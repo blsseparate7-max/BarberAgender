@@ -1,0 +1,422 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: usuarios
+    // Fields: uid, email, nome, tipo, ativo, createdAt, updatedAt
+    // tipos: 'admin', 'gerente', 'barbeiro', 'cliente'
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (
+          request.auth.token.email == "blsseparate7@gmail.com" ||
+          request.auth.token.email == "admin@admin.com" ||
+          (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin')
+        );
+    }
+
+    function isGerente() {
+      return isAuthenticated() && 
+        (
+          request.auth.token.email == "gerente@gerente.com" ||
+          (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'gerente')
+        );
+    }
+
+    function isStaff() {
+      return isAdmin() || isGerente();
+    }
+
+    function isBarbeiro() {
+      return isAuthenticated() && 
+        (
+          request.auth.token.email == "barbeiro@gmail.com" ||
+          (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro')
+        );
+    }
+
+    function isTestEmail(email) {
+      return email == "admin@admin.com" || email == "gerente@gerente.com" || email == "cliente@cliente.com" || email == "barbeiro@gmail.com";
+    }
+
+    // Rules for Test collection (connection test)
+    match /test/{docId} {
+      allow read: if isAuthenticated();
+    }
+
+    // Rules for Usuarios collection
+    match /usuarios/{userId} {
+      // Qualquer um autenticado pode ler dados básicos de perfis (necessário para agendamento e comandas).
+      allow read: if isAuthenticated();
+      
+      allow create: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isTestEmail(request.auth.token.email) ||
+        isStaff()
+      );
+
+      allow update: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isTestEmail(request.auth.token.email) ||
+        isStaff()
+      );
+      
+      allow delete: if isAdmin();
+
+      // Subcoleção de anotações internas dos clientes
+      match /anotacoes/{anotacaoId} {
+        allow read: if isAuthenticated() && (isStaff() || isBarbeiro() || request.auth.uid == userId);
+        allow create, update, delete: if isAuthenticated() && (isStaff() || isBarbeiro());
+      }
+    }
+
+    // Rules for Services
+    match /services/{serviceId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    match /service_categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Rules for Appointments
+    match /appointments/{appointmentId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow delete: if isStaff();
+    }
+
+    match /recurring_appointments/{appointmentId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow delete: if isStaff();
+    }
+
+    match /agenda_blocks/{blockId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff() || isBarbeiro();
+    }
+
+    // Rules for Comandas
+    match /comandas/{comandaId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create, update: if isStaff() || isBarbeiro();
+      allow delete: if isAdmin();
+    }
+
+    // --- Financeiro ---
+    match /financial_transactions/{transactionId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow create, update: if isStaff() || isBarbeiro();
+      allow delete: if isAdmin();
+    }
+    
+    match /cash_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /professional_advances/{advanceId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.profissional_id == request.auth.uid)
+      );
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /professional_payments/{paymentId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.profissional_id == request.auth.uid)
+      );
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /inconsistency_logs/{logId} {
+      allow read: if isStaff();
+      allow create: if isStaff() || isBarbeiro();
+      allow update, delete: if isStaff();
+    }
+
+    match /cash_movements/{movementId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow create, update: if isStaff() || isBarbeiro();
+      allow delete: if isAdmin();
+    }
+
+    match /professional_schedules/{barberId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff() || (isAuthenticated() && request.auth.uid == barberId);
+    }
+    
+    match /financial_categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    match /commissions/{commissionId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.profissional_id == request.auth.uid)
+      );
+      allow create, update: if isStaff() || isBarbeiro();
+      allow delete: if isAdmin();
+    }
+
+    match /commission_payouts/{payoutId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.profissional_id == request.auth.uid)
+      );
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // --- Estoque ---
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    
+    match /product_categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    
+    match /inventory_movements/{movementId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow create: if isStaff() || isBarbeiro();
+      allow update, delete: if isStaff();
+    }
+
+    // --- Assinaturas ---
+    match /subscription_plans/{planId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    
+    match /subscriptions/{subscriptionId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create: if isStaff();
+      allow update: if isStaff() || (
+        isAuthenticated() && 
+        resource != null && 
+        resource.data.cliente_id == request.auth.uid && 
+        request.resource.data.cliente_id == resource.data.cliente_id
+      );
+      allow delete: if isAdmin();
+    }
+    
+    match /subscription_usage/{usageId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create: if isStaff() || isBarbeiro();
+      allow update, delete: if isStaff();
+    }
+
+    // --- Marketing e Automações ---
+    match /marketing_campaigns/{campaignId} {
+      allow read, write: if isStaff();
+    }
+    
+    match /marketing_automations/{automationId} {
+      allow read, write: if isStaff();
+    }
+    
+    match /marketing_history/{historyId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /automations/{automationId} {
+      allow read, write: if isStaff();
+    }
+    
+    match /automation_logs/{logId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+    }
+
+    // --- Fidelidade ---
+    match /loyalty_config/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    match /waitlist/{entryId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow create, update: if isAuthenticated();
+      allow delete: if isStaff();
+    }
+
+    match /loyalty_points/{clientId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        request.auth.uid == clientId
+      );
+      allow write: if isStaff() || isBarbeiro();
+    }
+    
+    match /loyalty_history/{historyId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create: if isStaff() || isBarbeiro();
+      allow update, delete: if isStaff();
+    }
+
+    // --- Insights e Sistema ---
+    match /system_insights/{insightId} {
+      allow read, write: if isStaff();
+    }
+
+    match /payment_methods/{methodId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    match /settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // --- Dívidas ---
+    match /client_debts/{debtId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create, update: if isStaff() || isBarbeiro();
+      allow delete: if isAdmin();
+    }
+
+    match /debt_payments/{paymentId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
+      allow create, update: if isStaff() || isBarbeiro();
+      allow delete: if isAdmin();
+    }
+
+    // --- Novos Recursos de Relacionamento e Lembretes (Reminders) ---
+    match /lembretes_internos/{reminderId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow write: if isAuthenticated() && isStaff();
+    }
+
+    match /noticias_noticias/{noticiaId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isStaff();
+    }
+
+    match /noticias_campanhas/{campanhaId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isStaff();
+    }
+
+    // --- Fidelidade e Relacionamento ---
+    match /cupons_desconto/{cupomId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isStaff();
+    }
+
+    match /mensagens_modelos/{modeloId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow write: if isAuthenticated() && isStaff();
+    }
+
+    // --- Pesquisa de Satisfação ---
+    match /pesquisa_perguntas/{perguntaId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isStaff();
+    }
+
+    match /pesquisa_respostas/{respostaId} {
+      allow create: if isAuthenticated();
+      allow read, update, delete: if isAuthenticated() && isStaff();
+    }
+
+    // --- Pacotes e Planos Fidelidade ---
+    match /pacotes_config/{pkgId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isStaff();
+    }
+
+    match /pacotes_vendas/{vendaId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.clientId == request.auth.uid)
+      );
+      allow create, update, delete: if isAuthenticated() && (isStaff() || isBarbeiro());
+    }
+
+    // --- Auxiliares / Tipos Customizados ---
+    match /tipos_categorias/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_pagamentos/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_despesas/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_receitas/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_contas/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_equipamentos/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_fornecedores/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_anamnese/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_bandeiras/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_deducoes/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+    match /tipos_mensagens/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+  }
+}

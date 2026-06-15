@@ -1,0 +1,169 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Perfil de usuário e CRM de cliente",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "nome": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["admin", "gerente", "barbeiro", "cliente"] },
+        "ativo": { "type": "boolean" },
+        "phone": { "type": "string" },
+        "birthDate": { "type": "string" },
+        "address": { "type": "string" },
+        "observations": { "type": "string" },
+        "totalSpent": { "type": "number" },
+        "appointmentsCount": { "type": "number" },
+        "balance": { "type": "number" },
+        "commission_percentage": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "tipo", "ativo"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Serviços oferecidos",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "duration": { "type": "number" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Agendamentos",
+      "type": "object",
+      "properties": {
+        "cliente_id": { "type": "string" },
+        "profissional_id": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    },
+    "Comanda": {
+      "title": "Comanda",
+      "description": "Comanda de consumo",
+      "type": "object",
+      "properties": {
+        "number": { "type": "string" },
+        "cliente_id": { "type": "string" },
+        "profissional_id": { "type": "string" },
+        "status": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "items": { "type": "array" },
+        "payments": { "type": "array" }
+      }
+    },
+    "CashSession": {
+      "title": "CashSession",
+      "description": "Sessão de caixa diário",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "enum": ["aberto", "fechado"] },
+        "openingDate": { "type": "string", "format": "date-time" },
+        "openingValue": { "type": "number" },
+        "openingResponsibleId": { "type": "string" },
+        "openingResponsibleName": { "type": "string" },
+        "closingDate": { "type": "string", "format": "date-time" },
+        "closingValueExpected": { "type": "number" },
+        "closingValueReported": { "type": "number" },
+        "closingResponsibleId": { "type": "string" },
+        "closingResponsibleName": { "type": "string" },
+        "difference": { "type": "number" },
+        "reopenedLog": { "type": "array" }
+      },
+      "required": ["status", "openingDate", "openingValue", "openingResponsibleId"]
+    },
+    "Commission": {
+      "title": "Commission",
+      "description": "Comissões dos profissionais",
+      "type": "object",
+      "properties": {
+        "profissional_id": { "type": "string" },
+        "profissional_name": { "type": "string" },
+        "comanda_id": { "type": "string" },
+        "servico_id": { "type": "string" },
+        "servico_name": { "type": "string" },
+        "date": { "type": "string" },
+        "base_value": { "type": "number" },
+        "percentage": { "type": "number" },
+        "commission_value": { "type": "number" },
+        "status": { "type": "string", "enum": ["pendente", "pago", "parcial"] },
+        "payment_id": { "type": "string" }
+      },
+      "required": ["profissional_id", "date", "base_value", "commission_value", "status"]
+    },
+    "ProfessionalAdvance": {
+      "title": "ProfessionalAdvance",
+      "description": "Vales ou adiantamentos para profissionais",
+      "type": "object",
+      "properties": {
+        "profissional_id": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "responsible_id": { "type": "string" }
+      }
+    },
+    "ProfessionalPayment": {
+      "title": "ProfessionalPayment",
+      "description": "Pagamentos de comissões consolidado",
+      "type": "object",
+      "properties": {
+        "profissional_id": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "period_start": { "type": "string" },
+        "period_end": { "type": "string" },
+        "responsible_id": { "type": "string" },
+        "transaction_id": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Usuários e Clientes"
+    },
+    "/services/{serviceId}": {
+      "schema": "Service",
+      "description": "Serviços"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": "Appointment",
+      "description": "Agendamentos"
+    },
+    "/comandas/{comandaId}": {
+      "schema": "Comanda",
+      "description": "Comandas"
+    },
+    "/cash_sessions/{sessionId}": {
+      "schema": "CashSession",
+      "description": "Sessões de Caixa"
+    },
+    "/financial_transactions/{transactionId}": {
+      "schema": "FinancialTransaction",
+      "description": "Transações Financeiras (Entradas/Saídas)"
+    },
+    "/commissions/{commissionId}": {
+      "schema": "Commission",
+      "description": "Registro Individual de Comissões"
+    },
+    "/professional_advances/{advanceId}": {
+      "schema": "ProfessionalAdvance",
+      "description": "Vales/Adiantamentos"
+    },
+    "/professional_payments/{paymentId}": {
+      "schema": "ProfessionalPayment",
+      "description": "Pagamentos/Repasses Efetuados"
+    }
+  }
+}

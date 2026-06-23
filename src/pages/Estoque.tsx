@@ -39,6 +39,7 @@ export function Estoque() {
   const { user, profile, isAdmin, isGerente } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'products' | 'movements' | 'categories'>('products');
@@ -78,9 +79,10 @@ export function Estoque() {
     let loadedProducts = false;
     let loadedCategories = false;
     let loadedMovements = false;
+    let loadedSuppliers = false;
 
     const checkLoading = () => {
-      if (loadedProducts && loadedCategories && loadedMovements) {
+      if (loadedProducts && loadedCategories && loadedMovements && loadedSuppliers) {
         setLoading(false);
       }
     };
@@ -124,10 +126,24 @@ export function Estoque() {
       checkLoading();
     });
 
+    // 4. Subscribe to Suppliers (Fornecedores)
+    const qSuppliers = query(collection(db, 'tipos_fornecedores'), orderBy('name', 'asc'));
+    const unsubscribeSuppliers = onSnapshot(qSuppliers, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSuppliers(data);
+      loadedSuppliers = true;
+      checkLoading();
+    }, (error) => {
+      console.error("Erro ao assinar fornecedores:", error);
+      loadedSuppliers = true;
+      checkLoading();
+    });
+
     return () => {
       unsubscribeProducts();
       unsubscribeCategories();
       unsubscribeMovements();
+      unsubscribeSuppliers();
     };
   }, []);
 
@@ -143,6 +159,7 @@ export function Estoque() {
   const { execute: handleSaveProduct, isLoading: isSavingProduct } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    const fornecedorId = formData.get('fornecedorId') as string;
     const productData = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
@@ -154,6 +171,8 @@ export function Estoque() {
       minStock: Number(formData.get('minStock')),
       type: formData.get('type') as ProductType,
       status: formData.get('status') as 'active' | 'inactive',
+      fornecedor_id: fornecedorId || '',
+      fornecedor_name: suppliers.find(s => s.id === fornecedorId)?.name || '',
     };
 
     try {
@@ -599,6 +618,13 @@ export function Estoque() {
                       <option value="inactive">Inativo</option>
                     </select>
                   </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Fornecedor</label>
+                    <select name="fornecedorId" defaultValue={editingProduct?.fornecedor_id || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
+                      <option value="">Sem Fornecedor</option>
+                      {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
                 </div>
                 <div className="flex gap-4 pt-4">
                   <button type="button" onClick={() => setShowProductModal(false)} className="flex-1 py-4 border border-border text-muted rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
@@ -806,10 +832,17 @@ function ProductCard({ product, onEdit, onMovement, onDelete, isAdmin }: Product
           </div>
           <div className="space-y-1">
             <h3 className="font-bold text-lg text-primary group-hover:text-accent transition-colors leading-tight">{product.name}</h3>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-muted font-bold uppercase tracking-widest">{product.categoryName}</span>
-              <span className={`w-1.5 h-1.5 rounded-full ${product.status === 'active' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{product.status === 'active' ? 'Ativo' : 'Inativo'}</span>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted font-bold uppercase tracking-widest">{product.categoryName}</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${product.status === 'active' ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{product.status === 'active' ? 'Ativo' : 'Inativo'}</span>
+              </div>
+              {product.fornecedor_name && (
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                  Fornecedor: <span className="text-slate-700 font-black">{product.fornecedor_name}</span>
+                </span>
+              )}
             </div>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   TrendingUp, 
+  TrendingDown,
   BarChart3, 
   PieChart, 
   Download, 
@@ -1406,6 +1407,33 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
     outros: 'Outros Métodos'
   };
 
+  // Grouping by categories for Entradas and Saídas
+  const incomeCategoryList = useMemo(() => {
+    const groups: Record<string, number> = {};
+    transactions
+      .filter((t: any) => t.type === 'income' && t.status === 'pago')
+      .forEach((t: any) => {
+        const cat = t.category || 'Outros';
+        groups[cat] = (groups[cat] || 0) + (t.amount || 0);
+      });
+    return Object.entries(groups)
+      .map(([name, amount]) => ({ name, amount }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [transactions]);
+
+  const expenseCategoryList = useMemo(() => {
+    const groups: Record<string, number> = {};
+    transactions
+      .filter((t: any) => t.type === 'expense' && t.status === 'pago')
+      .forEach((t: any) => {
+        const cat = t.category || 'Outros';
+        groups[cat] = (groups[cat] || 0) + (t.amount || 0);
+      });
+    return Object.entries(groups)
+      .map(([name, amount]) => ({ name, amount }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [transactions]);
+
   return (
     <div className="space-y-8" id="report-financial-tab">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-5" id="finance-kpi-sub-grid">
@@ -1508,6 +1536,89 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Categories Breakdown Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8" id="financial-categories-bi-grid">
+        {/* Income Categories */}
+        <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm flex flex-col justify-between">
+          <div>
+            <h3 className="font-black text-xl text-primary tracking-tighter flex items-center gap-2">
+              <TrendingUp className="text-emerald-500" size={22} />
+              Entradas por Categoria
+            </h3>
+            <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1 mb-8">Breakdown de receitas operacionais e entradas</p>
+          </div>
+          <div className="space-y-6">
+            {incomeCategoryList.map((c, idx) => {
+              const pct = stats.income > 0 ? Math.round((c.amount / stats.income) * 100) : 0;
+              return (
+                <div className="space-y-2.5" key={`income-cat-${c.name}`}>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
+                      <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
+                      {c.name}
+                    </span>
+                    <span className="font-bold text-muted text-[11px]">
+                      <strong>R$ {c.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> ({pct}%)
+                    </span>
+                  </div>
+                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ duration: 1.2, ease: "easeOut" }}
+                      className="h-full rounded-full bg-emerald-500"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {incomeCategoryList.length === 0 && (
+              <p className="text-center italic text-xs text-slate-500 py-12">Nenhuma categoria de entrada registrada no período.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Expense Categories */}
+        <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm flex flex-col justify-between">
+          <div>
+            <h3 className="font-black text-xl text-primary tracking-tighter flex items-center gap-2">
+              <TrendingDown className="text-red-500" size={22} />
+              Saídas por Categoria
+            </h3>
+            <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1 mb-8">Breakdown de despesas corporativas e custos</p>
+          </div>
+          <div className="space-y-6">
+            {expenseCategoryList.map((c, idx) => {
+              const pct = stats.expense > 0 ? Math.round((c.amount / stats.expense) * 100) : 0;
+              return (
+                <div className="space-y-2.5" key={`expense-cat-${c.name}`}>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
+                      <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
+                      {c.name}
+                    </span>
+                    <span className="font-bold text-muted text-[11px]">
+                      <strong>R$ {c.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> ({pct}%)
+                    </span>
+                  </div>
+                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ duration: 1.2, ease: "easeOut" }}
+                      className="h-full rounded-full bg-red-500"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {expenseCategoryList.length === 0 && (
+              <p className="text-center italic text-xs text-slate-500 py-12">Nenhuma categoria de saída registrada no período.</p>
+            )}
           </div>
         </div>
       </div>

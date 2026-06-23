@@ -213,6 +213,7 @@ export interface PaymentMethodConfig {
   tipo_legado?: string; // legado
   description?: string;
   internalNotes?: string;
+  cardMachine?: string;
   createdAt: any;
   updatedAt: any;
 }
@@ -497,6 +498,8 @@ export interface Product {
   minStock: number;
   type: ProductType;
   status: 'active' | 'inactive';
+  fornecedor_id?: string;
+  fornecedor_name?: string;
   createdAt: any;
   updatedAt: any;
 }
@@ -671,4 +674,38 @@ export interface SystemInsight {
   data: any;
   date: string;
   createdAt: any;
+}
+
+export interface AccountPayable {
+  id: string;
+  description: string;
+  category: string;
+  amount: number;
+  dueDate: string;
+  supplier: string;
+  recurrence: 'none' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly';
+  status: 'pending' | 'paid' | 'overdue';
+  paidAt?: any;
+  paymentMethod?: string;
+  transactionId?: string;
+  movementId?: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface AccountReceivable {
+  id: string;
+  description: string;
+  category: string;
+  amount: number;
+  dueDate: string;
+  clientOrPartner: string;
+  recurrence: 'none' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly';
+  status: 'pending' | 'paid' | 'overdue';
+  receivedAt?: any;
+  paymentMethod?: string;
+  transactionId?: string;
+  movementId?: string;
+  createdAt: any;
+  updatedAt: any;
 }

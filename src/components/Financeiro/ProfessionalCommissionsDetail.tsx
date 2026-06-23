@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, Calendar, Plus, Printer, DollarSign, TrendingUp, Percent, 
   Receipt, CheckCircle2, Wallet, Briefcase, FileText, History, Loader2, Info,
-  Scissors, Coffee, Box, Sparkles, Tag, Users, X, ChevronRight, Filter
+  Scissors, Coffee, Box, Sparkles, Tag, Users, X, ChevronRight, Filter, Download, Share2
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { toast } from 'sonner';
@@ -14,6 +14,71 @@ import { commissionService } from '../../services/commissionService';
 import { cashService } from '../../services/cashService';
 import { financialService } from '../../services/financialService';
 import { Commission, ProfessionalAdvance, ProfessionalPayment } from '../../types';
+
+function extensos(valor: number): string {
+  if (valor === 0) return 'zero reais';
+  
+  const unidades = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
+  const dezenas = ['', 'dez', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
+  const dezoito = ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
+  const centenas = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos', 'seiscentos', 'setecentos', 'oitocentos', 'novecentos'];
+
+  const escreverGrupo = (n: number): string => {
+    if (n === 0) return '';
+    if (n === 100) return 'cem';
+    
+    const cent = Math.floor(n / 100);
+    const resto = n % 100;
+    const dez = Math.floor(resto / 10);
+    const uni = resto % 10;
+    
+    const partes: string[] = [];
+    if (cent > 0) partes.push(centenas[cent]);
+    
+    if (resto > 0) {
+      if (dez === 1) {
+        partes.push(dezoito[uni]);
+      } else {
+        if (dez > 0) partes.push(dezenas[dez]);
+        if (uni > 0) partes.push(unidades[uni]);
+      }
+    }
+    return partes.join(' e ');
+  };
+
+  const partesMoeda: string[] = [];
+  const real = Math.floor(valor);
+  const centavos = Math.round((valor - real) * 100);
+
+  if (real > 0) {
+    if (real === 1) {
+      partesMoeda.push('um real');
+    } else {
+      const milhar = Math.floor(real / 1000);
+      const restoReal = real % 1000;
+      let verbalReal = '';
+      if (milhar > 0) {
+        verbalReal += (milhar === 1 ? 'mil' : escreverGrupo(milhar) + ' mil');
+        if (restoReal > 0) {
+          verbalReal += ' e ' + escreverGrupo(restoReal);
+        }
+      } else {
+        verbalReal += escreverGrupo(restoReal);
+      }
+      partesMoeda.push(verbalReal + ' reais');
+    }
+  }
+
+  if (centavos > 0) {
+    if (centavos === 1) {
+      partesMoeda.push('um centavo');
+    } else {
+      partesMoeda.push(escreverGrupo(centavos) + ' centavos');
+    }
+  }
+
+  return partesMoeda.join(' e ');
+}
 
 interface DetailProps {
   professionalId: string;
@@ -31,14 +96,19 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   const [payouts, setPayouts] = useState<ProfessionalPayment[]>([]);
   const [isOpenCash, setIsOpenCash] = useState<any>(null);
 
+  const [localDateRange, setLocalDateRange] = useState({
+    start: dateRange.start,
+    end: dateRange.end
+  });
+
   // Compute filtered period lists and all-time ledger totals reactively
   const commissions = React.useMemo(() => {
-    return allCommissions.filter(c => c.date >= dateRange.start && c.date <= dateRange.end);
-  }, [allCommissions, dateRange.start, dateRange.end]);
+    return allCommissions.filter(c => c.date >= localDateRange.start && c.date <= localDateRange.end);
+  }, [allCommissions, localDateRange.start, localDateRange.end]);
 
   const advances = React.useMemo(() => {
-    return allAdvances.filter(a => a.date >= dateRange.start && a.date <= dateRange.end);
-  }, [allAdvances, dateRange.start, dateRange.end]);
+    return allAdvances.filter(a => a.date >= localDateRange.start && a.date <= localDateRange.end);
+  }, [allAdvances, localDateRange.start, localDateRange.end]);
 
   const allTimePendingCommissions = React.useMemo(() => {
     return allCommissions.filter(c => c.status === 'pendente');
@@ -47,6 +117,44 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   const allTimePendingAdvances = React.useMemo(() => {
     return allAdvances.filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'));
   }, [allAdvances]);
+
+  const periodPendingAdvances = React.useMemo(() => {
+    return advances.filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'));
+  }, [advances]);
+
+  const periodPendingAdvancesTotal = React.useMemo(() => {
+    return periodPendingAdvances.reduce((acc, a) => acc + (a.amount || 0), 0);
+  }, [periodPendingAdvances]);
+
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+
+  const payrollGroups = React.useMemo(() => {
+    const servicos: Commission[] = [];
+    const vendas: Commission[] = [];
+    const gorjetas: Commission[] = [];
+    const assinaturas: Commission[] = [];
+
+    commissions.forEach(c => {
+      const type = c.commission_type || (
+        c.servico_name?.toLowerCase().includes('gorjeta') ? 'gorjeta' :
+        (c.servico_name?.toLowerCase().includes('assinatura') || c.servico_name?.toLowerCase().includes('plano') || c.servico_name?.toLowerCase().includes('pacote')) ? 'assinatura' :
+        (c.servico_name?.toLowerCase().includes('produto') || c.servico_name?.toLowerCase().includes('venda')) ? 'venda' :
+        'servico'
+      );
+
+      if (type === 'gorjeta') {
+        gorjetas.push(c);
+      } else if (type === 'assinatura') {
+        assinaturas.push(c);
+      } else if (type === 'venda' || type === 'produto') {
+        vendas.push(c);
+      } else {
+        servicos.push(c);
+      }
+    });
+
+    return { servicos, vendas, gorjetas, assinaturas };
+  }, [commissions]);
   
   const [activeSubTab, setActiveSubTab] = useState<'analytical' | 'vales' | 'repasse' | 'payroll'>('analytical');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -129,9 +237,9 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       ...prev, 
       selectedIds: pendingIds, 
       amount: pendingTotal,
-      notes: `Fechamento período de ${format(parseISO(dateRange.start), 'dd/MM')} a ${format(parseISO(dateRange.end), 'dd/MM')}`
+      notes: `Fechamento período de ${format(parseISO(localDateRange.start), 'dd/MM')} a ${format(parseISO(localDateRange.end), 'dd/MM')}`
     }));
-  }, [commissions, dateRange.start, dateRange.end]);
+  }, [commissions, localDateRange.start, localDateRange.end]);
 
   useEffect(() => {
     setPaymentData(prev => ({
@@ -147,38 +255,43 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   }, [isOpenCash]);
 
   useEffect(() => {
-    setSelectedAdvanceIds(allTimePendingAdvances.map(a => a.id));
-  }, [allTimePendingAdvances]);
+    setSelectedAdvanceIds(periodPendingAdvances.map(a => a.id));
+  }, [periodPendingAdvances]);
 
   // Handle Register Payment (Repasse)
   const handleRegisterPayment = async () => {
-    if (!user || paymentData.amount <= 0) return;
+    const comissaoReceber = totals.pending; // comissões do período
+    if (!user || comissaoReceber <= 0) {
+      toast.error("Não há comissões pendentes no período selecionado para liquidar.");
+      return;
+    }
 
     try {
       const todayString = new Date().toISOString().split('T')[0];
       const txId = paymentData.source === 'caixa' ? `TX-CASH-${Date.now()}` : `TX-FIN-${Date.now()}`;
       
-      // Vales seleccionados para deduzir / descontar
-      const deductedAdvances = allTimePendingAdvances.filter(a => selectedAdvanceIds.includes(a.id));
-      const totalAdjustmentDeduction = deductedAdvances.reduce((acc, a) => acc + a.amount, 0);
+      // Vales do período selecionado para deduzir / descontar
+      const deductedAdvances = periodPendingAdvances;
+      const totalAdjustmentDeduction = periodPendingAdvancesTotal;
+      const autoSelectedAdvanceIds = deductedAdvances.map(a => a.id);
       
-      // Valor líquido final pago = Commissions selecionadas - Vales descontados
-      const finalNetPaidAmount = Math.max(0, paymentData.amount - totalAdjustmentDeduction);
+      // Valor líquido final pago = Commissions selecionadas no período - Vales selecionados no período
+      const finalNetPaidAmount = Math.max(0, comissaoReceber - totalAdjustmentDeduction);
 
       // 1. Submit payout batch update in commissionService
       await commissionService.registerPayout({
         profissional_id: professionalId,
         profissional_name: professionalName,
         commission_ids: paymentData.selectedIds,
-        advance_ids: selectedAdvanceIds,
+        advance_ids: autoSelectedAdvanceIds,
         amount: finalNetPaidAmount, // actual net bank transfer/cash amount paid
         date: todayString,
-        period_start: dateRange.start,
-        period_end: dateRange.end,
+        period_start: localDateRange.start,
+        period_end: localDateRange.end,
         responsible_id: user.uid,
         responsible_name: profile?.nome || 'Admin',
         transaction_id: txId,
-        notes: paymentData.notes + (totalAdjustmentDeduction > 0 ? ` (Descontado R$ ${totalAdjustmentDeduction.toFixed(2)} em Vales)` : '')
+        notes: paymentData.notes + (totalAdjustmentDeduction > 0 ? ` (Dedução Automática de R$ ${totalAdjustmentDeduction.toFixed(2)} em Vales no período)` : '')
       });
 
       // 2. Register financial accounting record
@@ -187,7 +300,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
           caixa_id: isOpenCash.id,
           type: 'expense',
           category: 'Repasse Comissões',
-          description: `Repasse Líquido - ${professionalName} (Ref ${dateRange.start} a ${dateRange.end})`,
+          description: `Repasse Líquido - ${professionalName} (Ref ${localDateRange.start} a ${localDateRange.end})`,
           amount: finalNetPaidAmount,
           paymentMethod: paymentData.paymentMethod as any,
           is_receivable: false,
@@ -199,7 +312,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         await financialService.createTransaction({
           type: 'expense',
           category: 'Repasse Comissões (Parceiros)',
-          description: `Repasse Líquido - ${professionalName} (Ref ${dateRange.start} a ${dateRange.end})`,
+          description: `Repasse Líquido - ${professionalName} (Ref ${localDateRange.start} a ${localDateRange.end})`,
           amount: finalNetPaidAmount,
           net_amount: finalNetPaidAmount,
           fee_amount: 0,
@@ -326,13 +439,14 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     commission: commissions.reduce((acc, c) => acc + (c.commission_value || 0), 0),
     pending: commissions.filter(c => c.status === 'pendente').reduce((acc, c) => acc + (c.commission_value || 0), 0),
     advances: advances.reduce((acc, a) => acc + (a.amount || 0), 0),
-    paid: payouts.reduce((acc, p) => acc + (p.date >= dateRange.start && p.date <= dateRange.end ? p.amount : 0), 0)
+    paid: payouts.reduce((acc, p) => acc + (p.date >= localDateRange.start && p.date <= localDateRange.end ? p.amount : 0), 0)
   };
 
   // 2. All-time actual pending totals to display correct global ledger to user
   const allTimePendingCommissionsTotal = allTimePendingCommissions.reduce((acc, c) => acc + (c.commission_value || 0), 0);
   const allTimePendingAdvancesTotal = allTimePendingAdvances.reduce((acc, a) => acc + (a.amount || 0), 0);
   const realBalanceToPayAllTime = allTimePendingCommissionsTotal - allTimePendingAdvancesTotal;
+  const periodNetTotalToPay = Math.max(0, totals.pending - periodPendingAdvancesTotal);
 
   // Selected deduction total inside the Payout Modal
   const currentSelectedAdvancesTotal = allTimePendingAdvances
@@ -373,7 +487,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       }
     });
 
-    const valesValue = allTimePendingAdvancesTotal; // All pending vales historically
+    const valesValue = periodPendingAdvancesTotal; // Vales pendentes no período selecionado
     const descontosValue = commissions.filter(c => c.commission_value < 0).reduce((acc, c) => acc + Math.abs(c.commission_value), 0);
     const deducoesValue = 0;
     const comandasValue = 0; // standard open ticket placeholder
@@ -422,9 +536,22 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 bg-slate-100/90 border border-slate-200/50 rounded-2xl px-4 py-2.5 shadow-sm text-xs font-semibold text-primary">
-              <Calendar className="text-slate-500" size={14} />
-              <span>Intervalo Lido: <strong className="font-extrabold">{format(new Date(dateRange.start + 'T00:00:00'), 'dd/MM/yyyy')}</strong> até <strong className="font-extrabold">{format(new Date(dateRange.end + 'T00:00:00'), 'dd/MM/yyyy')}</strong></span>
+            <div className="flex flex-wrap items-center gap-2 bg-slate-100/90 border border-slate-200/50 rounded-2xl px-3 py-2 shadow-sm text-xs font-semibold text-primary">
+              <Calendar className="text-slate-500 shrink-0" size={14} />
+              <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] mr-1">Filtrar Período:</span>
+              <input 
+                type="date" 
+                value={localDateRange.start}
+                onChange={(e) => setLocalDateRange(prev => ({ ...prev, start: e.target.value }))}
+                className="bg-white text-primary text-xs font-extrabold focus:outline-none focus:ring-1 focus:ring-primary/20 border border-slate-200 rounded p-1 shadow-sm font-sans"
+              />
+              <span className="text-slate-400 font-mono">até</span>
+              <input 
+                type="date" 
+                value={localDateRange.end}
+                onChange={(e) => setLocalDateRange(prev => ({ ...prev, end: e.target.value }))}
+                className="bg-white text-primary text-xs font-extrabold focus:outline-none focus:ring-1 focus:ring-primary/20 border border-slate-200 rounded p-1 shadow-sm font-sans"
+              />
             </div>
             <button 
               id="btn-print-commissions"
@@ -460,15 +587,15 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                   amount: totals.pending,
                   selectedIds: commissions.filter(c => c.status === 'pendente').map(c => c.id)
                 }));
-                // Automatically include all active vales
-                setSelectedAdvanceIds(allTimePendingAdvances.map(a => a.id));
+                // Automatically include period active vales
+                setSelectedAdvanceIds(periodPendingAdvances.map(a => a.id));
                 setIsPaymentModalOpen(true);
               }}
               disabled={totals.pending <= 0 && allTimePendingCommissionsTotal <= 0}
               className="flex items-center gap-2 bg-primary text-white px-6 py-3 rounded-2xl font-black text-sm hover:bg-slate-800 disabled:opacity-50 disabled:hover:bg-primary transition-all shadow-lg shadow-primary/10 active:scale-95"
             >
               <DollarSign size={18} />
-              Liquidara Acertos
+              Liquidar Acertos
             </button>
           </div>
         </header>
@@ -740,56 +867,423 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
                 {activeSubTab === 'payroll' && (
                   <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} key="payroll">
-                    <div className="max-w-2xl mx-auto p-10 bg-slate-50 rounded-[2.5rem] border border-slate-100 shadow-inner text-left">
-                      <div className="flex justify-between items-start mb-10">
+                    <div id="payroll-printable-area" className="max-w-2xl mx-auto p-8 sm:p-12 bg-white rounded-3xl border border-slate-200 shadow-xl text-left relative overflow-hidden transition-all duration-300">
+                      {/* Decorative/Aesthetic subtle background accent */}
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl opacity-50 -z-10" />
+                      
+                      {/* Salon / System Header */}
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 border-b border-dashed border-slate-200 pb-6">
                         <div>
-                          <h4 className="text-xl font-bold text-primary">Folha de Movimentação</h4>
-                          <p className="text-xs text-muted font-bold uppercase tracking-widest mt-1">Ref: {format(parseISO(dateRange.start), 'dd/MM/yyyy')} a {format(parseISO(dateRange.end), 'dd/MM/yyyy')}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] bg-primary text-white font-extrabold uppercase px-2.5 py-1 rounded-md tracking-wider">Cota-Parte</span>
+                            <span className="text-slate-400 font-bold text-xs">HOLERITE DIGITAL</span>
+                          </div>
+                          <h4 className="text-2xl font-black text-primary mt-1">Demonstrativo de Fechamento</h4>
+                          <p className="text-[11px] text-muted font-bold uppercase tracking-wider mt-0.5">
+                            Período: {format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a {format(parseISO(localDateRange.end), 'dd/MM/yyyy')}
+                          </p>
                         </div>
-                        <div className="text-right">
-                          <p className="text-xs font-black text-primary uppercase tracking-widest">{professionalName}</p>
-                          <p className="text-[10px] text-muted font-bold block">ID: {professionalId.slice(0, 8)}</p>
-                        </div>
-                      </div>
-
-                      {/* Detail Breakdown of Commission Categories */}
-                      <div className="bg-white/80 p-6 rounded-3xl border border-slate-200/50 mb-6 space-y-3.5">
-                        <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-1.5">Receitas por Categoria</h5>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-500 font-medium">Serviços Criados (+)</span>
-                          <span className="font-bold text-slate-700">R$ {periodCommissionsByCategory.servicos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-500 font-medium">Vendas de Balcão (+)</span>
-                          <span className="font-bold text-slate-700">R$ {periodCommissionsByCategory.vendas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-500 font-medium">Gorjetas Clientes (+)</span>
-                          <span className="font-bold text-slate-700">R$ {periodCommissionsByCategory.gorjetas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-500 font-medium">Assinaturas/Planos (+)</span>
-                          <span className="font-bold text-slate-700">R$ {periodCommissionsByCategory.assinaturas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <div className="sm:text-right bg-slate-50 px-4 py-3 rounded-2xl border border-slate-100">
+                          <p className="text-xs font-black text-slate-800 uppercase tracking-widest">{professionalName}</p>
+                          <p className="text-[9px] text-muted font-bold block mt-0.5">CPF/ID: {professionalId.slice(0, 10).toUpperCase()}</p>
                         </div>
                       </div>
 
-                      <div className="space-y-4 border-t border-b border-slate-200 py-8 mb-8">
-                        <PayrollRow label="Total Comissões Geradas (+)" value={totals.commission} />
-                        <PayrollRow label="Adiantamentos/Vales no Período (-)" value={totals.advances} isNegative />
-                        <PayrollRow label="Repasses Previstos / Pagos (-)" value={totals.paid} isNegative />
+                      {/* Earnings & Deductions grid layout - clean and elegant */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                        {/* Proventos (Earnings) */}
+                        <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-150 space-y-3">
+                          <div className="flex items-center gap-2 border-b border-slate-200/80 pb-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                            <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider">Proventos (Rendimentos)</h5>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            {/* Serviços Executados */}
+                            <div className="border border-slate-200/50 rounded-xl overflow-hidden bg-white shadow-xs">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedGroup(expandedGroup === 'servicos' ? null : 'servicos')}
+                                className="w-full flex justify-between items-center text-xs p-3 hover:bg-slate-50 transition-all text-left outline-none"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <ChevronRight size={14} className={`text-slate-400 transition-transform duration-300 ${expandedGroup === 'servicos' ? 'rotate-90 text-primary' : ''}`} />
+                                  <span className="text-slate-600 font-bold">Serviços Executados</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-black">{payrollGroups.servicos.length}</span>
+                                  <span className="font-extrabold text-slate-800">R$ {periodCommissionsByCategory.servicos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              </button>
+                              <AnimatePresence initial={false}>
+                                {expandedGroup === 'servicos' && (
+                                  <motion.div 
+                                    initial={{ height: 0, opacity: 0 }} 
+                                    animate={{ height: 'auto', opacity: 1 }} 
+                                    exit={{ height: 0, opacity: 0 }} 
+                                    className="overflow-hidden border-t border-slate-100 bg-slate-50/50"
+                                  >
+                                    <div className="p-3 max-h-56 overflow-y-auto no-scrollbar space-y-1.5">
+                                      {payrollGroups.servicos.length === 0 ? (
+                                        <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhum serviço neste período.</p>
+                                      ) : (
+                                        payrollGroups.servicos.map((c, idx) => (
+                                          <div key={`p-serv-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div className="text-left">
+                                              <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
+                                              <span className="text-[8px] text-slate-400 block mt-0.5">
+                                                {format(parseISO(c.date), 'dd/MM')} • Comanda #{c.comanda_number}
+                                              </span>
+                                            </div>
+                                            <div className="text-right font-bold">
+                                              <span className="text-emerald-700 block">R$ {c.commission_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                              <span className="text-[8px] text-slate-400 block">{c.commission_percentage}% de R$ {c.base_value}</span>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+
+                            {/* Vendas de Balcão */}
+                            <div className="border border-slate-200/50 rounded-xl overflow-hidden bg-white shadow-xs">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedGroup(expandedGroup === 'vendas' ? null : 'vendas')}
+                                className="w-full flex justify-between items-center text-xs p-3 hover:bg-slate-50 transition-all text-left outline-none"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <ChevronRight size={14} className={`text-slate-400 transition-transform duration-300 ${expandedGroup === 'vendas' ? 'rotate-90 text-emerald-500' : ''}`} />
+                                  <span className="text-slate-600 font-bold">Vendas de Balcão</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-black">{payrollGroups.vendas.length}</span>
+                                  <span className="font-extrabold text-slate-800">R$ {periodCommissionsByCategory.vendas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              </button>
+                              <AnimatePresence initial={false}>
+                                {expandedGroup === 'vendas' && (
+                                  <motion.div 
+                                    initial={{ height: 0, opacity: 0 }} 
+                                    animate={{ height: 'auto', opacity: 1 }} 
+                                    exit={{ height: 0, opacity: 0 }} 
+                                    className="overflow-hidden border-t border-slate-100 bg-slate-50/50"
+                                  >
+                                    <div className="p-3 max-h-56 overflow-y-auto no-scrollbar space-y-1.5">
+                                      {payrollGroups.vendas.length === 0 ? (
+                                        <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhuma venda de produto neste período.</p>
+                                      ) : (
+                                        payrollGroups.vendas.map((c, idx) => (
+                                          <div key={`p-vend-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div className="text-left">
+                                              <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
+                                              <span className="text-[8px] text-slate-400 block mt-0.5">
+                                                {format(parseISO(c.date), 'dd/MM')} • Comanda #{c.comanda_number}
+                                              </span>
+                                            </div>
+                                            <div className="text-right font-bold">
+                                              <span className="text-emerald-700 block">R$ {c.commission_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                              <span className="text-[8px] text-slate-400 block">{c.commission_percentage}% de R$ {c.base_value}</span>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+
+                            {/* Gorjetas Recebidas */}
+                            <div className="border border-slate-200/50 rounded-xl overflow-hidden bg-white shadow-xs">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedGroup(expandedGroup === 'gorjetas' ? null : 'gorjetas')}
+                                className="w-full flex justify-between items-center text-xs p-3 hover:bg-slate-50 transition-all text-left outline-none"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <ChevronRight size={14} className={`text-slate-400 transition-transform duration-300 ${expandedGroup === 'gorjetas' ? 'rotate-90 text-amber-500' : ''}`} />
+                                  <span className="text-slate-600 font-bold">Gorjetas Recebidas</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-black">{payrollGroups.gorjetas.length}</span>
+                                  <span className="font-extrabold text-slate-800">R$ {periodCommissionsByCategory.gorjetas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              </button>
+                              <AnimatePresence initial={false}>
+                                {expandedGroup === 'gorjetas' && (
+                                  <motion.div 
+                                    initial={{ height: 0, opacity: 0 }} 
+                                    animate={{ height: 'auto', opacity: 1 }} 
+                                    exit={{ height: 0, opacity: 0 }} 
+                                    className="overflow-hidden border-t border-slate-100 bg-slate-50/50"
+                                  >
+                                    <div className="p-3 max-h-56 overflow-y-auto no-scrollbar space-y-1.5">
+                                      {payrollGroups.gorjetas.length === 0 ? (
+                                        <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhuma gorjeta recebida no período.</p>
+                                      ) : (
+                                        payrollGroups.gorjetas.map((c, idx) => (
+                                          <div key={`p-gorj-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div className="text-left">
+                                              <span className="font-bold text-slate-800 block">Gorjeta de Cliente</span>
+                                              <span className="text-[8px] text-slate-400 block mt-0.5">
+                                                {format(parseISO(c.date), 'dd/MM')} • {c.cliente_name || 'Cliente Consumidor'} • Comanda #{c.comanda_number}
+                                              </span>
+                                            </div>
+                                            <div className="text-right font-bold">
+                                              <span className="text-amber-700 block">R$ {c.commission_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+
+                            {/* Planos e Assinaturas */}
+                            <div className="border border-slate-200/50 rounded-xl overflow-hidden bg-white shadow-xs">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedGroup(expandedGroup === 'assinaturas' ? null : 'assinaturas')}
+                                className="w-full flex justify-between items-center text-xs p-3 hover:bg-slate-50 transition-all text-left outline-none"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <ChevronRight size={14} className={`text-slate-400 transition-transform duration-300 ${expandedGroup === 'assinaturas' ? 'rotate-90 text-purple-500' : ''}`} />
+                                  <span className="text-slate-600 font-bold">Planos / Assinaturas</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-black">{payrollGroups.assinaturas.length}</span>
+                                  <span className="font-extrabold text-slate-800">R$ {periodCommissionsByCategory.assinaturas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              </button>
+                              <AnimatePresence initial={false}>
+                                {expandedGroup === 'assinaturas' && (
+                                  <motion.div 
+                                    initial={{ height: 0, opacity: 0 }} 
+                                    animate={{ height: 'auto', opacity: 1 }} 
+                                    exit={{ height: 0, opacity: 0 }} 
+                                    className="overflow-hidden border-t border-slate-100 bg-slate-50/50"
+                                  >
+                                    <div className="p-3 max-h-56 overflow-y-auto no-scrollbar space-y-1.5">
+                                      {payrollGroups.assinaturas.length === 0 ? (
+                                        <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhum plano ou assinatura neste período.</p>
+                                      ) : (
+                                        payrollGroups.assinaturas.map((c, idx) => (
+                                          <div key={`p-assin-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div className="text-left">
+                                              <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
+                                              <span className="text-[8px] text-slate-400 block mt-0.5">
+                                                {format(parseISO(c.date), 'dd/MM')} • {c.cliente_name || 'Membro do Club'}
+                                              </span>
+                                            </div>
+                                            <div className="text-right font-bold">
+                                              <span className="text-purple-700 block">R$ {c.commission_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          </div>
+
+                          <div className="border-t border-slate-200/80 pt-3 flex justify-between items-center text-xs font-black text-emerald-600">
+                            <span>TOTAL BRUTO DE ENTRADAS</span>
+                            <span>R$ {totals.commission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        </div>
+
+                        {/* Descontos (Deductions) */}
+                        <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-150 space-y-3">
+                          <div className="flex items-center gap-2 border-b border-slate-200/80 pb-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                            <h5 className="text-[11px] font-black text-slate-900 uppercase tracking-wider">Retenções e Descontos</h5>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            {/* Vales / Adiantamentos no Período */}
+                            <div className="border border-slate-200/50 rounded-xl overflow-hidden bg-white shadow-xs">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedGroup(expandedGroup === 'vales' ? null : 'vales')}
+                                className="w-full flex justify-between items-center text-xs p-3 hover:bg-slate-50 transition-all text-left outline-none"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <ChevronRight size={14} className={`text-slate-400 transition-transform duration-300 ${expandedGroup === 'vales' ? 'rotate-90 text-rose-500' : ''}`} />
+                                  <span className="text-slate-600 font-bold">Vales / Adiantamentos</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-black">{advances.length}</span>
+                                  <span className="font-extrabold text-rose-600">- R$ {periodPendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              </button>
+                              <AnimatePresence initial={false}>
+                                {expandedGroup === 'vales' && (
+                                  <motion.div 
+                                    initial={{ height: 0, opacity: 0 }} 
+                                    animate={{ height: 'auto', opacity: 1 }} 
+                                    exit={{ height: 0, opacity: 0 }} 
+                                    className="overflow-hidden border-t border-slate-100 bg-rose-50/20"
+                                  >
+                                    <div className="p-3 max-h-56 overflow-y-auto no-scrollbar space-y-1.5">
+                                      {advances.length === 0 ? (
+                                        <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhum vale deduzido neste período.</p>
+                                      ) : (
+                                        advances.map((a, idx) => (
+                                          <div key={`p-vale-${a.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-rose-100 p-2 rounded-lg">
+                                            <div className="text-left">
+                                              <span className="font-bold text-slate-800 block truncate max-w-[140px]">{a.description || 'Vale Avulso'}</span>
+                                              <span className="text-[8px] text-slate-400 block mt-0.5">
+                                                {format(parseISO(a.date), 'dd/MM')} • Aut: {a.responsible_name || 'Admin'}
+                                              </span>
+                                            </div>
+                                            <div className="text-right font-bold">
+                                              <span className="text-rose-600 block">- R$ {a.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          </div>
+
+                          <div className="border-t border-slate-200/80 pt-3 flex justify-between items-center text-xs font-black text-rose-600">
+                            <span>TOTAL RETENÇÕES</span>
+                            <span>- R$ {periodPendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                        <span className="text-primary font-black text-sm uppercase tracking-wide">Saldo Líquido Período</span>
-                        <span className="text-xl font-black text-primary">R$ {(totals.commission - totals.advances - totals.paid).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      {/* Interactive guide tip */}
+                      <div className="text-center mb-6">
+                        <span className="text-[10px] bg-slate-100 text-slate-500 font-bold py-1 px-3 rounded-full uppercase tracking-wider inline-block">
+                          💡 Dica: Clique em qualquer categoria acima para ver o extrato detalhado de itens
+                        </span>
                       </div>
 
-                      <div className="flex justify-between items-center bg-primary text-white p-6 rounded-3xl mt-4 shadow-md">
-                        <span className="font-black text-sm uppercase tracking-wide">SALDO PENDENTE HISTÓRICO GERAL</span>
-                        <span className="text-xl font-black">R$ {realBalanceToPayAllTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      {/* Final Net Amount Panel */}
+                      <div className="bg-primary hover:bg-slate-800 text-white p-6 rounded-2xl shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-colors mb-6 duration-300">
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-[#a3a3a3]">Subtotal Líquido de Fechamento</span>
+                          <h3 className="text-3xl font-black mt-1 font-mono">R$ {periodNetTotalToPay.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+                        </div>
+                        <div className="bg-white/10 self-stretch sm:self-auto flex items-center justify-center rounded-xl px-5 py-3 border border-white/5">
+                          <span className="text-xs font-extrabold text-white text-center">
+                            VALOR QUITADO EM {new Date().toLocaleDateString('pt-BR')}
+                          </span>
+                        </div>
                       </div>
 
-                      <p className="text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-12">BarberElite © Todos os direitos reservados</p>
+                      {/* Valor por Extenso em destaque */}
+                      <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/80 mb-8">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-1">Valor por extenso</span>
+                        <p className="text-xs font-black text-slate-700 italic lowercase first-letter:uppercase">
+                          ({extensos(periodNetTotalToPay)})
+                        </p>
+                      </div>
+
+                      {/* Footer signatures */}
+                      <div className="grid grid-cols-2 gap-8 border-t border-slate-150 pt-8 mb-6">
+                        <div className="text-center pt-4 border-t border-dashed border-slate-300">
+                          <p className="text-[10px] font-bold text-slate-600">{profile?.nome || 'Assinatura Administrador'}</p>
+                          <p className="text-[8px] text-muted font-bold uppercase mt-0.5">Responsável Pagador</p>
+                        </div>
+                        <div className="text-center pt-4 border-t border-dashed border-slate-300">
+                          <p className="text-[10px] font-bold text-slate-600">{professionalName}</p>
+                          <p className="text-[8px] text-muted font-bold uppercase mt-0.5">Assinatura do Profissional</p>
+                        </div>
+                      </div>
+
+                      {/* Action controller buttons section - visible on-screen but excluded when printing */}
+                      <div className="flex flex-wrap items-center justify-end gap-3 pt-6 border-t border-slate-150 no-print">
+                        <button
+                          id="btn-payroll-print"
+                          onClick={() => {
+                            window.print();
+                          }}
+                          className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs px-5 py-3 rounded-xl transition-all"
+                        >
+                          <Printer size={15} />
+                          Imprimir Recibo
+                        </button>
+
+                        <button
+                          id="btn-payroll-download"
+                          onClick={() => {
+                            // Generate TXT Content format
+                            const company = profile?.nome || 'BarberElite';
+                            const docTxt = `
+========================================
+       RECIBO DE FECHAMENTO FINANCEIRO
+========================================
+PROFISSIONAL: ${professionalName.toUpperCase()}
+CPF/ID: ${professionalId.toUpperCase()}
+PERIODO: ${format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a ${format(parseISO(localDateRange.end), 'dd/MM/yyyy')}
+EMISSÃO: ${new Date().toLocaleDateString('pt-BR')}
+
+--- RENDIMENTOS ---
+SERVIÇOS EXEC: R$ ${periodCommissionsByCategory.servicos.toFixed(2)}
+PRODUTOS VEND: R$ ${periodCommissionsByCategory.vendas.toFixed(2)}
+GORJETAS CLIE: R$ ${periodCommissionsByCategory.gorjetas.toFixed(2)}
+ASSINATURAS:   R$ ${periodCommissionsByCategory.assinaturas.toFixed(2)}
+TOTAL BRUTO:   R$ ${totals.pending.toFixed(2)}
+
+--- DESCONTOS ---
+VALES/ADIANT:  R$ ${periodPendingAdvancesTotal.toFixed(2)}
+OUTROS DESCO:  R$ 0.00
+TOTAL DESCON:  R$ ${periodPendingAdvancesTotal.toFixed(2)}
+
+========================================
+TOTAL LÍQUIDO A RECEBER: R$ ${periodNetTotalToPay.toFixed(2)}
+VALOR POR EXTENSO: (${extensos(periodNetTotalToPay)})
+========================================
+
+Declaro para os devidos fins que recebi do estabelecimento ${company} o valor líquido correspondente acima descrito.
+
+Assinatura: _______________________________
+     ${professionalName}
+`;
+                            const blob = new Blob([docTxt], { type: "text/plain;charset=utf-8" });
+                            const url = URL.createObjectURL(blob);
+                            const link = document.createElement("a");
+                            link.href = url;
+                            link.download = `fechamento_${professionalName.toLowerCase().replace(/\s+/g, '_')}_${localDateRange.start}.txt`;
+                            link.click();
+                            toast.success("Recibo TXT baixado com sucesso!");
+                          }}
+                          className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs px-5 py-3 rounded-xl transition-all"
+                        >
+                          <Download size={15} />
+                          Baixar Documento (.TXT)
+                        </button>
+
+                        <button
+                          id="btn-payroll-whatsapp"
+                          onClick={() => {
+                            const encodedTxt = encodeURIComponent(`*RECIBO DE FECHAMENTO FINANCEIRO - HOLERITE*\n\n*Profissional:* ${professionalName}\n*Período:* ${format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a ${format(parseISO(localDateRange.end), 'dd/MM/yyyy')}\n\n*Proventos:* R$ ${totals.pending.toFixed(2)}\n*Vales descontados:* R$ ${periodPendingAdvancesTotal.toFixed(2)}\n\n*LÍQUIDO A RECEBER:* R$ ${periodNetTotalToPay.toFixed(2)}\n*Por extenso:* _(${extensos(periodNetTotalToPay)})_\n\n_Gerado em alta velocidade por BarberElite._`);
+                            
+                            // Copy to clipboard
+                            navigator.clipboard.writeText(`RECIBO DE FECHAMENTO FINANCEIRO\n\nProfissional: ${professionalName}\nPeríodo: ${format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a ${format(parseISO(localDateRange.end), 'dd/MM/yyyy')}\n\nLíquido a receber: R$ ${periodNetTotalToPay.toFixed(2)}\n\n(${extensos(periodNetTotalToPay)})`);
+                            toast.success("Recibo copiado para a área de transferência!");
+
+                            window.open(`https://api.whatsapp.com/send?text=${encodedTxt}`, '_blank');
+                          }}
+                          className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-650 text-white font-extrabold text-xs px-5 py-3 rounded-xl transition-all shadow-md shadow-emerald-500/10"
+                        >
+                          <Share2 size={15} />
+                          Compartilhar no WhatsApp
+                        </button>
+                      </div>
                     </div>
                   </motion.div>
                 )}
@@ -797,9 +1291,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
             )}
           </div>
         </div>
-      </div>
-
-      {/* Payment Settlement Modal with Vale selection checklist */}
+                 {/* Payment Settlement Modal with Vale selection checklist */}
       <AnimatePresence>
         {isPaymentModalOpen && (
           <div id="modal-payment-settlement" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -808,139 +1300,118 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
               <div className="p-8 pb-4 max-h-[85vh] overflow-y-auto no-scrollbar">
                 <div className="flex items-center justify-between mb-6">
                   <div>
-                    <h3 className="text-2xl font-black text-primary">Liquidara Acertos</h3>
-                    <p className="text-xs text-muted font-semibold mt-1">Settle e deduza vales do profissional</p>
+                    <h3 className="text-2xl font-black text-primary">Liquidar Acerto</h3>
+                    <p className="text-xs text-muted font-semibold mt-1">Settle e deduza vales do profissional automaticamente no período</p>
                   </div>
                   <button onClick={() => setIsPaymentModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-all text-slate-400"><Plus className="rotate-45" size={24} /></button>
                 </div>
                 
-                <div className="space-y-5">
-                  {/* Bullet math */}
-                  <div className="p-6 bg-slate-50 border border-slate-200 rounded-3xl">
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-500 mb-2">
-                      <span>Comissão a Settle (+)</span>
-                      <span>R$ {paymentData.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <div className="space-y-6">
+                  {/* Clean mathematical items requested by the user */}
+                  <div className="p-6 bg-slate-50 border border-slate-150 rounded-3xl space-y-4">
+                    <div className="flex justify-between items-center text-sm font-bold text-slate-600">
+                      <span>Comissão a receber:</span>
+                      <span className="font-extrabold text-slate-900 font-mono">R$ {totals.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                     </div>
-                    <div className="flex justify-between items-center text-xs font-bold text-red-500 mb-4">
-                      <span>Desconto de Vales Selecionados (-)</span>
-                      <span>-R$ {currentSelectedAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+
+                    <div className="flex justify-between items-center text-sm font-bold text-red-500">
+                      <span>Vales:</span>
+                      <span className="font-extrabold font-mono">- R$ {periodPendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                     </div>
-                    <div className="border-t border-slate-200 pt-3 flex justify-between items-center">
-                      <span className="text-sm font-black text-primary">Saldo Líquido p/ Transferência</span>
-                      <span className="text-2xl font-black text-emerald-600">R$ {Math.max(0, paymentData.amount - currentSelectedAdvancesTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+
+                    <div className="border-t border-slate-200/85 pt-4 flex justify-between items-center">
+                      <span className="text-base font-black text-primary">Total:</span>
+                      <span className="text-2xl font-black text-emerald-600 font-mono">R$ {periodNetTotalToPay.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                     </div>
                   </div>
 
-                  {/* Vales checklists */}
-                  {allTimePendingAdvances.length > 0 ? (
+                  {/* Vales list being automatically deducted */}
+                  {periodPendingAdvances.length > 0 ? (
                     <div className="space-y-2">
-                      <label className="text-sm font-bold text-primary ml-1">Selecione Valos/Adiantamentos para Dedução:</label>
-                      <div className="max-h-40 overflow-y-auto bg-slate-50 border border-slate-150 rounded-2xl p-3 space-y-2">
-                        {allTimePendingAdvances.map(adv => (
-                          <label key={`chk-adv-${adv.id}`} className="flex items-center justify-between text-xs bg-white p-2.5 rounded-xl border border-slate-200/60 cursor-pointer hover:bg-slate-50">
-                            <div className="flex items-center gap-2">
-                              <input 
-                                type="checkbox"
-                                checked={selectedAdvanceIds.includes(adv.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedAdvanceIds([...selectedAdvanceIds, adv.id]);
-                                  } else {
-                                    setSelectedAdvanceIds(selectedAdvanceIds.filter(id => id !== adv.id));
-                                  }
-                                }}
-                                className="rounded text-primary focus:ring-primary w-4 h-4"
-                              />
-                              <div>
-                                <p className="font-bold text-primary">{adv.description}</p>
-                                <p className="text-[10px] text-muted">{format(parseISO(adv.date), 'dd/MM/yyyy')}</p>
-                              </div>
-                            </div>
-                            <span className="font-black text-red-500">R$ {adv.amount.toFixed(2)}</span>
-                          </label>
+                      <p className="text-xs font-black text-primary uppercase tracking-wider ml-1">Vales do Período sendo liquidados:</p>
+                      <div className="max-h-28 overflow-y-auto bg-slate-50 border border-slate-150 rounded-2xl p-2.5 space-y-1.5 no-scrollbar">
+                        {periodPendingAdvances.map(adv => (
+                          <div key={`chk-adv-${adv.id}`} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-2 rounded-xl border border-slate-150 shadow-sm animate-in fade-in">
+                            <span className="font-bold text-slate-700">{adv.description} ({format(parseISO(adv.date), 'dd/MM/yyyy')})</span>
+                            <span className="font-black text-red-500">- R$ {adv.amount.toFixed(2)}</span>
+                          </div>
                         ))}
                       </div>
                     </div>
                   ) : (
                     <div className="p-3 bg-amber-50 text-amber-700 text-xs rounded-2xl font-medium border border-amber-100 flex items-center gap-2">
                       <Info size={14} />
-                      Nenhum vale ativo em aberto para descontar no momento. Off-set zerado!
+                      Nenhum vale em aberto no período selecionado para descontar.
                     </div>
                   )}
 
-                  {/* ORIGEM DO DINHEIRO PARA REPASSE */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-primary ml-1">Origem do Financiamento</label>
+                  {/* FORMA DE PAGAMENTO */}
+                  <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setPaymentData({ ...paymentData, source: 'caixa', paymentMethod: 'dinheiro' })}
-                        disabled={!isOpenCash}
-                        className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between h-28 ${
-                          paymentData.source === 'caixa'
-                            ? 'border-emerald-600 bg-emerald-50/50 text-emerald-800 ring-2 ring-emerald-500/10'
-                            : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
-                        } ${!isOpenCash ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <div className="flex justify-between items-start w-full">
-                          <span className="text-xs font-black uppercase tracking-wider block">Registrar no Caixa</span>
-                          <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide ${isOpenCash ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}`}>
-                            {isOpenCash ? 'Aberto' : 'Fechado'}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-2 leading-tight">Retira do caixa físico de hoje da barbearia.</p>
-                      </button>
+                      <div className="space-y-1.5 col-span-2">
+                        <label className="text-xs font-black text-primary uppercase tracking-wider ml-1">Origem do Financiamento</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setPaymentData({ ...paymentData, source: 'caixa', paymentMethod: 'dinheiro' })}
+                            disabled={!isOpenCash}
+                            className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between h-20 ${
+                              paymentData.source === 'caixa'
+                                ? 'border-emerald-600 bg-emerald-50/50 text-emerald-800 ring-2 ring-emerald-500/10'
+                                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-550'
+                            } ${!isOpenCash ? 'opacity-40 cursor-not-allowed' : ''}`}
+                          >
+                            <span className="text-[11px] font-black uppercase tracking-wider block">Caixa Físico</span>
+                            <span className="text-[10px] text-slate-400">Registra no caixa hoje</span>
+                          </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setPaymentData({ ...paymentData, source: 'financeiro', paymentMethod: 'pix' })}
-                        className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between h-28 ${
-                          paymentData.source === 'financeiro'
-                            ? 'border-emerald-600 bg-emerald-50/50 text-emerald-800 ring-2 ring-emerald-500/10'
-                            : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
-                        }`}
-                      >
-                        <div className="flex justify-between items-start w-full">
-                          <span className="text-xs font-black uppercase tracking-wider block">Financeiro Geral</span>
-                          <span className="text-[8px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-full font-bold uppercase tracking-wide">
-                            Geral
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setPaymentData({ ...paymentData, source: 'financeiro', paymentMethod: 'pix' })}
+                            className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between h-20 ${
+                              paymentData.source === 'financeiro'
+                                ? 'border-emerald-600 bg-emerald-50/50 text-emerald-800 ring-2 ring-emerald-500/10'
+                                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-550'
+                            }`}
+                          >
+                            <span className="text-[11px] font-black uppercase tracking-wider block">Geral / Contas</span>
+                            <span className="text-[10px] text-slate-400">Registra no financeiro</span>
+                          </button>
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-2 leading-tight">Sai das contas ou bancos gerais integrados.</p>
-                      </button>
+                      </div>
+
+                      <div className="space-y-1.5 col-span-2">
+                        <label className="text-xs font-black text-primary uppercase tracking-wider ml-1">Forma de pagamento</label>
+                        <select
+                          value={paymentData.paymentMethod}
+                          onChange={(e) => setPaymentData({ ...paymentData, paymentMethod: e.target.value })}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all"
+                        >
+                          {paymentData.source === 'caixa' ? (
+                            <>
+                              <option value="dinheiro">Dinheiro (Em espécie da Gaveta)</option>
+                              <option value="pix">Pix (Registrado no Caixa)</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="pix">Pix (Transferência Bancária Direta)</option>
+                              <option value="transferencia">Transferência TED / DOC</option>
+                              <option value="dinheiro">Dinheiro (Retirada de cofres)</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5 col-span-2">
+                        <label className="text-xs font-black text-primary uppercase tracking-wider ml-1">Observações / Notas</label>
+                        <textarea 
+                          placeholder="Ex: Pagamento das comissões do período corrente..."
+                          value={paymentData.notes}
+                          onChange={(e) => setPaymentData({...paymentData, notes: e.target.value})}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-primary/5 transition-all h-16 resize-none"
+                        />
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-primary ml-1">Meio de Transferência</label>
-                    <select
-                      value={paymentData.paymentMethod}
-                      onChange={(e) => setPaymentData({ ...paymentData, paymentMethod: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-sm text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all"
-                    >
-                      {paymentData.source === 'caixa' ? (
-                        <>
-                          <option value="dinheiro">Dinheiro (Espécie da Gaveta)</option>
-                          <option value="pix">Pix (Registrado no Caixa)</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="pix">Pix (Transferência Direta Banco)</option>
-                          <option value="transferencia">Transferência TED / DOC</option>
-                          <option value="dinheiro">Dinheiro (Retirada de cofres)</option>
-                        </>
-                      )}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-primary ml-1">Observações do Pagamento</label>
-                    <textarea 
-                      placeholder="Ex: Pagamento referente à quinzena ou mês corrente"
-                      value={paymentData.notes}
-                      onChange={(e) => setPaymentData({...paymentData, notes: e.target.value})}
-                      className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-4 focus:ring-primary/5 transition-all h-20 resize-none"
-                    />
                   </div>
                 </div>
               </div>
@@ -1267,8 +1738,9 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
           </div>
         )}
       </AnimatePresence>
+    </div>
 
-      {/* EXCLUSIVO PARA IMPRESSÃO DE PDF (Ficha de Produção Escrita / Recibo) */}
+    {/* EXCLUSIVO PARA IMPRESSÃO DE PDF (Ficha de Produção Escrita / Recibo) */}
       <div className="hidden print:block w-full text-black p-8 font-sans bg-white leading-normal text-left">
         {/* Header - Barber Shop Logo/Name */}
         <div className="border-b-4 border-black pb-6 mb-8 flex justify-between items-end">
@@ -1291,7 +1763,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Período de Consolidação</p>
-            <p className="text-base font-black">{format(parseISO(dateRange.start), 'dd/MM/yyyy')} a {format(parseISO(dateRange.end), 'dd/MM/yyyy')}</p>
+            <p className="text-base font-black">{format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a {format(parseISO(localDateRange.end), 'dd/MM/yyyy')}</p>
             <p className="text-xs font-bold text-slate-500 mt-1">Status: Concluído / Pronto para repasse</p>
           </div>
         </div>
@@ -1372,7 +1844,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         </div>
 
         {/* Seção 3: Consolidado da Folha */}
-        <div className="mb-12 page-break-inside-avoid">
+        <div className="mb-8 page-break-inside-avoid">
           <h3 className="text-xs font-black uppercase tracking-widest border-b border-black pb-2 mb-4">3. Balanço Geral de Créditos e Débitos</h3>
           <div className="bg-slate-100 p-6 rounded-2xl grid grid-cols-2 gap-8">
             <div className="space-y-2">
@@ -1394,6 +1866,14 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
               <p className="text-3xl font-black text-black mt-1">R$ {(totals.commission - totals.advances - totals.paid).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
             </div>
           </div>
+        </div>
+
+        {/* Seção 4: Recibo de Quitação por Extenso */}
+        <div className="mb-12 p-6 bg-slate-50 border border-slate-300 rounded-2xl page-break-inside-avoid">
+          <h3 className="text-xs font-black uppercase tracking-wider mb-3 border-b border-slate-400 pb-1.5">4. Recibo de Quitação de Repasse (Valor Escrito de Recebimento)</h3>
+          <p className="text-xs text-slate-800 leading-relaxed font-serif italic">
+            Declaro para os devidos fins que recebi a importância líquida de <strong className="font-sans font-bold">R$ {Math.max(0, (totals.commission - totals.advances - totals.paid)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> (<span className="font-sans font-bold uppercase text-[10px] bg-slate-200/60 px-1.5 py-0.5 rounded tracking-wide">{extensos(Math.max(0, (totals.commission - totals.advances - totals.paid)))}</span>) referente ao repasse de comissões de serviços, produtos e gorjetas consolidado no período de <strong className="font-sans font-bold">{format(parseISO(localDateRange.start), 'dd/MM/yyyy')}</strong> a <strong className="font-sans font-bold">{format(parseISO(localDateRange.end), 'dd/MM/yyyy')}</strong>, deduzidos todos os vales adiantados listados nesta ficha, dando plena quitação.
+          </p>
         </div>
 
         {/* Termo de Quitação e Assinaturas */}

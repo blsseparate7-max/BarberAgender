@@ -463,6 +463,43 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
+  const updateItemPrice = async (itemId: string, newPrice: number) => {
+    if (!comanda || !user || loading) return;
+    if (newPrice < 0 || isNaN(newPrice)) {
+      toast.error("Valor inválido.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const updatedItems = comanda.items.map(i => {
+        if (i.id === itemId) {
+          return {
+            ...i,
+            unitPrice: newPrice,
+            totalPrice: i.isCortesia ? 0 : newPrice * i.quantity
+          };
+        }
+        return i;
+      });
+
+      await comandaService.updateComandaItems(
+        comanda.id, 
+        updatedItems, 
+        comanda.discount, 
+        comanda.tip, 
+        user.uid, 
+        profile?.nome || user.email || 'Usuário'
+      );
+      toast.success("Valor do item atualizado.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao atualizar valor do item.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const toggleItemDeduction = async (itemId: string, type: 'pacote' | 'assinatura' | 'none') => {
     if (!comanda || !user || loading) return;
     
@@ -1136,7 +1173,45 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                 </div>
                               </td>
                               <td className="px-6 py-5 text-sm text-muted font-medium">{item.quantity}</td>
-                              <td className="px-6 py-5 text-sm text-muted font-medium">R$ {item.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                              <td className="px-6 py-5 text-sm text-muted font-medium">
+                                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? (
+                                  <div className="flex items-center gap-1 justify-start">
+                                    <span className="text-xs text-slate-400 font-bold">R$</span>
+                                    <input
+                                      type="text"
+                                      defaultValue={item.unitPrice}
+                                      onBlur={(e) => {
+                                        const normalized = e.target.value.replace(',', '.');
+                                        const val = parseFloat(normalized);
+                                        if (!isNaN(val) && val >= 0) {
+                                          if (val !== item.unitPrice) {
+                                            updateItemPrice(item.id, val);
+                                          }
+                                        } else {
+                                          e.target.value = item.unitPrice.toString();
+                                        }
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          const normalized = (e.target as HTMLInputElement).value.replace(',', '.');
+                                          const val = parseFloat(normalized);
+                                          if (!isNaN(val) && val >= 0) {
+                                            if (val !== item.unitPrice) {
+                                              updateItemPrice(item.id, val);
+                                            }
+                                          } else {
+                                            (e.target as HTMLInputElement).value = item.unitPrice.toString();
+                                          }
+                                          (e.target as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      className="w-20 bg-slate-50 border border-slate-100 hover:border-slate-200 focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/5 rounded-lg py-1 px-2 text-xs font-black text-primary transition-all text-right outline-none"
+                                    />
+                                  </div>
+                                ) : (
+                                  <span>R$ {item.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                )}
+                              </td>
                               <td className="px-6 py-5 text-sm font-bold text-primary text-right">R$ {item.totalPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                               <td className="px-6 py-5 text-right">
                                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
@@ -1348,6 +1423,20 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   <span className="text-muted uppercase tracking-widest">Pendente</span>
                   <span className="text-amber-600">R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
+                {comanda.pendingAmount > 0 && (
+                  <div className={`p-3 rounded-xl border text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 mt-1 ${
+                    comanda.cliente_id === 'avulso'
+                      ? 'bg-red-50 border-red-100 text-red-700'
+                      : 'bg-amber-50 border-amber-200 text-amber-700'
+                  }`}>
+                    <AlertCircle className="shrink-0" size={14} />
+                    <span>
+                      {comanda.cliente_id === 'avulso'
+                        ? 'Vincule um cliente cadastrado para permitir fiado'
+                        : `O valor restante (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) será lançado como FIADO`}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? (
@@ -1762,7 +1851,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         onClose={() => setConfirmClose(false)}
         onConfirm={handleCloseComanda}
         title="Finalizar Comanda"
-        description="Deseja finalizar esta comanda manualmente? Isso a marcará como concluída no sistema financeiro."
+        description={
+          comanda.pendingAmount > 0
+            ? `Atenção: Há um saldo pendente de R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Ao finalizar, este valor será lançado automaticamente como FIADO na conta do cliente ${comanda.cliente_name}. O profissional receberá a comissão integral e a barbearia receberá posteriormente.`
+            : "Deseja finalizar esta comanda manualmente? Isso a marcará como concluída no sistema financeiro."
+        }
         confirmLabel="Finalizar"
       />
 

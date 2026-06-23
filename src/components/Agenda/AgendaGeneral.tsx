@@ -14,12 +14,20 @@ import {
   Scissors,
   User,
   AlertCircle,
-  Loader2
+  Loader2,
+  UserPlus,
+  AlertTriangle,
+  HeartHandshake,
+  DollarSign,
+  Award,
+  Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Appointment, AppointmentStatus, UserProfile } from '../../types';
+import { Appointment, AppointmentStatus, UserProfile, AgendaBlock } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
 import { userService } from '../../services/userService';
+import { agendaBlockService } from '../../services/agendaBlockService';
+import { toast } from 'sonner';
 import { format, addDays, subDays, isSameDay, parse, isEqual, isAfter, isBefore, addMinutes } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -28,7 +36,9 @@ interface AgendaGeneralProps {
   setSelectedDate: (date: Date) => void;
   barbers: UserProfile[];
   appointments: Appointment[];
-  onNewAppointment: (time?: string, profissional_id?: string) => void;
+  clients?: UserProfile[];
+  blocks?: AgendaBlock[];
+  onNewAppointment: (time: string, profissional_id: string) => void;
   onOpenAppointment: (app: Appointment) => void;
   onOpenComanda: (app: Appointment) => void;
   loading: boolean;
@@ -39,12 +49,73 @@ export function AgendaGeneral({
   setSelectedDate, 
   barbers, 
   appointments, 
+  clients = [],
+  blocks = [],
   onNewAppointment, 
   onOpenAppointment,
   onOpenComanda,
   loading 
 }: AgendaGeneralProps) {
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
+
+  const getClientClassification = (clienteId: string, clienteName: string) => {
+    const client = clients?.find(c => c.uid === clienteId);
+    
+    // 1. Check if they have a "faltou" history in database appointments
+    const hasMissedBefore = appointments.some(app => app.cliente_id === clienteId && app.status === 'faltou');
+
+    // 2. Check observations for indication / indicação
+    const obsLower = (client?.observations || client?.observacoes || '').toLowerCase();
+    const isReferred = obsLower.includes('indica') || obsLower.includes('indicado') || obsLower.includes('indicidade') || obsLower.includes('referra');
+
+    // 3. Outstanding debt
+    const hasDebt = (client?.total_em_aberto || 0) > 0;
+
+    // 4. Appointment count (Client is new vs VIP)
+    const count = client?.appointmentsCount ?? 0;
+    const isNew = count <= 1;
+    const isVIP = count >= 5;
+
+    const badges: { label: string; icon: React.ReactNode; className: string }[] = [];
+
+    if (isNew) {
+      badges.push({
+        label: 'Novo',
+        icon: <UserPlus size={10} />,
+        className: 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/20'
+      });
+    }
+    if (hasMissedBefore) {
+      badges.push({
+        label: 'Faltou',
+        icon: <AlertTriangle size={10} />,
+        className: 'bg-rose-500/10 text-rose-700 border border-rose-500/20'
+      });
+    }
+    if (isReferred) {
+      badges.push({
+        label: 'Indicado',
+        icon: <HeartHandshake size={10} />,
+        className: 'bg-purple-500/10 text-purple-700 border border-purple-500/20'
+      });
+    }
+    if (hasDebt) {
+      badges.push({
+        label: 'Débito',
+        icon: <DollarSign size={10} />,
+        className: 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
+      });
+    }
+    if (isVIP) {
+      badges.push({
+        label: 'VIP',
+        icon: <Award size={10} />,
+        className: 'bg-indigo-500/10 text-indigo-700 border border-indigo-500/40'
+      });
+    }
+
+    return badges;
+  };
 
   useEffect(() => {
     const slots = [];
@@ -76,6 +147,21 @@ export function AgendaGeneral({
     } catch (err) {
       console.error("Error filtering appointments:", err);
       return [];
+    }
+  };
+
+  const getBarberBlock = (profissional_id: string, time: string) => {
+    try {
+      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      return (blocks || []).find(block => {
+        if (block.date !== dateStr) return false;
+        if (!block.isGeneral && block.profissional_id !== profissional_id) return false;
+        
+        return time >= block.startTime && time < block.endTime;
+      });
+    } catch (err) {
+      console.error("Error filtering blocks:", err);
+      return undefined;
     }
   };
 
@@ -123,14 +209,76 @@ export function AgendaGeneral({
               <div className="flex-1 flex overflow-x-auto custom-scrollbar">
                 {barbers.map(barber => {
                   const apps = getBarberAppointments(barber.uid, time);
+                  const block = getBarberBlock(barber.uid, time);
+                  const isBlockStart = block && block.startTime === time;
+
                   return (
                     <div 
                       key={barber.uid} 
-                      onClick={() => apps.length === 0 && onNewAppointment(time, barber.uid)}
+                      onClick={() => {
+                        if (apps.length === 0 && !block) {
+                          onNewAppointment(time, barber.uid);
+                        }
+                      }}
                       className={`min-w-[200px] flex-1 p-1 min-h-[60px] border-r border-border/30 transition-colors cursor-pointer relative ${
-                        apps.length > 0 ? 'bg-slate-50/20' : 'hover:bg-accent/5'
+                        apps.length > 0 || block ? 'bg-slate-50/20' : 'hover:bg-accent/5'
                       }`}
                     >
+                      {isBlockStart && (
+                        <motion.div
+                          key={block.id}
+                          layoutId={block.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
+                              agendaBlockService.deleteBlock(block.id)
+                                .then(() => {
+                                  toast.success("Bloqueio removido com sucesso!");
+                                })
+                                .catch((err) => {
+                                  console.error("Erro ao deletar bloqueio:", err);
+                                  toast.error("Erro ao remover bloqueio.");
+                                });
+                            }
+                          }}
+                          style={{
+                            height: (() => {
+                              const bStart = parse(block.startTime, 'HH:mm', new Date());
+                              const bEnd = parse(block.endTime, 'HH:mm', new Date());
+                              if (!isNaN(bStart.getTime()) && !isNaN(bEnd.getTime())) {
+                                const bDur = Math.max(30, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
+                                const bSlots = Math.ceil(bDur / 30);
+                                return `calc(${bSlots * 100}% + ${(bSlots - 1) * 8}px)`;
+                              }
+                              return '100%';
+                            })(),
+                            top: '4px',
+                            left: '4px',
+                            right: '4px'
+                          }}
+                          className="absolute rounded-xl border border-rose-200 bg-rose-50/95 text-rose-700 p-3 flex flex-col justify-between shadow-sm z-10 transition-transform active:scale-[0.98] cursor-pointer hover:border-rose-400 group/block"
+                        >
+                          <div>
+                            <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider mb-1 text-rose-600">
+                              <Lock size={12} />
+                              <span>Bloqueado</span>
+                            </div>
+                            <p className="text-[11px] font-black uppercase leading-tight truncate">{block.reason || 'Bloqueado'}</p>
+                            {block.isGeneral && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 mt-1 rounded bg-rose-100 text-rose-900 border border-rose-200 text-[8px] font-black uppercase tracking-wider">
+                                Bloqueio Geral
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between text-[8px] font-black text-rose-600/80">
+                            <span>{block.startTime} - {block.endTime}</span>
+                            <span className="opacity-0 group-hover/block:opacity-100 text-[8px] uppercase tracking-widest text-rose-800 font-bold transition-opacity">
+                              [Clique para remover]
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+
                       {apps.map(app => {
                         const isStart = app.startTime === time;
                         if (!isStart) return null;
@@ -162,20 +310,28 @@ export function AgendaGeneral({
                             <div>
                               <p className="text-[11px] font-bold uppercase leading-none mb-1 truncate">{app.cliente_name}</p>
                               <p className="text-[9px] opacity-80 truncate font-medium">{app.servico_name}</p>
-                              {(app.origin === 'encaixe' || app.comanda_number) && (
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {app.origin === 'encaixe' && (
-                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 text-amber-800 text-[8px] font-black uppercase tracking-wider">
-                                      Encaixe
-                                    </span>
-                                  )}
-                                  {app.comanda_number && (
-                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[8px] font-black uppercase tracking-wider">
-                                      Comanda #{app.comanda_number}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {app.origin === 'encaixe' && (
+                                  <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 text-amber-800 text-[8px] font-black uppercase tracking-wider">
+                                    Encaixe
+                                  </span>
+                                )}
+                                {app.comanda_number && (
+                                  <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[8px] font-black uppercase tracking-wider">
+                                    Comanda #{app.comanda_number}
+                                  </span>
+                                )}
+                                {getClientClassification(app.cliente_id, app.cliente_name).map((badge, idx) => (
+                                  <span 
+                                    key={idx} 
+                                    title={badge.label}
+                                    className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${badge.className}`}
+                                  >
+                                    {badge.icon}
+                                    <span>{badge.label}</span>
+                                  </span>
+                                ))}
+                              </div>
                             </div>
                             <div className="flex items-center justify-between mt-1">
                               <span className="text-[9px] font-bold">{app.startTime}</span>

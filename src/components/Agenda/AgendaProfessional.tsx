@@ -16,13 +16,20 @@ import {
   AlertCircle,
   Loader2,
   Award,
-  Sparkles
+  Sparkles,
+  UserPlus,
+  AlertTriangle,
+  HeartHandshake,
+  DollarSign,
+  Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Appointment, AppointmentStatus, UserProfile } from '../../types';
+import { Appointment, AppointmentStatus, UserProfile, AgendaBlock } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
+import { agendaBlockService } from '../../services/agendaBlockService';
+import { toast } from 'sonner';
 import { format, addDays, subDays, isSameDay, parse, isEqual, isAfter, isBefore, addMinutes, startOfWeek, endOfWeek, eachDayOfInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -31,7 +38,9 @@ interface AgendaProfessionalProps {
   setSelectedDate: (date: Date) => void;
   barbers: UserProfile[];
   appointments: Appointment[];
-  onNewAppointment: (time?: string, profissional_id?: string) => void;
+  clients?: UserProfile[];
+  blocks?: AgendaBlock[];
+  onNewAppointment: (time: string, profissional_id: string) => void;
   onOpenAppointment: (app: Appointment) => void;
   onOpenComanda: (app: Appointment) => void;
   loading: boolean;
@@ -42,6 +51,8 @@ export function AgendaProfessional({
   setSelectedDate, 
   barbers, 
   appointments, 
+  clients = [],
+  blocks = [],
   onNewAppointment, 
   onOpenAppointment,
   onOpenComanda,
@@ -53,6 +64,65 @@ export function AgendaProfessional({
 
   const [clientsWithPackages, setClientsWithPackages] = useState<Set<string>>(new Set());
   const [clientsWithSubscriptions, setClientsWithSubscriptions] = useState<Set<string>>(new Set());
+
+  const getClientClassification = (clienteId: string, clienteName: string) => {
+    const client = clients?.find(c => c.uid === clienteId);
+    
+    // 1. Check if they have a "faltou" history in database appointments
+    const hasMissedBefore = appointments.some(app => app.cliente_id === clienteId && app.status === 'faltou');
+
+    // 2. Check observations for indication / indicação
+    const obsLower = (client?.observations || client?.observacoes || '').toLowerCase();
+    const isReferred = obsLower.includes('indica') || obsLower.includes('indicado') || obsLower.includes('indicidade') || obsLower.includes('referra');
+
+    // 3. Outstanding debt
+    const hasDebt = (client?.total_em_aberto || 0) > 0;
+
+    // 4. Appointment count (Client is new vs VIP)
+    const count = client?.appointmentsCount ?? 0;
+    const isNew = count <= 1;
+    const isVIP = count >= 5;
+
+    const badges: { label: string; icon: React.ReactNode; className: string }[] = [];
+
+    if (isNew) {
+      badges.push({
+        label: 'Novo',
+        icon: <UserPlus size={10} />,
+        className: 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/20'
+      });
+    }
+    if (hasMissedBefore) {
+      badges.push({
+        label: 'Faltou',
+        icon: <AlertTriangle size={10} />,
+        className: 'bg-rose-500/10 text-rose-700 border border-rose-500/20'
+      });
+    }
+    if (isReferred) {
+      badges.push({
+        label: 'Indicado',
+        icon: <HeartHandshake size={10} />,
+        className: 'bg-purple-500/10 text-purple-700 border border-purple-500/20'
+      });
+    }
+    if (hasDebt) {
+      badges.push({
+        label: 'Débito',
+        icon: <DollarSign size={10} />,
+        className: 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
+      });
+    }
+    if (isVIP) {
+      badges.push({
+        label: 'VIP',
+        icon: <Award size={10} />,
+        className: 'bg-indigo-500/10 text-indigo-700 border border-indigo-500/40'
+      });
+    }
+
+    return badges;
+  };
 
   useEffect(() => {
     const qPackages = query(collection(db, 'pacotes_vendas'), where('remainingCuts', '>', 0));
@@ -121,6 +191,20 @@ export function AgendaProfessional({
     } catch (err) {
       console.error("Error filtering appointments:", err);
       return [];
+    }
+  };
+
+  const getDayBlock = (date: string, time: string) => {
+    try {
+      return (blocks || []).find(block => {
+        if (block.date !== date) return false;
+        if (!block.isGeneral && block.profissional_id !== selectedProfissionalId) return false;
+        
+        return time >= block.startTime && time < block.endTime;
+      });
+    } catch (err) {
+      console.error("Error filtering blocks in week view:", err);
+      return undefined;
     }
   };
 
@@ -200,14 +284,72 @@ export function AgendaProfessional({
                   {weekDays.map(day => {
                     const dateStr = format(day, 'yyyy-MM-dd');
                     const apps = getDayAppointments(dateStr, time);
+                    const block = getDayBlock(dateStr, time);
+                    const isBlockStart = block && block.startTime === time;
                     return (
                       <div 
                         key={day.toISOString()} 
-                        onClick={() => apps.length === 0 && onNewAppointment(time, selectedProfissionalId)}
+                        onClick={() => {
+                          if (apps.length === 0 && !block) {
+                            onNewAppointment(time, selectedProfissionalId);
+                          }
+                        }}
                         className={`p-1 min-h-[60px] border-r border-border/30 last:border-r-0 transition-colors cursor-pointer relative ${
-                          apps.length > 0 ? 'bg-slate-50/20' : 'hover:bg-accent/5'
+                          apps.length > 0 || block ? 'bg-slate-50/20' : 'hover:bg-accent/5'
                         } ${isSameDay(day, new Date()) ? 'bg-accent/5' : ''}`}
                       >
+                        {isBlockStart && (
+                          <motion.div
+                            key={block.id}
+                            layoutId={block.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
+                                agendaBlockService.deleteBlock(block.id)
+                                  .then(() => {
+                                    toast.success("Bloqueio removido com sucesso!");
+                                  })
+                                  .catch((err) => {
+                                    console.error("Erro ao deletar bloqueio:", err);
+                                    toast.error("Erro ao remover bloqueio.");
+                                  });
+                              }
+                            }}
+                            style={{
+                              height: (() => {
+                                const bStart = parse(block.startTime, 'HH:mm', new Date());
+                                const bEnd = parse(block.endTime, 'HH:mm', new Date());
+                                if (!isNaN(bStart.getTime()) && !isNaN(bEnd.getTime())) {
+                                  const bDur = Math.max(30, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
+                                  const bSlots = Math.ceil(bDur / 30);
+                                  return `calc(${bSlots * 100}% + ${(bSlots - 1) * 8}px)`;
+                                }
+                                return '100%';
+                              })(),
+                              top: '4px',
+                              left: '4px',
+                              right: '4px'
+                            }}
+                            className="absolute rounded-xl border border-rose-200 bg-rose-50/95 text-rose-700 p-2 flex flex-col justify-between shadow-sm z-10 transition-transform active:scale-[0.98] cursor-pointer hover:border-rose-400 group/block"
+                          >
+                            <div className="overflow-hidden">
+                              <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider mb-0.5 text-rose-600">
+                                <Lock size={10} />
+                                <span>Bloqueado</span>
+                              </div>
+                              <p className="text-[10px] font-bold uppercase leading-tight truncate">{block.reason || 'Bloqueado'}</p>
+                              {block.isGeneral && (
+                                <span className="inline-flex items-center px-1 py-0.5 mt-0.5 rounded bg-rose-100 text-rose-950 border border-rose-200 text-[7px] font-black uppercase tracking-wider">
+                                  Geral
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center justify-between text-[7px] font-black text-rose-600/80 mt-1">
+                              <span>{block.startTime}</span>
+                            </div>
+                          </motion.div>
+                        )}
+
                         {apps.map(app => {
                           const isStart = app.startTime === time;
                           if (!isStart) return null;
@@ -239,7 +381,6 @@ export function AgendaProfessional({
                               <div>
                                 <p className="text-[10px] font-bold uppercase leading-none mb-1 truncate">{app.cliente_name}</p>
                                 <p className="text-[8px] opacity-80 truncate font-medium">{app.servico_name}</p>
-                                {(app.origin === 'encaixe' || app.comanda_number) && (
                                   <div className="flex flex-wrap gap-1 mt-1">
                                     {app.origin === 'encaixe' && (
                                       <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 text-amber-800 text-[8px] font-black uppercase tracking-wider">
@@ -263,8 +404,17 @@ export function AgendaProfessional({
                                         CLUBE
                                       </span>
                                     )}
+                                    {getClientClassification(app.cliente_id, app.cliente_name).map((badge, idx) => (
+                                      <span 
+                                        key={idx} 
+                                        title={badge.label}
+                                        className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[7px] font-black uppercase tracking-wider border ${badge.className}`}
+                                      >
+                                        {badge.icon}
+                                        <span>{badge.label}</span>
+                                      </span>
+                                    ))}
                                   </div>
-                                )}
                               </div>
                               <div className="flex items-center justify-between mt-1">
                                 <span className="text-[8px] font-bold">{app.startTime}</span>

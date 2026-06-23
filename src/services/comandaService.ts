@@ -510,6 +510,40 @@ export const comandaService = {
         );
       }
     });
+
+    try {
+      const updatedSnap = await getDoc(docRef);
+      if (updatedSnap.exists() && updatedSnap.data().status === 'fechada') {
+        await this.closeLinkedAppointments(id);
+      }
+    } catch (err) {
+      console.warn("Error in post-payment appointment closure sync:", err);
+    }
+  },
+
+  async closeLinkedAppointments(comandaId: string) {
+    try {
+      const apptsQuery = query(
+        collection(db, 'appointments'),
+        where('comanda_id', '==', comandaId)
+      );
+      const apptsSnap = await getDocs(apptsQuery);
+      if (!apptsSnap.empty) {
+        const batch = writeBatch(db);
+        apptsSnap.forEach((docSnap) => {
+          if (docSnap.data().status !== 'concluído') {
+            batch.update(docSnap.ref, {
+              status: 'concluído',
+              updatedAt: serverTimestamp()
+            });
+          }
+        });
+        await batch.commit();
+        console.log(`Successfully completed linked appointments for comanda ${comandaId}`);
+      }
+    } catch (err) {
+      console.warn("Error auto-closing linked appointments for comanda:", err);
+    }
   },
 
   async applyComandaClosureWrites(
@@ -810,6 +844,14 @@ export const comandaService = {
         );
       }
     });
+
+    try {
+      if (status === 'fechada') {
+        await this.closeLinkedAppointments(id);
+      }
+    } catch (e) {
+      console.error("Error closing linked appointments inside closeComanda:", e);
+    }
   },
 
   async payDebt(debtId: string, amount: number, method: PaymentMethod, methodId: string, userId: string, userName: string) {

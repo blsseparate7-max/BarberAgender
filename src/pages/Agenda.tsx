@@ -34,11 +34,12 @@ import {
   Smartphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Appointment, AppointmentStatus, UserProfile, TabId } from '../types';
+import { Appointment, AppointmentStatus, UserProfile, TabId, AgendaBlock } from '../types';
 import { appointmentService } from '../services/appointmentService';
 import { userService } from '../services/userService';
 import { cashService } from '../services/cashService';
 import { comandaService } from '../services/comandaService';
+import { agendaBlockService } from '../services/agendaBlockService';
 import { useAuth } from '../contexts/AuthContext';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
@@ -87,7 +88,9 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
   const [viewType, setViewType] = useState<ViewType>('day');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [blocks, setBlocks] = useState<AgendaBlock[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
+  const [clients, setClients] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
@@ -128,13 +131,21 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
   useEffect(() => {
     loadBarbers();
+    loadClients();
     
     // Subscribe to Cash Status for Alert
     const unsubscribeCash = cashService.subscribeToCurrentCash((cash) => {
       setCurrentCash(cash);
     });
 
-    return () => unsubscribeCash();
+    const unsubscribeBlocks = agendaBlockService.subscribeToBlocks({}, (data) => {
+      setBlocks(data);
+    });
+
+    return () => {
+      unsubscribeCash();
+      unsubscribeBlocks();
+    };
   }, []);
 
   useEffect(() => {
@@ -172,6 +183,15 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
     try {
       const data = await userService.getAllBarbers();
       setBarbers(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loadClients = async () => {
+    try {
+      const data = await userService.getAllClients();
+      setClients(data);
     } catch (err) {
       console.error(err);
     }
@@ -392,6 +412,8 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                   setSelectedDate={setSelectedDate}
                   barbers={barbers}
                   appointments={appointments}
+                  clients={clients}
+                  blocks={blocks}
                   onNewAppointment={handleNew}
                   onOpenAppointment={handleOpenAppointment}
                   onOpenComanda={handleOpenComanda}
@@ -403,6 +425,8 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                   setSelectedDate={setSelectedDate}
                   barbers={barbers}
                   appointments={appointments}
+                  clients={clients}
+                  blocks={blocks}
                   onNewAppointment={handleNew}
                   onOpenAppointment={handleOpenAppointment}
                   onOpenComanda={handleOpenComanda}
@@ -431,7 +455,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
             )}
             {activeTab === 'recurring' && <RecurringAppointments />}
             {activeTab === 'availability' && <AvailabilityManager />}
-            {activeTab === 'blocks' && <BlocksManager />}
+            {activeTab === 'blocks' && <BlocksManager selectedDate={selectedDate} />}
             {activeTab === 'operations' && <OperationsManager />}
             {activeTab === 'resources' && (
               <div className="bg-white border border-slate-200 p-20 rounded-[2.5rem] text-center shadow-sm">
@@ -510,6 +534,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
       {isComandaModalOpen && selectedAppointment && comandaInitialData && (
         <ComandaModal 
+          comanda_id={selectedAppointment.comanda_id}
           onClose={() => setIsComandaModalOpen(false)}
           onSave={loadAppointments}
           initialData={comandaInitialData}

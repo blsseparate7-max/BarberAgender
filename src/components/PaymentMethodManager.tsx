@@ -33,6 +33,7 @@ export function PaymentMethodManager() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [feeInputStr, setFeeInputStr] = useState<string>('0');
   
   const [formData, setFormData] = useState<Partial<PaymentMethodConfig>>({
     name: '',
@@ -47,6 +48,7 @@ export function PaymentMethodManager() {
     allowsPartial: true,
     allowsSplit: true,
     description: '',
+    cardMachine: '',
     internalNotes: ''
   });
 
@@ -83,6 +85,7 @@ export function PaymentMethodManager() {
   const resetForm = () => {
     setEditingId(null);
     setIsFormOpen(false);
+    setFeeInputStr('0');
     setFormData({
       name: '',
       type: 'pix',
@@ -96,6 +99,7 @@ export function PaymentMethodManager() {
       allowsPartial: true,
       allowsSplit: true,
       description: '',
+      cardMachine: '',
       internalNotes: ''
     });
   };
@@ -103,6 +107,7 @@ export function PaymentMethodManager() {
   const handleEdit = (method: PaymentMethodConfig) => {
     setEditingId(method.id);
     setFormData(method);
+    setFeeInputStr((method.feePercentage !== undefined ? method.feePercentage : 0).toString());
     setIsFormOpen(true);
   };
 
@@ -193,7 +198,14 @@ export function PaymentMethodManager() {
                       </div>
                       <div>
                         <p className="text-sm font-bold text-primary">{method.name}</p>
-                        <p className="text-[10px] text-muted uppercase tracking-tighter font-bold">{method.type}</p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <p className="text-[10px] text-muted uppercase tracking-tighter font-bold">{method.type}</p>
+                          {method.cardMachine && (
+                            <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded text-[8px] font-black uppercase tracking-widest">
+                              {method.cardMachine}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -323,15 +335,37 @@ export function PaymentMethodManager() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Descrição (Opcional)</label>
-                  <input 
-                    type="text"
-                    value={formData.description}
-                    onChange={e => setFormData({ ...formData, description: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none"
-                    placeholder="Ex: Recebimento via maquininha Stone"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Descrição (Opcional)</label>
+                    <input 
+                      type="text"
+                      value={formData.description}
+                      onChange={e => setFormData({ ...formData, description: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none"
+                      placeholder="Ex: Recebimento via Pix"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Máquina de Cartão (Se houver)</label>
+                    <select
+                      value={formData.cardMachine || ''}
+                      onChange={e => setFormData({ ...formData, cardMachine: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none cursor-pointer"
+                    >
+                      <option value="">Nenhuma / Não se aplica</option>
+                      <option value="Stone">Stone</option>
+                      <option value="PagSeguro">PagSeguro (PagBank)</option>
+                      <option value="Mercado Pago">Mercado Pago</option>
+                      <option value="Cielo">Cielo</option>
+                      <option value="Rede">Rede</option>
+                      <option value="InfinitePay">InfinitePay</option>
+                      <option value="Ton">Ton</option>
+                      <option value="SafraPay">SafraPay</option>
+                      <option value="SumUp">SumUp</option>
+                      <option value="Outra">Outra máquina</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Financial Rules */}
@@ -347,11 +381,24 @@ export function PaymentMethodManager() {
                       <div className="relative">
                         <Percent className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                         <input 
-                          type="number"
-                          step="0.01"
+                          type="text"
                           required
-                          value={formData.feePercentage}
-                          onChange={e => setFormData({ ...formData, feePercentage: parseFloat(e.target.value) })}
+                          value={feeInputStr}
+                          onChange={e => {
+                            const val = e.target.value;
+                            // Allow numbers, commas, and decimal points
+                            const normalized = val.replace(',', '.');
+                            if (normalized === '' || /^[0-9]*\.?[0-9]*$/.test(normalized)) {
+                              setFeeInputStr(val);
+                              const parsed = parseFloat(normalized);
+                              if (!isNaN(parsed)) {
+                                setFormData(prev => ({ ...prev, feePercentage: parsed }));
+                              } else {
+                                setFormData(prev => ({ ...prev, feePercentage: 0 }));
+                              }
+                            }
+                          }}
+                          placeholder="0.00"
                           className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary"
                         />
                       </div>

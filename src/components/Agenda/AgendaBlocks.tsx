@@ -17,7 +17,11 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../ConfirmationModal';
 
-export function AgendaBlocks() {
+interface AgendaBlocksProps {
+  selectedDate?: Date;
+}
+
+export function AgendaBlocks({ selectedDate }: AgendaBlocksProps = {}) {
   const [blocks, setBlocks] = useState<AgendaBlock[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +38,15 @@ export function AgendaBlocks() {
     reason: 'Almoço',
     isGeneral: false
   });
+
+  useEffect(() => {
+    if (selectedDate) {
+      setFormData(prev => ({
+        ...prev,
+        date: format(selectedDate, 'yyyy-MM-dd')
+      }));
+    }
+  }, [selectedDate]);
 
   useEffect(() => {
     loadInitialData();

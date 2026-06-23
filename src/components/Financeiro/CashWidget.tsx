@@ -16,6 +16,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { DailyCash, UserProfile, CashMovement } from '../../types';
 import { cashService } from '../../services/cashService';
+import { userService } from '../../services/userService';
+import { commissionService } from '../../services/commissionService';
 import { useAuth } from '../../contexts/AuthContext';
 import { format } from 'date-fns';
 import { parseDate } from '../../lib/utils';
@@ -26,7 +28,7 @@ interface CashWidgetProps {
 }
 
 export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
-  const { user, isAdmin, isGerente } = useAuth();
+  const { user, isAdmin, isGerente, profile } = useAuth();
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
   const [movements, setMovements] = useState<CashMovement[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,6 +41,134 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
   const [closingBalance, setClosingBalance] = useState<string>('');
   const [closingObservations, setClosingObservations] = useState<string>('');
   const [actionLoading, setActionLoading] = useState(false);
+
+  // New features states: Withdrawals and Professional Vales
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('');
+  const [withdrawDescription, setWithdrawDescription] = useState<string>('');
+
+  const [showValeModal, setShowValeModal] = useState(false);
+  const [valeAmount, setValeAmount] = useState<string>('');
+  const [valeDescription, setValeDescription] = useState<string>('');
+  const [selectedBarberId, setSelectedBarberId] = useState<string>('');
+  const [deductFromCash, setDeductFromCash] = useState<boolean>(true);
+  const [barbers, setBarbers] = useState<UserProfile[]>([]);
+
+  const loadBarbers = async () => {
+    try {
+      const data = await userService.getAllBarbers();
+      setBarbers(data);
+    } catch (error) {
+      console.error("Erro ao carregar profissionais:", error);
+    }
+  };
+
+  const handleWithdrawal = async () => {
+    if (!currentCash || !user) return;
+    const val = parseFloat(withdrawAmount);
+    if (isNaN(val) || val <= 0) {
+      toast.error("Por favor, informe um valor de retirada válido.");
+      return;
+    }
+    const available = currentCash.expected_balance ?? currentCash.expectedBalance ?? 0;
+    if (val > available) {
+      toast.error("Saldo insuficiente no caixa para realizar esta retirada!");
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await cashService.addMovement({
+        caixa_id: currentCash.id,
+        type: 'sangria',
+        category: 'Sangria de Caixa',
+        description: withdrawDescription || 'Retirada manual pelo widget de caixa',
+        amount: val,
+        paymentMethod: 'dinheiro',
+        is_receivable: false,
+        usuario_id: user.uid,
+        usuario_name: profile?.nome || user.displayName || 'Sistema',
+        date: new Date().toISOString().split('T')[0]
+      });
+      setWithdrawAmount('');
+      setWithdrawDescription('');
+      setShowWithdrawModal(false);
+      toast.success("Retirada registrada no caixa!");
+    } catch (err: any) {
+      console.error("Erro ao registrar retirada:", err);
+      toast.error(err?.message || "Erro ao registrar retirada.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleVale = async () => {
+    if (!currentCash || !user) return;
+    if (!selectedBarberId) {
+      toast.error("Selecione um profissional.");
+      return;
+    }
+    const val = parseFloat(valeAmount);
+    if (isNaN(val) || val <= 0) {
+      toast.error("Por favor, informe um valor de vale válido.");
+      return;
+    }
+    
+    const available = currentCash.expected_balance ?? currentCash.expectedBalance ?? 0;
+    if (deductFromCash && val > available) {
+      toast.error("Saldo insuficiente no caixa para pagar este vale do caixa físico!");
+      return;
+    }
+
+    const selectedBarber = barbers.find(b => b.uid === selectedBarberId);
+    if (!selectedBarber) {
+      toast.error("Profissional selecionado inválido.");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      
+      // 1. Register Professional Advance (Vale)
+      await commissionService.registerAdvance({
+        profissional_id: selectedBarberId,
+        profissional_name: selectedBarber.nome || 'Profissional',
+        amount: val,
+        date: todayStr,
+        description: valeDescription || 'Vale antecipado',
+        status: 'pendente',
+        responsible_id: user.uid,
+        responsible_name: profile?.nome || user.displayName || 'Sistema'
+      });
+
+      // 2. Register Cash Movement if requested
+      if (deductFromCash) {
+        await cashService.addMovement({
+          caixa_id: currentCash.id,
+          type: 'expense',
+          category: 'Adiantamento de Comissão',
+          description: `Vale pago ao profissional ${selectedBarber.nome || 'Profissional'}: ${valeDescription || 'Adiantamento'}`,
+          amount: val,
+          paymentMethod: 'dinheiro',
+          is_receivable: false,
+          usuario_id: user.uid,
+          usuario_name: profile?.nome || user.displayName || 'Sistema',
+          date: todayStr
+        });
+      }
+
+      setValeAmount('');
+      setValeDescription('');
+      setSelectedBarberId('');
+      setShowValeModal(false);
+      toast.success("Vale registrado com sucesso!");
+    } catch (err: any) {
+      console.error("Erro ao registrar vale:", err);
+      toast.error(err?.message || "Erro ao registrar vale.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   useEffect(() => {
     // Subscribe to Cash Status
@@ -136,7 +266,7 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
   }, {} as Record<string, number>);
 
   return (
-    <div className="relative md:hidden">
+    <div className="relative">
       {/* Toggle Button */}
       {!isOpen && (
         <button 
@@ -156,7 +286,7 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
             initial={{ opacity: 0, y: 100, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 100, scale: 0.9 }}
-            className="fixed bottom-6 right-6 z-40 w-full max-w-[340px] bg-white border border-slate-200 rounded-[2rem] shadow-2xl shadow-primary/20 overflow-hidden"
+            className="fixed bottom-6 right-6 z-40 w-full max-w-[340px] bg-white border border-slate-200 rounded-[2rem] shadow-2xl shadow-primary/20 overflow-hidden flex flex-col max-h-[85vh]"
           >
             {/* Header */}
             <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
@@ -178,7 +308,7 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
             </div>
 
             {/* Content */}
-            <div className="p-6">
+            <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
               {loading ? (
                 <div className="py-10 flex flex-col items-center justify-center gap-3">
                   <Loader2 className="animate-spin text-accent" size={24} />
@@ -238,6 +368,29 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                    </div>
 
                     */}
+                    </div>
+
+                    {/* Ações Rápidas de Saída: Retirada e Vale */}
+                    <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-200/60">
+                      <button 
+                        type="button"
+                        onClick={() => setShowWithdrawModal(true)}
+                        className="flex items-center justify-center gap-1.5 py-2 px-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-[10px] uppercase tracking-wider transition-all active:scale-95 shadow-sm shadow-red-500/10"
+                      >
+                        <TrendingDown size={14} className="shrink-0" />
+                        Retirada (Sangria)
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          loadBarbers();
+                          setShowValeModal(true);
+                        }}
+                        className="flex items-center justify-center gap-1.5 py-2 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-[10px] uppercase tracking-wider transition-all active:scale-95 shadow-sm shadow-amber-500/10"
+                      >
+                        <Wallet size={14} className="shrink-0" />
+                        Lançar Vale
+                      </button>
                     </div>
 
                     {/* Live Extrato/Movimentações Section */}
@@ -526,6 +679,191 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                     className="flex-[2] py-5 bg-rose-500 text-white rounded-[1.5rem] font-bold text-sm hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
                   >
                     {actionLoading ? <Loader2 className="animate-spin" size={20} /> : 'Concluir Fechamento'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Withdrawal Modal */}
+      <AnimatePresence>
+        {showWithdrawModal && currentCash && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white border border-slate-200 w-full max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-rose-100 rounded-2xl flex items-center justify-center text-rose-600 border border-rose-200 shadow-sm">
+                    <TrendingDown size={20} />
+                  </div>
+                  <h3 className="text-xl font-black text-primary">Retirada (Sangria)</h3>
+                </div>
+                <button 
+                  onClick={() => setShowWithdrawModal(false)} 
+                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor da Retirada</label>
+                  <div className="relative">
+                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-rose-500 font-black">R$</span>
+                    <input 
+                      type="number"
+                      value={withdrawAmount}
+                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-3xl py-6 pl-14 pr-6 text-2xl font-black text-primary focus:outline-none focus:ring-4 focus:ring-rose-500/10 focus:border-rose-500 transition-all shadow-inner"
+                      placeholder="0,00"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-medium px-1">
+                    Saldo disponível em caixa: R$ {(currentCash.expected_balance ?? currentCash.expectedBalance ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Descrição / Motivo</label>
+                  <input 
+                    type="text"
+                    value={withdrawDescription}
+                    onChange={(e) => setWithdrawDescription(e.target.value)}
+                    placeholder="Ex: Compra de café, suprimentos..."
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-inner"
+                  />
+                </div>
+
+                <div className="flex gap-4 pt-2">
+                  <button 
+                    type="button"
+                    onClick={() => setShowWithdrawModal(false)}
+                    className="flex-1 py-4 border border-slate-200 rounded-[1.25rem] font-bold text-xs uppercase tracking-widest text-muted hover:bg-slate-50 transition-all"
+                  >
+                    Voltar
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={handleWithdrawal}
+                    disabled={actionLoading}
+                    className="flex-[2] py-4 bg-rose-500 text-white rounded-[1.25rem] font-bold text-xs uppercase tracking-widest hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                  >
+                    {actionLoading ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Vale (Advance) Modal */}
+      <AnimatePresence>
+        {showValeModal && currentCash && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white border border-slate-200 w-full max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
+                    <Wallet size={20} />
+                  </div>
+                  <h3 className="text-xl font-black text-primary">Lançar Vale</h3>
+                </div>
+                <button 
+                  onClick={() => setShowValeModal(false)} 
+                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Profissional</label>
+                  <select
+                    value={selectedBarberId}
+                    onChange={(e) => setSelectedBarberId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm"
+                  >
+                    <option value="">Selecione um profissional...</option>
+                    {barbers.map(b => (
+                      <option key={b.uid} value={b.uid}>
+                        {b.nome || b.displayName || 'Profissional'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor do Vale</label>
+                  <div className="relative">
+                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-amber-500 font-black">R$</span>
+                    <input 
+                      type="number"
+                      value={valeAmount}
+                      onChange={(e) => setValeAmount(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-3xl py-6 pl-14 pr-6 text-2xl font-black text-primary focus:outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all shadow-inner"
+                      placeholder="0,00"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Descrição / Observação</label>
+                  <input 
+                    type="text"
+                    value={valeDescription}
+                    onChange={(e) => setValeDescription(e.target.value)}
+                    placeholder="Ex: Adiantamento semanal..."
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-inner"
+                  />
+                </div>
+
+                {/* Toggle to deduct from Cash Drawer */}
+                <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200/60 select-none">
+                  <input 
+                    type="checkbox"
+                    id="deductFromCashCheckbox"
+                    checked={deductFromCash}
+                    onChange={(e) => setDeductFromCash(e.target.checked)}
+                    className="mt-1 h-4.5 w-4.5 text-primary focus:ring-primary rounded border-slate-300 accent-primary"
+                  />
+                  <label htmlFor="deductFromCashCheckbox" className="cursor-pointer">
+                    <p className="text-xs font-black text-slate-800 leading-tight">Retirar do Caixa de Hoje (Gaveta)</p>
+                    <p className="text-[10px] text-muted font-medium mt-1 leading-normal">
+                      Ative se o dinheiro do vale estiver saindo fisicamente da gaveta do caixa de hoje. 
+                      Se desativado (PIX, etc.), o vale será registrado na conta do barbeiro sem alterar o caixa diário.
+                    </p>
+                  </label>
+                </div>
+
+                <div className="flex gap-4 pt-2">
+                  <button 
+                    type="button"
+                    onClick={() => setShowValeModal(false)}
+                    className="flex-1 py-4 border border-slate-200 rounded-[1.25rem] font-bold text-xs uppercase tracking-widest text-muted hover:bg-slate-50 transition-all"
+                  >
+                    Voltar
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={handleVale}
+                    disabled={actionLoading}
+                    className="flex-[2] py-4 bg-amber-500 text-white rounded-[1.25rem] font-bold text-xs uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                  >
+                    {actionLoading ? <Loader2 className="animate-spin" size={16} /> : 'Registrar Vale'}
                   </button>
                 </div>
               </div>

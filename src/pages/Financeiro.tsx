@@ -89,6 +89,8 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { parseDate } from '../lib/utils';
 import { ProfessionalCommissions } from '../components/Financeiro/ProfessionalCommissions';
 import { DREGerencial } from '../components/Financeiro/DREGerencial';
+import { AccountsPayableManager } from '../components/AccountsPayableManager';
+import { AccountsReceivableManager } from '../components/AccountsReceivableManager';
 import { InputModal } from '../components/InputModal';
 import { 
   ResponsiveContainer, 
@@ -105,7 +107,7 @@ import {
 
 export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new'>('overview');
   const [dateRange, setDateRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
@@ -182,8 +184,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         'financeiro-comissoes': 'commissions',
         'financeiro-movimentacoes': 'entries-exits',
         'financeiro-fiados': 'client-accounts',
-        'financeiro-contas-receber': 'client-accounts',
-        'financeiro-contas-pagar': 'entries-exits',
+        'financeiro-contas-receber': 'accounts-receivable-new',
+        'financeiro-contas-pagar': 'accounts-payable',
         'financeiro-fluxo': 'overview',
         'financeiro-assinaturas': 'subscriptions'
       };
@@ -856,6 +858,30 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                     </div>
                   </div>
                 </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'accounts-payable' && (
+              <motion.div 
+                key="accounts-payable"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="space-y-8"
+              >
+                <AccountsPayableManager userId={user?.uid || ''} userName={user?.displayName || 'Sistema'} />
+              </motion.div>
+            )}
+
+            {activeTab === 'accounts-receivable-new' && (
+              <motion.div 
+                key="accounts-receivable-new"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="space-y-8"
+              >
+                <AccountsReceivableManager userId={user?.uid || ''} userName={user?.displayName || 'Sistema'} />
               </motion.div>
             )}
 
@@ -3682,6 +3708,8 @@ function StatusBadge({ status }: { status: string }) {
 function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: TransactionType, currentCash: DailyCash | null, onClose: () => void, onSuccess: () => void }) {
   const { user, profile } = useAuth();
   const [categories, setCategories] = useState<FinancialCategory[]>([]);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
   const [formData, setFormData] = useState({
     description: '',
     amount: 0,
@@ -3699,6 +3727,25 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
     const cats = await financialService.getCategories(type);
     setCategories(cats);
     if (cats.length > 0) setFormData(prev => ({ ...prev, category: cats[0].name }));
+  };
+
+  const handleAddNewCategory = async () => {
+    if (!newCategoryName.trim()) {
+      toast.error("Insira um nome válido para a categoria!");
+      return;
+    }
+    try {
+      await financialService.createCategory(newCategoryName.trim(), type);
+      toast.success("Categoria criada com sucesso!");
+      const cats = await financialService.getCategories(type);
+      setCategories(cats);
+      setFormData(prev => ({ ...prev, category: newCategoryName.trim() }));
+      setNewCategoryName('');
+      setShowAddCategory(false);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao cadastrar categoria.");
+    }
   };
 
   const { execute: handleSubmit, isLoading: loading } = useAsyncAction(async (e: React.FormEvent) => {
@@ -3804,16 +3851,51 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
           </div>
 
           <div className="grid grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Categoria</label>
-              <select 
-                value={formData.category}
-                onChange={(e) => setFormData({...formData, category: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-bold shadow-inner"
-              >
-                {categories.map((cat, idx) => <option key={`cat-opt-${cat.id || idx}-${idx}`} value={cat.name}>{cat.name}</option>)}
-                <option value="Outros">Outros</option>
-              </select>
+            <div className="space-y-2 flex flex-col justify-end">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Categoria</label>
+                <button
+                  type="button"
+                  onClick={() => setShowAddCategory(!showAddCategory)}
+                  className="text-accent hover:text-accent-hover text-xs font-black uppercase tracking-wider flex items-center gap-1 transition-all"
+                >
+                  <Plus size={12} />
+                  <span>{showAddCategory ? 'Selecionar' : 'Criar Nova'}</span>
+                </button>
+              </div>
+              {showAddCategory ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    placeholder="Nova Categoria..."
+                    className="flex-1 bg-slate-50 border border-slate-100 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner animate-fade-in"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddNewCategory();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddNewCategory}
+                    className="bg-primary hover:bg-slate-800 text-white px-4 py-3 rounded-2xl text-[10px] uppercase font-black tracking-wider shadow-sm transition-all active:scale-95"
+                  >
+                    Salvar
+                  </button>
+                </div>
+              ) : (
+                <select 
+                  value={formData.category}
+                  onChange={(e) => setFormData({...formData, category: e.target.value})}
+                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-bold shadow-inner"
+                >
+                  {categories.map((cat, idx) => <option key={`cat-opt-${cat.id || idx}-${idx}`} value={cat.name}>{cat.name}</option>)}
+                  <option value="Outros">Outros</option>
+                </select>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>

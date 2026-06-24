@@ -849,7 +849,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               <span>{isPDVMode ? 'Modo Normal' : 'Modo PDV'}</span>
             </button>
             <div className="w-px h-8 bg-slate-200 mx-1" />
-            <button onClick={onClose} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100 shadow-sm">
+            <button 
+              onClick={onClose} 
+              className="p-3 text-muted hover:text-primary hover:bg-slate-100 transition-colors bg-white rounded-xl border border-slate-100 shadow-sm min-w-[44px] min-h-[44px] flex items-center justify-center"
+              title="Fechar"
+            >
               <X size={24} />
             </button>
           </div>
@@ -1622,9 +1626,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-surface border border-border w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden"
+              className="bg-surface border border-border w-full max-w-xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
             >
-              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50">
+              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50 shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-600 shadow-sm border border-emerald-100">
                     <DollarSign size={20} />
@@ -1634,12 +1638,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Selecione a forma de recebimento</p>
                   </div>
                 </div>
-                <button onClick={() => setShowPaymentModal(false)} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm">
-                  <X size={20} />
+                <button 
+                  onClick={() => setShowPaymentModal(false)} 
+                  className="p-3 text-muted hover:text-primary hover:bg-slate-100 transition-colors bg-white rounded-xl border border-slate-100 shadow-sm min-w-[44px] min-h-[44px] flex items-center justify-center"
+                  title="Fechar"
+                >
+                  <X size={22} />
                 </button>
               </div>
               
-              <div className="p-8 space-y-8">
+              <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar flex-1">
                 <div className="bg-emerald-50 border border-emerald-100 p-8 rounded-3xl text-center relative overflow-hidden shadow-sm">
                   <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500/20" />
                   <p className="text-[10px] text-emerald-600 uppercase tracking-widest font-black mb-1">Valor Pendente</p>

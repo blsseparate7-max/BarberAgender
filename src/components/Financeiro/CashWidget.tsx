@@ -695,24 +695,25 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white border border-slate-200 w-full max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden"
+              className="bg-white border border-slate-200 w-full max-w-sm max-h-[90vh] rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col"
             >
-              <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+              <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-rose-100 rounded-2xl flex items-center justify-center text-rose-600 border border-rose-200 shadow-sm">
                     <TrendingDown size={20} />
                   </div>
-                  <h3 className="text-xl font-black text-primary">Retirada (Sangria)</h3>
+                  <h3 className="text-lg font-black text-primary">Retirada (Sangria)</h3>
                 </div>
                 <button 
                   onClick={() => setShowWithdrawModal(false)} 
-                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100"
+                  className="p-2.5 text-muted hover:text-primary hover:bg-slate-100 transition-all bg-white rounded-xl border border-slate-100 shadow-sm min-w-[40px] min-h-[40px] flex items-center justify-center"
+                  title="Fechar"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="p-8 space-y-6">
+              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor da Retirada</label>
                   <div className="relative">
@@ -772,24 +773,25 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white border border-slate-200 w-full max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden"
+              className="bg-white border border-slate-200 w-full max-w-sm max-h-[90vh] rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col"
             >
-              <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+              <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
                     <Wallet size={20} />
                   </div>
-                  <h3 className="text-xl font-black text-primary">Lançar Vale</h3>
+                  <h3 className="text-lg font-black text-primary">Lançar Vale</h3>
                 </div>
                 <button 
                   onClick={() => setShowValeModal(false)} 
-                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100"
+                  className="p-2.5 text-muted hover:text-primary hover:bg-slate-100 transition-all bg-white rounded-xl border border-slate-100 shadow-sm min-w-[40px] min-h-[40px] flex items-center justify-center"
+                  title="Fechar"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="p-8 space-y-6">
+              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Profissional</label>
                   <select

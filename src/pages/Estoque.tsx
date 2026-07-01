@@ -58,6 +58,12 @@ export function Estoque() {
   const [categoryInput, setCategoryInput] = useState('');
   const [editingCategory, setEditingCategory] = useState<ProductCategory | null>(null);
 
+  // Inline category creation state inside product modal
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [showInlineCategoryInput, setShowInlineCategoryInput] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [isCreatingCategoryOnTheFly, setIsCreatingCategoryOnTheFly] = useState(false);
+
   // Custom Alert / Confirm Modal States
   const [alertModal, setAlertModal] = useState<{
     show: boolean;
@@ -72,6 +78,22 @@ export function Estoque() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
+
+  // Synchronize and initialize selectedCategoryId inside product modal
+  useEffect(() => {
+    if (showProductModal) {
+      if (editingProduct) {
+        setSelectedCategoryId(editingProduct.categoria_id || '');
+      } else {
+        const hasValidCategory = categories.some(c => c.id === selectedCategoryId);
+        if (!hasValidCategory && categories.length > 0) {
+          setSelectedCategoryId(categories[0].id);
+        }
+      }
+    } else {
+      setSelectedCategoryId('');
+    }
+  }, [showProductModal, editingProduct, categories]);
 
   // Real-time synchronization
   useEffect(() => {
@@ -158,13 +180,23 @@ export function Estoque() {
 
   const { execute: handleSaveProduct, isLoading: isSavingProduct } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!selectedCategoryId) {
+      setAlertModal({
+        show: true,
+        title: 'Categoria Necessária',
+        message: 'Por favor, selecione ou crie uma categoria para poder salvar o produto.',
+        type: 'warning'
+      });
+      return;
+    }
+
     const formData = new FormData(e.currentTarget);
     const fornecedorId = formData.get('fornecedorId') as string;
     const productData = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
-      categoria_id: formData.get('categoryId') as string,
-      categoryName: categories.find(c => c.id === formData.get('categoryId'))?.name || '',
+      categoria_id: selectedCategoryId,
+      categoryName: categories.find(c => c.id === selectedCategoryId)?.name || '',
       costPrice: Number(formData.get('costPrice')),
       salePrice: Number(formData.get('salePrice')),
       currentStock: Number(formData.get('currentStock')),
@@ -236,6 +268,21 @@ export function Estoque() {
       setCategoryInput('');
     } catch (error) {
       console.error("Erro ao salvar categoria:", error);
+    }
+  };
+
+  const handleCreateCategoryOnTheFly = async () => {
+    if (!newCategoryName.trim()) return;
+    setIsCreatingCategoryOnTheFly(true);
+    try {
+      const newId = await inventoryService.createCategory(newCategoryName.trim());
+      setSelectedCategoryId(newId);
+      setShowInlineCategoryInput(false);
+      setNewCategoryName('');
+    } catch (error) {
+      console.error("Erro ao cadastrar categoria rápida:", error);
+    } finally {
+      setIsCreatingCategoryOnTheFly(false);
     }
   };
 
@@ -579,10 +626,71 @@ export function Estoque() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Categoria</label>
-                    <select name="categoryId" defaultValue={editingProduct?.categoria_id} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
-                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <select 
+                          name="categoryId" 
+                          value={selectedCategoryId} 
+                          onChange={(e) => setSelectedCategoryId(e.target.value)}
+                          required 
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                        >
+                          {categories.length === 0 ? (
+                            <option value="">Nenhuma categoria cadastrada</option>
+                          ) : (
+                            categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)
+                          )}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowInlineCategoryInput(prev => !prev)}
+                        className="px-4 py-3 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-primary rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 shrink-0"
+                        title="Nova Categoria"
+                      >
+                        <Plus size={16} />
+                        Nova
+                      </button>
+                    </div>
                   </div>
+
+                  {showInlineCategoryInput && (
+                    <div className="md:col-span-2 p-5 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-3">
+                      <p className="text-[10px] font-bold text-primary uppercase tracking-widest ml-1">Cadastrar Nova Categoria</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Nome da categoria (ex: Cabelo, Barba, Pomadas)"
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent font-medium text-primary shadow-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleCreateCategoryOnTheFly}
+                          disabled={isCreatingCategoryOnTheFly || !newCategoryName.trim()}
+                          className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 shrink-0 active:scale-95"
+                        >
+                          {isCreatingCategoryOnTheFly ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <CheckCircle2 size={14} />
+                          )}
+                          Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowInlineCategoryInput(false);
+                            setNewCategoryName('');
+                          }}
+                          className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="md:col-span-2 space-y-2">
                     <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Descrição</label>
                     <textarea name="description" defaultValue={editingProduct?.description} rows={2} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium resize-none" />

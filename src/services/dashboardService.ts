@@ -211,12 +211,17 @@ export const dashboardService = {
   async getClientStats(cliente_id: string) {
     const appointmentsQuery = query(
       collection(db, 'appointments'),
-      where('cliente_id', '==', cliente_id),
-      orderBy('date', 'desc'),
-      orderBy('startTime', 'desc')
+      where('cliente_id', '==', cliente_id)
     );
     const appointmentsSnap = await getDocs(appointmentsQuery);
     const appointments = appointmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+    
+    // Sort in memory by date desc, then by startTime desc
+    appointments.sort((a, b) => {
+      const dateCompare = (b.date || '').localeCompare(a.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      return (b.startTime || '').localeCompare(a.startTime || '');
+    });
     
     const completed = appointments.filter(a => a.status === 'concluído');
     const upcoming = appointments.filter(a => a.status === 'confirmado' || a.status === 'agendado' || a.status === 'em_atendimento');

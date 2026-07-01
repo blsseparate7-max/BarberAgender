@@ -14,7 +14,9 @@ import {
   Calendar,
   FileText,
   AlertCircle,
-  Loader2
+  Loader2,
+  Percent,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -109,10 +111,10 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar vales:", error);
     });
 
-    const unsubCash = onSnapshot(collection(db, 'caixa_diario'), (snapshot) => {
+    const unsubCash = onSnapshot(collection(db, 'cash_sessions'), (snapshot) => {
       const openCash = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
-        .find((c: any) => c.status === 'open');
+        .find((c: any) => c.status === 'open' || c.status === 'reopened');
       setIsOpenCash(openCash || null);
       setLoading(false);
     }, (error) => {
@@ -135,7 +137,6 @@ export function ProfessionalCommissions({
       setValeData(prev => ({ ...prev, source: 'caixa', paymentMethod: 'dinheiro' }));
     }
   }, [isOpenCash]);
-
   // Compute summaries onchanges completely in memory with zero async latency
   const summaries = React.useMemo(() => {
     return barbers.map(barber => {
@@ -169,6 +170,17 @@ export function ProfessionalCommissions({
       };
     });
   }, [barbers, allCommissions, allAdvances, dateRange.start, dateRange.end]);
+
+  // Compute aggregated totals for the selected period across all professionals
+  const aggregatedTotals = React.useMemo(() => {
+    return summaries.reduce((acc, curr) => {
+      acc.production += curr.production;
+      acc.commissionGenerated += curr.commissionGenerated;
+      acc.vales += curr.vales;
+      acc.balance += curr.balance;
+      return acc;
+    }, { production: 0, commissionGenerated: 0, vales: 0, balance: 0 });
+  }, [summaries]);
 
   const filteredSummaries = summaries.filter(s => 
     s.nome.toLowerCase().includes(searchTerm.toLowerCase())
@@ -247,6 +259,16 @@ export function ProfessionalCommissions({
     }
   };
 
+  // Helper to get initials for barber avatar
+  const getInitials = (name: string) => {
+    if (!name) return 'PR';
+    const parts = name.split(' ');
+    if (parts.length > 1) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return parts[0].slice(0, 2).toUpperCase();
+  };
+
   if (selectedProId) {
     const pro = summaries.find(s => s.id === selectedProId);
     return (
@@ -262,268 +284,359 @@ export function ProfessionalCommissions({
   }
 
   return (
-    <div className="space-y-6">
-      {/* Search and Filters */}
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+    <div className="space-y-8">
+      {/* Search and Filters & Date Information */}
+      <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-5 rounded-[2rem] border border-slate-200/80 shadow-sm">
         <div className="relative w-full md:w-96">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
           <input 
             type="text"
-            placeholder="Buscar profissional..."
+            placeholder="Filtrar profissionais..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/10 transition-all font-medium"
+            className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200/60 rounded-2xl text-sm focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-slate-300 transition-all font-semibold text-primary placeholder:text-slate-400"
           />
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="flex items-center gap-2 bg-slate-100/80 border border-slate-200/50 rounded-xl px-4 py-2 shadow-sm text-xs font-semibold text-primary">
-            <Calendar className="text-slate-500" size={14} />
-            <span>Período: <strong className="font-extrabold">{format(new Date(dateRange.start + 'T00:00:00'), 'dd/MM/yyyy')}</strong> até <strong className="font-extrabold">{format(new Date(dateRange.end + 'T00:00:00'), 'dd/MM/yyyy')}</strong></span>
-          </div>
+        <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200/50 rounded-2xl px-5 py-3 shadow-sm text-xs font-semibold text-slate-600 w-full md:w-auto justify-center md:justify-start">
+          <Calendar className="text-slate-500" size={15} />
+          <span>Faturamento do período: <strong className="font-extrabold text-primary">{format(new Date(dateRange.start + 'T00:00:00'), 'dd/MM/yyyy')}</strong> até <strong className="font-extrabold text-primary">{format(new Date(dateRange.end + 'T00:00:00'), 'dd/MM/yyyy')}</strong></span>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 gap-4">
-          <Loader2 className="animate-spin text-primary" size={40} />
-          <p className="text-muted text-sm font-medium">Consolidando financeiros...</p>
+        <div className="flex flex-col items-center justify-center py-24 gap-4">
+          <Loader2 className="animate-spin text-primary" size={36} />
+          <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Consolidando comissões...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredSummaries.map((pro, index) => (
-            <motion.div 
-              key={`pro-summ-${pro.id || pro.uid || index}-${index}`}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-sm hover:shadow-md transition-all group"
-            >
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-500">
-                    <Users size={24} />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-primary">{pro.nome}</h4>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-muted">Barbeiro</span>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setSelectedProId(pro.id)}
-                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
-                >
-                  <ChevronRight size={20} className="text-slate-400" />
-                </button>
+        <>
+          {/* Bento-grid store summary stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200/80 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between relative overflow-hidden group">
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Produção Bruta (Total)</p>
+                <h3 className="text-2xl font-black text-primary mt-2">
+                  R$ {aggregatedTotals.production.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </h3>
               </div>
-
-              <div className="space-y-4 mb-6">
-                {/* Produção / Comissão */}
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100/80 flex items-center justify-between">
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Produção / Comissão</p>
-                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      <span className="text-xs text-slate-500 font-semibold">Prod:</span>
-                      <span className="font-extrabold text-sm text-primary">R$ {pro.production.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                      <span className="text-xs text-slate-300 font-medium font-mono">/</span>
-                      <span className="text-xs text-emerald-600 font-bold">Comissão:</span>
-                      <span className="font-black text-sm text-emerald-700">R$ {pro.commissionGenerated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                    </div>
-                  </div>
-                  <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black text-xs">
-                    %
-                  </div>
-                </div>
-
-                {/* Vale / Saldo a Receber */}
-                <div className="p-4 bg-amber-50/40 rounded-2xl border border-amber-100 flex items-center justify-between">
-                  <div>
-                    <p className="text-[10px] font-black text-amber-800/80 uppercase tracking-widest mb-1.5">Vale / Saldo a Receber</p>
-                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      <span className="text-xs text-amber-700 font-semibold">Vale:</span>
-                      <span className="font-bold text-sm text-amber-800">R$ {pro.vales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                      <span className="text-xs text-amber-300 font-medium font-mono">/</span>
-                      <span className="text-xs text-primary font-bold">Saldo:</span>
-                      <span className={`font-black text-sm ${pro.balance > 0 ? 'text-primary' : 'text-slate-500'}`}>R$ {pro.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                    </div>
-                  </div>
-                  <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-                    <Wallet size={15} />
-                  </div>
-                </div>
+              <div className="text-[11px] text-slate-400 font-medium mt-4 pt-4 border-t border-slate-100 flex items-center gap-1">
+                <TrendingUp size={12} className="text-slate-400" /> Total gerado em serviços e vendas
               </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button 
-                  onClick={() => {
-                    setValePro(pro);
-                    setIsValeModalOpen(true);
-                  }}
-                  className="py-2.5 bg-white border border-slate-200 text-amber-600 rounded-xl text-xs font-bold hover:bg-amber-50 transition-all flex items-center justify-center gap-2"
-                >
-                  <DollarSign size={14} />
-                  Adiantar Vale
-                </button>
-                <button 
-                  onClick={() => setSelectedProId(pro.id)}
-                  className="py-2.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
-                >
-                  <ArrowRight size={14} />
-                  Ver Detalhes
-                </button>
-              </div>
-            </motion.div>
-          ))}
-
-          {filteredSummaries.length === 0 && (
-            <div className="col-span-full py-20 bg-slate-50/50 rounded-[2rem] border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-4">
-              <Users size={48} className="text-slate-200" />
-              <p className="text-sm text-muted font-medium">Nenhum profissional encontrado no período.</p>
             </div>
-          )}
-        </div>
+
+            <div className="bg-white border border-slate-200/80 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between relative overflow-hidden group">
+              <div>
+                <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Comissão Gerada</p>
+                <h3 className="text-2xl font-black text-emerald-700 mt-2">
+                  R$ {aggregatedTotals.commissionGenerated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </h3>
+              </div>
+              <div className="text-[11px] text-emerald-600/80 font-semibold mt-4 pt-4 border-t border-slate-100 flex items-center gap-1">
+                <Percent size={12} className="text-emerald-500" /> Parte devida aos profissionais
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200/80 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between relative overflow-hidden group">
+              <div>
+                <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Vales Adiantados</p>
+                <h3 className="text-2xl font-black text-amber-800 mt-2">
+                  R$ {aggregatedTotals.vales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </h3>
+              </div>
+              <div className="text-[11px] text-amber-700/80 font-semibold mt-4 pt-4 border-t border-slate-100 flex items-center gap-1">
+                <Wallet size={12} className="text-amber-600" /> Retirados no período escolhido
+              </div>
+            </div>
+
+            <div className="bg-slate-950 text-white rounded-[2rem] p-6 shadow-md flex flex-col justify-between relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none" />
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Saldo Geral a Pagar</p>
+                <h3 className="text-2xl font-black text-white mt-2">
+                  R$ {aggregatedTotals.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </h3>
+              </div>
+              <div className="text-[11px] text-slate-300 font-semibold mt-4 pt-4 border-t border-white/10 flex items-center gap-1">
+                <DollarSign size={12} className="text-emerald-400" /> Total acumulado pendente atual
+              </div>
+            </div>
+          </div>
+
+          {/* Clean Professional Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredSummaries.map((pro, index) => {
+              const hasBalance = pro.balance > 0;
+              const hasVales = pro.vales > 0;
+
+              return (
+                <motion.div 
+                  key={`pro-summ-${pro.id || pro.uid || index}-${index}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.04 }}
+                  className="bg-white border border-slate-200/80 rounded-[2rem] p-6 shadow-sm hover:shadow-md hover:border-slate-300/80 transition-all flex flex-col justify-between relative group"
+                >
+                  {/* Top section: Barber profile header */}
+                  <div>
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-3.5">
+                        <div className="w-12 h-12 bg-slate-950 text-white rounded-2xl flex items-center justify-center font-black text-sm tracking-wider shadow-sm transition-transform group-hover:scale-105 duration-300">
+                          {getInitials(pro.nome)}
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-primary text-base leading-tight">{pro.nome}</h4>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Parceiro</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setSelectedProId(pro.id)}
+                        className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-700 rounded-full transition-all"
+                        title="Ver extrato completo"
+                      >
+                        <ChevronRight size={18} />
+                      </button>
+                    </div>
+
+                    {/* Breakdown List */}
+                    <div className="space-y-3 mb-6">
+                      <div className="flex justify-between items-center py-2.5 border-b border-slate-100">
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Produção do Período</span>
+                        <span className="text-sm font-bold text-slate-700">R$ {pro.production.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+
+                      <div className="flex justify-between items-center py-2.5 border-b border-slate-100">
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Comissão Gerada</span>
+                        <span className="text-sm font-black text-emerald-600">R$ {pro.commissionGenerated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+
+                      <div className="flex justify-between items-center py-2.5 border-b border-slate-100">
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Vales Retirados</span>
+                        <span className={`text-sm font-bold ${hasVales ? 'text-amber-700' : 'text-slate-400'}`}>
+                          R$ {pro.vales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Net Balance Highlight & Actions */}
+                  <div>
+                    {/* Highlight Box for Balance */}
+                    <div className={`p-4 rounded-2xl border mb-5 flex items-center justify-between ${
+                      pro.balance > 0 
+                        ? 'bg-emerald-50/50 border-emerald-100/60' 
+                        : pro.balance < 0 
+                          ? 'bg-rose-50/50 border-rose-100/60' 
+                          : 'bg-slate-50 border-slate-100'
+                    }`}>
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saldo Pendente Atual</p>
+                        <p className={`text-base font-black mt-1 ${
+                          pro.balance > 0 
+                            ? 'text-emerald-700' 
+                            : pro.balance < 0 
+                              ? 'text-rose-700' 
+                              : 'text-slate-500'
+                        }`}>
+                          R$ {pro.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                        pro.balance > 0 
+                          ? 'bg-emerald-100/60 text-emerald-700' 
+                          : pro.balance < 0 
+                            ? 'bg-rose-100/60 text-rose-700' 
+                            : 'bg-slate-200/50 text-slate-500'
+                      }`}>
+                        {pro.balance > 0 ? <TrendingUp size={14} /> : <Wallet size={14} />}
+                      </div>
+                    </div>
+
+                    {/* Compact, clean, professional actions */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <button 
+                        onClick={() => {
+                          setValePro(pro);
+                          setIsValeModalOpen(true);
+                        }}
+                        className="py-3 bg-slate-50 hover:bg-amber-50/60 text-amber-700 border border-slate-150 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 active:scale-95"
+                      >
+                        <Wallet size={14} />
+                        Lançar Vale
+                      </button>
+                      <button 
+                        onClick={() => setSelectedProId(pro.id)}
+                        className="py-3 bg-slate-950 text-white hover:bg-slate-800 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm shadow-slate-950/10"
+                      >
+                        Extrato
+                        <ArrowRight size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+
+            {filteredSummaries.length === 0 && (
+              <div className="col-span-full py-24 bg-slate-50/50 rounded-[2.5rem] border-2 border-dashed border-slate-200/60 flex flex-col items-center justify-center gap-4">
+                <Users size={40} className="text-slate-300" />
+                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest text-center">Nenhum parceiro encontrado no período.</p>
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* Vales Modal */}
       <AnimatePresence>
         {isValeModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsValeModalOpen(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-md bg-white rounded-[2rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="p-8 pb-4 max-h-[80vh] overflow-y-auto no-scrollbar">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-2xl font-black text-primary">Lançar Vale (Adiantamento)</h3>
-                  <button onClick={() => setIsValeModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-all text-slate-400">
-                    <Plus className="rotate-45" size={24} />
-                  </button>
+              {/* Header */}
+              <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-700 border border-amber-200/60 shadow-sm">
+                    <Wallet size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-primary leading-tight">Lançar Vale</h3>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Adiantamento de Comissão</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsValeModalOpen(false)} 
+                  className="p-2.5 text-muted hover:text-primary hover:bg-slate-100 transition-all bg-white rounded-xl border border-slate-100 shadow-sm min-w-[40px] min-h-[40px] flex items-center justify-center"
+                  title="Fechar"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+                {/* Beneficiary */}
+                <div className="flex items-center gap-3.5 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div className="w-10 h-10 bg-slate-950 text-white rounded-xl flex items-center justify-center font-black text-xs">
+                    {valePro ? getInitials(valePro.nome) : 'PR'}
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Profissional Beneficiário</p>
+                    <p className="font-extrabold text-primary text-sm mt-0.5">{valePro?.nome}</p>
+                  </div>
                 </div>
 
-                <div className="space-y-5">
-                  <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                    <div className="w-12 h-12 bg-primary text-white rounded-xl flex items-center justify-center">
-                      <Users size={24} />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-muted">Beneficiário</p>
-                      <p className="font-black text-primary">{valePro?.nome}</p>
-                    </div>
-                  </div>
-
-                  {/* ORIGEM DO RECURSO (NEW FEATURE REQUESTED BY USER) */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-primary ml-1">Origem do Recurso</label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setValeData({ ...valeData, source: 'caixa', paymentMethod: 'dinheiro' })}
-                        disabled={!isOpenCash}
-                        className={`p-4 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
-                          valeData.source === 'caixa'
-                            ? 'border-primary bg-primary/5 text-primary ring-2 ring-primary/10'
-                            : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
-                        } ${!isOpenCash ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <div className="flex justify-between items-start w-full">
-                          <span className="text-xs font-black uppercase tracking-wider block">Caixa Diário</span>
-                          <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide ${isOpenCash ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}`}>
-                            {isOpenCash ? 'Aberto' : 'Fechado'}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-2 leading-tight">Retira do caixa físico da recepção hoje e diminui o dinheiro da gaveta.</p>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setValeData({ ...valeData, source: 'financeiro', paymentMethod: 'pix' })}
-                        className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between ${
-                          valeData.source === 'financeiro'
-                            ? 'border-primary bg-primary/5 text-primary ring-2 ring-primary/10'
-                            : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
-                        }`}
-                      >
-                        <div className="flex justify-between items-start w-full">
-                          <span className="text-xs font-black uppercase tracking-wider block">Geral / Banco</span>
-                          <span className="text-[8px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-full font-bold uppercase tracking-wide">
-                            Contas Gerais
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-2 leading-tight">Sai das contas da empresa (ex: Pix/banco). Não mexe na gaveta de hoje.</p>
-                      </button>
-                    </div>
-                  </div>
-
+                {/* ORIGEM DO RECURSO */}
+                <div className="space-y-2.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Origem do Recurso</label>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <label className="text-sm font-bold text-primary ml-1">Valor do Vale</label>
-                      <div className="relative">
-                        <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                        <input 
-                          type="number"
-                          placeholder="0,00"
-                          value={valeData.amount}
-                          onChange={(e) => setValeData({...valeData, amount: e.target.value})}
-                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-black text-base text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all"
-                        />
+                    <button
+                      type="button"
+                      onClick={() => setValeData({ ...valeData, source: 'caixa', paymentMethod: 'dinheiro' })}
+                      disabled={!isOpenCash}
+                      className={`p-4 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+                        valeData.source === 'caixa'
+                          ? 'border-primary bg-primary/5 text-primary ring-2 ring-primary/10'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                      } ${!isOpenCash ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex justify-between items-start w-full">
+                        <span className="text-[10px] font-black uppercase tracking-wider block">Caixa Diário</span>
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide ${isOpenCash ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}`}>
+                          {isOpenCash ? 'Aberto' : 'Fechado'}
+                        </span>
                       </div>
-                    </div>
+                      <p className="text-[10px] text-slate-400 mt-2 leading-tight">Retira do caixa físico de recepção hoje.</p>
+                    </button>
 
-                    <div className="space-y-2">
-                      <label className="text-sm font-bold text-primary ml-1">Meio de Transação</label>
-                      <select
-                        value={valeData.paymentMethod}
-                        onChange={(e) => setValeData({ ...valeData, paymentMethod: e.target.value })}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-sm text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all"
-                      >
-                        {valeData.source === 'caixa' ? (
-                          <>
-                            <option value="dinheiro">Dinheiro (Físico em Espécie)</option>
-                            <option value="pix">Pix (Registrado no Caixa)</option>
-                          </>
-                        ) : (
-                          <>
-                            <option value="pix">Pix (Transferência Instantânea)</option>
-                            <option value="transferencia">Transferência TED/DOC</option>
-                            <option value="dinheiro">Dinheiro (Retirada Bancária)</option>
-                          </>
-                        )}
-                      </select>
+                    <button
+                      type="button"
+                      onClick={() => setValeData({ ...valeData, source: 'financeiro', paymentMethod: 'pix' })}
+                      className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between ${
+                        valeData.source === 'financeiro'
+                          ? 'border-primary bg-primary/5 text-primary ring-2 ring-primary/10'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start w-full">
+                        <span className="text-[10px] font-black uppercase tracking-wider block">Geral / Banco</span>
+                        <span className="text-[8px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-full font-bold uppercase tracking-wide">
+                          Gerais
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-2 leading-tight">Sai das contas gerais por Pix/transferência.</p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Amount and Method */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor do Vale</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                      <input 
+                        type="number"
+                        placeholder="0,00"
+                        value={valeData.amount}
+                        onChange={(e) => setValeData({...valeData, amount: e.target.value})}
+                        className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200/80 rounded-xl font-bold text-sm text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-slate-300 transition-all"
+                      />
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-primary ml-1">Observação / Motivo</label>
-                    <textarea 
-                      placeholder="Ex: Adiantamento para despesas pessoais ou vale emergência"
-                      value={valeData.description}
-                      onChange={(e) => setValeData({...valeData, description: e.target.value})}
-                      className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all resize-none h-20"
-                    />
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Meio de Transação</label>
+                    <select
+                      value={valeData.paymentMethod}
+                      onChange={(e) => setValeData({ ...valeData, paymentMethod: e.target.value })}
+                      className="w-full px-3.5 py-3 bg-slate-50 border border-slate-200/80 rounded-xl font-bold text-sm text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-slate-300 transition-all"
+                    >
+                      {valeData.source === 'caixa' ? (
+                        <>
+                          <option value="dinheiro">Dinheiro Físico</option>
+                          <option value="pix">Pix (no Caixa)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="pix">Pix (Transferência)</option>
+                          <option value="transferencia">Transferência</option>
+                          <option value="dinheiro">Dinheiro Geral</option>
+                        </>
+                      )}
+                    </select>
                   </div>
+                </div>
+
+                {/* Description */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Observação / Motivo</label>
+                  <textarea 
+                    placeholder="Ex: Adiantamento emergencial para despesas pessoais"
+                    value={valeData.description}
+                    onChange={(e) => setValeData({...valeData, description: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200/80 rounded-xl text-sm font-medium text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-slate-300 transition-all resize-none h-20"
+                  />
                 </div>
               </div>
 
-              <div className="p-8 pt-4 flex gap-3 border-t border-slate-100 bg-slate-50/50">
+              {/* Actions Footer */}
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex gap-3 shrink-0">
                 <button 
                   onClick={() => setIsValeModalOpen(false)}
-                  className="flex-1 py-4 bg-white border border-slate-200 text-slate-600 rounded-2xl font-bold hover:bg-slate-100 transition-all active:scale-95"
+                  className="flex-1 py-3 bg-white border border-slate-250 text-slate-650 rounded-xl font-bold text-sm hover:bg-slate-100 transition-all"
                 >
                   Cancelar
                 </button>
                 <button 
                   onClick={handleRegisterVale}
-                  className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg shadow-primary/20 hover:bg-slate-800 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  className="flex-1 py-3 bg-primary text-white rounded-xl font-black text-sm shadow-md hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
                 >
-                  Confirmar e Registrar
+                  Registrar Vale
                 </button>
               </div>
             </motion.div>

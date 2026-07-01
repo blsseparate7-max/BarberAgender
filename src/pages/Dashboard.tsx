@@ -678,8 +678,8 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                       <span className="text-[10px] font-black uppercase bg-indigo-50 px-2.5 py-1 text-indigo-700 rounded-lg">{comandasAbertas.length} abertas</span>
                     </h3>
                     <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                      {comandasAbertas.map((c: any) => (
-                        <div key={`comanda-list-alert-${c.id}`} className="flex items-center justify-between p-4 bg-slate-50/50 border border-slate-100 rounded-xl">
+                      {comandasAbertas.map((c: any, idx: number) => (
+                        <div key={`comanda-list-alert-${c.id || idx}-${idx}`} className="flex items-center justify-between p-4 bg-slate-50/50 border border-slate-100 rounded-xl">
                           <div>
                             <p className="font-bold text-sm text-primary">Comanda #{c.number}</p>
                             <p className="text-[10px] text-muted font-bold uppercase">Cliente: {c.cliente_name || 'Consumidor Final'}</p>
@@ -706,8 +706,8 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                       <span className="text-[10px] font-black uppercase bg-red-50 px-2.5 py-1 text-red-700 rounded-lg">R$ {clientesDevedores.reduce((acc, c) => acc + (c.remainingAmount || 0), 0).toLocaleString('pt-BR')}</span>
                     </h3>
                     <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                      {clientesDevedores.map((d: any) => (
-                        <div key={`debt-list-alert-${d.id}`} className="flex items-center justify-between p-4 bg-slate-50/50 border border-slate-100 rounded-xl">
+                      {clientesDevedores.map((d: any, idx: number) => (
+                        <div key={`debt-list-alert-${d.id || idx}-${idx}`} className="flex items-center justify-between p-4 bg-slate-50/50 border border-slate-100 rounded-xl">
                           <div>
                             <p className="font-bold text-sm text-primary">{d.cliente_name}</p>
                             <p className="text-[10px] text-muted font-bold uppercase">Aberto em: {d.date}</p>
@@ -742,8 +742,8 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {baixoEstoque.map((p: any) => (
-                            <tr key={`baixo-estoque-table-${p.id}`} className="hover:bg-slate-50/50 transition-colors">
+                          {baixoEstoque.map((p: any, idx: number) => (
+                            <tr key={`baixo-estoque-table-${p.id || idx}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                               <td className="py-3 px-4 font-bold text-primary">{p.name}</td>
                               <td className="py-3 px-4 text-center text-slate-500">{p.minStock} unidades</td>
                               <td className="py-3 px-4 text-center font-black text-red-600">{p.currentStock} unidades</td>
@@ -971,39 +971,30 @@ function BarberDashboard({ data, refresh, setActiveTab, activeTab = 'overview' }
         >
           {activeTab === 'overview' && (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
                 <KpiCard 
-                  title="Minha Produção" 
-                  value={data.production} 
-                  icon={<TrendingUp className="text-emerald-500" />} 
-                  trend="Mês Atual" 
-                  trendUp={true}
-                  color="emerald"
-                />
-                <KpiCard 
-                  title="Comandas Abertas" 
-                  value={data.activeComandasCount} 
-                  icon={<BarChart3 className="text-blue-500" />} 
-                  trend="Minhas mesas" 
-                  trendUp={true}
-                  color="blue"
-                  isCurrency={false}
-                />
-                <KpiCard 
-                  title="A Receber" 
+                  title="Comissão a Receber" 
                   value={data.commissionPending} 
                   icon={<Wallet className="text-amber-500" />} 
-                  trend="Comissão" 
+                  trend="Aguardando repasse" 
                   trendUp={false}
                   color="amber"
                 />
                 <KpiCard 
-                  title="Atendimentos" 
-                  value={data.completedCount} 
-                  icon={<UserCheck className="text-zinc-400" />} 
-                  trend={`${data.appointmentsCount} total`} 
+                  title="Total de Comissão (Mês)" 
+                  value={data.commissionTotal || 0} 
+                  icon={<TrendingUp className="text-emerald-500" />} 
+                  trend="Ganhos acumulados" 
                   trendUp={true}
-                  color="zinc"
+                  color="emerald"
+                />
+                <KpiCard 
+                  title="Meus Atendimentos" 
+                  value={data.completedCount} 
+                  icon={<UserCheck className="text-blue-500" />} 
+                  trend={`${data.appointmentsCount} total no período`} 
+                  trendUp={true}
+                  color="blue"
                   isCurrency={false}
                 />
               </div>
@@ -1045,7 +1036,6 @@ function BarberDashboard({ data, refresh, setActiveTab, activeTab = 'overview' }
                   </h3>
                   <div className="space-y-8">
                     <GoalItem label="Atendimentos" current={data?.completedCount || 0} target={100} color="emerald" />
-                    <GoalItem label="Faturamento" current={data?.production || 0} target={5000} color="blue" isCurrency />
                     <GoalItem label="Comissão" current={data?.commissionTotal || 0} target={2500} color="amber" isCurrency />
                   </div>
                   

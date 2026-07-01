@@ -168,6 +168,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
       };
       
       if (currentUser.tipo === 'cliente') filters.cliente_id = currentUser.uid;
+      if (currentUser.tipo === 'barbeiro') filters.profissional_id = currentUser.uid;
 
       setLoading(true);
       const unsubscribeAppointments = appointmentService.subscribeToAppointments(filters, (data) => {
@@ -219,6 +220,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
       };
       
       if (currentUser.tipo === 'cliente') filters.cliente_id = currentUser.uid;
+      if (currentUser.tipo === 'barbeiro') filters.profissional_id = currentUser.uid;
 
       const data = await appointmentService.getAppointments(filters);
       setAppointments(data);
@@ -258,6 +260,13 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
     { id: 'resources', label: 'Recursos', icon: <Armchair size={16} /> },
   ];
 
+  const filteredTabs = tabs.filter(tab => {
+    if (currentUser.tipo === 'barbeiro' || currentUser.tipo === 'cliente') {
+      return tab.id === 'main';
+    }
+    return true;
+  });
+
   return (
     <div className="flex flex-col gap-8 min-h-[calc(100vh-120px)] pb-10">
       {error && (
@@ -295,7 +304,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
       {/* Sub-navigation */}
       <div className="flex items-center gap-3 overflow-x-auto pb-4 custom-scrollbar">
-        {tabs.map(tab => (
+        {filteredTabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as AgendaTab)}

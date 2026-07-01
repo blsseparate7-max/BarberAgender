@@ -137,11 +137,11 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       roles: ['admin', 'gerente', 'barbeiro', 'cliente'],
       subItems: [
         { id: 'agenda-main', label: 'Grade Principal', roles: ['admin', 'gerente', 'barbeiro', 'cliente'] },
-        { id: 'agenda-appointments', label: 'Relação de Agendamentos', roles: ['admin', 'gerente', 'barbeiro'] },
+        { id: 'agenda-appointments', label: 'Relação de Agendamentos', roles: ['admin', 'gerente'] },
         { id: 'agenda-recurring', label: 'Agendamentos Recorrentes', roles: ['admin', 'gerente'] },
         { id: 'agenda-availability', label: 'Disponibilidade de Escala', roles: ['admin', 'gerente'] },
-        { id: 'agenda-blocks', label: 'Bloquear Horários', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'agenda-operations', label: 'Painel Operacional', roles: ['admin', 'gerente', 'barbeiro'] },
+        { id: 'agenda-blocks', label: 'Bloquear Horários', roles: ['admin', 'gerente'] },
+        { id: 'agenda-operations', label: 'Painel Operacional', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -153,8 +153,8 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         { id: 'comandas-nova', label: 'Lançar Nova Comanda', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'comandas-abertas', label: 'Comandas em Aberto', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'comandas-historico', label: 'Histórico de Atendimentos', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'comandas-fiadas', label: 'Pendências e Fiados', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'comandas-checkout', label: 'Checkout / PDV Rápido', roles: ['admin', 'gerente', 'barbeiro'] },
+        { id: 'comandas-fiadas', label: 'Pendências e Fiados', roles: ['admin', 'gerente'] },
+        { id: 'comandas-checkout', label: 'Checkout / PDV Rápido', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -169,7 +169,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         { id: 'cadastros-assinaturas', label: 'Minha Assinatura', roles: ['cliente'] },
         { id: 'cadastros-pacotes', label: 'Modelos de Pacotes', roles: ['admin', 'gerente'] },
         { id: 'cadastros-pacotes-meus', label: 'Meus Pacotes', roles: ['cliente'] },
-        { id: 'cadastros-consumo', label: 'Consumo de Pacotes', roles: ['admin', 'gerente', 'barbeiro'] },
+        { id: 'cadastros-consumo', label: 'Consumo de Pacotes', roles: ['admin', 'gerente'] },
         { id: 'fidelidade-programa', label: 'Pontuação de Fidelidade', roles: ['admin', 'gerente', 'cliente'] },
         { id: 'fidelidade-cashback', label: 'Regras de Cashback', roles: ['admin', 'gerente', 'cliente'] },
         { id: 'fidelidade-vip', label: 'Clientes de Alto Valor (VIP)', roles: ['admin', 'gerente'] },
@@ -189,6 +189,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       subItems: [
         { id: 'cadastros-profissionais', label: 'Ficha dos Profissionais', roles: ['admin', 'gerente'] },
         { id: 'financeiro-comissoes', label: 'Recálculo de Comissões', roles: ['admin', 'gerente'] },
+        { id: 'comissoes', label: 'Minhas Comissões', roles: ['barbeiro'] },
         { id: 'dashboard-agenda', label: 'Minha Agenda de Hoje', roles: ['admin', 'gerente', 'barbeiro'] },
       ]
     },
@@ -227,7 +228,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       subItems: [
         { id: 'cadastros-produtos', label: 'Catálogo de Produtos', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'estoque-produtos', label: 'Quantitativo em Estoque', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'estoque-movimentacoes', label: 'Histórico de Entradas/Saídas', roles: ['admin', 'gerente', 'barbeiro'] },
+        { id: 'estoque-movimentacoes', label: 'Histórico de Entradas/Saídas', roles: ['admin', 'gerente'] },
         { id: 'estoque-inventario', label: 'Auditoria de Inventário', roles: ['admin', 'gerente'] },
       ]
     },

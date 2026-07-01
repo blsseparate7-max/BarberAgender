@@ -222,13 +222,24 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     const q = query(
       collection(db, 'financial_transactions'),
       where('date', '>=', dateRange.start),
-      where('date', '<=', dateRange.end),
-      orderBy('date', 'desc'),
-      orderBy('createdAt', 'desc')
+      where('date', '<=', dateRange.end)
     );
 
     const unsubscribeTransactions = onSnapshot(q, (snapshot) => {
       const txs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+      
+      // Sort in memory by date desc, then by createdAt seconds desc
+      txs.sort((a, b) => {
+        const dateCompare = (b.date || '').localeCompare(a.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        
+        const timeA = a.createdAt?.seconds || 0;
+        const timeB = b.createdAt?.seconds || 0;
+        if (timeB !== timeA) return timeB - timeA;
+        
+        return (b.id || '').localeCompare(a.id || '');
+      });
+
       setTransactions(txs);
       
       // Also update stats locally to avoid a separate fetch

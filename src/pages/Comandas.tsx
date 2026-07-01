@@ -20,8 +20,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { comandaService } from '../services/comandaService';
 import { Comanda, ComandaStatus } from '../types';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
+import { useAuth } from '../contexts/AuthContext';
 
 export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
+  const { profile, isBarbeiro } = useAuth();
   const [activeTab, setActiveTab] = useState<'abertas' | 'historico' | 'fiadas' | 'nova'>('abertas');
   const [comandas, setComandas] = useState<Comanda[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,6 +82,13 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
   };
 
   const currentComandas = comandas.filter(c => {
+    if (isBarbeiro && profile) {
+      const isMyComanda = c.profissional_id === profile.uid || 
+                          (c.profissional_name && profile.nome && c.profissional_name.toLowerCase().includes(profile.nome.toLowerCase())) ||
+                          (c as any).items?.some((item: any) => item.profissional_id === profile.uid);
+      if (!isMyComanda) return false;
+    }
+
     const clienteName = c.cliente_name || '';
     const profName = c.profissional_name || '';
     const num = c.number || '';
@@ -167,16 +176,18 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
           Histórico
           {activeTab === 'historico' && <motion.div layoutId="activeTabCom" className="absolute bottom-0 left-0 right-0 h-1 bg-accent rounded-t-full" />}
         </button>
-        <button 
-          onClick={() => setActiveTab('fiadas')}
-          className={`px-6 py-4 text-sm font-bold transition-all relative whitespace-nowrap flex items-center gap-2.5 ${
-            activeTab === 'fiadas' ? 'text-accent' : 'text-muted hover:text-primary'
-          }`}
-        >
-          <AlertCircle size={16} />
-          Não Pagas / Fiados
-          {activeTab === 'fiadas' && <motion.div layoutId="activeTabCom" className="absolute bottom-0 left-0 right-0 h-1 bg-accent rounded-t-full" />}
-        </button>
+        {!isBarbeiro && (
+          <button 
+            onClick={() => setActiveTab('fiadas')}
+            className={`px-6 py-4 text-sm font-bold transition-all relative whitespace-nowrap flex items-center gap-2.5 ${
+              activeTab === 'fiadas' ? 'text-accent' : 'text-muted hover:text-primary'
+            }`}
+          >
+            <AlertCircle size={16} />
+            Não Pagas / Fiados
+            {activeTab === 'fiadas' && <motion.div layoutId="activeTabCom" className="absolute bottom-0 left-0 right-0 h-1 bg-accent rounded-t-full" />}
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col md:flex-row gap-6">

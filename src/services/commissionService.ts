@@ -22,32 +22,62 @@ const ADVANCES_COLLECTION = 'professional_advances';
 
 export const commissionService = {
   async getCommissions(filters: { profissional_id?: string; status?: CommissionStatus; startDate?: string; endDate?: string }) {
-    let q = query(collection(db, COMMISSIONS_COLLECTION), orderBy('date', 'desc'), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, COMMISSIONS_COLLECTION));
 
     if (filters.profissional_id) {
       q = query(q, where('profissional_id', '==', filters.profissional_id));
-    }
-    if (filters.status) {
-      q = query(q, where('status', '==', filters.status));
-    }
-    if (filters.startDate && filters.endDate) {
-      q = query(q, where('date', '>=', filters.startDate), where('date', '<=', filters.endDate));
     }
 
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+    let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+
+    // Filter in memory
+    if (filters.status) {
+      results = results.filter(c => c.status === filters.status);
+    }
+    if (filters.startDate && filters.endDate) {
+      results = results.filter(c => c.date >= filters.startDate! && c.date <= filters.endDate!);
+    }
+
+    // Sort in memory by date desc, then by seconds desc, then by ID
+    results.sort((a, b) => {
+      const dateCompare = (b.date || '').localeCompare(a.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      
+      const timeA = a.createdAt?.seconds || 0;
+      const timeB = b.createdAt?.seconds || 0;
+      if (timeB !== timeA) return timeB - timeA;
+      
+      return (b.id || '').localeCompare(a.id || '');
+    });
+
+    return results;
   },
 
   async getAdvances(filters: { profissional_id?: string; startDate?: string; endDate?: string }) {
-    let q = query(collection(db, ADVANCES_COLLECTION), orderBy('date', 'desc'), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, ADVANCES_COLLECTION));
     if (filters.profissional_id) {
       q = query(q, where('profissional_id', '==', filters.profissional_id));
     }
-    if (filters.startDate && filters.endDate) {
-      q = query(q, where('date', '>=', filters.startDate), where('date', '<=', filters.endDate));
-    }
     const snap = await getDocs(q);
-    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
+    let results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
+
+    if (filters.startDate && filters.endDate) {
+      results = results.filter(a => a.date >= filters.startDate! && a.date <= filters.endDate!);
+    }
+
+    results.sort((a, b) => {
+      const dateCompare = (b.date || '').localeCompare(a.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      
+      const timeA = a.createdAt?.seconds || 0;
+      const timeB = b.createdAt?.seconds || 0;
+      if (timeB !== timeA) return timeB - timeA;
+      
+      return (b.id || '').localeCompare(a.id || '');
+    });
+
+    return results;
   },
 
   async registerAdvance(data: Omit<ProfessionalAdvance, 'id' | 'createdAt'>) {
@@ -69,12 +99,25 @@ export const commissionService = {
   },
 
   async getPayouts(profissional_id?: string) {
-    let q = query(collection(db, PAYOUTS_COLLECTION), orderBy('date', 'desc'), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, PAYOUTS_COLLECTION));
     if (profissional_id) {
       q = query(q, where('profissional_id', '==', profissional_id));
     }
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
+    let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
+
+    results.sort((a, b) => {
+      const dateCompare = (b.date || '').localeCompare(a.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      
+      const timeA = a.createdAt?.seconds || 0;
+      const timeB = b.createdAt?.seconds || 0;
+      if (timeB !== timeA) return timeB - timeA;
+      
+      return (b.id || '').localeCompare(a.id || '');
+    });
+
+    return results;
   },
 
   // Novo Drill Down completo com alinhamento de saldo real pendente (todas do período de comissões não pagas vs vales não pagos)

@@ -37,6 +37,7 @@ import { commissionService } from '../services/commissionService';
 import { userService } from '../services/userService';
 import { useAuth } from '../contexts/AuthContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
+import { ProfessionalCommissionsDetail } from '../components/Financeiro/ProfessionalCommissionsDetail';
 
 export function Comissoes() {
   const { user, profile, isAdmin, isGerente } = useAuth();
@@ -127,6 +128,16 @@ export function Comissoes() {
     }
   });
 
+  if (profile?.tipo === 'barbeiro' && user) {
+    return (
+      <ProfessionalCommissionsDetail 
+        professionalId={user.uid}
+        professionalName={profile.nome || 'Meu Usuário'}
+        dateRange={{ start: dateRange.start, end: dateRange.end }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-8">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -146,7 +157,7 @@ export function Comissoes() {
       </header>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${profile?.tipo === 'barbeiro' ? 'lg:grid-cols-3' : 'lg:grid-cols-4'} gap-4`}>
         <StatCard 
           title="Total Pendente" 
           value={stats.pending} 
@@ -161,13 +172,15 @@ export function Comissoes() {
           color="emerald"
           subtitle="Comissões já repassadas"
         />
-        <StatCard 
-          title="Faturamento Base" 
-          value={stats.totalBase} 
-          icon={<TrendingUp className="text-blue-500" />} 
-          color="blue"
-          subtitle="Valor total dos serviços"
-        />
+        {profile?.tipo !== 'barbeiro' && (
+          <StatCard 
+            title="Faturamento Base" 
+            value={stats.totalBase} 
+            icon={<TrendingUp className="text-blue-500" />} 
+            color="blue"
+            subtitle="Valor total dos serviços"
+          />
+        )}
         <StatCard 
           title="Atendimentos" 
           value={stats.count} 

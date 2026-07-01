@@ -51,14 +51,38 @@ function MainApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authView, setAuthView] = useState<'login' | 'register' | 'forgot'>('login');
 
-  // Remover redirecionamento forçado para permitir dashboard do cliente
-  /*
+  // Redirect to permitted tabs based on role to avoid missing permissions errors on mounted pages
   useEffect(() => {
-    if (profile?.tipo === 'cliente' && (activeTab === 'dashboard' || activeTab.startsWith('dashboard-'))) {
-      setActiveTab('agenda');
+    if (!profile) return;
+    
+    const role = profile.tipo;
+    let isAllowed = false;
+    
+    if (role === 'admin' || role === 'gerente') {
+      isAllowed = true;
+    } else if (role === 'barbeiro') {
+      const allowedPatterns = [
+        'dashboard-overview', 'dashboard', 'agenda-main', 'agenda',
+        'comandas', 'comissoes', 'estoque', 'cadastros-clientes', 'fidelidade'
+      ];
+      isAllowed = allowedPatterns.some(p => activeTab === p || activeTab.startsWith(p + '-'));
+    } else if (role === 'cliente') {
+      const allowedPatterns = [
+        'agenda-main', 'agenda', 'cadastros-pacotes-meus'
+      ];
+      isAllowed = allowedPatterns.some(p => activeTab === p || activeTab.startsWith(p + '-'));
     }
-  }, [profile, activeTab]);
-  */
+    
+    if (!isAllowed) {
+      if (role === 'barbeiro') {
+        setActiveTab('dashboard-overview');
+      } else if (role === 'cliente') {
+        setActiveTab('agenda-main');
+      } else {
+        setActiveTab('dashboard');
+      }
+    }
+  }, [profile?.tipo, activeTab]);
 
   if (loading) {
     return (
@@ -151,7 +175,7 @@ function MainApp() {
     }
 
     switch (activeTab) {
-      case 'comissoes': return <Financeiro activeSubTab="financeiro-comissoes" />;
+      case 'comissoes': return <Comissoes />;
       case 'marketing': return <Marketing />;
       case 'insights': return <Insights />;
       default: return <Dashboard stats={initialStats} setActiveTab={setActiveTab} activeSubTab={activeTab} />;

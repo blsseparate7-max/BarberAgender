@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { 
   Package, 
   Plus, 
@@ -32,7 +33,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { inventoryService } from '../services/inventoryService';
 import { Product, ProductCategory, InventoryMovement, MovementType, ProductType } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export function Estoque() {
@@ -64,6 +65,21 @@ export function Estoque() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [isCreatingCategoryOnTheFly, setIsCreatingCategoryOnTheFly] = useState(false);
 
+  // Inline supplier creation state inside product modal
+  const [selectedSupplierId, setSelectedSupplierId] = useState('');
+  const [showInlineSupplierInput, setShowInlineSupplierInput] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [isCreatingSupplierOnTheFly, setIsCreatingSupplierOnTheFly] = useState(false);
+
+  // Barbers / active professionals state
+  const [barbers, setBarbers] = useState<any[]>([]);
+
+  // Commission settings state inside product modal
+  const [activeModalTab, setActiveModalTab] = useState<'dados' | 'comissao'>('dados');
+  const [tipoComissao, setTipoComissao] = useState<'padrao' | 'percentual' | 'fixo'>('padrao');
+  const [valorComissao, setValorComissao] = useState<number>(0);
+  const [comissoesPorProfissional, setComissoesPorProfissional] = useState<Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>>({});
+
   // Custom Alert / Confirm Modal States
   const [alertModal, setAlertModal] = useState<{
     show: boolean;
@@ -79,19 +95,35 @@ export function Estoque() {
     onConfirm: () => void;
   } | null>(null);
 
-  // Synchronize and initialize selectedCategoryId inside product modal
+  // Synchronize and initialize selectedCategoryId and commission states inside product modal
   useEffect(() => {
     if (showProductModal) {
+      setActiveModalTab('dados');
+      setShowInlineCategoryInput(false);
+      setShowInlineSupplierInput(false);
+      setNewCategoryName('');
+      setNewSupplierName('');
       if (editingProduct) {
         setSelectedCategoryId(editingProduct.categoria_id || '');
+        setSelectedSupplierId(editingProduct.fornecedor_id || '');
+        // Commission fields
+        setTipoComissao((editingProduct as any).tipo_comissao || 'padrao');
+        setValorComissao((editingProduct as any).valor_comissao || 0);
+        setComissoesPorProfissional((editingProduct as any).comissoes_por_profissional || {});
       } else {
         const hasValidCategory = categories.some(c => c.id === selectedCategoryId);
         if (!hasValidCategory && categories.length > 0) {
           setSelectedCategoryId(categories[0].id);
         }
+        setSelectedSupplierId('');
+        // Reset commission fields to default
+        setTipoComissao('padrao');
+        setValorComissao(0);
+        setComissoesPorProfissional({});
       }
     } else {
       setSelectedCategoryId('');
+      setSelectedSupplierId('');
     }
   }, [showProductModal, editingProduct, categories]);
 
@@ -161,11 +193,22 @@ export function Estoque() {
       checkLoading();
     });
 
+    // 5. Subscribe to Active Professionals
+    const qProf = query(collection(db, 'usuarios'), orderBy('nome', 'asc'));
+    const unsubscribeProf = onSnapshot(qProf, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }));
+      const barbersOnly = docs.filter((u: any) => u.tipo === 'barbeiro' || u.tipo === 'gerente');
+      setBarbers(barbersOnly);
+    }, (error) => {
+      console.error("Erro ao assinar profissionais:", error);
+    });
+
     return () => {
       unsubscribeProducts();
       unsubscribeCategories();
       unsubscribeMovements();
       unsubscribeSuppliers();
+      unsubscribeProf();
     };
   }, []);
 
@@ -191,7 +234,6 @@ export function Estoque() {
     }
 
     const formData = new FormData(e.currentTarget);
-    const fornecedorId = formData.get('fornecedorId') as string;
     const productData = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
@@ -203,20 +245,26 @@ export function Estoque() {
       minStock: Number(formData.get('minStock')),
       type: formData.get('type') as ProductType,
       status: formData.get('status') as 'active' | 'inactive',
-      fornecedor_id: fornecedorId || '',
-      fornecedor_name: suppliers.find(s => s.id === fornecedorId)?.name || '',
+      fornecedor_id: selectedSupplierId || '',
+      fornecedor_name: suppliers.find(s => s.id === selectedSupplierId)?.name || '',
+      tipo_comissao: tipoComissao,
+      valor_comissao: tipoComissao === 'padrao' ? 0 : Number(valorComissao),
+      comissoes_por_profissional: comissoesPorProfissional,
     };
 
     try {
       if (editingProduct) {
         await inventoryService.updateProduct(editingProduct.id, productData);
+        toast.success('Produto atualizado com sucesso!');
       } else {
         await inventoryService.createProduct(productData);
+        toast.success('Produto criado com sucesso!');
       }
       setShowProductModal(false);
       setEditingProduct(null);
     } catch (error) {
       console.error("Erro ao salvar produto:", error);
+      toast.error('Erro ao salvar produto.');
     }
   });
 
@@ -283,6 +331,27 @@ export function Estoque() {
       console.error("Erro ao cadastrar categoria rápida:", error);
     } finally {
       setIsCreatingCategoryOnTheFly(false);
+    }
+  };
+
+  const handleCreateSupplierOnTheFly = async () => {
+    if (!newSupplierName.trim()) return;
+    setIsCreatingSupplierOnTheFly(true);
+    try {
+      const docRef = await addDoc(collection(db, 'tipos_fornecedores'), {
+        name: newSupplierName.trim(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      setSelectedSupplierId(docRef.id);
+      setShowInlineSupplierInput(false);
+      setNewSupplierName('');
+      toast.success('Fornecedor cadastrado com sucesso!');
+    } catch (error) {
+      console.error("Erro ao cadastrar fornecedor rápido:", error);
+      toast.error('Erro ao cadastrar fornecedor.');
+    } finally {
+      setIsCreatingSupplierOnTheFly(false);
     }
   };
 
@@ -610,134 +679,380 @@ export function Estoque() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-surface border border-border rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl"
+              className="bg-surface border border-border rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
             >
-              <div className="p-8 border-b border-border flex items-center justify-between bg-slate-50/50">
-                <h2 className="text-xl font-bold text-primary">{editingProduct ? 'Editar Produto' : 'Novo Produto'}</h2>
+              {/* Modal Header */}
+              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50 shrink-0">
+                <div>
+                  <h2 className="text-xl font-bold text-primary">{editingProduct ? 'Editar Produto' : 'Novo Produto'}</h2>
+                  <p className="text-muted text-[10px] font-bold uppercase tracking-widest mt-1">
+                    {editingProduct ? 'Atualize as informações do estoque e comissões' : 'Cadastre um novo item ao seu catálogo'}
+                  </p>
+                </div>
                 <button onClick={() => setShowProductModal(false)} className="p-2 hover:bg-slate-100 rounded-full text-muted transition-colors">
                   <XCircle size={24} />
                 </button>
               </div>
-              <form onSubmit={handleSaveProduct} className="p-8 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Nome do Produto</label>
-                    <input name="name" defaultValue={editingProduct?.name} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Categoria</label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <select 
-                          name="categoryId" 
-                          value={selectedCategoryId} 
-                          onChange={(e) => setSelectedCategoryId(e.target.value)}
-                          required 
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
-                        >
-                          {categories.length === 0 ? (
-                            <option value="">Nenhuma categoria cadastrada</option>
-                          ) : (
-                            categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)
-                          )}
+
+              {/* Modal Sub-Tabs */}
+              <div className="flex border-b border-border bg-slate-50/50 px-6 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setActiveModalTab('dados')}
+                  className={`py-4 px-6 font-bold text-xs uppercase tracking-wider border-b-2 transition-all ${
+                    activeModalTab === 'dados' 
+                      ? 'border-primary text-primary bg-white/50' 
+                      : 'border-transparent text-muted hover:text-primary'
+                  }`}
+                >
+                  📋 1. Dados do Produto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveModalTab('comissao')}
+                  className={`py-4 px-6 font-bold text-xs uppercase tracking-wider border-b-2 transition-all ${
+                    activeModalTab === 'comissao' 
+                      ? 'border-primary text-primary bg-white/50' 
+                      : 'border-transparent text-muted hover:text-primary'
+                  }`}
+                >
+                  💰 2. Configuração de Comissão
+                </button>
+              </div>
+
+              {/* Modal Form */}
+              <form onSubmit={handleSaveProduct} className="flex-1 overflow-hidden flex flex-col">
+                <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+                  
+                  {/* TAB 1: BASIC PRODUCT DATA */}
+                  {activeModalTab === 'dados' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Nome do Produto</label>
+                        <input name="name" defaultValue={editingProduct?.name} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Categoria</label>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <select 
+                              name="categoryId" 
+                              value={selectedCategoryId} 
+                              onChange={(e) => setSelectedCategoryId(e.target.value)}
+                              required 
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                            >
+                              {categories.length === 0 ? (
+                                <option value="">Nenhuma categoria cadastrada</option>
+                              ) : (
+                                categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)
+                              )}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowInlineCategoryInput(prev => !prev)}
+                            className="px-4 py-3 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-primary rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 shrink-0"
+                            title="Nova Categoria"
+                          >
+                            <Plus size={16} />
+                            Nova
+                          </button>
+                        </div>
+                      </div>
+
+                      {showInlineCategoryInput && (
+                        <div className="md:col-span-2 p-5 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-3">
+                          <p className="text-[10px] font-bold text-primary uppercase tracking-widest ml-1">Cadastrar Nova Categoria</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="Nome da categoria (ex: Cabelo, Barba, Pomadas)"
+                              value={newCategoryName}
+                              onChange={(e) => setNewCategoryName(e.target.value)}
+                              className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent font-medium text-primary shadow-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleCreateCategoryOnTheFly}
+                              disabled={isCreatingCategoryOnTheFly || !newCategoryName.trim()}
+                              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 shrink-0 active:scale-95"
+                            >
+                              {isCreatingCategoryOnTheFly ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <CheckCircle2 size={14} />
+                              )}
+                              Confirmar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowInlineCategoryInput(false);
+                                setNewCategoryName('');
+                              }}
+                              className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Fornecedor on the fly creation section */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Fornecedor</label>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <select 
+                              name="fornecedorId" 
+                              value={selectedSupplierId} 
+                              onChange={(e) => setSelectedSupplierId(e.target.value)}
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                            >
+                              <option value="">Sem Fornecedor</option>
+                              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowInlineSupplierInput(prev => !prev)}
+                            className="px-4 py-3 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-primary rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 shrink-0"
+                            title="Novo Fornecedor"
+                          >
+                            <Plus size={16} />
+                            Novo
+                          </button>
+                        </div>
+                      </div>
+
+                      {showInlineSupplierInput && (
+                        <div className="md:col-span-2 p-5 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-3">
+                          <p className="text-[10px] font-bold text-primary uppercase tracking-widest ml-1">Cadastrar Novo Fornecedor</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="Nome do fornecedor (ex: Distribuidora Barber, etc.)"
+                              value={newSupplierName}
+                              onChange={(e) => setNewSupplierName(e.target.value)}
+                              className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent font-medium text-primary shadow-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleCreateSupplierOnTheFly}
+                              disabled={isCreatingSupplierOnTheFly || !newSupplierName.trim()}
+                              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 shrink-0 active:scale-95"
+                            >
+                              {isCreatingSupplierOnTheFly ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <CheckCircle2 size={14} />
+                              )}
+                              Confirmar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowInlineSupplierInput(false);
+                                setNewSupplierName('');
+                              }}
+                              className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="md:col-span-2 space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Descrição</label>
+                        <textarea name="description" defaultValue={editingProduct?.description} rows={2} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium resize-none" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
+                        <input name="costPrice" type="number" step="0.01" defaultValue={editingProduct?.costPrice} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
+                        <input name="salePrice" type="number" step="0.01" defaultValue={editingProduct?.salePrice} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Estoque Inicial</label>
+                        <input name="currentStock" type="number" defaultValue={editingProduct?.currentStock || 0} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Estoque Mínimo</label>
+                        <input name="minStock" type="number" defaultValue={editingProduct?.minStock || 5} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Produto</label>
+                        <select name="type" defaultValue={editingProduct?.type || 'venda'} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
+                          <option value="venda">Para Venda</option>
+                          <option value="uso_interno">Uso Interno</option>
+                          <option value="ambos">Ambos</option>
                         </select>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowInlineCategoryInput(prev => !prev)}
-                        className="px-4 py-3 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-primary rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-1 shrink-0"
-                        title="Nova Categoria"
-                      >
-                        <Plus size={16} />
-                        Nova
-                      </button>
-                    </div>
-                  </div>
 
-                  {showInlineCategoryInput && (
-                    <div className="md:col-span-2 p-5 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-3">
-                      <p className="text-[10px] font-bold text-primary uppercase tracking-widest ml-1">Cadastrar Nova Categoria</p>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Nome da categoria (ex: Cabelo, Barba, Pomadas)"
-                          value={newCategoryName}
-                          onChange={(e) => setNewCategoryName(e.target.value)}
-                          className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent font-medium text-primary shadow-sm"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleCreateCategoryOnTheFly}
-                          disabled={isCreatingCategoryOnTheFly || !newCategoryName.trim()}
-                          className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 shrink-0 active:scale-95"
-                        >
-                          {isCreatingCategoryOnTheFly ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : (
-                            <CheckCircle2 size={14} />
-                          )}
-                          Confirmar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowInlineCategoryInput(false);
-                            setNewCategoryName('');
-                          }}
-                          className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all active:scale-95"
-                        >
-                          Cancelar
-                        </button>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Status</label>
+                        <select name="status" defaultValue={editingProduct?.status || 'active'} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
+                          <option value="active">Ativo</option>
+                          <option value="inactive">Inativo</option>
+                        </select>
                       </div>
                     </div>
                   )}
-                  <div className="md:col-span-2 space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Descrição</label>
-                    <textarea name="description" defaultValue={editingProduct?.description} rows={2} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium resize-none" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
-                    <input name="costPrice" type="number" step="0.01" defaultValue={editingProduct?.costPrice} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
-                    <input name="salePrice" type="number" step="0.01" defaultValue={editingProduct?.salePrice} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Estoque Inicial</label>
-                    <input name="currentStock" type="number" defaultValue={editingProduct?.currentStock || 0} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Estoque Mínimo</label>
-                    <input name="minStock" type="number" defaultValue={editingProduct?.minStock || 5} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Produto</label>
-                    <select name="type" defaultValue={editingProduct?.type || 'venda'} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
-                      <option value="venda">Para Venda</option>
-                      <option value="uso_interno">Uso Interno</option>
-                      <option value="ambos">Ambos</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Status</label>
-                    <select name="status" defaultValue={editingProduct?.status || 'active'} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
-                      <option value="active">Ativo</option>
-                      <option value="inactive">Inativo</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Fornecedor</label>
-                    <select name="fornecedorId" defaultValue={editingProduct?.fornecedor_id || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
-                      <option value="">Sem Fornecedor</option>
-                      {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
+
+                  {/* TAB 2: PRODUCT COMMISSION RULES */}
+                  {activeModalTab === 'comissao' && (
+                    <div className="space-y-6">
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-4">
+                        <h4 className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-200 pb-2.5">
+                          <span>⚙️ Regra Geral de Comissão por Produto</span>
+                        </h4>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Apuração</label>
+                            <select 
+                              value={tipoComissao}
+                              onChange={(e) => setTipoComissao(e.target.value as any)}
+                              className="w-full px-4 py-3 bg-white border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                            >
+                              <option value="padrao">Comissão Geral do Barbeiro (%)</option>
+                              <option value="percentual">Percentual Fixo (%)</option>
+                              <option value="fixo">Dinheiro / Valor Fixo (R$)</option>
+                            </select>
+                          </div>
+
+                          {tipoComissao !== 'padrao' && (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">
+                                {tipoComissao === 'percentual' ? 'Taxa Percentual (%)' : 'Taxa Dinheiro (R$)'}
+                              </label>
+                              <div className="relative">
+                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                                  {tipoComissao === 'percentual' ? '%' : 'R$'}
+                                </span>
+                                <input 
+                                  type="number"
+                                  required
+                                  min="0"
+                                  step={tipoComissao === 'percentual' ? '1' : '0.01'}
+                                  value={valorComissao}
+                                  onChange={(e) => setValorComissao(Number(e.target.value))}
+                                  className="w-full px-10 py-3 bg-white border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium"
+                                  placeholder={tipoComissao === 'percentual' ? 'Ex: 10' : 'Ex: 5.00'}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <p className="text-[11px] text-slate-500 italic leading-relaxed bg-white p-3.5 rounded-xl border border-slate-100">
+                          💡 {tipoComissao === 'padrao' && 'Será considerada a comissão padrão cadastrada no perfil de cada respectivo faturador (ex: faturamento de comissões na equipe).'}
+                          {tipoComissao === 'percentual' && `Neste produto o profissional faturará exatamente ${valorComissao}% de comissão sobre a venda.`}
+                          {tipoComissao === 'fixo' && `Neste produto o profissional faturará exatamente R$ ${valorComissao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de comissão fixa para cada unidade vendida.`}
+                        </p>
+                      </div>
+
+                      {/* Exceções por profissionais */}
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-4">
+                        <div>
+                          <h4 className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-200 pb-2">
+                            <span>🤝 Exceções Individuais por Profissional</span>
+                          </h4>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-1.5">
+                            Personalize comissões especiais por produto para barbeiros específicos.
+                          </p>
+                        </div>
+
+                        <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+                          {barbers.length === 0 ? (
+                            <p className="text-xs text-slate-400 text-center italic py-4">Nenhum profissional listado.</p>
+                          ) : (
+                            barbers.map((prof, index) => {
+                              const override = comissoesPorProfissional[prof.uid] || { tipo: 'padrao', valor: 0 };
+                              const getInitials = (n: string) => n.split(' ').map(p => p.charAt(0)).slice(0, 2).join('').toUpperCase();
+
+                              return (
+                                <div 
+                                  key={`prof-override-${prof.uid || index}`} 
+                                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-slate-200 transition-all"
+                                >
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="w-8 h-8 rounded-lg bg-slate-100 text-primary flex items-center justify-center font-bold text-xs uppercase border border-slate-200/50">
+                                      {getInitials(prof.nome || prof.name || '')}
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-bold text-primary leading-tight">{prof.nome || prof.name}</p>
+                                      <p className="text-[9px] font-bold uppercase text-slate-400 mt-0.5 leading-none">
+                                        Cadastro: {prof.commission_percentage || prof.percentual_comissao || 0}%
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                                    <select 
+                                      value={override.tipo}
+                                      onChange={(e) => {
+                                        const nt = e.target.value as any;
+                                        setComissoesPorProfissional({
+                                          ...comissoesPorProfissional,
+                                          [prof.uid]: { tipo: nt, valor: nt === 'padrao' ? 0 : override.valor }
+                                        });
+                                      }}
+                                      className="bg-slate-50 border border-slate-100 rounded-lg py-1 px-2.5 text-[10px] font-bold text-slate-600 outline-none cursor-pointer"
+                                    >
+                                      <option value="padrao">Regra Geral</option>
+                                      <option value="percentual">Fixo (%)</option>
+                                      <option value="fixo">Fixo (R$)</option>
+                                    </select>
+
+                                    {override.tipo !== 'padrao' && (
+                                      <div className="relative w-20 shrink-0">
+                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">
+                                          {override.tipo === 'percentual' ? '%' : 'R$'}
+                                        </span>
+                                        <input 
+                                          type="number"
+                                          required
+                                          min="0"
+                                          step={override.tipo === 'percentual' ? '1' : '0.01'}
+                                          value={override.valor}
+                                          onChange={(e) => {
+                                            setComissoesPorProfissional({
+                                              ...comissoesPorProfissional,
+                                              [prof.uid]: { tipo: override.tipo, valor: Number(e.target.value) }
+                                            });
+                                          }}
+                                          className="w-full bg-slate-50 border border-slate-100 rounded-lg py-1 pl-6 pr-1.5 text-[10px] font-bold text-primary outline-none"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
-                <div className="flex gap-4 pt-4">
-                  <button type="button" onClick={() => setShowProductModal(false)} className="flex-1 py-4 border border-border text-muted rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
-                  <button type="submit" disabled={isSavingProduct} className="flex-1 py-4 bg-primary text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95">
-                    {isSavingProduct && <Loader2 size={18} className="animate-spin" />}
+
+                {/* Modal Footer */}
+                <div className="p-6 border-t border-border flex gap-4 shrink-0 bg-slate-50/50">
+                  <button type="button" onClick={() => setShowProductModal(false)} className="flex-1 py-3 border border-border text-muted rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-slate-50 transition-all">Cancelar</button>
+                  <button type="submit" disabled={isSavingProduct} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95">
+                    {isSavingProduct && <Loader2 size={16} className="animate-spin" />}
                     Salvar Produto
                   </button>
                 </div>

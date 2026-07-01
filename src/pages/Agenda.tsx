@@ -4,6 +4,7 @@ import {
   Plus, 
   ChevronLeft, 
   ChevronRight, 
+  ChevronDown,
   Clock, 
   Filter, 
   Search, 
@@ -96,7 +97,13 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
   
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedBarberFilter, setSelectedBarberFilter] = useState<string>('all');
   const [currentCash, setCurrentCash] = useState<any>(null);
+
+  const filteredBarbersForGrid = React.useMemo(() => {
+    if (selectedBarberFilter === 'all') return barbers;
+    return barbers.filter(b => b.uid === selectedBarberFilter);
+  }, [barbers, selectedBarberFilter]);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -371,6 +378,30 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                     : format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })
                   }
                 </h2>
+
+                {viewType !== 'month' && barbers.length > 0 && (
+                  <>
+                    <div className="h-8 w-px bg-slate-200 hidden xl:block" />
+                    <div className="relative w-52">
+                      <Users className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                      <select
+                        value={selectedBarberFilter}
+                        onChange={(e) => setSelectedBarberFilter(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 pl-9 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner appearance-none font-bold cursor-pointer"
+                      >
+                        <option value="all">Todos Profissionais</option>
+                        {barbers.map(barber => (
+                          <option key={barber.uid} value={barber.uid}>
+                            {barber.nome}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                        <ChevronDown size={12} />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-4 w-full xl:w-auto">
@@ -419,7 +450,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                 <AgendaGeneral 
                   selectedDate={selectedDate}
                   setSelectedDate={setSelectedDate}
-                  barbers={barbers}
+                  barbers={filteredBarbersForGrid}
                   appointments={appointments}
                   clients={clients}
                   blocks={blocks}
@@ -432,7 +463,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                 <AgendaProfessional 
                   selectedDate={selectedDate}
                   setSelectedDate={setSelectedDate}
-                  barbers={barbers}
+                  barbers={filteredBarbersForGrid}
                   appointments={appointments}
                   clients={clients}
                   blocks={blocks}

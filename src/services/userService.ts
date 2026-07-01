@@ -34,12 +34,12 @@ export const userService = {
     return querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
   },
 
-  async getAllBarbers() {
-    return this.getUsersByRole('barbeiro', false); // Get all to show status in list
+  async getAllBarbers(onlyActive = true) {
+    return this.getUsersByRole('barbeiro', onlyActive);
   },
 
-  async getAllClients() {
-    return this.getUsersByRole('cliente', false); // Get all to show status in list
+  async getAllClients(onlyActive = true) {
+    return this.getUsersByRole('cliente', onlyActive);
   },
 
   async searchUsers(role: UserRole, searchTerm: string) {

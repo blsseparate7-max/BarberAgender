@@ -89,7 +89,7 @@ export function Barbeiros() {
   const [commissions, setCommissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('all');
+  const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('active');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBarber, setEditingBarber] = useState<UserProfile | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);

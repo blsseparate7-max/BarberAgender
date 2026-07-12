@@ -10,6 +10,10 @@ import { cashService } from '../services/cashService';
 import { paymentMethodService } from '../services/paymentMethodService';
 import { AccountPayable, PaymentMethodConfig, DailyCash } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { collection, query, where, getDocs, onSnapshot, orderBy } from 'firebase/firestore';
+import { db } from '../firebase';
+import { commissionService } from '../services/commissionService';
+import { financialService } from '../services/financialService';
 
 interface AccountsPayableManagerProps {
   userId: string;
@@ -31,6 +35,9 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
   const [activeCash, setActiveCash] = useState<DailyCash | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
 
+  // List of active barbers for professional advances (Vales)
+  const [barbers, setBarbers] = useState<{ id: string; nome: string }[]>([]);
+
   // Modal States
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
@@ -46,6 +53,11 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
     supplier: '',
     recurrence: 'none' as AccountPayable['recurrence']
   });
+
+  // States for Vale/Adiantamento Integration
+  const [isValeType, setIsValeType] = useState(false);
+  const [selectedBarberId, setSelectedBarberId] = useState('');
+  const [valeSettleImmediately, setValeSettleImmediately] = useState(true);
 
   // Settlement States
   const [settleMethod, setSettleMethod] = useState('dinheiro');
@@ -68,20 +80,54 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
   ];
 
   useEffect(() => {
-    loadPayables();
+    setLoading(true);
+    let q = query(collection(db, 'accounts_payable'), orderBy('dueDate', 'asc'));
+    
+    if (dateRange.start && dateRange.end) {
+      q = query(q, where('dueDate', '>=', dateRange.start), where('dueDate', '<=', dateRange.end));
+    }
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          ...d,
+          dueDate: d.dueDate || '',
+          status: d.status || 'pending',
+          amount: d.amount || 0,
+          recurrence: d.recurrence || 'none',
+          category: d.category || 'outros',
+          supplier: d.supplier || '',
+          description: d.description || ''
+        } as AccountPayable;
+      });
+      setPayables(data);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error loading payables via real-time:", error);
+      setLoading(false);
+    });
+
     loadContextData();
+    fetchBarbers();
+
+    return () => unsubscribe();
   }, [dateRange]);
 
-  const loadPayables = async () => {
+  const fetchBarbers = async () => {
     try {
-      setLoading(true);
-      const data = await billService.getPayables(dateRange.start, dateRange.end);
-      setPayables(data);
-    } catch (error) {
-      console.error("Error loading payables:", error);
-    } finally {
-      setLoading(false);
+      const q = query(collection(db, 'usuarios'), where('tipo', '==', 'barbeiro'));
+      const snap = await getDocs(q);
+      const list = snap.docs.map(doc => ({ id: doc.id, nome: doc.data().nome || 'Barbeiro' }));
+      setBarbers(list);
+    } catch (err) {
+      console.error("Error fetching barbers for outlays:", err);
     }
+  };
+
+  const loadPayables = async () => {
+    // Keep as legacy fallback, onSnapshot handles state updates now.
   };
 
   const loadContextData = async () => {
@@ -97,6 +143,9 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
   const handleOpenCreate = () => {
     setEditingPayable(null);
+    setIsValeType(false);
+    setSelectedBarberId('');
+    setValeSettleImmediately(true);
     setFormData({
       description: '',
       category: 'Aluguel',
@@ -110,6 +159,7 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
   const handleOpenEdit = (payable: AccountPayable) => {
     setEditingPayable(payable);
+    setIsValeType(false);
     setFormData({
       description: payable.description,
       category: payable.category,
@@ -128,21 +178,95 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
     try {
       setSubmittingForm(true);
       const parsedAmount = parseFloat(formData.amount);
-      
-      const payload = {
-        description: formData.description,
-        category: formData.category,
-        amount: parsedAmount,
-        dueDate: formData.dueDate,
-        supplier: formData.supplier,
-        recurrence: formData.recurrence,
-        status: 'pending' as const
-      };
+      const todayStr = new Date().toISOString().split('T')[0];
 
-      if (editingPayable) {
-        await billService.updatePayable(editingPayable.id, payload);
+      if (isValeType) {
+        if (!selectedBarberId) {
+          alert("Por favor, selecione o profissional.");
+          setSubmittingForm(false);
+          return;
+        }
+
+        const selectedBarber = barbers.find(b => b.id === selectedBarberId);
+        if (!selectedBarber) {
+          alert("Profissional selecionado inválido.");
+          setSubmittingForm(false);
+          return;
+        }
+
+        // 1. Register Professional Advance (Vale) in general ledger
+        await commissionService.registerAdvance({
+          profissional_id: selectedBarberId,
+          profissional_name: selectedBarber.nome,
+          amount: parsedAmount,
+          date: formData.dueDate,
+          description: formData.description || 'Vale / Adiantamento de comissão',
+          status: 'pendente',
+          responsible_id: userId,
+          responsible_name: userName
+        });
+
+        // 2. Register as a paid or pending accounts payable (outlay)
+        if (valeSettleImmediately) {
+          // Create immediately paid financial transaction
+          const transactionId = await financialService.createTransaction({
+            type: 'expense',
+            category: 'Comissões',
+            amount: parsedAmount,
+            net_amount: parsedAmount,
+            fee_amount: 0,
+            paymentMethod: 'pix', // Sair do financeiro (geralmente PIX / Conta Geral)
+            date: formData.dueDate,
+            settlement_date: formData.dueDate,
+            status: 'pago',
+            is_settled: true,
+            responsavel_id: userId,
+            responsavel_name: userName,
+            description: `Vale p/ ${selectedBarber.nome} (${formData.description || 'Adiantamento'})`
+          });
+
+          // Create Paid AccountPayable
+          await billService.createPayable({
+            description: `Vale: ${selectedBarber.nome} - ${formData.description || 'Adiantamento'}`,
+            category: 'Comissões',
+            amount: parsedAmount,
+            dueDate: formData.dueDate,
+            supplier: selectedBarber.nome,
+            recurrence: 'none',
+            status: 'paid',
+            paidAt: new Date().toISOString() as any,
+            paymentMethod: 'pix',
+            transactionId
+          });
+        } else {
+          // Create Pending AccountPayable
+          await billService.createPayable({
+            description: `Vale Pendente: ${selectedBarber.nome} - ${formData.description || 'Adiantamento'}`,
+            category: 'Comissões',
+            amount: parsedAmount,
+            dueDate: formData.dueDate,
+            supplier: selectedBarber.nome,
+            recurrence: 'none',
+            status: 'pending'
+          });
+        }
       } else {
-        await billService.createPayable(payload);
+        // Standard Common Expense Flow
+        const payload = {
+          description: formData.description,
+          category: formData.category,
+          amount: parsedAmount,
+          dueDate: formData.dueDate,
+          supplier: formData.supplier,
+          recurrence: formData.recurrence,
+          status: 'pending' as const
+        };
+
+        if (editingPayable) {
+          await billService.updatePayable(editingPayable.id, payload);
+        } else {
+          await billService.createPayable(payload);
+        }
       }
       
       setIsFormOpen(false);
@@ -550,13 +674,81 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
               </div>
 
               <form onSubmit={handleSave} className="p-8 space-y-6">
+                {/* Outflow Type Toggle (Only on creation) */}
+                {!editingPayable && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo de Lançamento</label>
+                    <div className="grid grid-cols-2 gap-2 bg-slate-100/60 p-1.5 rounded-2xl border border-slate-200/50">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsValeType(false);
+                          setFormData(prev => ({ ...prev, category: 'Aluguel' }));
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          !isValeType
+                            ? 'bg-white text-primary shadow-sm border border-slate-200/40'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Tag size={13} />
+                        <span>Despesa Comum</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsValeType(true);
+                          setFormData(prev => ({ 
+                            ...prev, 
+                            category: 'Comissões', 
+                            description: 'Vale antecipado de comissão' 
+                          }));
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          isValeType
+                            ? 'bg-white text-primary shadow-sm border border-slate-200/40'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <User size={13} />
+                        <span>Lançar Vale</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Barber Selection (Only for Vale) */}
+                {isValeType && (
+                  <div className="space-y-1.5 animate-fadeIn">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Profissional Beneficiado *</label>
+                    <div className="relative">
+                      <select
+                        required
+                        value={selectedBarberId}
+                        onChange={e => setSelectedBarberId(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
+                      >
+                        <option value="">Selecione o profissional...</option>
+                        {barbers.map(b => (
+                          <option key={b.id} value={b.id}>{b.nome}</option>
+                        ))}
+                      </select>
+                      <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400">
+                        <User size={14} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Description */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Descrição da Conta *</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    {isValeType ? 'Observações / Motivo do Vale *' : 'Descrição da Conta *'}
+                  </label>
                   <input 
                     type="text"
                     required
-                    placeholder="Ex: Aluguel da Barbearia, Conta de Energia, etc."
+                    placeholder={isValeType ? 'Ex: Adiantamento semanal, Emergência, etc.' : 'Ex: Aluguel da Barbearia, Conta de Energia, etc.'}
                     value={formData.description}
                     onChange={e => setFormData({ ...formData, description: e.target.value })}
                     className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
@@ -580,7 +772,9 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
                   {/* Due Date */}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vencimento *</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      {isValeType ? 'Data do Vale *' : 'Vencimento *'}
+                    </label>
                     <input 
                       type="date"
                       required
@@ -591,47 +785,74 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Category */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Categoria</label>
-                    <select
-                      value={formData.category}
-                      onChange={e => setFormData({ ...formData, category: e.target.value })}
-                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
-                    >
-                      {categories.map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                  </div>
+                {/* Standard Expense Only Fields */}
+                {!isValeType ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Category */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Categoria</label>
+                        <select
+                          value={formData.category}
+                          onChange={e => setFormData({ ...formData, category: e.target.value })}
+                          className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
+                        >
+                          {categories.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
 
-                  {/* Recurrence */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recorrência</label>
-                    <select
-                      value={formData.recurrence}
-                      onChange={e => setFormData({ ...formData, recurrence: e.target.value as any })}
-                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
-                    >
-                      {recurrences.map(rec => (
-                        <option key={rec.value} value={rec.value}>{rec.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                      {/* Recurrence */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recorrência</label>
+                        <select
+                          value={formData.recurrence}
+                          onChange={e => setFormData({ ...formData, recurrence: e.target.value as any })}
+                          className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
+                        >
+                          {recurrences.map(rec => (
+                            <option key={rec.value} value={rec.value}>{rec.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
 
-                {/* Fornecedor */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fornecedor / Favorecido</label>
-                  <input 
-                    type="text"
-                    placeholder="Ex: Companhia de Energia S/A, Distribuidora XYZ, etc."
-                    value={formData.supplier}
-                    onChange={e => setFormData({ ...formData, supplier: e.target.value })}
-                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
-                  />
-                </div>
+                    {/* Fornecedor */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fornecedor / Favorecido</label>
+                      <input 
+                        type="text"
+                        placeholder="Ex: Companhia de Energia S/A, Distribuidora XYZ, etc."
+                        value={formData.supplier}
+                        onChange={e => setFormData({ ...formData, supplier: e.target.value })}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  /* Vale Only Fields: Instant Financial Settlement */
+                  <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-2 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700">Liquidar Imediatamente?</span>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-100 text-[9px] font-black text-blue-700 uppercase tracking-wider">
+                        Conta Geral do Financeiro
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-450 font-semibold leading-relaxed">
+                      Se ativado, esta saída será registrada no financeiro geral como <strong className="text-slate-600">Paga/Liquidada via PIX</strong> imediatamente, sem transitar ou impactar o caixa físico aberto do dia.
+                    </p>
+                    <label className="flex items-center gap-2.5 pt-1.5 cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={valeSettleImmediately}
+                        onChange={e => setValeSettleImmediately(e.target.checked)}
+                        className="w-4.5 h-4.5 text-primary border-slate-300 rounded focus:ring-primary cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-600 select-none">Efetuar baixa automática como Pago</span>
+                    </label>
+                  </div>
+                )}
 
                 {/* Submit button */}
                 <button

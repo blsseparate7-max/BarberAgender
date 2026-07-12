@@ -18,6 +18,8 @@ import { DailyCash, UserProfile, CashMovement } from '../../types';
 import { cashService } from '../../services/cashService';
 import { userService } from '../../services/userService';
 import { commissionService } from '../../services/commissionService';
+import { billService } from '../../services/billService';
+import { financialService } from '../../services/financialService';
 import { useAuth } from '../../contexts/AuthContext';
 import { format } from 'date-fns';
 import { parseDate } from '../../lib/utils';
@@ -141,7 +143,38 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
         responsible_name: profile?.nome || user.displayName || 'Sistema'
       });
 
-      // 2. Register Cash Movement if requested
+      // 2. Register Financial Transaction (Always! Because it's an outgoing expense)
+      const transactionId = await financialService.createTransaction({
+        type: 'expense',
+        category: 'Comissões',
+        amount: val,
+        net_amount: val,
+        fee_amount: 0,
+        paymentMethod: deductFromCash ? 'dinheiro' : 'pix',
+        date: todayStr,
+        settlement_date: todayStr,
+        status: 'pago',
+        is_settled: true,
+        responsavel_id: user.uid,
+        responsavel_name: profile?.nome || user.displayName || 'Sistema',
+        description: `Vale p/ ${selectedBarber.nome || 'Profissional'} (${valeDescription || 'Adiantamento'})`
+      });
+
+      // 3. Register as a Paid Payable Bill to keep the financial ledger & bill reports 100% complete
+      await billService.createPayable({
+        description: `Vale: ${selectedBarber.nome || 'Profissional'} - ${valeDescription || 'Adiantamento'}`,
+        category: 'Comissões',
+        amount: val,
+        dueDate: todayStr,
+        supplier: selectedBarber.nome || 'Profissional',
+        recurrence: 'none',
+        status: 'paid',
+        paidAt: new Date().toISOString() as any,
+        paymentMethod: deductFromCash ? 'dinheiro' : 'pix',
+        transactionId
+      });
+
+      // 4. Register Cash Movement if requested
       if (deductFromCash) {
         await cashService.addMovement({
           caixa_id: currentCash.id,

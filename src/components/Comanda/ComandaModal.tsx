@@ -27,13 +27,16 @@ import {
   Check,
   EyeOff,
   Sparkles,
-  Award
+  Award,
+  BellRing
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog } from '../../types';
+import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt } from '../../types';
 import { comandaService } from '../../services/comandaService';
+import { debtService } from '../../services/debtService';
+import { marketingService } from '../../services/marketingService';
 import { subscriptionService } from '../../services/subscriptionService';
 import { appointmentService } from '../../services/appointmentService';
 import { serviceService } from '../../services/serviceService';
@@ -96,6 +99,36 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     profissional_name: initialData?.profissional_name || '',
     observations: initialData?.observations || '',
   });
+
+  // States for active client debts
+  const [clientDebts, setClientDebts] = useState<ClientDebt[]>([]);
+  const [loadingDebts, setLoadingDebts] = useState(false);
+  const [isPayingDebt, setIsPayingDebt] = useState(false);
+  const [payingDebtAmount, setPayingDebtAmount] = useState('');
+  const [payingDebtMethod, setPayingDebtMethod] = useState('');
+  const [selectedDebtToPay, setSelectedDebtToPay] = useState<ClientDebt | null>(null);
+
+  // States for finalizing comanda with remaining balance (fiado)
+  const [showFiadoConfirmationModal, setShowFiadoConfirmationModal] = useState(false);
+  const [fiadoDueDate, setFiadoDueDate] = useState('');
+  const [scheduleFiadoReminder, setScheduleFiadoReminder] = useState(true);
+
+  const loadClientDebts = async (clientId: string) => {
+    if (!clientId || clientId === 'avulso') {
+      setClientDebts([]);
+      return;
+    }
+    setLoadingDebts(true);
+    try {
+      const debts = await debtService.getClientDebts(clientId);
+      const pending = debts.filter(d => d.status !== 'pago');
+      setClientDebts(pending);
+    } catch (err) {
+      console.error("Error loading client debts:", err);
+    } finally {
+      setLoadingDebts(false);
+    }
+  };
 
   const [activeComandaId, setActiveComandaId] = useState<string | null>(comanda_id || null);
   const hasOpenedComanda = React.useRef(false);
@@ -166,9 +199,13 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       loyaltyService.getClientPoints(comanda.cliente_id).then(loyalty => {
         setClientLoyalty({ points: loyalty.points, cashback: loyalty.cashback });
       });
+
+      // Load client debts
+      loadClientDebts(comanda.cliente_id);
     } else {
       setSelectedClientProfile(null);
       setClientLoyalty(null);
+      setClientDebts([]);
     }
   }, [comanda?.cliente_id, clients]);
 
@@ -662,6 +699,129 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
+  const handleCloseComandaWithFiado = async () => {
+    if (!comanda || !user || loading) return;
+    setLoading(true);
+    try {
+      // 1. Process package/subscription deductions before closing
+      for (const item of comanda.items) {
+        if (item.deductType === 'pacote' && item.packageSaleId) {
+          const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
+          const pkgSnap = await getDoc(pkgRef);
+          if (pkgSnap.exists()) {
+            const pkgData = pkgSnap.data();
+            const currentUsages = pkgData.usages || [];
+            const newIndex = currentUsages.length + 1;
+            const newUsage = {
+              usedAt: new Date().toISOString(),
+              notes: `Consumo automático na Comanda #${comanda.number}`,
+              index: newIndex,
+              comanda_id: comanda.id
+            };
+            await updateDoc(pkgRef, {
+              remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
+              usages: [...currentUsages, newUsage]
+            });
+            console.log(`Deducted 1 cut from Package Sale ID ${item.packageSaleId}`);
+          }
+        } else if (item.deductType === 'assinatura' && item.subscriptionId) {
+          const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
+          const typeLabel: 'haircut' | 'beard' = isCut ? 'haircut' : 'beard';
+          
+          await subscriptionService.registerUsage(item.subscriptionId, typeLabel, comanda.agendamento_id);
+          console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
+        }
+      }
+
+      // 2. Actually close the comanda with the custom due date
+      await comandaService.closeComanda(
+        comanda.id, 
+        user.uid, 
+        profile?.nome || user.email || 'Usuário', 
+        'fechada', 
+        fiadoDueDate
+      );
+
+      // 3. Schedule automated billing reminder if requested
+      if (scheduleFiadoReminder && fiadoDueDate) {
+        const clientObj = clients.find(c => c.uid === comanda.cliente_id);
+        const phone = clientObj?.telefone || clientObj?.phone || '';
+        
+        await marketingService.sendSimulatedMessage({
+          cliente_id: comanda.cliente_id,
+          cliente_name: comanda.cliente_name,
+          clientPhone: phone,
+          message: `Olá, ${comanda.cliente_name}! Passando para lembrar que o pagamento do seu saldo devedor de R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} referente à comanda #${comanda.number} está agendado para o dia ${format(new Date(fiadoDueDate + 'T12:00:00'), 'dd/MM/yyyy')}. Qualquer dúvida, estamos à disposição!`,
+          campanha_id: '',
+          automacao_id: 'cobranca_fiado'
+        });
+      }
+
+      toast.success("Comanda fechada com sucesso!");
+      setShowFiadoConfirmationModal(false);
+      onSave();
+    } catch (error) {
+      console.error("Erro ao fechar comanda com fiado:", error);
+      toast.error("Erro ao fechar comanda: " + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmPayDebt = async () => {
+    if (!comanda?.cliente_id || !user) return;
+    const amt = parseFloat(payingDebtAmount);
+    if (isNaN(amt) || amt <= 0) {
+      toast.error("Por favor, insira um valor válido.");
+      return;
+    }
+
+    let debtToPay = selectedDebtToPay;
+    if (!debtToPay) {
+      const sortedPending = [...clientDebts].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      if (sortedPending.length === 0) {
+        toast.error("Nenhuma dívida pendente encontrada.");
+        return;
+      }
+      debtToPay = sortedPending[0];
+    }
+
+    if (amt > debtToPay.remainingAmount) {
+      toast.error(`O valor inserido (R$ ${amt}) é maior que o saldo desta dívida (R$ ${debtToPay.remainingAmount}).`);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const method = paymentMethods.find(m => m.id === payingDebtMethod);
+      if (!method) throw new Error("Método de pagamento inválido.");
+
+      await comandaService.payDebt(
+        debtToPay.id,
+        amt,
+        method.type as any,
+        method.id,
+        user.uid,
+        profile?.nome || user.email || 'Usuário'
+      );
+
+      toast.success("Pagamento de fiado registrado com sucesso!");
+      setIsPayingDebt(false);
+      setSelectedDebtToPay(null);
+      setPayingDebtAmount('');
+      
+      // Reload active client debts and refresh the global clients list (caixa sincronizado)
+      await loadClientDebts(comanda.cliente_id);
+      const updatedClients = await userService.getAllClients();
+      setClients(updatedClients);
+    } catch (err: any) {
+      console.error("Error paying debt:", err);
+      toast.error(err.message || "Erro ao registrar pagamento.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCancelComanda = async () => {
     if (!comanda || !user || loading) return;
     setLoading(true);
@@ -964,6 +1124,40 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     </AnimatePresence>
                   </div>
                 </div>
+
+                {comanda?.cliente_id && comanda?.cliente_id !== 'avulso' && (() => {
+                  const clientObj = clients.find(c => c.uid === comanda.cliente_id);
+                  const totalEmAberto = clientObj?.total_em_aberto || 0;
+                  if (totalEmAberto <= 0) return null;
+                  return (
+                    <div id="alert-debtor" className="p-5 bg-rose-50 border border-rose-100 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center border border-rose-200/50 shrink-0">
+                          <AlertCircle size={24} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-rose-900 uppercase tracking-widest">Saldo Devedor Ativo</h4>
+                          <p className="text-xs font-bold text-rose-700 mt-0.5">
+                            Este cliente possui <span className="underline font-extrabold">R$ {totalEmAberto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> em aberto (FIADO).
+                          </p>
+                        </div>
+                      </div>
+                      <button 
+                        id="btn-pay-fiado-trigger"
+                        type="button"
+                        onClick={() => {
+                          setSelectedDebtToPay(null);
+                          setPayingDebtAmount(totalEmAberto.toString());
+                          setPayingDebtMethod(paymentMethods[0]?.id || 'dinheiro');
+                          setIsPayingDebt(true);
+                        }}
+                        className="px-5 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap self-end sm:sm:self-auto"
+                      >
+                        Pagar Fiado
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {isPDVMode && (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-in slide-in-from-top duration-500">
@@ -1456,7 +1650,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
                   <div className="grid grid-cols-2 gap-3">
                     <button 
-                      onClick={() => setConfirmClose(true)}
+                      onClick={() => {
+                        if (comanda.pendingAmount > 0) {
+                          const nextWeek = new Date();
+                          nextWeek.setDate(nextWeek.getDate() + 7);
+                          setFiadoDueDate(nextWeek.toISOString().split('T')[0]);
+                          setShowFiadoConfirmationModal(true);
+                        } else {
+                          setConfirmClose(true);
+                        }
+                      }}
                       disabled={loading}
                       className="py-3 bg-white border border-slate-200 text-primary rounded-xl font-bold text-xs hover:bg-slate-50 transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
                     >
@@ -1890,6 +2093,248 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         description={`Deseja lançar R$ ${confirmFiado?.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} como FIADO na conta do cliente?`}
         confirmLabel="Confirmar"
       />
+
+      <AnimatePresence>
+        {showFiadoConfirmationModal && (
+          <div id="modal-fiado-confirm" className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+            <motion.div 
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col"
+            >
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-rose-50/30">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-600/20">
+                    <AlertCircle size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-rose-900">Finalizar com Fiado</h3>
+                    <p className="text-[10px] text-rose-600 font-bold uppercase tracking-widest leading-none mt-1">
+                      Saldo pendente: R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  id="close-fiado-modal-btn"
+                  onClick={() => setShowFiadoConfirmationModal(false)} 
+                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6">
+                <p className="text-xs text-slate-500 leading-relaxed font-medium">
+                  A comanda possui um saldo pendente de <span className="text-rose-600 font-bold">R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>. Este valor será lançado como FIADO para o cliente <span className="font-bold text-slate-800">{comanda.cliente_name}</span>. O profissional receberá a comissão normalmente.
+                </p>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Data Prometida de Pagamento</label>
+                  <input 
+                    id="fiado-due-date-input"
+                    type="date"
+                    value={fiadoDueDate}
+                    onChange={(e) => setFiadoDueDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/10 focus:border-rose-500 transition-all text-primary font-bold shadow-inner"
+                  />
+                </div>
+
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100/80 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                      <BellRing size={18} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Lembrete Automático</h4>
+                      <p className="text-[10px] text-slate-500 font-medium">Notificar cliente no dia do vencimento</p>
+                    </div>
+                  </div>
+                  <button
+                    id="toggle-fiado-reminder-btn"
+                    type="button"
+                    onClick={() => setScheduleFiadoReminder(!scheduleFiadoReminder)}
+                    className={`w-12 h-7 rounded-full transition-colors relative focus:outline-none ${
+                      scheduleFiadoReminder ? 'bg-indigo-600' : 'bg-slate-200'
+                    }`}
+                  >
+                    <span 
+                      className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${
+                        scheduleFiadoReminder ? 'translate-x-5' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button 
+                    id="cancel-fiado-modal-btn"
+                    onClick={() => setShowFiadoConfirmationModal(false)}
+                    className="flex-1 py-4 bg-slate-100 text-primary rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all active:scale-95"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    id="confirm-fiado-modal-btn"
+                    onClick={handleCloseComandaWithFiado}
+                    disabled={loading || !fiadoDueDate}
+                    className="flex-[2] py-4 bg-rose-600 text-white rounded-2xl font-bold text-sm hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20 flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 cursor-pointer"
+                  >
+                    {loading ? <Loader2 className="animate-spin" size={20} /> : (
+                      <>
+                        <CheckCircle2 size={20} />
+                        <span>Confirmar Fiado</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isPayingDebt && (
+          <div id="modal-pay-debt" className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+            <motion.div 
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col"
+            >
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-emerald-50/30">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-emerald-600/20">
+                    <DollarSign size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-emerald-900">Registrar Pagamento de Fiado</h3>
+                    <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest leading-none mt-1">
+                      Cliente: {comanda.cliente_name}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  id="close-pay-debt-modal-btn"
+                  onClick={() => setIsPayingDebt(false)} 
+                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6">
+                {/* Debts dropdown / picker if multiple */}
+                {clientDebts.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Selecione o Débito</label>
+                    <select
+                      id="select-debt-item"
+                      value={selectedDebtToPay?.id || ''}
+                      onChange={(e) => {
+                        const dbt = clientDebts.find(d => d.id === e.target.value);
+                        setSelectedDebtToPay(dbt || null);
+                        if (dbt) setPayingDebtAmount(dbt.remainingAmount.toString());
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all text-primary font-bold shadow-inner"
+                    >
+                      <option value="">-- Mais antigo primeiro (Automático) --</option>
+                      {clientDebts.map(d => (
+                        <option key={d.id} value={d.id}>
+                          Comanda #{d.comanda_id?.slice(-4) || 's/n'} - R$ {d.remainingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({format(new Date(d.date + 'T12:00:00'), 'dd/MM/yyyy')})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Amount input */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center ml-1">
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest">Valor do Pagamento</label>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        const total = selectedDebtToPay 
+                          ? selectedDebtToPay.remainingAmount 
+                          : clientDebts.reduce((acc, d) => acc + d.remainingAmount, 0);
+                        setPayingDebtAmount(total.toString());
+                      }}
+                      className="text-[10px] font-bold text-emerald-600 hover:underline uppercase tracking-wider"
+                    >
+                      Quitar Total
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">R$</span>
+                    <input 
+                      id="pay-debt-amount-input"
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder="0,00"
+                      value={payingDebtAmount}
+                      onChange={(e) => setPayingDebtAmount(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all text-primary font-bold shadow-inner"
+                    />
+                  </div>
+                </div>
+
+                {/* Payment method selection */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {paymentMethods.map(method => (
+                      <button
+                        id={`pay-debt-method-${method.id}`}
+                        key={method.id}
+                        type="button"
+                        onClick={() => setPayingDebtMethod(method.id)}
+                        className={`py-3 px-4 rounded-xl text-xs font-bold transition-all border-2 flex items-center justify-between ${
+                          payingDebtMethod === method.id 
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-700' 
+                            : 'bg-white border-slate-100 text-muted hover:border-slate-200'
+                        }`}
+                      >
+                        <span>{method.name}</span>
+                        {payingDebtMethod === method.id && <CheckCircle2 size={14} className="text-emerald-600" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button 
+                    id="cancel-pay-debt-modal"
+                    onClick={() => {
+                      setIsPayingDebt(false);
+                      setSelectedDebtToPay(null);
+                      setPayingDebtAmount('');
+                    }}
+                    className="flex-1 py-4 bg-slate-100 text-primary rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all active:scale-95"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    id="confirm-pay-debt-modal"
+                    onClick={handleConfirmPayDebt}
+                    disabled={loading || !payingDebtAmount || parseFloat(payingDebtAmount) <= 0}
+                    className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 cursor-pointer"
+                  >
+                    {loading ? <Loader2 className="animate-spin" size={20} /> : (
+                      <>
+                        <DollarSign size={20} />
+                        <span>Confirmar Pagamento</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

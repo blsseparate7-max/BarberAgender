@@ -157,7 +157,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     return { servicos, vendas, gorjetas, assinaturas };
   }, [commissions]);
   
-  const [activeSubTab, setActiveSubTab] = useState<'analytical' | 'vales' | 'repasse' | 'payroll'>('analytical');
+  const [activeSubTab, setActiveSubTab] = useState<'analytical' | 'vales' | 'repasse'>('analytical');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isValeModalOpen, setIsValeModalOpen] = useState(false);
 
@@ -564,6 +564,17 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
             >
               <Printer size={20} />
             </button>
+            {isBarbeiro && (
+              <button 
+                id="btn-view-receipt-barber"
+                onClick={() => setShowReceiptModal(true)}
+                className="flex items-center gap-2 bg-rose-500 text-white px-5 py-3 rounded-2xl font-black text-sm hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/10 active:scale-95 animate-in fade-in"
+                title="Visualizar Demonstrativo de Comissões e Vales"
+              >
+                <FileText size={18} />
+                Ver Recibo / Fechamento
+              </button>
+            )}
             {!isBarbeiro && (
               <>
                 <button 
@@ -578,10 +589,10 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                   id="btn-view-receipt"
                   onClick={() => setShowReceiptModal(true)}
                   className="flex items-center gap-2 bg-rose-500 text-white px-5 py-3 rounded-2xl font-black text-sm hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/10 active:scale-95"
-                  title="Visualizar Demonstrativo Bruto / Acertos"
+                  title="Visualizar Demonstrativo de Comissões e Vales"
                 >
                   <FileText size={18} />
-                  Demonstrativo Bruto
+                  Ver Recibo / Fechamento
                 </button>
                 <button 
                   id="btn-register-payout"
@@ -694,7 +705,6 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
             <SubTabButton isActive={activeSubTab === 'analytical'} onClick={() => setActiveSubTab('analytical')} label="Analítico (Serviços)" icon={<Briefcase size={16} />} />
             <SubTabButton isActive={activeSubTab === 'vales'} onClick={() => setActiveSubTab('vales')} label="Vales / Adiantamentos" icon={<FileText size={16} />} />
             <SubTabButton isActive={activeSubTab === 'repasse'} onClick={() => setActiveSubTab('repasse')} label="Histórico de Repasses" icon={<History size={16} />} />
-            <SubTabButton isActive={activeSubTab === 'payroll'} onClick={() => setActiveSubTab('payroll')} label="Folha de Pagamento" icon={<Receipt size={16} />} />
           </div>
 
           <div className="p-8">
@@ -882,7 +892,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                   </motion.div>
                 )}
 
-                {activeSubTab === 'payroll' && (
+                {/* Folha de pagamento removida - mantida oculta de forma segura */}
+                {false && (
                   <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} key="payroll">
                     <div id="payroll-printable-area" className="max-w-2xl mx-auto p-8 sm:p-12 bg-white rounded-3xl border border-slate-200 shadow-xl text-left relative overflow-hidden transition-all duration-300">
                       {/* Decorative/Aesthetic subtle background accent */}
@@ -1857,17 +1868,41 @@ Assinatura: _______________________________
                     <div className="flex justify-between items-center text-xs font-black">
                       <div className="flex items-center gap-3 text-slate-800">
                         <DollarSign size={16} className="text-slate-800" />
-                        <span className="uppercase tracking-wider">TOTAL</span>
+                        <span className="uppercase tracking-wider">TOTAL LÍQUIDO</span>
                       </div>
                       <span className="text-sm font-black text-slate-800">R$ {detailedBreakdown.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+
+                    {/* Valor por extenso */}
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mt-3 text-left">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Valor por Extenso</p>
+                      <p className="text-[11px] font-bold text-slate-700 capitalize font-serif italic">
+                        ({extensos(detailedBreakdown.total)})
+                      </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Professional Name Tag at bottom inside mockup */}
-                <div className="mt-6 text-center">
-                  <p className="text-xs font-black text-slate-600">{professionalName}</p>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Fechamento Consolidado no Período</p>
+                {/* Professional Name Tag & Signature Lines at bottom inside mockup */}
+                <div className="mt-6 text-center space-y-6">
+                  <div>
+                    <p className="text-xs font-black text-slate-600">{professionalName}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Fechamento Consolidado no Período</p>
+                  </div>
+
+                  {/* Aesthetic Signatures lines */}
+                  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200/60 text-left">
+                    <div className="space-y-1">
+                      <div className="border-b border-slate-350 h-8"></div>
+                      <p className="text-[10px] font-black text-slate-700 truncate uppercase tracking-wider">{profile?.nome_barbearia || profile?.nome || 'Proprietário'}</p>
+                      <p className="text-[8px] text-slate-450 font-bold uppercase tracking-widest">Responsável (Paga)</p>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="border-b border-slate-350 h-8"></div>
+                      <p className="text-[10px] font-black text-slate-700 truncate uppercase tracking-wider">{professionalName}</p>
+                      <p className="text-[8px] text-slate-450 font-bold uppercase tracking-widest">Profissional (Recebe)</p>
+                    </div>
+                  </div>
                 </div>
               </div>
 

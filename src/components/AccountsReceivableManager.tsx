@@ -10,6 +10,8 @@ import { cashService } from '../services/cashService';
 import { paymentMethodService } from '../services/paymentMethodService';
 import { AccountReceivable, PaymentMethodConfig, DailyCash } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { db } from '../firebase';
 
 interface AccountsReceivableManagerProps {
   userId: string;
@@ -68,20 +70,42 @@ export const AccountsReceivableManager: React.FC<AccountsReceivableManagerProps>
   ];
 
   useEffect(() => {
-    loadReceivables();
+    setLoading(true);
+    let q = query(collection(db, 'accounts_receivable'), orderBy('dueDate', 'asc'));
+    
+    if (dateRange.start && dateRange.end) {
+      q = query(q, where('dueDate', '>=', dateRange.start), where('dueDate', '<=', dateRange.end));
+    }
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          ...d,
+          dueDate: d.dueDate || '',
+          status: d.status || 'pending',
+          amount: d.amount || 0,
+          recurrence: d.recurrence || 'none',
+          category: d.category || 'outros',
+          clientOrPartner: d.clientOrPartner || '',
+          description: d.description || ''
+        } as AccountReceivable;
+      });
+      setReceivables(data);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error loading receivables via real-time:", error);
+      setLoading(false);
+    });
+
     loadContextData();
+
+    return () => unsubscribe();
   }, [dateRange]);
 
   const loadReceivables = async () => {
-    try {
-      setLoading(true);
-      const data = await billService.getReceivables(dateRange.start, dateRange.end);
-      setReceivables(data);
-    } catch (error) {
-      console.error("Error loading receivables:", error);
-    } finally {
-      setLoading(false);
-    }
+    // Keep as legacy fallback, onSnapshot handles state updates now.
   };
 
   const loadContextData = async () => {

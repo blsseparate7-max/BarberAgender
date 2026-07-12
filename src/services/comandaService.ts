@@ -727,7 +727,7 @@ export const comandaService = {
     }
   },
 
-  async closeComanda(id: string, userId: string, userName: string, status: ComandaStatus = 'fechada') {
+  async closeComanda(id: string, userId: string, userName: string, status: ComandaStatus = 'fechada', dueDate?: string) {
     const docRef = doc(db, COLLECTION, id);
     
     await runTransaction(db, async (transaction) => {
@@ -808,6 +808,7 @@ export const comandaService = {
           remainingAmount: pending,
           status: 'pendente',
           date: new Date().toISOString().split('T')[0],
+          dueDate: dueDate || '',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });

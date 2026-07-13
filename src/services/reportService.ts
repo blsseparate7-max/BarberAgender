@@ -11,6 +11,7 @@ import {
   endAt
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getActiveTenantId } from './tenantService';
 import { 
   Appointment, 
   FinancialTransaction, 
@@ -37,6 +38,7 @@ export interface ReportFilter {
 export const reportService = {
   async getGeneralReport(filter: ReportFilter) {
     const { startDate, endDate } = filter;
+    const currentTenantId = getActiveTenantId();
 
     // Fetch transactions
     const financialQuery = query(
@@ -45,7 +47,9 @@ export const reportService = {
       where('date', '<=', endDate)
     );
     const financialSnap = await getDocs(financialQuery);
-    const transactions = financialSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+    const transactions = financialSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
+      .filter(t => !(t as any).tenantId || (t as any).tenantId === currentTenantId);
 
     // Fetch appointments
     const appointmentsQuery = query(
@@ -54,7 +58,9 @@ export const reportService = {
       where('date', '<=', endDate)
     );
     const appointmentsSnap = await getDocs(appointmentsQuery);
-    const appointments = appointmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+    const appointments = appointmentsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
+      .filter(a => !(a as any).tenantId || (a as any).tenantId === currentTenantId);
 
     // Fetch comandas
     const comandasQuery = query(
@@ -63,7 +69,9 @@ export const reportService = {
       where('date', '<=', endDate)
     );
     const comandasSnap = await getDocs(comandasQuery);
-    const comandas = comandasSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comanda));
+    const comandas = comandasSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Comanda))
+      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
 
     // Calculations
     const grossRevenue = transactions
@@ -99,6 +107,7 @@ export const reportService = {
 
   async getAppointmentsReport(filter: ReportFilter) {
     const { startDate, endDate, profissional_id, status } = filter;
+    const currentTenantId = getActiveTenantId();
     const q = query(
       collection(db, 'appointments'),
       where('date', '>=', startDate),
@@ -106,7 +115,9 @@ export const reportService = {
     );
 
     const snap = await getDocs(q);
-    let data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+    let data = snap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
+      .filter(a => !(a as any).tenantId || (a as any).tenantId === currentTenantId);
 
     if (profissional_id && profissional_id !== 'all') {
       data = data.filter(a => a.profissional_id === profissional_id);
@@ -131,11 +142,12 @@ export const reportService = {
 
   async getClientsReport(filter: ReportFilter) {
     const { startDate, endDate } = filter;
+    const currentTenantId = getActiveTenantId();
     
     // Fetch all clients to identify new ones in period
     const clientsSnap = await getDocs(collection(db, 'usuarios'));
     const allUsers = clientsSnap.docs.map(doc => ({ uid: doc.id, ...doc.data() } as unknown as UserProfile));
-    const clients = allUsers.filter(u => u.tipo === 'cliente');
+    const clients = allUsers.filter(u => u.tipo === 'cliente' && (!(u as any).tenantId || (u as any).tenantId === currentTenantId));
 
     // Appointments in period
     const apptsQuery = query(
@@ -146,7 +158,7 @@ export const reportService = {
     const apptsSnap = await getDocs(apptsQuery);
     const appts = apptsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(a => a.status === 'concluído');
+      .filter(a => a.status === 'concluído' && (!(a as any).tenantId || (a as any).tenantId === currentTenantId));
 
     const newClients = clients.filter(c => {
       const createdDate = c.createdAt?.toDate ? format(c.createdAt.toDate(), 'yyyy-MM-dd') : null;
@@ -176,6 +188,7 @@ export const reportService = {
 
   async getProfessionalsReport(filter: ReportFilter) {
     const { startDate, endDate } = filter;
+    const currentTenantId = getActiveTenantId();
     
     const apptsSnap = await getDocs(query(
       collection(db, 'appointments'),
@@ -184,14 +197,16 @@ export const reportService = {
     ));
     const appts = apptsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(a => a.status === 'concluído');
+      .filter(a => a.status === 'concluído' && (!(a as any).tenantId || (a as any).tenantId === currentTenantId));
 
     const commissionsSnap = await getDocs(query(
       collection(db, 'commissions'),
       where('date', '>=', startDate),
       where('date', '<=', endDate)
     ));
-    const commissions = commissionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+    const commissions = commissionsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
+      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
 
     const profMap: Record<string, any> = {};
 
@@ -232,16 +247,21 @@ export const reportService = {
 
   async getInventoryReport(filter: ReportFilter) {
     const { startDate, endDate } = filter;
+    const currentTenantId = getActiveTenantId();
     
     const prodSnap = await getDocs(collection(db, 'products'));
-    const products = prodSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+    const products = prodSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Product))
+      .filter(p => !(p as any).tenantId || (p as any).tenantId === currentTenantId);
 
     const movementsSnap = await getDocs(query(
       collection(db, 'inventory_movements'),
       where('date', '>=', startDate),
       where('date', '<=', endDate)
     ));
-    const movements = movementsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement));
+    const movements = movementsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement))
+      .filter(m => !(m as any).tenantId || (m as any).tenantId === currentTenantId);
 
     const stats = {
       totalProducts: products.length,
@@ -255,13 +275,16 @@ export const reportService = {
 
   async getFinanceiroReport(filter: ReportFilter) {
     const { startDate, endDate } = filter;
+    const currentTenantId = getActiveTenantId();
     
     const transactionsSnap = await getDocs(query(
       collection(db, 'financial_transactions'),
       where('date', '>=', startDate),
       where('date', '<=', endDate)
     ));
-    const transactions = transactionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+    const transactions = transactionsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
+      .filter(t => !(t as any).tenantId || (t as any).tenantId === currentTenantId);
 
     const income = transactions.filter(t => t.type === 'income' && t.status === 'pago').reduce((acc, t) => acc + t.amount, 0);
     const expense = transactions.filter(t => t.type === 'expense' && t.status === 'pago').reduce((acc, t) => acc + t.amount, 0);
@@ -281,6 +304,7 @@ export const reportService = {
 
   async getComissoesReport(filter: ReportFilter) {
     const { startDate, endDate, profissional_id } = filter;
+    const currentTenantId = getActiveTenantId();
     
     const q = query(
       collection(db, 'commissions'),
@@ -289,7 +313,9 @@ export const reportService = {
     );
 
     const snap = await getDocs(q);
-    let data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+    let data = snap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
+      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
 
     if (profissional_id && profissional_id !== 'all') {
       data = data.filter(c => c.profissional_id === profissional_id);
@@ -307,6 +333,7 @@ export const reportService = {
 
   async getComandasReport(filter: ReportFilter) {
     const { startDate, endDate, status } = filter;
+    const currentTenantId = getActiveTenantId();
     
     const q = query(
       collection(db, 'comandas'),
@@ -315,7 +342,9 @@ export const reportService = {
     );
 
     const snap = await getDocs(q);
-    let data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comanda));
+    let data = snap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Comanda))
+      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
 
     if (status && status !== 'all') {
       data = data.filter(c => c.status === status);

@@ -126,9 +126,31 @@
         "responsible_id": { "type": "string" },
         "transaction_id": { "type": "string" }
       }
+    },
+    "Tenant": {
+      "title": "Tenant",
+      "description": "Multi-tenant barbershop unit configurations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "accentColor": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "object" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "accentColor", "isActive"]
     }
   },
   "firestore": {
+    "/tenants/{tenantId}": {
+      "schema": "Tenant",
+      "description": "Unidades / Barbearias Multitenant"
+    },
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "Usuários e Clientes"

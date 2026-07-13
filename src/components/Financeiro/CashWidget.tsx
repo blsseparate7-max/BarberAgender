@@ -48,10 +48,13 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState<string>('');
   const [withdrawDescription, setWithdrawDescription] = useState<string>('');
+  const [withdrawType, setWithdrawType] = useState<'expense' | 'sangria'>('expense');
+  const [withdrawCategory, setWithdrawCategory] = useState<string>('Outros');
 
   const [showValeModal, setShowValeModal] = useState(false);
   const [valeAmount, setValeAmount] = useState<string>('');
   const [valeDescription, setValeDescription] = useState<string>('');
+  const [valeCategory, setValeCategory] = useState<string>('Comissões');
   const [selectedBarberId, setSelectedBarberId] = useState<string>('');
   const [deductFromCash, setDeductFromCash] = useState<boolean>(true);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
@@ -79,25 +82,97 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
     }
     setActionLoading(true);
     try {
-      await cashService.addMovement({
-        caixa_id: currentCash.id,
-        type: 'sangria',
-        category: 'Sangria de Caixa',
-        description: withdrawDescription || 'Retirada manual pelo widget de caixa',
-        amount: val,
-        paymentMethod: 'dinheiro',
-        is_receivable: false,
-        usuario_id: user.uid,
-        usuario_name: profile?.nome || user.displayName || 'Sistema',
-        date: new Date().toISOString().split('T')[0]
-      });
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      if (withdrawType === 'expense') {
+        // 1. Register Financial Transaction (Expense)
+        const transactionId = await financialService.createTransaction({
+          type: 'expense',
+          category: withdrawCategory,
+          amount: val,
+          net_amount: val,
+          fee_amount: 0,
+          paymentMethod: 'dinheiro',
+          date: todayStr,
+          settlement_date: todayStr,
+          status: 'pago',
+          is_settled: true,
+          responsavel_id: user.uid,
+          responsavel_name: profile?.nome || user.displayName || 'Sistema',
+          description: withdrawDescription || `Gasto registrado pelo widget (${withdrawCategory})`
+        });
+
+        // 2. Register as a Paid Payable Bill for reports completeness
+        await billService.createPayable({
+          description: withdrawDescription || `Gasto registrado pelo widget (${withdrawCategory})`,
+          category: withdrawCategory,
+          amount: val,
+          dueDate: todayStr,
+          supplier: 'Diversos',
+          recurrence: 'none',
+          status: 'paid',
+          paidAt: new Date().toISOString() as any,
+          paymentMethod: 'dinheiro',
+          transactionId
+        });
+
+        // 3. Register Cash Movement
+        await cashService.addMovement({
+          caixa_id: currentCash.id,
+          type: 'expense',
+          category: withdrawCategory,
+          description: withdrawDescription || `Gasto: ${withdrawCategory}`,
+          amount: val,
+          paymentMethod: 'dinheiro',
+          is_receivable: false,
+          usuario_id: user.uid,
+          usuario_name: profile?.nome || user.displayName || 'Sistema',
+          date: todayStr
+        });
+
+        toast.success("Gasto registrado e integrado ao financeiro!");
+      } else {
+        // Sangria simples de caixa
+        // 1. Register Financial Transaction (Sangria)
+        const transactionId = await financialService.createTransaction({
+          type: 'sangria',
+          category: 'Sangria de Caixa',
+          amount: val,
+          net_amount: val,
+          fee_amount: 0,
+          paymentMethod: 'dinheiro',
+          date: todayStr,
+          settlement_date: todayStr,
+          status: 'pago',
+          is_settled: true,
+          responsavel_id: user.uid,
+          responsavel_name: profile?.nome || user.displayName || 'Sistema',
+          description: withdrawDescription || 'Retirada (Sangria) simples de caixa'
+        });
+
+        // 2. Register Cash Movement
+        await cashService.addMovement({
+          caixa_id: currentCash.id,
+          type: 'sangria',
+          category: 'Sangria de Caixa',
+          description: withdrawDescription || 'Sangria simples de caixa',
+          amount: val,
+          paymentMethod: 'dinheiro',
+          is_receivable: false,
+          usuario_id: user.uid,
+          usuario_name: profile?.nome || user.displayName || 'Sistema',
+          date: todayStr
+        });
+
+        toast.success("Retirada (Sangria) registrada no caixa!");
+      }
+
       setWithdrawAmount('');
       setWithdrawDescription('');
       setShowWithdrawModal(false);
-      toast.success("Retirada registrada no caixa!");
     } catch (err: any) {
-      console.error("Erro ao registrar retirada:", err);
-      toast.error(err?.message || "Erro ao registrar retirada.");
+      console.error("Erro ao registrar retirada/gasto:", err);
+      toast.error(err?.message || "Erro ao registrar retirada/gasto.");
     } finally {
       setActionLoading(false);
     }
@@ -146,7 +221,7 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
       // 2. Register Financial Transaction (Always! Because it's an outgoing expense)
       const transactionId = await financialService.createTransaction({
         type: 'expense',
-        category: 'Comissões',
+        category: valeCategory,
         amount: val,
         net_amount: val,
         fee_amount: 0,
@@ -163,7 +238,7 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
       // 3. Register as a Paid Payable Bill to keep the financial ledger & bill reports 100% complete
       await billService.createPayable({
         description: `Vale: ${selectedBarber.nome || 'Profissional'} - ${valeDescription || 'Adiantamento'}`,
-        category: 'Comissões',
+        category: valeCategory,
         amount: val,
         dueDate: todayStr,
         supplier: selectedBarber.nome || 'Profissional',
@@ -735,7 +810,7 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                   <div className="w-10 h-10 bg-rose-100 rounded-2xl flex items-center justify-center text-rose-600 border border-rose-200 shadow-sm">
                     <TrendingDown size={20} />
                   </div>
-                  <h3 className="text-lg font-black text-primary">Retirada (Sangria)</h3>
+                  <h3 className="text-lg font-black text-primary">Lançar Retirada / Gasto</h3>
                 </div>
                 <button 
                   onClick={() => setShowWithdrawModal(false)} 
@@ -746,7 +821,55 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                 </button>
               </div>
 
-              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+              <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar flex-1">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Tipo de Registro</label>
+                  <div className="grid grid-cols-2 gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-150">
+                    <button
+                      type="button"
+                      onClick={() => setWithdrawType('expense')}
+                      className={`py-2 px-3 rounded-xl font-bold text-xs transition-all ${
+                        withdrawType === 'expense'
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'text-slate-650 hover:bg-slate-100'
+                      }`}
+                    >
+                      Gasto / Despesa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWithdrawType('sangria')}
+                      className={`py-2 px-3 rounded-xl font-bold text-xs transition-all ${
+                        withdrawType === 'sangria'
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'text-slate-650 hover:bg-slate-100'
+                      }`}
+                    >
+                      Sangria simples
+                    </button>
+                  </div>
+                </div>
+
+                {withdrawType === 'expense' && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Categoria da Despesa</label>
+                    <select
+                      value={withdrawCategory}
+                      onChange={(e) => setWithdrawCategory(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm"
+                    >
+                      <option value="Aluguel">Aluguel</option>
+                      <option value="Água, Luz e Telefone">Água, Luz e Telefone</option>
+                      <option value="Produtos e Estoque">Produtos e Estoque</option>
+                      <option value="Marketing e Divulgação">Marketing e Divulgação</option>
+                      <option value="Equipamentos e Manutenção">Equipamentos e Manutenção</option>
+                      <option value="Comissões e Salários">Comissões e Salários</option>
+                      <option value="Impostos e Taxas">Impostos e Taxas</option>
+                      <option value="Outros">Outros</option>
+                    </select>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor da Retirada</label>
                   <div className="relative">
@@ -838,6 +961,19 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                         {b.nome || b.displayName || 'Profissional'}
                       </option>
                     ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Categoria do Vale</label>
+                  <select
+                    value={valeCategory}
+                    onChange={(e) => setValeCategory(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm"
+                  >
+                    <option value="Comissões">Comissões (Adiantamento)</option>
+                    <option value="Adiantamentos">Adiantamentos Gerais</option>
+                    <option value="Outros">Outros</option>
                   </select>
                 </div>
 

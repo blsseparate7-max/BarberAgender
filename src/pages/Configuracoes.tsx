@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { settingsService, BarbershopProfile } from '../services/settingsService';
 import { userService } from '../services/userService';
@@ -40,7 +41,29 @@ import { toast } from 'sonner';
 
 export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const { profile, signOut } = useAuth();
-  const [activeSection, setActiveSection] = useState('profile');
+  const { tenant, updateTenantProfile } = useTenant();
+  const [activeSection, setActiveSection] = useState(activeSubTab === 'configuracoes-perfil' ? 'user-profile' : 'profile');
+  const [accentColor, setAccentColor] = useState(tenant?.accentColor || '#6366F1');
+  const [logoUrl, setLogoUrl] = useState(tenant?.logoUrl || '');
+
+  // Personal profile states
+  const [userProfileName, setUserProfileName] = useState(profile?.nome || '');
+  const [userProfilePhone, setUserProfilePhone] = useState(profile?.telefone || profile?.phone || '');
+  const [isSavingUserProfile, setIsSavingUserProfile] = useState(false);
+
+  useEffect(() => {
+    if (profile) {
+      setUserProfileName(profile.nome || '');
+      setUserProfilePhone(profile.telefone || profile.phone || '');
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    if (tenant) {
+      setAccentColor(tenant.accentColor || '#6366F1');
+      setLogoUrl(tenant.logoUrl || '');
+    }
+  }, [tenant]);
 
   // New modules states
   const [notifWeb, setNotifWeb] = useState(true);
@@ -79,6 +102,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       else if (activeSubTab === 'configuracoes-funcionamento') setActiveSection('hours');
       else if (activeSubTab === 'configuracoes-permissoes') setActiveSection('security');
       else if (activeSubTab === 'admin-usuarios') setActiveSection('security');
+      else if (activeSubTab === 'configuracoes-perfil') setActiveSection('user-profile');
     }
   }, [activeSubTab]);
 
@@ -137,12 +161,35 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     }
   };
 
+  const handleSaveUserProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile?.uid) return;
+    if (!userProfileName.trim()) {
+      toast.error("Por favor, preencha o seu nome.");
+      return;
+    }
+    setIsSavingUserProfile(true);
+    try {
+      await userService.updateUserProfile(profile.uid, {
+        nome: userProfileName,
+        telefone: userProfilePhone,
+        phone: userProfilePhone
+      });
+      toast.success("Seu perfil pessoal foi atualizado com sucesso!");
+    } catch (error) {
+      console.error("Error saving user profile:", error);
+      toast.error("Erro ao salvar dados do perfil.");
+    } finally {
+      setIsSavingUserProfile(false);
+    }
+  };
+
   const loadSettings = async () => {
     setLoadingProfile(true);
     try {
-      const data = await settingsService.getProfile();
-      if (data) {
-        setBbProfile(data);
+      if (tenant) {
+        setAccentColor(tenant.accentColor || '#6366F1');
+        setLogoUrl(tenant.logoUrl || '');
       }
     } catch (error) {
       console.error("Error loading settings:", error);
@@ -159,6 +206,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       email: formData.get('email') as string,
       phone: formData.get('phone') as string,
       cnpj: formData.get('cnpj') as string,
+      accentColor,
+      logoUrl,
       address: {
         street: formData.get('street') as string,
         city: formData.get('city') as string,
@@ -168,12 +217,9 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     };
 
     try {
-      await settingsService.updateProfile(data);
-      setBbProfile(data as BarbershopProfile);
-      toast.success("Perfil da unidade atualizado com sucesso!");
+      await updateTenantProfile(data);
     } catch (error) {
       console.error("Error saving profile:", error);
-      toast.error("Erro ao salvar perfil.");
     }
   });
 
@@ -235,6 +281,12 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
         <div className="lg:col-span-4 space-y-3">
+          <ConfigSidebarItem 
+            icon={<User size={18} />} 
+            label="Meu Perfil" 
+            active={activeSection === 'user-profile'} 
+            onClick={() => setActiveSection('user-profile')}
+          />
           <ConfigSidebarItem 
             icon={<Building2 size={18} />} 
             label="Perfil da Barbearia" 
@@ -302,22 +354,177 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             animate={{ opacity: 1, y: 0 }}
             className="bg-white border border-slate-200 rounded-[2.5rem] p-8 md:p-10 shadow-sm space-y-10"
           >
+            {/* Meu Perfil Pessoal */}
+            {activeSection === 'user-profile' && (
+              <form onSubmit={handleSaveUserProfile} className="space-y-8">
+                <section className="space-y-8">
+                  <div className="flex flex-col sm:flex-row items-center gap-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                    <div className="w-20 h-20 bg-primary rounded-[2rem] flex items-center justify-center font-black text-white text-3xl shadow-xl shadow-primary/20 shrink-0">
+                      {profile?.nome?.charAt(0) || 'U'}
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-xl font-black text-primary tracking-tight">Seu Perfil de Acesso</h3>
+                      <p className="text-xs text-muted font-bold uppercase tracking-wider bg-slate-200/50 px-2.5 py-1 rounded-lg inline-block">{profile?.tipo || 'Usuário'}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Seu Nome Completo</label>
+                      <input 
+                        type="text" 
+                        value={userProfileName}
+                        onChange={(e) => setUserProfileName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Telefone / WhatsApp</label>
+                      <input 
+                        type="text" 
+                        value={userProfilePhone}
+                        onChange={(e) => setUserProfilePhone(e.target.value)}
+                        placeholder="(11) 99999-9999"
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">E-mail de Login</label>
+                      <input 
+                        type="email" 
+                        value={profile?.email || ''} 
+                        disabled
+                        className="w-full bg-slate-100 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold text-slate-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Status da Conta</label>
+                      <div className="w-full bg-slate-100 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold text-emerald-600 flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Conta Ativa e Sincronizada
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* If client/fidelidade details exist */}
+                  {(profile?.saldo_atual !== undefined || (profile as any)?.pontos !== undefined) && (
+                    <div className="p-6 bg-amber-50/50 rounded-3xl border border-amber-100/60 grid grid-cols-2 gap-6 mt-6">
+                      {profile?.saldo_atual !== undefined && (
+                        <div>
+                          <p className="text-[9px] font-black text-amber-800 uppercase tracking-widest">Saldo de Cashback / Crédito</p>
+                          <p className="text-xl font-black text-amber-700 mt-1">R$ {profile.saldo_atual.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        </div>
+                      )}
+                      {(profile as any)?.pontos !== undefined && (
+                        <div>
+                          <p className="text-[9px] font-black text-amber-800 uppercase tracking-widest">Seus Pontos de Fidelidade</p>
+                          <p className="text-xl font-black text-amber-700 mt-1">{(profile as any).pontos} pts</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                <div className="flex justify-end gap-4 pt-10 border-t border-slate-100">
+                  <button 
+                    type="submit" 
+                    disabled={isSavingUserProfile}
+                    className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-lg shadow-primary/10 flex items-center gap-3 active:scale-95 uppercase tracking-widest disabled:opacity-50"
+                  >
+                    {isSavingUserProfile ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                    Salvar Perfil Pessoal
+                  </button>
+                </div>
+              </form>
+            )}
+
             {/* Perfil da Barbearia */}
             {activeSection === 'profile' && (
-              <form onSubmit={handleSaveProfile}>
+              <form onSubmit={handleSaveProfile} className="space-y-8">
                 <section className="space-y-8">
-                  <div className="flex items-center gap-8">
-                    <div className="relative group">
-                      <div className="w-24 h-24 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-300 group-hover:border-accent group-hover:text-accent transition-all cursor-pointer shadow-inner">
-                        <Camera size={32} />
+                  <div className="flex flex-col sm:flex-row items-center gap-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                    <div className="relative">
+                      <div className="w-24 h-24 bg-white rounded-[2rem] border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-300 overflow-hidden shadow-inner">
+                        {logoUrl ? (
+                          <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <Camera size={32} />
+                        )}
                       </div>
-                      <button type="button" className="absolute -bottom-2 -right-2 w-10 h-10 bg-primary text-white rounded-xl flex items-center justify-center shadow-lg border-4 border-white active:scale-90 transition-transform">
-                        <Plus size={18} />
-                      </button>
                     </div>
-                    <div>
+                    <div className="space-y-2 flex-1 w-full">
                       <h3 className="text-xl font-black text-primary tracking-tight">Logo da Unidade</h3>
-                      <p className="text-xs text-muted font-medium mt-1 max-w-xs leading-relaxed">Recomendamos uma imagem quadrada de pelo menos 512x512px.</p>
+                      <p className="text-xs text-muted font-medium mb-3 max-w-xs leading-relaxed">Insira a URL da logo de sua marca ou utilize um link de imagem quadrada.</p>
+                      <input 
+                        type="text"
+                        value={logoUrl}
+                        onChange={(e) => setLogoUrl(e.target.value)}
+                        placeholder="https://exemplo.com/sua-logo.png"
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-4 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Brand Color Customizer (The coolest SaaS feature) */}
+                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                    <div>
+                      <h4 className="text-sm font-bold text-primary">Paleta de Cores & Destaque Visual</h4>
+                      <p className="text-xs text-muted mt-1">Selecione a cor de identidade de sua barbearia. Todo o sistema se adaptará instantaneamente a este tom!</p>
+                    </div>
+
+                    <div className="grid grid-cols-5 sm:grid-cols-10 gap-3">
+                      {[
+                        { name: 'Indigo', value: '#6366F1' },
+                        { name: 'Ouro', value: '#D4AF37' },
+                        { name: 'Esmeralda', value: '#10B981' },
+                        { name: 'Azul Safira', value: '#3B82F6' },
+                        { name: 'Cereja', value: '#EF4444' },
+                        { name: 'Carbono', value: '#1E293B' },
+                        { name: 'Bronze', value: '#B45309' },
+                        { name: 'Púrpura', value: '#8B5CF6' },
+                        { name: 'Laranja', value: '#F97316' },
+                        { name: 'Rosa Coral', value: '#F43F5E' },
+                      ].map((preset) => {
+                        const isSelected = accentColor.toUpperCase() === preset.value.toUpperCase();
+                        return (
+                          <button
+                            key={preset.value}
+                            type="button"
+                            onClick={() => setAccentColor(preset.value)}
+                            title={preset.name}
+                            style={{ backgroundColor: preset.value }}
+                            className="w-8 h-8 rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all hover:scale-110 relative"
+                          >
+                            {isSelected && (
+                              <Check size={14} className="text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center gap-4 pt-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-wider">Código Hexadecimal Personalizado</label>
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="color" 
+                            value={accentColor}
+                            onChange={(e) => setAccentColor(e.target.value)}
+                            className="w-10 h-10 border-0 rounded-xl cursor-pointer shadow-sm bg-transparent"
+                          />
+                          <input 
+                            type="text" 
+                            value={accentColor}
+                            onChange={(e) => setAccentColor(e.target.value)}
+                            className="bg-white border border-slate-200 rounded-xl py-1.5 px-3 text-xs font-mono font-bold w-24 uppercase focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex-1 rounded-2xl bg-white border border-slate-100 p-4 flex items-center gap-3">
+                        <div className="w-3 h-3 rounded-full animate-ping" style={{ backgroundColor: accentColor }}></div>
+                        <span className="text-xs font-semibold text-primary">Demonstração ao Vivo do seu Visual Premium!</span>
+                      </div>
                     </div>
                   </div>
 
@@ -327,7 +534,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       <input 
                         name="name"
                         type="text" 
-                        defaultValue={bbProfile?.name || "BarberElite Headquarters"} 
+                        defaultValue={tenant?.name || "BarberElite Headquarters"} 
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                       />
                     </div>
@@ -336,7 +543,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       <input 
                         name="email"
                         type="email" 
-                        defaultValue={bbProfile?.email || "contato@barberelite.com"} 
+                        defaultValue={tenant?.email || "contato@barberelite.com"} 
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                       />
                     </div>
@@ -345,7 +552,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       <input 
                         name="phone"
                         type="text" 
-                        defaultValue={bbProfile?.phone || "(11) 99999-8888"} 
+                        defaultValue={tenant?.phone || "(11) 99999-8888"} 
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                       />
                     </div>
@@ -354,7 +561,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       <input 
                         name="cnpj"
                         type="text" 
-                        defaultValue={bbProfile?.cnpj}
+                        defaultValue={(tenant as any)?.cnpj || ''}
                         placeholder="00.000.000/0000-00" 
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                       />
@@ -373,7 +580,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       <input 
                         name="street"
                         type="text" 
-                        defaultValue={bbProfile?.address?.street || "Avenida Paulista, 1000"} 
+                        defaultValue={tenant?.address?.street || "Avenida Paulista, 1000"} 
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                       />
                     </div>
@@ -381,9 +588,9 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Cidade</label>
                         <input 
-                          name="city"
+                           name="city"
                           type="text" 
-                          defaultValue={bbProfile?.address?.city || "São Paulo"} 
+                          defaultValue={tenant?.address?.city || "São Paulo"} 
                           className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                         />
                       </div>
@@ -392,7 +599,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                         <input 
                           name="state"
                           type="text" 
-                          defaultValue={bbProfile?.address?.state || "SP"} 
+                          defaultValue={tenant?.address?.state || "SP"} 
                           className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                         />
                       </div>
@@ -401,7 +608,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                         <input 
                           name="zipCode"
                           type="text" 
-                          defaultValue={bbProfile?.address?.zipCode || "01310-100"} 
+                          defaultValue={tenant?.address?.zipCode || "01310-100"} 
                           className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                         />
                       </div>

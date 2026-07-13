@@ -546,6 +546,31 @@ export const comandaService = {
     }
   },
 
+  async cancelLinkedAppointments(comandaId: string) {
+    try {
+      const apptsQuery = query(
+        collection(db, 'appointments'),
+        where('comanda_id', '==', comandaId)
+      );
+      const apptsSnap = await getDocs(apptsQuery);
+      if (!apptsSnap.empty) {
+        const batch = writeBatch(db);
+        apptsSnap.forEach((docSnap) => {
+          if (docSnap.data().status !== 'cancelado') {
+            batch.update(docSnap.ref, {
+              status: 'cancelado',
+              updatedAt: serverTimestamp()
+            });
+          }
+        });
+        await batch.commit();
+        console.log(`Successfully canceled linked appointments for comanda ${comandaId}`);
+      }
+    } catch (err) {
+      console.warn("Error auto-canceling linked appointments for comanda:", err);
+    }
+  },
+
   async applyComandaClosureWrites(
     comanda: Comanda, 
     transaction: any, 
@@ -843,15 +868,25 @@ export const comandaService = {
           productExistsMap,
           servicesMap
         );
+      } else if (finalStatus === 'cancelada') {
+        if (comanda.agendamento_id && appSnap?.exists()) {
+          const appointmentRef = doc(db, 'appointments', comanda.agendamento_id);
+          transaction.update(appointmentRef, {
+            status: 'cancelado',
+            updatedAt: serverTimestamp()
+          });
+        }
       }
     });
 
     try {
       if (status === 'fechada') {
         await this.closeLinkedAppointments(id);
+      } else if (status === 'cancelada') {
+        await this.cancelLinkedAppointments(id);
       }
     } catch (e) {
-      console.error("Error closing linked appointments inside closeComanda:", e);
+      console.error("Error updating linked appointments inside closeComanda:", e);
     }
   },
 
@@ -1026,6 +1061,7 @@ export const comandaService = {
       getDocs(query(collection(db, 'cash_movements'), where('referencia_id', '==', id))),
       getDocs(query(collection(db, 'commissions'), where('comanda_id', '==', id))),
       getDocs(query(collection(db, 'inventory_movements'), where('referencia_id', '==', id))),
+      getDocs(query(collection(db, 'appointments'), where('comanda_id', '==', id))),
     ];
 
     if (debtIds.length > 0) {
@@ -1036,7 +1072,7 @@ export const comandaService = {
       relatedQueries.push(Promise.resolve({ docs: [] }));
     }
 
-    const [financialTxs, cashMovements, commissions, inventoryMovements, debtPayments, debtCashMovements] = await Promise.all(relatedQueries);
+    const [financialTxs, cashMovements, commissions, inventoryMovements, linkedAppointments, debtPayments, debtCashMovements] = await Promise.all(relatedQueries);
 
     await runTransaction(db, async (transaction) => {
       // 2. Transactional Reads
@@ -1178,6 +1214,15 @@ export const comandaService = {
       }
 
       // Appointment
+      linkedAppointments.docs.forEach((docSnap) => {
+        if (docSnap.data().status !== 'em_atendimento') {
+          transaction.update(docSnap.ref, {
+            status: 'em_atendimento',
+            updatedAt: serverTimestamp()
+          });
+        }
+      });
+
       if (appointmentRef) {
         transaction.update(appointmentRef, {
           status: 'em_atendimento',

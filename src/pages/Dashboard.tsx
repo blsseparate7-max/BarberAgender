@@ -32,7 +32,13 @@ import {
   Lock,
   Unlock,
   CreditCard,
-  ArrowRight
+  ArrowRight,
+  Copy,
+  MapPin,
+  Phone,
+  Mail,
+  Share2,
+  Gift
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays, isSameDay, parseISO } from 'date-fns';
@@ -50,10 +56,13 @@ import {
   Cell
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { dashboardService } from '../services/dashboardService';
+import { settingsService } from '../services/settingsService';
+import { toast } from 'sonner';
 import { Appointment, FinancialTransaction, Commission, UserProfile, TabId } from '../types';
 import { db } from '../firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 
 export function Dashboard({ stats: initialStats, setActiveTab, activeSubTab }: { stats: any, setActiveTab: (tab: TabId) => void, activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
@@ -1109,21 +1118,182 @@ function BarberDashboard({ data, refresh, setActiveTab, activeTab = 'overview' }
 // --- CLIENT DASHBOARD ---
 function ClientDashboard({ data, refresh, setActiveTab }: any) {
   const { profile } = useAuth();
+  const { tenant, tenantsList } = useTenant();
+  const [copied, setCopied] = useState(false);
+  const [showUnitsModal, setShowUnitsModal] = useState(false);
+  const [linkingUnit, setLinkingUnit] = useState<string | null>(null);
+
+  const invitationLink = `${window.location.origin}/register?tenant=${tenant?.id || 'barber-elite'}&ref=${profile?.uid || ''}`;
+
+  const copyInvitation = () => {
+    navigator.clipboard.writeText(invitationLink);
+    setCopied(true);
+    toast.success("Link especial de indicação copiado!");
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleLinkUnit = async (targetTenantId: string) => {
+    setLinkingUnit(targetTenantId);
+    try {
+      if (profile?.uid) {
+        await updateDoc(doc(db, 'usuarios', profile.uid), {
+          tenantId: targetTenantId
+        });
+      }
+      localStorage.setItem('barberelite_tenant_id', targetTenantId);
+      toast.success("Barbearia conectada com sucesso!");
+      window.location.search = `?tenant=${targetTenantId}`;
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao conectar à barbearia.");
+    } finally {
+      setLinkingUnit(null);
+      setShowUnitsModal(false);
+    }
+  };
+
+  // Safe percentage calculator for subscriptions
+  const getSubProgress = (used: number, limit: number) => {
+    if (!limit) return 0;
+    return Math.min(100, (used / limit) * 100);
+  };
+
   return (
     <div className="space-y-8 pb-12">
-      <header className="flex items-center justify-between">
+      {/* Top Welcome Header */}
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-primary mb-1">Olá, {profile?.nome?.split(' ')[0]}!</h1>
-          <p className="text-muted text-sm">Acompanhe seus cortes e agendamentos na BarberElite.</p>
+          <h1 className="text-2xl font-extrabold tracking-tight text-primary mb-1">Olá, {profile?.nome?.split(' ')[0]}!</h1>
+          <p className="text-muted text-sm font-medium">Seja bem-vindo de volta à sua área exclusiva de cliente.</p>
         </div>
-        <button 
-          onClick={refresh} 
-          className="p-2.5 bg-surface border border-border rounded-xl text-muted hover:text-accent hover:border-accent/30 transition-all shadow-sm active:scale-95"
-        >
-          <RefreshCw size={18} />
-        </button>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setActiveTab('agenda-main')}
+            className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black rounded-xl text-xs transition-all shadow-md active:scale-95 uppercase tracking-widest"
+          >
+            <CalendarCheck size={16} />
+            Agendar Agora
+          </button>
+          <button 
+            onClick={refresh} 
+            className="p-2.5 bg-surface border border-border rounded-xl text-muted hover:text-accent hover:border-accent/30 transition-all shadow-sm active:scale-95"
+            title="Atualizar painel"
+          >
+            <RefreshCw size={18} />
+          </button>
+        </div>
       </header>
 
+      {/* Main Grid: Barbershop official Card + Loyalty Points Visual */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        {/* official Barbershop Unit Card */}
+        <div className="lg:col-span-5 bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 text-white rounded-3xl p-8 shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[280px]">
+          <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+          
+          <div>
+            <div className="flex items-center justify-between mb-6">
+              <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 rounded-full text-[10px] font-black uppercase tracking-widest border border-emerald-500/25">
+                Barbearia Ativa
+              </span>
+              <div className="w-10 h-10 rounded-xl bg-zinc-850 border border-zinc-800 flex items-center justify-center font-black text-lg text-emerald-400 overflow-hidden">
+                {tenant?.logoUrl ? (
+                  <img src={tenant.logoUrl} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <Scissors size={18} />
+                )}
+              </div>
+            </div>
+
+            <h2 className="text-xl font-black tracking-tight mb-1">{tenant?.name || "BarberElite"}</h2>
+            <p className="text-zinc-400 text-xs max-w-sm mb-4 font-medium">Você está conectado a esta unidade.</p>
+            
+            <button 
+              type="button" 
+              onClick={() => setShowUnitsModal(true)}
+              className="text-[10px] uppercase font-black text-emerald-400 hover:text-emerald-300 tracking-widest flex items-center gap-1 bg-zinc-800/50 hover:bg-zinc-800 px-3.5 py-1.5 rounded-xl border border-zinc-700 transition-all"
+            >
+              Procurar Outra Barbearia ⚡
+            </button>
+          </div>
+
+          <div className="space-y-3 pt-4 border-t border-zinc-800/60 text-zinc-300 text-xs font-medium mt-4">
+            {tenant?.address && (
+              <div className="flex items-start gap-3">
+                <MapPin size={14} className="text-emerald-400 mt-0.5 shrink-0" />
+                <span>
+                  {tenant.address.street}, {tenant.address.city} - {tenant.address.state}
+                </span>
+              </div>
+            )}
+            {tenant?.phone && (
+              <div className="flex items-center gap-3">
+                <Phone size={14} className="text-emerald-400 shrink-0" />
+                <span>{tenant.phone}</span>
+              </div>
+            )}
+            {tenant?.email && (
+              <div className="flex items-center gap-3">
+                <Mail size={14} className="text-emerald-400 shrink-0" />
+                <span className="truncate">{tenant.email}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Loyalty Program Card (Stunning Visualizer) */}
+        <div className="lg:col-span-7 bg-surface border border-border rounded-3xl p-8 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center text-amber-500 shadow-sm border border-amber-100">
+                  <Award size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-primary">Programa de Fidelidade</h3>
+                  <p className="text-xs text-muted">Acumule pontos e resgate descontos especiais.</p>
+                </div>
+              </div>
+              <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-xs font-bold uppercase tracking-wider">
+                {data?.points >= 1000 ? "Cliente VIP" : "Club Standard"}
+              </span>
+            </div>
+
+            {/* Loyalty details & Meter */}
+            <div className="grid grid-cols-2 gap-4 mb-6 bg-slate-50 border border-slate-100 rounded-2xl p-4">
+              <div>
+                <p className="text-[10px] text-muted font-black uppercase tracking-wider mb-1">Meus Pontos</p>
+                <p className="text-2xl font-black text-amber-600">{data?.points || 0} <span className="text-xs font-normal text-muted">pts</span></p>
+              </div>
+              <div>
+                <p className="text-[10px] text-muted font-black uppercase tracking-wider mb-1">Meu Cashback</p>
+                <p className="text-2xl font-black text-emerald-600">R$ {(data?.cashback || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+              </div>
+            </div>
+
+            {/* VIP Progress Bar */}
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs font-semibold">
+                <span className="text-muted">Progresso para VIP</span>
+                <span className="text-primary font-bold">{Math.min(1000, data?.points || 0)} / 1000 pts</span>
+              </div>
+              <div className="w-full h-3 bg-slate-100 border border-slate-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, ((data?.points || 0) / 1000) * 100)}%` }}
+                ></div>
+              </div>
+              <p className="text-[10px] text-muted font-medium pt-1">
+                {data?.points >= 1000 
+                  ? "⭐ Parabéns! Você é um Cliente VIP e desfruta de prioridades e descontos exclusivos!" 
+                  : `Faltam ${1000 - (data?.points || 0)} pontos para você alcançar a categoria VIP e liberar benefícios especiais.`}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Cards: Quick stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <KpiCard 
           title="Total de Cortes" 
@@ -1135,23 +1305,23 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
           isCurrency={false}
         />
         <KpiCard 
-          title="Meu Saldo" 
+          title="Meu Saldo Líquido" 
           value={data?.balance || 0} 
           icon={<Wallet className="text-blue-500" />} 
-          trend="Créditos" 
+          trend="Pré-pago / Adiantado" 
           trendUp={true}
           color="blue"
         />
         <KpiCard 
-          title="A Pagar" 
+          title="Saldo a Pagar" 
           value={data?.debt || 0} 
-          icon={<AlertCircle className="text-red-500" />} 
-          trend="Pendências" 
+          icon={<AlertCircle className="text-rose-500" />} 
+          trend="Fiado / Pendente" 
           trendUp={false}
           color="red"
         />
         <KpiCard 
-          title="Barbeiro Favorito" 
+          title="Barbeiro Preferido" 
           value={0} 
           icon={<Star className="text-amber-500" />} 
           trend="Preferência" 
@@ -1162,6 +1332,119 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
         />
       </div>
 
+      {/* active Packages / Subscriptions details */}
+      <div className="bg-surface border border-border rounded-3xl p-8 shadow-sm">
+        <h3 className="font-bold text-lg text-primary mb-6 flex items-center gap-3">
+          <Gift size={20} className="text-indigo-500" />
+          Meus Pacotes de Cortes & Assinaturas Ativas
+        </h3>
+
+        {data?.subscriptions && data.subscriptions.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {data.subscriptions.map((sub: any) => {
+              const isExpired = new Date(sub.endDate) < new Date();
+              const isActive = sub.status === 'active' && !isExpired;
+
+              return (
+                <div key={sub.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="font-bold text-base text-primary">{sub.planName}</span>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                        isActive 
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                          : 'bg-red-50 text-red-700 border-red-200'
+                      }`}>
+                        {isActive ? 'Ativo' : 'Inativo / Expirado'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-4 mb-4">
+                      {/* Haircuts Progress */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs font-semibold text-muted">
+                          <span>Cortes Utilizados (Mês)</span>
+                          <span className="text-primary font-bold">{sub.haircutsUsed || 0} de {sub.haircutsLimit || 4}</span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-200/60 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-primary rounded-full transition-all duration-500"
+                            style={{ width: `${getSubProgress(sub.haircutsUsed || 0, sub.haircutsLimit || 4)}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      {/* Beard Progress (if supported) */}
+                      {(sub.beardsLimit > 0 || sub.beardsUsed > 0) && (
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs font-semibold text-muted">
+                            <span>Barbas Utilizadas (Mês)</span>
+                            <span className="text-primary font-bold">{sub.beardsUsed || 0} de {sub.beardsLimit || 4}</span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-200/60 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                              style={{ width: `${getSubProgress(sub.beardsUsed || 0, sub.beardsLimit || 4)}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-200/60 flex items-center justify-between text-xs text-muted font-medium mt-2">
+                    <span>Vencimento: <strong>{format(parseISO(sub.endDate), 'dd/MM/yyyy')}</strong></span>
+                    <span>Auto-renovável: <strong>{sub.autoRenew ? 'Sim' : 'Não'}</strong></span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-12 bg-slate-50 border border-slate-100 rounded-2xl">
+            <p className="text-muted text-sm italic mb-4">Você ainda não possui um plano de assinatura ou pacote ativo.</p>
+            <button 
+              onClick={() => setActiveTab('assinaturas')}
+              className="px-6 py-2.5 bg-primary text-white font-bold rounded-xl text-xs uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-sm"
+            >
+              Conhecer Planos & Pacotes
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Referral & Invitation Box */}
+      <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-slate-50 border border-emerald-500/20 rounded-[2rem] p-8 shadow-sm flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl -ml-12 -mt-12 pointer-events-none"></div>
+        <div className="space-y-2 max-w-xl">
+          <div className="flex items-center gap-2 text-emerald-700 font-bold text-xs uppercase tracking-widest">
+            <Zap size={14} className="animate-pulse" />
+            Indique Amigos, Ganhe Benefícios!
+          </div>
+          <h3 className="font-extrabold text-xl text-slate-900">Seu Link Especial da Barbearia</h3>
+          <p className="text-slate-600 text-sm leading-relaxed font-medium">
+            Compartilhe seu link exclusivo de recomendação com seus amigos. Quando eles se cadastrarem e agendarem o primeiro corte, vocês dois acumulam cashback e pontos no clube de fidelidade BarberElite!
+          </p>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full md:w-auto shrink-0 max-w-md">
+          <input 
+            type="text" 
+            readOnly 
+            value={invitationLink} 
+            className="px-4 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-mono focus:outline-none min-w-[240px] shadow-sm select-all"
+          />
+          <button 
+            onClick={copyInvitation}
+            className="flex items-center justify-center gap-2 px-6 py-3 bg-zinc-950 hover:bg-zinc-850 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-all active:scale-95 shadow-md"
+          >
+            {copied ? <CheckCircle2 size={16} className="text-emerald-400" /> : <Copy size={16} />}
+            {copied ? 'Copiado!' : 'Copiar Link'}
+          </button>
+        </div>
+      </div>
+
+      {/* Appointments & History */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-surface border border-border rounded-3xl p-8 shadow-sm">
           <h3 className="font-bold text-lg text-primary mb-8 flex items-center gap-3">
@@ -1227,6 +1510,98 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
           </div>
         </div>
       </div>
+
+      {/* Units Selection Modal */}
+      <AnimatePresence>
+        {showUnitsModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-surface border border-border w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]"
+            >
+              <div className="p-6 border-b border-border flex items-center justify-between bg-zinc-50 dark:bg-zinc-900/50">
+                <div>
+                  <h3 className="font-extrabold text-lg text-primary">Unidades & Barbearias Disponíveis</h3>
+                  <p className="text-muted text-xs">Selecione uma das unidades cadastradas no nosso sistema SaaS para conectar e ver seus pontos, serviços e agendamentos.</p>
+                </div>
+                <button 
+                  onClick={() => setShowUnitsModal(false)}
+                  className="p-2 text-muted hover:text-primary hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-lg transition-all"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-4 max-h-[50vh] custom-scrollbar">
+                {tenantsList.map((unit) => {
+                  const isActive = unit.id === tenant?.id;
+                  return (
+                    <div 
+                      key={unit.id} 
+                      className={`p-5 border rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all ${
+                        isActive 
+                          ? 'border-emerald-500 bg-emerald-500/5 shadow-sm' 
+                          : 'border-border bg-slate-50 hover:bg-slate-100/50 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-white border border-border rounded-xl flex items-center justify-center font-black text-lg text-emerald-500 overflow-hidden shrink-0">
+                          {unit.logoUrl ? (
+                            <img src={unit.logoUrl} alt={unit.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <Scissors size={20} />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-base text-primary">{unit.name}</h4>
+                            {isActive && (
+                              <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 text-[9px] font-black uppercase tracking-wider rounded border border-emerald-500/25">
+                                Ativa
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-muted text-xs flex items-center gap-1 mt-1">
+                            <MapPin size={12} className="text-muted-foreground shrink-0" />
+                            {unit.address?.street ? `${unit.address.street}, ${unit.address.city}` : 'Endereço não configurado'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isActive || linkingUnit === unit.id}
+                        onClick={() => handleLinkUnit(unit.id)}
+                        className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-95 whitespace-nowrap shrink-0 ${
+                          isActive 
+                            ? 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800 cursor-not-allowed'
+                            : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-md'
+                        }`}
+                      >
+                        {linkingUnit === unit.id ? 'Conectando...' : isActive ? 'Já Conectado' : 'Conectar Unidade'}
+                      </button>
+                    </div>
+                  );
+                })}
+                {tenantsList.length === 0 && (
+                  <div className="text-center py-8 text-muted italic">Nenhuma barbearia cadastrada no sistema.</div>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-border bg-zinc-50 dark:bg-zinc-900/50 text-right">
+                <button 
+                  onClick={() => setShowUnitsModal(false)}
+                  className="px-5 py-2.5 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-850 dark:hover:bg-zinc-800 rounded-xl text-xs font-bold uppercase tracking-widest transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

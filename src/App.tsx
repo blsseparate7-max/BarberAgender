@@ -26,6 +26,7 @@ import { ForgotPasswordPage } from './pages/ForgotPassword';
 import { TabId, Stats } from './types';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { TenantProvider, useTenant } from './contexts/TenantContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 import { PagePlaceholder } from './components/PagePlaceholder';
@@ -47,6 +48,7 @@ const initialStats: Stats = {
 
 function MainApp() {
   const { user, profile, loading } = useAuth();
+  const { tenant, loading: tenantLoading } = useTenant();
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authView, setAuthView] = useState<'login' | 'register' | 'forgot'>('login');
@@ -84,12 +86,14 @@ function MainApp() {
     }
   }, [profile?.tipo, activeTab]);
 
-  if (loading) {
+  if (loading || tenantLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="animate-spin text-accent w-12 h-12" />
-          <p className="text-muted font-medium tracking-widest uppercase text-[10px]">Carregando BarberElite...</p>
+          <p className="text-muted font-medium tracking-widest uppercase text-[10px]">
+            Carregando {tenant?.name || 'BarberElite'}...
+          </p>
         </div>
       </div>
     );
@@ -204,7 +208,7 @@ function MainApp() {
       />
       
       <div className="flex-1 flex flex-col min-w-0 max-w-full">
-        <Header setSidebarOpen={setSidebarOpen} />
+        <Header setSidebarOpen={setSidebarOpen} onProfileClick={() => setActiveTab('configuracoes-perfil' as any)} />
         
         <main className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
           <div className="max-w-7xl mx-auto w-full">
@@ -231,8 +235,10 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Toaster position="top-right" richColors closeButton />
-        <MainApp />
+        <TenantProvider>
+          <Toaster position="top-right" richColors closeButton />
+          <MainApp />
+        </TenantProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

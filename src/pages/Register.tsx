@@ -1,9 +1,10 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome } from 'lucide-react';
+import { getActiveTenantId } from '../services/tenantService';
+import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface RegisterPageProps {
@@ -17,6 +18,15 @@ export function RegisterPage({ onLoginClick }: RegisterPageProps) {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
+  const [refCode, setRefCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref') || params.get('invite');
+    if (ref) {
+      setRefCode(ref);
+    }
+  }, []);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +50,8 @@ export function RegisterPage({ onLoginClick }: RegisterPageProps) {
         nome: name,
         tipo: 'cliente', // Default role
         ativo: true,
+        tenantId: getActiveTenantId(),
+        indicadoPor: refCode || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -77,6 +89,8 @@ export function RegisterPage({ onLoginClick }: RegisterPageProps) {
           nome: user.displayName || 'Usuário Google',
           tipo: 'cliente',
           ativo: true,
+          tenantId: getActiveTenantId(),
+          indicadoPor: refCode || null,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -105,6 +119,16 @@ export function RegisterPage({ onLoginClick }: RegisterPageProps) {
         </div>
 
         <form onSubmit={handleRegister} className="bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl shadow-xl space-y-6">
+          {refCode && (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-xl flex items-start gap-3 text-emerald-400 text-sm">
+              <Sparkles className="shrink-0 text-emerald-400 mt-0.5" size={18} />
+              <div>
+                <p className="font-bold text-xs uppercase tracking-wider">Indicação Ativa!</p>
+                <p className="text-zinc-400 text-xs mt-1">Você foi indicado para se cadastrar na BarberElite. Aproveite cashback e vantagens de fidelidade no seu primeiro agendamento!</p>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-xl flex items-center gap-3 text-red-500 text-sm">
               <AlertCircle size={18} />

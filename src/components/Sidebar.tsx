@@ -45,6 +45,7 @@ import {
 } from 'lucide-react';
 import { TabId, DailyCash } from '../types';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { cashService } from '../services/cashService';
@@ -72,6 +73,7 @@ interface MenuItem {
 
 export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarProps) {
   const { profile, overrideRole, setOverrideRole } = useAuth();
+  const { tenant } = useTenant();
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
 
@@ -275,10 +277,16 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       <div className="p-8 flex flex-col h-full">
         <div className="flex items-center justify-between mb-12">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/20">
-              <Scissors className="text-white w-6 h-6" />
-            </div>
-            <h1 className="text-2xl font-black tracking-tight text-primary">BarberElite</h1>
+            {tenant?.logoUrl ? (
+              <img src={tenant.logoUrl} alt={tenant.name} className="w-12 h-12 rounded-2xl object-cover shadow-xl shadow-primary/10" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/20">
+                <Scissors className="text-white w-6 h-6" />
+              </div>
+            )}
+            <h1 className="text-2xl font-black tracking-tight text-primary leading-tight truncate max-w-[140px]" title={tenant?.name || "BarberElite"}>
+              {tenant?.name || "BarberElite"}
+            </h1>
           </div>
           <button onClick={() => setIsOpen(false)} className="md:hidden p-2.5 text-slate-400 hover:text-primary bg-slate-50 rounded-xl border border-slate-100">
             <X size={24} />

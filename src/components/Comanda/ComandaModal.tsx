@@ -31,7 +31,7 @@ import {
   BellRing
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt } from '../../types';
 import { comandaService } from '../../services/comandaService';
@@ -112,6 +112,108 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [showFiadoConfirmationModal, setShowFiadoConfirmationModal] = useState(false);
   const [fiadoDueDate, setFiadoDueDate] = useState('');
   const [scheduleFiadoReminder, setScheduleFiadoReminder] = useState(true);
+
+  const [amountToPay, setAmountToPay] = useState<string>('');
+  const [customTipValue, setCustomTipValue] = useState<string>('');
+  const [showCustomTipInput, setShowCustomTipInput] = useState(false);
+
+  useEffect(() => {
+    if (comanda) {
+      setAmountToPay(comanda.pendingAmount.toFixed(2));
+    }
+  }, [comanda?.pendingAmount]);
+
+  const handleResetPayments = async () => {
+    if (!comanda || !user || loading) return;
+    setLoading(true);
+    try {
+      const financialSnap = await getDocs(query(collection(db, 'financial_transactions'), where('comanda_id', '==', comanda.id)));
+      const cashMovementsSnap = await getDocs(query(collection(db, 'cash_movements'), where('referencia_id', '==', comanda.id)));
+      const clientDebtsSnap = await getDocs(query(collection(db, 'client_debts'), where('comanda_id', '==', comanda.id)));
+
+      const batch = writeBatch(db);
+      
+      financialSnap.forEach(docSnap => {
+        batch.delete(docSnap.ref);
+      });
+      cashMovementsSnap.forEach(docSnap => {
+        batch.delete(docSnap.ref);
+      });
+      clientDebtsSnap.forEach(docSnap => {
+        batch.delete(docSnap.ref);
+      });
+
+      const cashQuery = query(collection(db, 'cash_sessions'), where('status', 'in', ['open', 'reopened']));
+      const cashDocs = await getDocs(cashQuery);
+      if (!cashDocs.empty) {
+        const cashDoc = cashDocs.docs[0];
+        let totalCashSub = 0;
+        let totalReceivablesSub = 0;
+        
+        comanda.payments.forEach(p => {
+          const methodConfig = paymentMethods.find(m => m.id === p.metodo_pagamento_id || m.type === p.method);
+          if (methodConfig) {
+            const feeAmount = (p.amount * methodConfig.feePercentage) / 100;
+            const netAmount = p.amount - feeAmount;
+            if (methodConfig.goesToReceivables) {
+              totalReceivablesSub += netAmount;
+            } else {
+              totalCashSub += p.amount;
+            }
+          }
+        });
+
+        if (totalCashSub > 0 || totalReceivablesSub > 0) {
+          batch.update(cashDoc.ref, {
+            total_income: increment(-totalCashSub),
+            totalIncome: increment(-totalCashSub),
+            expected_balance: increment(-totalCashSub),
+            expectedBalance: increment(-totalCashSub),
+            total_receivables: increment(-totalReceivablesSub),
+            totalReceivables: increment(-totalReceivablesSub),
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+
+      if (comanda.cliente_id && comanda.cliente_id !== 'avulso') {
+        const clientRef = doc(db, 'usuarios', comanda.cliente_id);
+        const totalPaidToSub = comanda.payments.reduce((acc, p) => acc + p.amount, 0);
+        batch.update(clientRef, {
+          total_pago: increment(-totalPaidToSub),
+          totalPaid: increment(-totalPaidToSub),
+          saldo_atual: increment(-totalPaidToSub),
+          balance: increment(-totalPaidToSub),
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      const newLog = {
+        userId: user.uid,
+        userName: profile?.nome || user.email || 'Usuário',
+        date: new Date().toISOString(),
+        action: 'Pagamentos resetados',
+        details: 'Todos os pagamentos parciais foram removidos e estornados do caixa.'
+      };
+
+      batch.update(doc(db, 'comandas', comanda.id), {
+        payments: [],
+        paidAmount: 0,
+        pendingAmount: comanda.totalAmount,
+        status: 'aberta',
+        logs: [...(comanda.logs || []), newLog],
+        updatedAt: serverTimestamp()
+      });
+
+      await batch.commit();
+      toast.success("Todos os pagamentos foram estornados e o saldo restaurado!");
+    } catch (err) {
+      console.error("Erro ao estornar pagamentos:", err);
+      toast.error("Erro ao estornar pagamentos: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const loadClientDebts = async (clientId: string) => {
     if (!clientId || clientId === 'avulso') {
@@ -354,6 +456,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               if (pData.date) dateStr = pData.date;
               if (pData.endTime) startTimeStr = pData.endTime;
               if (pData.status) parentStatus = pData.status;
+            }
+          } else {
+            // Se for comanda avulsa (sem agendamento de origem) mas já estiver aberta ou em atendimento,
+            // define o encaixe como 'em_atendimento' para que fique da mesma cor amarela/laranja.
+            if (comanda.status === 'aberta' || comanda.status === 'aguardando_pagamento') {
+              parentStatus = 'em_atendimento';
             }
           }
 
@@ -923,6 +1031,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium"
               >
                 <option value="">Selecione um cliente</option>
+                <option value="avulso">👤 Cliente Avulso (Sem Cadastro)</option>
                 {clients.map((c, index) => (
                   <option key={c.uid || `client-${index}`} value={c.uid}>{c.nome}</option>
                 ))}
@@ -943,14 +1052,63 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               </select>
             </div>
 
-            <button 
-              onClick={handleOpenComanda}
-              disabled={loading}
-              className="w-full py-4 bg-primary text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 mt-4 active:scale-95"
-            >
-              {loading ? <Loader2 className="animate-spin" size={20} /> : <Receipt size={20} />}
-              <span>Abrir Comanda Agora</span>
-            </button>
+            <div className="pt-2 space-y-3">
+              <button 
+                onClick={handleOpenComanda}
+                disabled={loading}
+                className="w-full py-4 bg-primary text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 active:scale-95"
+              >
+                {loading ? <Loader2 className="animate-spin" size={20} /> : <Receipt size={20} />}
+                <span>Abrir Comanda Agora</span>
+              </button>
+
+              <button 
+                type="button"
+                disabled={loading || !formData.profissional_id}
+                onClick={async () => {
+                  if (!formData.profissional_id) {
+                    toast.error("Por favor, selecione o profissional primeiro.");
+                    return;
+                  }
+                  // Temporarily update state
+                  const updatedFormData = {
+                    ...formData,
+                    cliente_id: 'avulso',
+                    cliente_name: 'Cliente Avulso'
+                  };
+                  setFormData(updatedFormData);
+                  
+                  // Wait state to apply and open
+                  setLoading(true);
+                  try {
+                    const prof = barbers.find(b => b.uid === formData.profissional_id);
+                    const newCom = await comandaService.openComanda({
+                      cliente_id: 'avulso',
+                      cliente_name: 'Cliente Avulso',
+                      profissional_id: formData.profissional_id,
+                      profissional_name: prof?.nome || 'Profissional',
+                      observations: formData.observations || '',
+                      origin: 'balcao',
+                      status: 'aberta',
+                      items: []
+                    }, user?.uid || '', profile?.nome || user?.email || 'Sistema');
+                    
+                    setComanda(newCom);
+                    setActiveComandaId(newCom.id);
+                    toast.success("Comanda de Cliente Avulso aberta!");
+                    onSave();
+                  } catch (err: any) {
+                    toast.error("Erro ao abrir comanda: " + err.message);
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+              >
+                <Zap size={14} className="text-amber-500" />
+                <span>Atendimento Rápido Sem Cadastro</span>
+              </button>
+            </div>
           </div>
         </motion.div>
       </div>
@@ -1070,7 +1228,25 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             <p className="text-[10px] text-muted uppercase tracking-widest font-bold">Cliente</p>
                             {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && <ArrowRightLeft size={8} className="text-slate-300" />}
                           </div>
-                          <p className="text-primary font-bold">{comanda.cliente_name || 'Cliente Avulso'}</p>
+                          <div className="flex flex-col items-start gap-1">
+                            <p className="text-primary font-bold">{comanda.cliente_name || 'Cliente Avulso'}</p>
+                            {comanda.cliente_id && comanda.cliente_id !== 'avulso' && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleQuickClientSelect({ id: 'avulso', name: 'Cliente Avulso' });
+                                }}
+                                className="px-2 py-0.5 text-[8px] font-bold text-red-600 bg-red-50 hover:bg-red-100/80 border border-red-100 rounded-md transition-all uppercase tracking-wider mt-1"
+                              >
+                                Desvincular Cliente
+                              </button>
+                            )}
+                            {(!comanda.cliente_id || comanda.cliente_id === 'avulso') && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                              <span className="px-2 py-0.5 text-[8px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-md uppercase tracking-wider mt-1">
+                                Sem Cadastro
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <div className="text-right">
@@ -1545,54 +1721,108 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           </div>
 
           {/* Right Side: Summary & Actions */}
-          <div className="space-y-8">
-            <div className="bg-slate-50 border border-slate-200 rounded-3xl p-8 space-y-8 shadow-sm">
-              <h3 className="text-lg font-bold text-primary">Resumo do Checkout</h3>
+          <div className="space-y-8 lg:col-span-1">
+            <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 sm:p-8 space-y-8 shadow-sm">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black text-primary tracking-tight">Resumo do Checkout</h3>
+                {comanda.status === 'aberta' && (
+                  <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Ajustável</span>
+                )}
+              </div>
               
               <div className="space-y-4">
-                <div className="flex justify-between text-sm font-medium">
-                  <span className="text-muted">Subtotal Serviços</span>
+                <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
+                  <span className="text-muted">Serviços</span>
                   <span className="text-primary">R$ {comanda.subtotalServices.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
-                <div className="flex justify-between text-sm font-medium">
-                  <span className="text-muted">Subtotal Produtos</span>
+                <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
+                  <span className="text-muted">Produtos</span>
                   <span className="text-primary">R$ {comanda.subtotalProducts.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Gorjeta</label>
-                    <div className="relative">
-                      <Plus className="absolute left-2.5 top-1/2 -translate-y-1/2 text-emerald-500" size={12} />
-                      <input 
-                        type="number"
-                        value={comanda.tip || ''}
-                        disabled={['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) !== -1 || loading}
-                        onChange={(e) => updateFinancials({ tip: Number(e.target.value) })}
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-xs text-emerald-600 font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500/50 transition-all disabled:opacity-50"
-                        placeholder="0,00"
-                      />
+                {/* Gorjeta / Caixinha Interactive Selector */}
+                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                  <div className="space-y-3 pt-2">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-1">
+                      <Sparkles size={10} className="text-amber-500" />
+                      Gorjeta para o Profissional
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[0, 5, 10, 15, 20].map((tipVal) => (
+                        <button
+                          key={`tip-chip-${tipVal}`}
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            setShowCustomTipInput(false);
+                            updateFinancials({ tip: tipVal });
+                          }}
+                          className={`px-3 py-2 text-[10px] font-black rounded-xl border transition-all active:scale-95 ${
+                            (comanda.tip || 0) === tipVal && !showCustomTipInput
+                              ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm shadow-emerald-600/10'
+                              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                          }`}
+                        >
+                          {tipVal === 0 ? 'Sem Gorjeta' : `R$ ${tipVal}`}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => {
+                          setShowCustomTipInput(true);
+                          setCustomTipValue(comanda.tip ? comanda.tip.toString() : '');
+                        }}
+                        className={`px-3 py-2 text-[10px] font-black rounded-xl border transition-all active:scale-95 ${
+                          showCustomTipInput
+                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm shadow-emerald-600/10'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        Outro
+                      </button>
                     </div>
+
+                    {showCustomTipInput && (
+                      <div className="relative mt-2 animate-in slide-in-from-top-1 duration-150">
+                        <Plus className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500" size={12} />
+                        <input 
+                          type="number"
+                          value={customTipValue}
+                          disabled={loading}
+                          onChange={(e) => {
+                            setCustomTipValue(e.target.value);
+                            updateFinancials({ tip: Number(e.target.value) || 0 });
+                          }}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-8 pr-3 text-xs text-emerald-600 font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500/50 transition-all"
+                          placeholder="Valor personalizado..."
+                        />
+                      </div>
+                    )}
                   </div>
+                )}
+
+                {/* Desconto Input */}
+                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Desconto</label>
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Aplicar Desconto</label>
                     <div className="relative">
-                      <Trash2 className="absolute left-2.5 top-1/2 -translate-y-1/2 text-red-500" size={12} />
+                      <Trash2 className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500" size={12} />
                       <input 
                         type="number"
                         value={comanda.discount || ''}
-                        disabled={['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) !== -1 || loading}
+                        disabled={loading}
                         onChange={(e) => updateFinancials({ discount: Number(e.target.value) })}
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-xs text-red-600 font-bold focus:outline-none focus:ring-2 focus:ring-red-500/10 focus:border-red-500/50 transition-all disabled:opacity-50"
-                        placeholder="0,00"
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-8 pr-3 text-xs text-red-600 font-bold focus:outline-none focus:ring-2 focus:ring-red-500/10 focus:border-red-500/50 transition-all disabled:opacity-50"
+                        placeholder="R$ 0,00"
                       />
                     </div>
                   </div>
-                </div>
+                )}
 
                 <div className="pt-6 border-t border-slate-200 space-y-4">
                   <div className="flex justify-between items-center">
-                    <span className="text-primary font-bold">Total Geral</span>
+                    <span className="text-primary font-bold text-sm uppercase tracking-wider">Total Geral</span>
                     <span className="text-3xl font-black text-primary tracking-tighter">R$ {comanda.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
 
@@ -1609,46 +1839,195 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       </span>
                     </div>
                   )}
+
+                  {clientDebts.length > 0 && (
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs space-y-2">
+                      <div className="flex items-center gap-2 text-amber-800 font-bold">
+                        <AlertCircle size={14} />
+                        <span>Contas pendentes anteriores</span>
+                      </div>
+                      <p className="text-amber-700 leading-tight">
+                        Este cliente tem R$ {clientDebts.reduce((acc, d) => acc + d.amount, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em contas em aberto.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-3 pt-4 border-t border-slate-200">
-                <div className="flex justify-between text-xs font-bold">
-                  <span className="text-muted uppercase tracking-widest">Total Pago</span>
-                  <span className="text-emerald-600">R$ {comanda.paidAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+              {/* Payments and Split Registry */}
+              <div className="pt-6 border-t border-slate-200 space-y-4">
+                <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
+                  <span className="text-muted">Total Pago</span>
+                  <span className="text-emerald-600 font-extrabold">R$ {comanda.paidAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
-                <div className="flex justify-between text-xs font-bold">
-                  <span className="text-muted uppercase tracking-widest">Pendente</span>
-                  <span className="text-amber-600">R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
+                  <span className="text-muted">Pendente</span>
+                  <span className="text-amber-600 font-extrabold">R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
-                {comanda.pendingAmount > 0 && (
-                  <div className={`p-3 rounded-xl border text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 mt-1 ${
-                    comanda.cliente_id === 'avulso'
-                      ? 'bg-red-50 border-red-100 text-red-700'
-                      : 'bg-amber-50 border-amber-200 text-amber-700'
-                  }`}>
-                    <AlertCircle className="shrink-0" size={14} />
-                    <span>
-                      {comanda.cliente_id === 'avulso'
-                        ? 'Vincule um cliente cadastrado para permitir fiado'
-                        : `O valor restante (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) será lançado como FIADO`}
-                    </span>
+
+                {comanda.payments.length > 0 && (
+                  <div className="bg-slate-100 rounded-2xl p-4 space-y-2 border border-slate-200 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Pagamentos Lançados</p>
+                      {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={handleResetPayments}
+                          className="text-[9px] font-black text-red-600 hover:text-red-700 hover:underline uppercase tracking-wider flex items-center gap-1"
+                        >
+                          <RefreshCcw size={10} />
+                          Zerar Lançamentos
+                        </button>
+                      )}
+                    </div>
+                    <div className="space-y-1.5 max-h-32 overflow-y-auto custom-scrollbar">
+                      {comanda.payments.map((p, index) => (
+                        <div key={`p-list-${index}`} className="flex justify-between items-center text-xs font-medium text-slate-700 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200/50">
+                          <span className="capitalize">{p.method === 'cartao' ? 'Cartão' : p.method}</span>
+                          <span className="font-bold text-primary">R$ {p.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
 
-              {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? (
-                <div className="space-y-4 pt-4">
-                  <button 
-                    onClick={() => setShowPaymentModal(true)}
-                    disabled={loading || comanda.pendingAmount <= 0}
-                    className="w-full py-4 bg-primary text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
-                  >
-                    <DollarSign size={20} />
-                    <span>Registrar Pagamento</span>
-                  </button>
+              {/* Direct Split Payment Gateways */}
+              {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                <div className="pt-6 border-t border-slate-200 space-y-5">
+                  {comanda.pendingAmount > 0 ? (
+                    <>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Lançar Recebimento</label>
+                        <div className="relative">
+                          <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                          <input 
+                            type="number"
+                            value={amountToPay}
+                            disabled={loading}
+                            onChange={(e) => setAmountToPay(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-xl py-3.5 pl-8 pr-16 text-sm text-primary font-black focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary/50 transition-all shadow-inner"
+                            placeholder="Valor"
+                          />
+                          <button 
+                            onClick={() => setAmountToPay(comanda.pendingAmount.toFixed(2))}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
+                          >
+                            Restante
+                          </button>
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                      {clientLoyalty && clientLoyalty.cashback > 0 && (
+                        <button
+                          onClick={() => {
+                            const valToUse = Math.min(Number(amountToPay) || comanda.pendingAmount, clientLoyalty.cashback);
+                            handleAddPayment('resgate', valToUse);
+                          }}
+                          disabled={loading || comanda.pendingAmount <= 0}
+                          className="w-full p-4 bg-amber-50 border border-amber-200 hover:bg-amber-100/60 rounded-2xl flex items-center justify-between transition-all shadow-sm active:scale-95 text-left"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-amber-600 shadow-sm border border-amber-100">
+                              <Zap size={16} fill="currentColor" />
+                            </div>
+                            <div>
+                              <p className="text-[9px] font-black uppercase tracking-widest text-amber-700 leading-none mb-1">Usar Cashback</p>
+                              <p className="text-xs font-bold text-amber-900">R$ {clientLoyalty.cashback.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis</p>
+                            </div>
+                          </div>
+                          <span className="text-[9px] font-black uppercase tracking-widest bg-amber-600 text-white px-2 py-1 rounded-lg">Resgatar</span>
+                        </button>
+                      )}
+
+                      <div className="space-y-2">
+                        <span className="text-[9px] font-black text-muted uppercase tracking-widest ml-1 block">Clique no método para registrar</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          {paymentMethods.map((method, index) => {
+                            const valToPay = Number(amountToPay) || comanda.pendingAmount;
+                            const isFiado = method.type === 'fiado' || method.goesToClientAccount;
+                            
+                            return (
+                              <button
+                                key={method.id || `pm-${index}`}
+                                type="button"
+                                disabled={valToPay <= 0 || (valToPay < comanda.pendingAmount && !method.allowsPartial) || (isFiado && comanda.cliente_id === 'avulso')}
+                                onClick={() => {
+                                  if (valToPay <= 0) return;
+                                  if (isFiado) {
+                                    setConfirmFiado({ amount: valToPay, method: method.type, methodId: method.id });
+                                    return;
+                                  }
+                                  handleAddPayment(method.type, valToPay, method.id);
+                                }}
+                                className={`flex flex-col items-center justify-center p-4 border rounded-2xl transition-all relative text-center active:scale-95 group ${
+                                  valToPay <= 0 || (valToPay < comanda.pendingAmount && !method.allowsPartial) || (isFiado && comanda.cliente_id === 'avulso')
+                                    ? 'bg-slate-50 border-slate-100 opacity-40 cursor-not-allowed'
+                                    : 'bg-white border-slate-200 hover:border-emerald-500/50 hover:bg-emerald-50/30'
+                                }`}
+                              >
+                                <div className={`p-2.5 rounded-xl mb-1.5 transition-transform group-hover:scale-110 ${
+                                  isFiado ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                                }`}>
+                                  {method.type === 'pix' ? <Smartphone size={16} /> : 
+                                   method.type === 'dinheiro' ? <DollarSign size={16} /> : 
+                                   method.type === 'fiado' ? <AlertCircle size={16} /> : 
+                                   method.type === 'assinatura' ? <Wallet size={16} /> : <CreditCard size={16} />}
+                                </div>
+                                <span className="text-xs font-bold text-primary block leading-none">{method.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-2xl space-y-4 animate-in zoom-in-95 duration-200">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-emerald-500 text-white rounded-full flex items-center justify-center">
+                          <CheckCircle2 size={18} />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-emerald-800 uppercase tracking-wider">Conta Paga!</p>
+                          <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest mt-0.5">Relatórios e dados sincronizados</p>
+                        </div>
+                      </div>
+
+                      {/* Real-time Feedback Checklist */}
+                      <div className="space-y-2 border-t border-emerald-100 pt-3 text-[10px] font-bold text-slate-600">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-500">✓</span>
+                          <span>Comissão Profissional gerada</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-500">✓</span>
+                          <span>Entrada lançada no Caixa de hoje</span>
+                        </div>
+                        {comanda.cliente_id !== 'avulso' && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-emerald-500">✓</span>
+                            <span>Fidelidade & Cashback creditados</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-500">✓</span>
+                          <span>Controle de estoque deduzido</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-500">✓</span>
+                          <span>Agendamento marcado como Concluído</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Main Actions Bar */}
+              <div className="space-y-3 pt-6 border-t border-slate-200">
+                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? (
+                  <>
                     <button 
                       onClick={() => {
                         if (comanda.pendingAmount > 0) {
@@ -1660,44 +2039,50 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           setConfirmClose(true);
                         }
                       }}
-                      disabled={loading}
-                      className="py-3 bg-white border border-slate-200 text-primary rounded-xl font-bold text-xs hover:bg-slate-50 transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
+                      disabled={loading || (comanda.pendingAmount > 0 && comanda.cliente_id === 'avulso')}
+                      className={`w-full py-4 text-white rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all ${
+                        comanda.pendingAmount === 0 
+                          ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/10' 
+                          : 'bg-primary hover:bg-slate-800 shadow-primary/10'
+                      }`}
                     >
-                      {loading ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} className="text-emerald-500" />}
+                      {loading ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
                       <span>Finalizar Conta</span>
                     </button>
-                    <button 
-                      onClick={() => setConfirmCancel(true)}
-                      disabled={loading}
-                      className="py-3 bg-white border border-slate-200 text-red-500 rounded-xl font-bold text-xs hover:bg-red-50 transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
-                    >
-                      {loading ? <Loader2 className="animate-spin" size={16} /> : <X size={16} />}
-                      <span>Cancelar</span>
-                    </button>
-                  </div>
 
-                  <button 
-                    onClick={onClose}
-                    className="w-full py-3 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95"
-                  >
-                    <EyeOff size={16} className="text-slate-500" />
-                    <span>Ocultar Comanda (Salvar e Sair)</span>
-                  </button>
-                </div>
-              ) : (
-                (isAdmin || isGerente) && (
-                  <div className="pt-4">
-                    <button 
-                      onClick={() => setShowReopenModal(true)}
-                      disabled={loading}
-                      className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold text-sm hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/10 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
-                    >
-                      {loading ? <Loader2 className="animate-spin" size={20} /> : <RefreshCcw size={20} />}
-                      <span>Reabrir Comanda</span>
-                    </button>
-                  </div>
-                )
-              )}
+                    <div className="grid grid-cols-2 gap-3">
+                      <button 
+                        onClick={() => setConfirmCancel(true)}
+                        disabled={loading}
+                        className="py-3 bg-white border border-slate-200 text-red-500 rounded-xl font-bold text-xs hover:bg-red-50 transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
+                      >
+                        {loading ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
+                        <span>Cancelar</span>
+                      </button>
+                      <button 
+                        onClick={onClose}
+                        className="py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95"
+                      >
+                        <EyeOff size={14} className="text-slate-500" />
+                        <span>Ocultar</span>
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  (isAdmin || isGerente) && (
+                    <div className="pt-2">
+                      <button 
+                        onClick={() => setShowReopenModal(true)}
+                        disabled={loading}
+                        className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold text-sm hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/10 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                      >
+                        {loading ? <Loader2 className="animate-spin" size={20} /> : <RefreshCcw size={20} />}
+                        <span>Reabrir Comanda</span>
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
             </div>
 
             <div className="space-y-2">

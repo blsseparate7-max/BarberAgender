@@ -7,9 +7,10 @@ import { DailyCash } from '../types';
 
 interface HeaderProps {
   setSidebarOpen: (open: boolean) => void;
+  onProfileClick?: () => void;
 }
 
-export function Header({ setSidebarOpen }: HeaderProps) {
+export function Header({ setSidebarOpen, onProfileClick }: HeaderProps) {
   const { profile } = useAuth();
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
 
@@ -69,7 +70,10 @@ export function Header({ setSidebarOpen }: HeaderProps) {
         
         <div className="h-8 w-[1px] bg-slate-100 mx-1 hidden md:block"></div>
         
-        <div className="flex items-center gap-4 pl-2 group cursor-pointer">
+        <div 
+          onClick={onProfileClick}
+          className="flex items-center gap-4 pl-2 group cursor-pointer"
+        >
           <div className="text-right hidden sm:block">
             <p className="text-sm font-black text-primary leading-none mb-1.5 tracking-tight group-hover:text-accent transition-colors">{profile?.nome || 'Usuário'}</p>
             <p className="text-[10px] text-muted uppercase tracking-widest font-black opacity-70">{profile?.tipo || 'Perfil'}</p>

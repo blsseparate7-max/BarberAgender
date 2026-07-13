@@ -8,7 +8,9 @@ import {
   limit,
   Timestamp,
   startAt,
-  endAt
+  endAt,
+  doc,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Appointment, FinancialTransaction, Commission, UserProfile } from '../types';
@@ -209,6 +211,10 @@ export const dashboardService = {
   },
 
   async getClientStats(cliente_id: string) {
+    const userRef = doc(db, 'usuarios', cliente_id);
+    const userSnap = await getDoc(userRef);
+    const userData = userSnap.exists() ? userSnap.data() : null;
+
     const appointmentsQuery = query(
       collection(db, 'appointments'),
       where('cliente_id', '==', cliente_id)
@@ -234,12 +240,30 @@ export const dashboardService = {
     const favoriteBarber = Object.entries(barberCounts)
       .sort((a, b) => b[1] - a[1])[0]?.[0] || 'Nenhum';
 
+    // Fetch loyalty points/cashback
+    const pointsRef = doc(db, 'loyalty_points', cliente_id);
+    const pointsSnap = await getDoc(pointsRef);
+    const pointsData = pointsSnap.exists() ? pointsSnap.data() : { points: 0, cashback: 0 };
+
+    // Fetch subscriptions
+    const subsQuery = query(
+      collection(db, 'subscriptions'),
+      where('cliente_id', '==', cliente_id)
+    );
+    const subsSnap = await getDocs(subsQuery);
+    const subscriptionsList = subsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+
     return {
       totalCuts: completed.length,
       lastCut: completed[0]?.date || 'Nunca',
       favoriteBarber,
       upcoming: upcoming.slice(0, 3),
-      history: completed.slice(0, 5)
+      history: completed.slice(0, 5),
+      balance: userData?.saldo_atual ?? userData?.balance ?? 0,
+      debt: userData?.total_em_aberto ?? userData?.debt ?? 0,
+      points: pointsData?.points ?? 0,
+      cashback: pointsData?.cashback ?? 0,
+      subscriptions: subscriptionsList
     };
   }
 };

@@ -26,6 +26,7 @@ import { professionalScheduleService } from './professionalScheduleService';
 import { agendaBlockService } from './agendaBlockService';
 import { cashService } from './cashService';
 import { serviceService } from './serviceService';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'appointments';
 const RECURRING_COLLECTION = 'recurring_appointments';
@@ -43,6 +44,7 @@ export const appointmentService = {
     // 2. Add to Firestore
     const docRef = await addDoc(collection(db, COLLECTION), {
       ...data,
+      tenantId: (data as any).tenantId || getActiveTenantId(),
       origin: data.origin || 'agenda',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -269,6 +271,31 @@ export const appointmentService = {
       status,
       updatedAt: serverTimestamp(),
     });
+
+    // Sincroniza outros agendamentos da mesma comanda se houver comanda_id
+    if (appointment.comanda_id) {
+      try {
+        const linkedQuery = query(
+          collection(db, COLLECTION),
+          where('comanda_id', '==', appointment.comanda_id)
+        );
+        const linkedSnap = await getDocs(linkedQuery);
+        if (!linkedSnap.empty) {
+          const batch = writeBatch(db);
+          linkedSnap.forEach((docSnap) => {
+            if (docSnap.id !== id && docSnap.data().status !== status) {
+              batch.update(docSnap.ref, {
+                status,
+                updatedAt: serverTimestamp()
+              });
+            }
+          });
+          await batch.commit();
+        }
+      } catch (linkSyncErr) {
+        console.error("Erro ao sincronizar status entre agendamentos coligados à comanda:", linkSyncErr);
+      }
+    }
 
     // Se concluído, atualiza estatísticas do cliente e gera registro financeiro
     if (status === 'concluído') {

@@ -60,6 +60,14 @@ service cloud.firestore {
       allow read: if isAuthenticated();
     }
 
+    // Rules for Tenants (Multi-tenant units)
+    match /tenants/{tenantId} {
+      allow read: if true;
+      allow create: if true; // Allows guest/unauthenticated visitors to auto-create missing tenants
+      allow update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
     // Rules for Usuarios collection
     match /usuarios/{userId} {
       // Qualquer um autenticado pode ler dados básicos de perfis (necessário para agendamento e comandas).

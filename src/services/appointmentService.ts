@@ -164,6 +164,7 @@ export const appointmentService = {
   async checkConflict(profissional_id: string, date: string, startTime: string, endTime: string, excludeId?: string) {
     const q = query(
       collection(db, COLLECTION),
+      where('tenantId', '==', getActiveTenantId()),
       where('profissional_id', '==', profissional_id),
       where('date', '==', date),
       where('status', 'in', ['agendado', 'confirmado', 'em_atendimento', 'concluído'])
@@ -187,7 +188,7 @@ export const appointmentService = {
   },
 
   async getAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }) {
-    let q = query(collection(db, COLLECTION));
+    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
 
     if (filters.date) {
       q = query(q, where('date', '==', filters.date), orderBy('startTime', 'asc'));
@@ -217,7 +218,7 @@ export const appointmentService = {
   },
 
   subscribeToAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }, callback: (appointments: Appointment[]) => void) {
-    let q = query(collection(db, COLLECTION));
+    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
 
     if (filters.date) {
       q = query(q, where('date', '==', filters.date), orderBy('startTime', 'asc'));
@@ -504,6 +505,7 @@ export const appointmentService = {
   async createRecurringAppointment(data: Omit<RecurringAppointment, 'id' | 'createdAt' | 'updatedAt'>) {
     const docRef = await addDoc(collection(db, RECURRING_COLLECTION), {
       ...data,
+      tenantId: getActiveTenantId(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -511,7 +513,7 @@ export const appointmentService = {
   },
 
   async getRecurringAppointments(profissional_id?: string) {
-    let q = query(collection(db, RECURRING_COLLECTION));
+    let q = query(collection(db, RECURRING_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (profissional_id) {
       q = query(q, where('appointmentTemplate.profissional_id', '==', profissional_id));
     }

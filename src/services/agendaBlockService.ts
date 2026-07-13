@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { AgendaBlock } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'agenda_blocks';
 
@@ -20,6 +21,7 @@ export const agendaBlockService = {
   async createBlock(data: Omit<AgendaBlock, 'id' | 'createdAt'>) {
     const docRef = await addDoc(collection(db, COLLECTION), {
       ...data,
+      tenantId: getActiveTenantId(),
       createdAt: serverTimestamp(),
     });
     return docRef.id;
@@ -30,7 +32,7 @@ export const agendaBlockService = {
   },
 
   async getBlocks(filters: { date?: string; profissional_id?: string }) {
-    let q = query(collection(db, COLLECTION));
+    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
 
     if (filters.date) {
       q = query(q, where('date', '==', filters.date));
@@ -44,7 +46,7 @@ export const agendaBlockService = {
   },
 
   subscribeToBlocks(filters: { date?: string; profissional_id?: string }, callback: (blocks: AgendaBlock[]) => void) {
-    let q = query(collection(db, COLLECTION));
+    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
 
     if (filters.date) {
       q = query(q, where('date', '==', filters.date));

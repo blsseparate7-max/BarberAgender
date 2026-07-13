@@ -1,4 +1,3 @@
-
 import { 
   collection, 
   query, 
@@ -7,26 +6,31 @@ import {
   addDoc, 
   updateDoc, 
   doc, 
-  orderBy, 
-  serverTimestamp,
-  limit
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Automation, AutomationLog } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'automations';
 const LOGS_COLLECTION = 'automation_logs';
 
 export const automationService = {
   async getAutomations() {
-    const q = query(collection(db, COLLECTION), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Automation));
+    const automations = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Automation));
+    return automations.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    });
   },
 
   async createAutomation(data: Omit<Automation, 'id' | 'createdAt'>) {
     const docRef = await addDoc(collection(db, COLLECTION), {
       ...data,
+      tenantId: getActiveTenantId(),
       createdAt: serverTimestamp()
     });
     return docRef.id;
@@ -38,14 +42,20 @@ export const automationService = {
   },
 
   async getLogs() {
-    const q = query(collection(db, LOGS_COLLECTION), orderBy('executedAt', 'desc'), limit(50));
+    const q = query(collection(db, LOGS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AutomationLog));
+    const logs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AutomationLog));
+    return logs.sort((a, b) => {
+      const aTime = a.executedAt?.seconds || a.executedAt?.toMillis?.() || 0;
+      const bTime = b.executedAt?.seconds || b.executedAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    }).slice(0, 50);
   },
 
   async logExecution(data: Omit<AutomationLog, 'id' | 'executedAt'>) {
     await addDoc(collection(db, LOGS_COLLECTION), {
       ...data,
+      tenantId: getActiveTenantId(),
       executedAt: serverTimestamp()
     });
   }

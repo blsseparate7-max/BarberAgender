@@ -1,4 +1,3 @@
-
 import { 
   collection, 
   query, 
@@ -7,16 +6,14 @@ import {
   addDoc, 
   updateDoc, 
   doc, 
-  getDoc, 
-  orderBy, 
   increment,
   runTransaction,
-  serverTimestamp,
-  limit
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { SubscriptionPlan, Subscription, SubscriptionUsage, SubscriptionStatus } from '../types';
 import { format, addMonths } from 'date-fns';
+import { getActiveTenantId } from './tenantService';
 
 const PLANS_COLLECTION = 'subscription_plans';
 const SUBSCRIPTIONS_COLLECTION = 'subscriptions';
@@ -25,14 +22,16 @@ const USAGE_COLLECTION = 'subscription_usage';
 export const subscriptionService = {
   // Plans
   async getPlans() {
-    const q = query(collection(db, PLANS_COLLECTION), orderBy('price', 'asc'));
+    const q = query(collection(db, PLANS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SubscriptionPlan));
+    const plans = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SubscriptionPlan));
+    return plans.sort((a, b) => (a.price || 0) - (b.price || 0));
   },
 
   async createPlan(plan: Omit<SubscriptionPlan, 'id' | 'createdAt' | 'updatedAt'>) {
     const docRef = await addDoc(collection(db, PLANS_COLLECTION), {
       ...plan,
+      tenantId: getActiveTenantId(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
@@ -49,15 +48,21 @@ export const subscriptionService = {
 
   // Subscriptions
   async getSubscriptions(cliente_id?: string) {
-    let q = query(collection(db, SUBSCRIPTIONS_COLLECTION), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (cliente_id) {
-      q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('cliente_id', '==', cliente_id));
+      q = query(q, where('cliente_id', '==', cliente_id));
     }
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+    const subscriptions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+    return subscriptions.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    });
   },
 
   async createSubscription(data: { cliente_id: string; cliente_name: string; plano_id: string; autoRenew: boolean }) {
+    const activeTenantId = getActiveTenantId();
     return await runTransaction(db, async (transaction) => {
       const planRef = doc(db, PLANS_COLLECTION, data.plano_id);
       const planSnap = await transaction.get(planRef);
@@ -69,7 +74,8 @@ export const subscriptionService = {
       const endDate = addMonths(startDate, 1);
 
       const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
-      const subscriptionData: Omit<Subscription, 'id'> = {
+      const subscriptionData = {
+        tenantId: activeTenantId,
         cliente_id: data.cliente_id,
         cliente_name: data.cliente_name,
         plano_id: data.plano_id,
@@ -90,6 +96,7 @@ export const subscriptionService = {
       // Create financial transaction
       const financialRef = doc(collection(db, 'financial_transactions'));
       transaction.set(financialRef, {
+        tenantId: activeTenantId,
         type: 'income',
         amount: plan.price,
         date: format(startDate, 'yyyy-MM-dd'),
@@ -123,6 +130,7 @@ export const subscriptionService = {
 
   // Usage
   async registerUsage(subscriptionId: string, type: 'haircut' | 'beard', agendamento_id?: string) {
+    const activeTenantId = getActiveTenantId();
     return await runTransaction(db, async (transaction) => {
       const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, subscriptionId);
       const subSnap = await transaction.get(subRef);
@@ -146,6 +154,7 @@ export const subscriptionService = {
       // Register usage
       const usageRef = doc(collection(db, USAGE_COLLECTION));
       transaction.set(usageRef, {
+        tenantId: activeTenantId,
         assinatura_id: subscriptionId,
         cliente_id: sub.cliente_id,
         type,
@@ -168,10 +177,15 @@ export const subscriptionService = {
   async getUsageHistory(subscriptionId: string) {
     const q = query(
       collection(db, USAGE_COLLECTION), 
-      where('assinatura_id', '==', subscriptionId),
-      orderBy('createdAt', 'desc')
+      where('tenantId', '==', getActiveTenantId()),
+      where('assinatura_id', '==', subscriptionId)
     );
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SubscriptionUsage));
+    const usage = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SubscriptionUsage));
+    return usage.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    });
   }
 };

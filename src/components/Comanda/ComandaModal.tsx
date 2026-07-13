@@ -645,7 +645,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
-  const toggleItemDeduction = async (itemId: string, type: 'pacote' | 'assinatura' | 'none') => {
+  const toggleItemDeduction = async (itemId: string, type: 'pacote' | 'assinatura' | 'none', specificPackageSaleId?: string) => {
     if (!comanda || !user || loading) return;
     
     setLoading(true);
@@ -653,13 +653,21 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       const updatedItems = comanda.items.map(i => {
         if (i.id === itemId) {
           if (type === 'pacote') {
-            const hasPkg = clientPackages.find(
-              p => p.remainingCuts > 0 && (p.serviceId === i.referencia_id || p.packageName.toLowerCase().includes(i.name.toLowerCase()))
-            );
+            const hasPkg = specificPackageSaleId 
+              ? clientPackages.find(p => p.id === specificPackageSaleId)
+              : clientPackages.find(
+                  p => p.remainingCuts > 0 && (p.serviceId === i.referencia_id || p.packageName.toLowerCase().includes(i.name.toLowerCase()))
+                );
+            const pPrice = hasPkg 
+              ? (hasPkg.pricePerService !== undefined && hasPkg.pricePerService !== null 
+                  ? hasPkg.pricePerService 
+                  : (hasPkg.pricePaid / hasPkg.totalCuts)) 
+              : 0;
             return {
               ...i,
               deductType: 'pacote' as const,
               packageSaleId: hasPkg?.id || '',
+              packageUnitPrice: pPrice,
               subscriptionId: '',
               isCortesia: true,
               totalPrice: 0,
@@ -1498,7 +1506,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                     </div>
 
                                     {/* Action buttons to toggle deduction */}
-                                    {isService && (hasPkg || hasSub) && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                                    {isService && (clientPackages.some(p => p.remainingCuts > 0) || hasSub) && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                                       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                                         <button
                                           type="button"
@@ -1512,20 +1520,33 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                           Pagar R$
                                         </button>
                                         
-                                        {hasPkg && (
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleItemDeduction(item.id, 'pacote')}
-                                            className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-1 ${
-                                              item.deductType === 'pacote'
-                                                ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
-                                                : 'bg-amber-50 text-amber-600 border-amber-100/50 hover:bg-amber-100'
-                                            }`}
-                                          >
-                                            <Award size={10} fill="currentColor" />
-                                            <span>Usar Pacote ({hasPkg.remainingCuts} rest.)</span>
-                                          </button>
-                                        )}
+                                        {clientPackages.filter(p => p.remainingCuts > 0).map((pkg) => {
+                                          const isSelectedPkg = item.deductType === 'pacote' && item.packageSaleId === pkg.id;
+                                          const pPrice = pkg.pricePerService !== undefined && pkg.pricePerService !== null 
+                                            ? pkg.pricePerService 
+                                            : (pkg.pricePaid / pkg.totalCuts);
+                                          return (
+                                            <button
+                                              key={`assoc-pkg-${pkg.id}`}
+                                              type="button"
+                                              onClick={() => {
+                                                if (isSelectedPkg) {
+                                                  toggleItemDeduction(item.id, 'none');
+                                                } else {
+                                                  toggleItemDeduction(item.id, 'pacote', pkg.id);
+                                                }
+                                              }}
+                                              className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-1 ${
+                                                isSelectedPkg
+                                                  ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                                                  : 'bg-amber-50 text-amber-700 border-amber-100/50 hover:bg-amber-100'
+                                              }`}
+                                            >
+                                              <Award size={10} fill="currentColor" />
+                                              <span>Associar Pacote ({pkg.packageName}) - {pkg.remainingCuts} rest. (R$ {pPrice.toFixed(2)})</span>
+                                            </button>
+                                          );
+                                        })}
 
                                         {hasSub && (
                                           <button

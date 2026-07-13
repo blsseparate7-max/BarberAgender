@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Service, ServiceCategory } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const SERVICES_COLLECTION = 'services';
 const CATEGORIES_COLLECTION = 'service_categories';
@@ -21,7 +22,10 @@ const CATEGORIES_COLLECTION = 'service_categories';
 export const serviceService = {
   // --- Services ---
   async getServices(onlyActive = true, category?: string) {
-    let q = query(collection(db, SERVICES_COLLECTION), orderBy('nome', 'asc'));
+    let q = query(
+      collection(db, SERVICES_COLLECTION),
+      where('tenantId', '==', getActiveTenantId())
+    );
     
     if (onlyActive) {
       q = query(q, where('active', '==', true));
@@ -32,7 +36,8 @@ export const serviceService = {
     }
 
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
+    const services = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
+    return services.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
   async getServiceById(id: string) {
@@ -46,6 +51,7 @@ export const serviceService = {
 
   async createService(data: Partial<Service>) {
     const docRef = await addDoc(collection(db, SERVICES_COLLECTION), {
+      tenantId: getActiveTenantId(),
       nome: data.nome || '',
       name: data.nome || '', // compatibilidade
       descricao: data.descricao || '',
@@ -84,16 +90,21 @@ export const serviceService = {
 
   // --- Categories ---
   async getCategories(onlyActive = true) {
-    let q = query(collection(db, CATEGORIES_COLLECTION), orderBy('order', 'asc'));
+    let q = query(
+      collection(db, CATEGORIES_COLLECTION),
+      where('tenantId', '==', getActiveTenantId())
+    );
     if (onlyActive) {
       q = query(q, where('active', '==', true));
     }
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceCategory));
+    const categories = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceCategory));
+    return categories.sort((a, b) => (a.order || 0) - (b.order || 0));
   },
 
   async createCategory(name: string, order: number = 0) {
     const docRef = await addDoc(collection(db, CATEGORIES_COLLECTION), {
+      tenantId: getActiveTenantId(),
       name,
       order,
       active: true,

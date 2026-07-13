@@ -6,11 +6,11 @@ import {
   getDocs, 
   query, 
   where, 
-  serverTimestamp,
-  updateDoc
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ProfessionalSchedule, WorkingHours } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'professional_schedules';
 
@@ -29,12 +29,14 @@ export const professionalScheduleService = {
     await setDoc(docRef, {
       ...schedule,
       profissional_id,
+      tenantId: getActiveTenantId(),
       updatedAt: serverTimestamp()
     });
   },
 
   async getAllSchedules(): Promise<ProfessionalSchedule[]> {
-    const snap = await getDocs(collection(db, COLLECTION));
+    const q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
+    const snap = await getDocs(q);
     return snap.docs.map(doc => doc.data() as ProfessionalSchedule);
   },
 

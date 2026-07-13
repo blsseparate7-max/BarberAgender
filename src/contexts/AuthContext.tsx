@@ -37,7 +37,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [overrideRole, setOverrideRoleState] = useState<UserRole | null>(() => {
     const saved = localStorage.getItem('barberelite_override_role');
-    return saved ? (saved as UserRole) : 'admin';
+    return saved ? (saved as UserRole) : null;
   });
 
   const setOverrideRole = (role: UserRole | null) => {

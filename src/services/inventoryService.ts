@@ -1,4 +1,3 @@
-
 import { 
   collection, 
   query, 
@@ -9,13 +8,12 @@ import {
   deleteDoc,
   doc, 
   getDoc, 
-  orderBy, 
-  increment,
   runTransaction,
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Product, ProductCategory, InventoryMovement, MovementType } from '../types';
+import { Product, ProductCategory, InventoryMovement } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const PRODUCTS_COLLECTION = 'products';
 const CATEGORIES_COLLECTION = 'product_categories';
@@ -24,9 +22,10 @@ const MOVEMENTS_COLLECTION = 'inventory_movements';
 export const inventoryService = {
   // Products
   async getProducts() {
-    const q = query(collection(db, PRODUCTS_COLLECTION), orderBy('name', 'asc'));
+    const q = query(collection(db, PRODUCTS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+    const products = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+    return products.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   },
 
   async getProduct(id: string) {
@@ -41,6 +40,7 @@ export const inventoryService = {
   async createProduct(product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) {
     const docRef = await addDoc(collection(db, PRODUCTS_COLLECTION), {
       ...product,
+      tenantId: getActiveTenantId(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     });
@@ -62,13 +62,15 @@ export const inventoryService = {
 
   // Categories
   async getCategories() {
-    const q = query(collection(db, CATEGORIES_COLLECTION), orderBy('name', 'asc'));
+    const q = query(collection(db, CATEGORIES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductCategory));
+    const categories = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductCategory));
+    return categories.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   },
 
   async createCategory(name: string) {
     const docRef = await addDoc(collection(db, CATEGORIES_COLLECTION), {
+      tenantId: getActiveTenantId(),
       name,
       active: true
     });
@@ -87,12 +89,20 @@ export const inventoryService = {
 
   // Movements
   async getMovements(produto_id?: string) {
-    let q = query(collection(db, MOVEMENTS_COLLECTION), orderBy('date', 'desc'), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, MOVEMENTS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (produto_id) {
-      q = query(collection(db, MOVEMENTS_COLLECTION), where('produto_id', '==', produto_id), orderBy('date', 'desc'), orderBy('createdAt', 'desc'));
+      q = query(q, where('produto_id', '==', produto_id));
     }
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement));
+    const movements = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement));
+    return movements.sort((a, b) => {
+      const aDate = a.date || '';
+      const bDate = b.date || '';
+      if (aDate !== bDate) return bDate.localeCompare(aDate);
+      const aTime = a.createdAt || '';
+      const bTime = b.createdAt || '';
+      return bTime.localeCompare(aTime);
+    });
   },
 
   async registerMovement(
@@ -132,6 +142,7 @@ export const inventoryService = {
         financialId = financialRef.id;
         
         transaction.set(financialRef, {
+          tenantId: getActiveTenantId(),
           type: movement.type === 'venda' ? 'income' : 'expense',
           amount: financialData.amount,
           date: movement.date,
@@ -150,6 +161,7 @@ export const inventoryService = {
       const movementRef = doc(collection(db, MOVEMENTS_COLLECTION));
       transaction.set(movementRef, {
         ...movement,
+        tenantId: getActiveTenantId(),
         financialId,
         createdAt: new Date().toISOString()
       });

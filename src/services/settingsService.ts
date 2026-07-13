@@ -1,4 +1,3 @@
-
 import { 
   doc, 
   getDoc, 
@@ -7,6 +6,7 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getActiveTenantId } from './tenantService';
 
 export interface BarbershopProfile {
   name: string;
@@ -23,12 +23,11 @@ export interface BarbershopProfile {
   updatedAt?: any;
 }
 
-const SETTINGS_ID = 'barbershop_profile';
-
 export const settingsService = {
   async getProfile(): Promise<BarbershopProfile | null> {
     try {
-      const docRef = doc(db, 'settings', SETTINGS_ID);
+      const tenantId = getActiveTenantId();
+      const docRef = doc(db, 'settings', tenantId);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         return docSnap.data() as BarbershopProfile;
@@ -42,7 +41,8 @@ export const settingsService = {
 
   async updateProfile(data: Partial<BarbershopProfile>): Promise<void> {
     try {
-      const docRef = doc(db, 'settings', SETTINGS_ID);
+      const tenantId = getActiveTenantId();
+      const docRef = doc(db, 'settings', tenantId);
       const docSnap = await getDoc(docRef);
       
       if (docSnap.exists()) {
@@ -53,6 +53,7 @@ export const settingsService = {
       } else {
         await setDoc(docRef, {
           ...data,
+          tenantId,
           updatedAt: serverTimestamp()
         });
       }

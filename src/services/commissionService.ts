@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Commission, CommissionPayout, CommissionStatus, ProfessionalAdvance, ProfessionalPayment } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const COMMISSIONS_COLLECTION = 'commissions';
 const PAYOUTS_COLLECTION = 'professional_payments';
@@ -22,7 +23,7 @@ const ADVANCES_COLLECTION = 'professional_advances';
 
 export const commissionService = {
   async getCommissions(filters: { profissional_id?: string; status?: CommissionStatus; startDate?: string; endDate?: string }) {
-    let q = query(collection(db, COMMISSIONS_COLLECTION));
+    let q = query(collection(db, COMMISSIONS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
 
     if (filters.profissional_id) {
       q = query(q, where('profissional_id', '==', filters.profissional_id));
@@ -55,7 +56,7 @@ export const commissionService = {
   },
 
   async getAdvances(filters: { profissional_id?: string; startDate?: string; endDate?: string }) {
-    let q = query(collection(db, ADVANCES_COLLECTION));
+    let q = query(collection(db, ADVANCES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (filters.profissional_id) {
       q = query(q, where('profissional_id', '==', filters.profissional_id));
     }
@@ -83,6 +84,7 @@ export const commissionService = {
   async registerAdvance(data: Omit<ProfessionalAdvance, 'id' | 'createdAt'>) {
     const docRef = await addDoc(collection(db, ADVANCES_COLLECTION), {
       ...data,
+      tenantId: getActiveTenantId(),
       status: 'pendente',
       createdAt: serverTimestamp(),
     });
@@ -92,6 +94,7 @@ export const commissionService = {
   async createCommission(data: Omit<Commission, 'id' | 'createdAt' | 'updatedAt'>) {
     const docRef = await addDoc(collection(db, COMMISSIONS_COLLECTION), {
       ...data,
+      tenantId: getActiveTenantId(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -99,7 +102,7 @@ export const commissionService = {
   },
 
   async getPayouts(profissional_id?: string) {
-    let q = query(collection(db, PAYOUTS_COLLECTION));
+    let q = query(collection(db, PAYOUTS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (profissional_id) {
       q = query(q, where('profissional_id', '==', profissional_id));
     }
@@ -123,7 +126,7 @@ export const commissionService = {
   // Novo Drill Down completo com alinhamento de saldo real pendente (todas do período de comissões não pagas vs vales não pagos)
   async getProfessionalSummary(startDate: string, endDate: string) {
     const [barbers, commissions, advances, allPendingComms, allPendingAdvs] = await Promise.all([
-      getDocs(query(collection(db, 'usuarios'), where('tipo', '==', 'barbeiro'))),
+      getDocs(query(collection(db, 'usuarios'), where('tenantId', '==', getActiveTenantId()), where('tipo', '==', 'barbeiro'))),
       this.getCommissions({ startDate, endDate }),
       this.getAdvances({ startDate, endDate }),
       this.getCommissions({ status: 'pendente' }),
@@ -167,6 +170,7 @@ export const commissionService = {
     const payoutRef = doc(collection(db, PAYOUTS_COLLECTION));
     batch.set(payoutRef, {
       ...data,
+      tenantId: getActiveTenantId(),
       id: payoutRef.id,
       createdAt: serverTimestamp(),
     });

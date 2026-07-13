@@ -208,7 +208,33 @@ export function AppointmentModal({
     }
   };
 
+  // Reset professional if selected service can't be performed by them
+  useEffect(() => {
+    if (formData.servico_id) {
+      const selectedService = services.find(s => s.id === formData.servico_id);
+      if (selectedService && selectedService.barbeiros_ids && selectedService.barbeiros_ids.length > 0) {
+        if (formData.profissional_id && !selectedService.barbeiros_ids.includes(formData.profissional_id)) {
+          setFormData(prev => ({ ...prev, profissional_id: '', profissional_name: '' }));
+        }
+      }
+    }
+  }, [formData.servico_id, services]);
+
   if (!isOpen) return null;
+
+  const selectedService = services.find(s => s.id === formData.servico_id);
+  const eligibleBarbers = barbers.filter(b => {
+    // Only active barbers
+    if (b.ativo === false) return false;
+    
+    // If a service is selected and has a list of allowed professional IDs, check if this barber is in the list
+    if (selectedService) {
+      if (selectedService.barbeiros_ids && selectedService.barbeiros_ids.length > 0) {
+        return selectedService.barbeiros_ids.includes(b.uid);
+      }
+    }
+    return true;
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
@@ -269,7 +295,7 @@ export function AppointmentModal({
                   className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none disabled:opacity-50"
                 >
                   <option value="" className="text-muted">Selecione o profissional</option>
-                  {barbers.map(b => <option key={b.uid} value={b.uid} className="text-primary font-medium">{b.nome}</option>)}
+                  {eligibleBarbers.map(b => <option key={b.uid} value={b.uid} className="text-primary font-medium">{b.nome}</option>)}
                 </select>
               </div>
             </div>

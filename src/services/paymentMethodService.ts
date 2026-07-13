@@ -1,72 +1,30 @@
-
 import { 
   collection, 
   doc, 
   setDoc, 
   updateDoc, 
-  getDoc, 
   getDocs, 
   query, 
   where, 
-  orderBy, 
   serverTimestamp,
   deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { PaymentMethodConfig } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'payment_methods';
 
 export const paymentMethodService = {
   async getPaymentMethods() {
-    const q = query(collection(db, COLLECTION), orderBy('name', 'asc'));
+    const q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      const nome = data.nome || data.name || '';
-      const name = data.name || data.nome || '';
-      const tipo = data.tipo || data.type || 'outros';
-      const type = data.type || data.tipo || 'outros';
-      const taxa_percentual = data.taxa_percentual !== undefined ? data.taxa_percentual : (data.feePercentage !== undefined ? data.feePercentage : 0);
-      const feePercentage = data.feePercentage !== undefined ? data.feePercentage : (data.taxa_percentual !== undefined ? data.taxa_percentual : 0);
-      const prazo_recebimento = data.prazo_recebimento !== undefined ? data.prazo_recebimento : (data.settlementDays !== undefined ? data.settlementDays : 0);
-      const settlementDays = data.settlementDays !== undefined ? data.settlementDays : (data.prazo_recebimento !== undefined ? data.prazo_recebimento : 0);
-      const recebe_na_hora = data.recebe_na_hora !== undefined ? data.recebe_na_hora : (data.receivesImmediately !== undefined ? data.receivesImmediately : false);
-      const receivesImmediately = data.receivesImmediately !== undefined ? data.receivesImmediately : (data.recebe_na_hora !== undefined ? data.recebe_na_hora : false);
-      const entra_no_caixa = data.entra_no_caixa !== undefined ? data.entra_no_caixa : (data.entersCashImmediately !== undefined ? data.entersCashImmediately : false);
-      const entersCashImmediately = data.entersCashImmediately !== undefined ? data.entersCashImmediately : (data.entra_no_caixa !== undefined ? data.entra_no_caixa : false);
-      const vai_para_recebiveis = data.vai_para_recebiveis !== undefined ? data.vai_para_recebiveis : (data.goesToReceivables !== undefined ? data.goesToReceivables : false);
-      const goesToReceivables = data.goesToReceivables !== undefined ? data.goesToReceivables : (data.vai_para_recebiveis !== undefined ? data.vai_para_recebiveis : false);
-      const vai_para_conta_cliente = data.vai_para_conta_cliente !== undefined ? data.vai_para_conta_cliente : (data.goesToClientAccount !== undefined ? data.goesToClientAccount : false);
-      const goesToClientAccount = data.goesToClientAccount !== undefined ? data.goesToClientAccount : (data.vai_para_conta_cliente !== undefined ? data.vai_para_conta_cliente : false);
-      const permite_parcial = data.permite_parcial !== undefined ? data.permite_parcial : (data.allowsPartial !== undefined ? data.allowsPartial : false);
-      const allowsPartial = data.allowsPartial !== undefined ? data.allowsPartial : (data.permite_parcial !== undefined ? data.permite_parcial : false);
-      const permite_split = data.permite_split !== undefined ? data.permite_split : (data.allowsSplit !== undefined ? data.allowsSplit : false);
-      const allowsSplit = data.allowsSplit !== undefined ? data.allowsSplit : (data.permite_split !== undefined ? data.permite_split : false);
+    
+    if (querySnapshot.empty) {
+      await this.seedDefaultMethods();
+      return this.getPaymentMethods();
+    }
 
-      return {
-        ...data,
-        id: doc.id,
-        nome, name,
-        tipo, type,
-        taxa_percentual, feePercentage,
-        prazo_recebimento, settlementDays,
-        recebe_na_hora, receivesImmediately,
-        entra_no_caixa, entersCashImmediately,
-        vai_para_recebiveis, goesToReceivables,
-        vai_para_conta_cliente, goesToClientAccount,
-        permite_parcial, allowsPartial,
-        permite_split, allowsSplit
-      } as PaymentMethodConfig;
-    });
-  },
-
-  async getActivePaymentMethods() {
-    const q = query(
-      collection(db, COLLECTION), 
-      where('status', '==', 'active')
-    );
-    const querySnapshot = await getDocs(q);
     const list = querySnapshot.docs.map(doc => {
       const data = doc.data();
       const nome = data.nome || data.name || '';
@@ -105,7 +63,13 @@ export const paymentMethodService = {
         permite_split, allowsSplit
       } as PaymentMethodConfig;
     });
+
     return list.sort((a, b) => a.nome.localeCompare(b.nome));
+  },
+
+  async getActivePaymentMethods() {
+    const list = await this.getPaymentMethods();
+    return list.filter(m => m.status === 'active');
   },
 
   async createPaymentMethod(data: Partial<PaymentMethodConfig>) {
@@ -133,6 +97,7 @@ export const paymentMethodService = {
 
     const newMethod: PaymentMethodConfig = {
       id: docRef.id,
+      tenantId: getActiveTenantId(),
       nome, name,
       tipo, type,
       tipo_legado: tipo,
@@ -147,8 +112,8 @@ export const paymentMethodService = {
       permite_split, allowsSplit,
       description: data.description || '',
       internalNotes: data.internalNotes || '',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
+      createdAt: serverTimestamp() as any,
+      updatedAt: serverTimestamp() as any
     };
     await setDoc(docRef, newMethod);
     return docRef.id;

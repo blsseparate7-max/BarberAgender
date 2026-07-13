@@ -73,6 +73,7 @@ export interface Service {
   tipo_comissao?: 'padrao' | 'percentual' | 'fixo';
   valor_comissao?: number;
   comissoes_por_profissional?: Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>;
+  barbeiros_ids?: string[];
   name?: string; // legado
   duration?: number; // legado
   price?: number; // legado
@@ -322,6 +323,10 @@ export interface ComandaItem {
   generateCommission: boolean;
   profissional_id?: string;
   profissional_name?: string;
+  deductType?: 'pacote' | 'assinatura';
+  packageSaleId?: string;
+  subscriptionId?: string;
+  packageUnitPrice?: number;
 }
 
 export interface ComandaPayment {

@@ -1,4 +1,3 @@
-
 import { 
   collection, 
   addDoc, 
@@ -7,26 +6,19 @@ import {
   query, 
   where, 
   getDocs, 
-  serverTimestamp,
-  orderBy,
-  limit,
-  Timestamp,
-  getDoc,
-  setDoc,
-  runTransaction
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { FinancialTransaction, DailyCash, FinancialCategory, TransactionType } from '../types';
-import { format } from 'date-fns';
+import { FinancialTransaction, FinancialCategory, TransactionType } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const TRANSACTIONS_COLLECTION = 'financial_transactions';
-const DAILY_CASH_COLLECTION = 'cash_sessions';
 const CATEGORIES_COLLECTION = 'financial_categories';
 
 export const financialService = {
   // --- Transactions ---
   async getTransactions(startDate?: string, endDate?: string, type?: TransactionType) {
-    let q = query(collection(db, TRANSACTIONS_COLLECTION), orderBy('date', 'desc'), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, TRANSACTIONS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     
     if (startDate && endDate) {
       q = query(q, where('date', '>=', startDate), where('date', '<=', endDate));
@@ -37,12 +29,21 @@ export const financialService = {
     }
 
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+    const transactions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+    return transactions.sort((a, b) => {
+      const aDate = a.date || '';
+      const bDate = b.date || '';
+      if (aDate !== bDate) return bDate.localeCompare(aDate);
+      const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    });
   },
 
   async createTransaction(data: Omit<FinancialTransaction, 'id' | 'createdAt' | 'updatedAt'>) {
     const docRef = await addDoc(collection(db, TRANSACTIONS_COLLECTION), {
       ...data,
+      tenantId: getActiveTenantId(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -59,7 +60,11 @@ export const financialService = {
 
   // --- Categories ---
   async getCategories(type?: TransactionType) {
-    let q = query(collection(db, CATEGORIES_COLLECTION), where('active', '==', true));
+    let q = query(
+      collection(db, CATEGORIES_COLLECTION),
+      where('tenantId', '==', getActiveTenantId()),
+      where('active', '==', true)
+    );
     if (type) {
       q = query(q, where('type', '==', type));
     }
@@ -69,6 +74,7 @@ export const financialService = {
 
   async createCategory(name: string, type: TransactionType) {
     const docRef = await addDoc(collection(db, CATEGORIES_COLLECTION), {
+      tenantId: getActiveTenantId(),
       name,
       type,
       active: true,

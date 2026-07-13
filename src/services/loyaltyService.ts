@@ -1,4 +1,3 @@
-
 import { 
   collection, 
   query, 
@@ -8,7 +7,6 @@ import {
   updateDoc, 
   doc, 
   getDoc, 
-  orderBy, 
   increment,
   runTransaction,
   serverTimestamp,
@@ -17,6 +15,7 @@ import {
 import { db } from '../firebase';
 import { LoyaltyConfig, LoyaltyPoints, LoyaltyHistory } from '../types';
 import { format } from 'date-fns';
+import { getActiveTenantId } from './tenantService';
 
 const CONFIG_COLLECTION = 'loyalty_config';
 const POINTS_COLLECTION = 'loyalty_points';
@@ -24,11 +23,12 @@ const HISTORY_COLLECTION = 'loyalty_history';
 
 export const loyaltyService = {
   async getConfig() {
-    const q = query(collection(db, CONFIG_COLLECTION), limit(1));
+    const q = query(collection(db, CONFIG_COLLECTION), where('tenantId', '==', getActiveTenantId()), limit(1));
     const querySnapshot = await getDocs(q);
     if (querySnapshot.empty) {
       // Create default config if not exists
-      const defaultConfig: Omit<LoyaltyConfig, 'id'> = {
+      const defaultConfig = {
+        tenantId: getActiveTenantId(),
         pointsPerReal: 1,
         pointsPerAppointment: 10,
         cashbackPercentage: 5,
@@ -38,7 +38,7 @@ export const loyaltyService = {
       };
       const docRef = doc(collection(db, CONFIG_COLLECTION));
       await setDoc(docRef, defaultConfig);
-      return { id: docRef.id, ...defaultConfig } as LoyaltyConfig;
+      return { id: docRef.id, ...defaultConfig } as unknown as LoyaltyConfig;
     }
     const docData = querySnapshot.docs[0];
     return { id: docData.id, ...docData.data() } as LoyaltyConfig;
@@ -53,7 +53,8 @@ export const loyaltyService = {
   },
 
   async getClientPoints(cliente_id: string) {
-    const docRef = doc(db, POINTS_COLLECTION, cliente_id);
+    const docId = `${getActiveTenantId()}_${cliente_id}`;
+    const docRef = doc(db, POINTS_COLLECTION, docId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return docSnap.data() as LoyaltyPoints;
@@ -61,17 +62,20 @@ export const loyaltyService = {
     // Return default if not exists
     return {
       cliente_id,
+      tenantId: getActiveTenantId(),
       points: 0,
       cashback: 0,
       isVip: false,
       updatedAt: new Date()
-    } as LoyaltyPoints;
+    } as unknown as LoyaltyPoints;
   },
 
   async addPoints(cliente_id: string, amount: number, value: number, description: string, source: LoyaltyHistory['source']) {
     const config = await this.getConfig();
+    const activeTenantId = getActiveTenantId();
     return await runTransaction(db, async (transaction) => {
-      const pointsRef = doc(db, POINTS_COLLECTION, cliente_id);
+      const docId = `${activeTenantId}_${cliente_id}`;
+      const pointsRef = doc(db, POINTS_COLLECTION, docId);
       const pointsSnap = await transaction.get(pointsRef);
       
       let currentPoints = 0;
@@ -92,6 +96,7 @@ export const loyaltyService = {
 
       transaction.set(pointsRef, {
         cliente_id,
+        tenantId: activeTenantId,
         points: newPoints,
         cashback: newCashback,
         isVip,
@@ -101,6 +106,7 @@ export const loyaltyService = {
       const historyRef = doc(collection(db, HISTORY_COLLECTION));
       transaction.set(historyRef, {
         cliente_id,
+        tenantId: activeTenantId,
         type: 'earn',
         source,
         points: pointsToAdd,
@@ -115,8 +121,10 @@ export const loyaltyService = {
   },
 
   async redeemPoints(cliente_id: string, points: number, cashback: number, description: string) {
+    const activeTenantId = getActiveTenantId();
     return await runTransaction(db, async (transaction) => {
-      const pointsRef = doc(db, POINTS_COLLECTION, cliente_id);
+      const docId = `${activeTenantId}_${cliente_id}`;
+      const pointsRef = doc(db, POINTS_COLLECTION, docId);
       const pointsSnap = await transaction.get(pointsRef);
       
       if (!pointsSnap.exists()) throw new Error("Cliente não possui pontos");
@@ -134,6 +142,7 @@ export const loyaltyService = {
       const historyRef = doc(collection(db, HISTORY_COLLECTION));
       transaction.set(historyRef, {
         cliente_id,
+        tenantId: activeTenantId,
         type: 'redeem',
         source: 'manual',
         points,
@@ -146,11 +155,16 @@ export const loyaltyService = {
   },
 
   async getHistory(cliente_id?: string) {
-    let q = query(collection(db, HISTORY_COLLECTION), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, HISTORY_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (cliente_id) {
-      q = query(collection(db, HISTORY_COLLECTION), where('cliente_id', '==', cliente_id), orderBy('createdAt', 'desc'));
+      q = query(q, where('cliente_id', '==', cliente_id));
     }
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LoyaltyHistory));
+    const history = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LoyaltyHistory));
+    return history.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    });
   }
 };

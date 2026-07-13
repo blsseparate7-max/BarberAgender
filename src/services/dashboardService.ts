@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Appointment, FinancialTransaction, Commission, UserProfile } from '../types';
+import { getActiveTenantId } from './tenantService';
 import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays } from 'date-fns';
 import { cashService } from './cashService';
 
@@ -27,6 +28,7 @@ export const dashboardService = {
     // 1. Fetch Appointments in period
     const appointmentsQuery = query(
       collection(db, 'appointments'),
+      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
@@ -37,6 +39,7 @@ export const dashboardService = {
     // 2. Fetch Financial Transactions in period
     const financialQuery = query(
       collection(db, 'financial_transactions'),
+      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
@@ -46,6 +49,7 @@ export const dashboardService = {
     // 3. Fetch Commissions in period
     const commissionsQuery = query(
       collection(db, 'commissions'),
+      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
@@ -71,20 +75,21 @@ export const dashboardService = {
     // 6. Active Comandas
     const comandasQuery = query(
       collection(db, 'comandas'),
+      where('tenantId', '==', getActiveTenantId()),
       where('status', 'not-in', ['fechada', 'cancelada'])
     );
     const comandasSnap = await getDocs(comandasQuery);
     const activeComandasCount = comandasSnap.docs.length;
 
     // 7. Inventory Alerts
-    const productsSnap = await getDocs(collection(db, 'products'));
+    const productsSnap = await getDocs(query(collection(db, 'products'), where('tenantId', '==', getActiveTenantId())));
     const lowStockCount = productsSnap.docs.filter(d => {
       const p = d.data();
       return p.currentStock <= p.minStock && p.status === 'active';
     }).length;
 
     // 8. Clients with debt
-    const debtsSnap = await getDocs(query(collection(db, 'client_debts'), where('status', 'in', ['pendente', 'parcial', 'vencido'])));
+    const debtsSnap = await getDocs(query(collection(db, 'client_debts'), where('tenantId', '==', getActiveTenantId()), where('status', 'in', ['pendente', 'parcial', 'vencido'])));
     const totalDebts = debtsSnap.docs.reduce((acc, d) => acc + (d.data().remainingAmount || 0), 0);
     const debtorClientsCount = new Set(debtsSnap.docs.map(d => d.data().cliente_id)).size;
 
@@ -176,6 +181,7 @@ export const dashboardService = {
 
     const appointmentsQuery = query(
       collection(db, 'appointments'),
+      where('tenantId', '==', getActiveTenantId()),
       where('profissional_id', '==', profissional_id),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
@@ -186,6 +192,7 @@ export const dashboardService = {
 
     const commissionsQuery = query(
       collection(db, 'commissions'),
+      where('tenantId', '==', getActiveTenantId()),
       where('profissional_id', '==', profissional_id),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
@@ -217,6 +224,7 @@ export const dashboardService = {
 
     const appointmentsQuery = query(
       collection(db, 'appointments'),
+      where('tenantId', '==', getActiveTenantId()),
       where('cliente_id', '==', cliente_id)
     );
     const appointmentsSnap = await getDocs(appointmentsQuery);
@@ -248,6 +256,7 @@ export const dashboardService = {
     // Fetch subscriptions
     const subsQuery = query(
       collection(db, 'subscriptions'),
+      where('tenantId', '==', getActiveTenantId()),
       where('cliente_id', '==', cliente_id)
     );
     const subsSnap = await getDocs(subsQuery);

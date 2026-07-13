@@ -25,6 +25,7 @@ import { commissionService } from './commissionService';
 import { inventoryService } from './inventoryService';
 import { userService } from './userService';
 import { loyaltyService } from './loyaltyService';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'comandas';
 
@@ -77,23 +78,33 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 export const comandaService = {
   async getComandas(status?: ComandaStatus) {
-    let q = query(collection(db, COLLECTION), orderBy('createdAt', 'desc'));
+    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (status) {
       q = query(q, where('status', '==', status));
     }
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comanda));
+    const comandas = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comanda));
+    return comandas.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || 0;
+      const bTime = b.createdAt?.seconds || 0;
+      return bTime - aTime;
+    });
   },
 
   subscribeToComandas(statuses: ComandaStatus[], callback: (comandas: Comanda[]) => void) {
     const q = query(
       collection(db, COLLECTION), 
-      where('status', 'in', statuses),
-      orderBy('createdAt', 'desc')
+      where('tenantId', '==', getActiveTenantId()),
+      where('status', 'in', statuses)
     );
     
     return onSnapshot(q, (snapshot) => {
       const comandas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comanda));
+      comandas.sort((a, b) => {
+        const aTime = a.createdAt?.seconds || 0;
+        const bTime = b.createdAt?.seconds || 0;
+        return bTime - aTime;
+      });
       callback(comandas);
     });
   },
@@ -124,6 +135,7 @@ export const comandaService = {
 
     const newComanda: Comanda = {
       id: docRef.id,
+      tenantId: getActiveTenantId(),
       number,
       cliente_id: data.cliente_id || '',
       cliente_name: data.cliente_name || '',
@@ -657,8 +669,13 @@ export const comandaService = {
         let commission_percentage = defaultPercentage;
         let commission_value = 0;
 
-        // Rule: Cortesia uses unitPrice as base if commission enabled, else useTotalPrice
-        const base_value = item.isCortesia ? (item.unitPrice * item.quantity) : item.totalPrice;
+        // Rule: Cortesia uses unitPrice as base if commission enabled, else useTotalPrice.
+        // If deductType is 'pacote' and a packageUnitPrice is set, use that as the base instead.
+        const base_value = item.isCortesia 
+          ? ((item.deductType === 'pacote' && item.packageUnitPrice !== undefined && item.packageUnitPrice !== null)
+              ? (item.packageUnitPrice * item.quantity)
+              : (item.unitPrice * item.quantity))
+          : item.totalPrice;
 
         // Check if there's a specific professional-level override for this service
         const proOverride = sData.comissoes_por_profissional?.[targetBarberId];

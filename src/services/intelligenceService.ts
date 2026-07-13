@@ -1,24 +1,21 @@
-
 import { 
   collection, 
   query, 
   where, 
   getDocs, 
-  orderBy, 
-  limit,
-  Timestamp,
-  addDoc,
+  addDoc, 
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { SystemInsight } from '../types';
-import { subDays, format, isBefore, parseISO } from 'date-fns';
+import { format } from 'date-fns';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'system_insights';
 
 export const intelligenceService = {
   async getInsights() {
-    const q = query(collection(db, COLLECTION), orderBy('createdAt', 'desc'), limit(10));
+    const q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
     const querySnapshot = await getDocs(q);
     
     if (querySnapshot.empty) {
@@ -27,11 +24,15 @@ export const intelligenceService = {
       return this.getInsights();
     }
     
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SystemInsight));
+    const insights = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SystemInsight));
+    return insights.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    }).slice(0, 10);
   },
 
   async generateInsights() {
-    // This would normally be a cloud function, but we simulate it here
     const insights: Omit<SystemInsight, 'id' | 'createdAt'>[] = [
       {
         type: 'inactive_client',
@@ -62,6 +63,7 @@ export const intelligenceService = {
     for (const insight of insights) {
       await addDoc(collection(db, COLLECTION), {
         ...insight,
+        tenantId: getActiveTenantId(),
         createdAt: serverTimestamp()
       });
     }

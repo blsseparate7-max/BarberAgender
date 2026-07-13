@@ -16,6 +16,7 @@ import { db } from '../firebase';
 import { AccountPayable, AccountReceivable } from '../types';
 import { financialService } from './financialService';
 import { cashService } from './cashService';
+import { getActiveTenantId } from './tenantService';
 
 const PAYABLES_COLLECTION = 'accounts_payable';
 const RECEIVABLES_COLLECTION = 'accounts_receivable';
@@ -23,14 +24,14 @@ const RECEIVABLES_COLLECTION = 'accounts_receivable';
 export const billService = {
   // --- Accounts Payable (Contas a Pagar) ---
   async getPayables(startDate?: string, endDate?: string) {
-    let q = query(collection(db, PAYABLES_COLLECTION), orderBy('dueDate', 'asc'));
+    let q = query(collection(db, PAYABLES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     
     if (startDate && endDate) {
       q = query(q, where('dueDate', '>=', startDate), where('dueDate', '<=', endDate));
     }
     
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
+    const payables = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,
@@ -44,12 +45,15 @@ export const billService = {
         description: data.description || ''
       } as AccountPayable;
     });
+
+    return payables.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
   },
 
   async createPayable(data: Omit<AccountPayable, 'id' | 'createdAt' | 'updatedAt'>) {
     const docRef = doc(collection(db, PAYABLES_COLLECTION));
     const newPayable: AccountPayable = {
       ...data,
+      tenantId: getActiveTenantId(),
       id: docRef.id,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
@@ -136,14 +140,14 @@ export const billService = {
 
   // --- Accounts Receivable (Contas a Receber) ---
   async getReceivables(startDate?: string, endDate?: string) {
-    let q = query(collection(db, RECEIVABLES_COLLECTION), orderBy('dueDate', 'asc'));
+    let q = query(collection(db, RECEIVABLES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     
     if (startDate && endDate) {
       q = query(q, where('dueDate', '>=', startDate), where('dueDate', '<=', endDate));
     }
     
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
+    const receivables = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,
@@ -157,12 +161,15 @@ export const billService = {
         description: data.description || ''
       } as AccountReceivable;
     });
+
+    return receivables.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
   },
 
   async createReceivable(data: Omit<AccountReceivable, 'id' | 'createdAt' | 'updatedAt'>) {
     const docRef = doc(collection(db, RECEIVABLES_COLLECTION));
     const newReceivable: AccountReceivable = {
       ...data,
+      tenantId: getActiveTenantId(),
       id: docRef.id,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()

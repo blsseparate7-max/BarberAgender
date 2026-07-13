@@ -494,6 +494,8 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
   const [comissoesPorProfissional, setComissoesPorProfissional] = useState<Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>>(
     service?.comissoes_por_profissional || {}
   );
+  const [barbeirosIds, setBarbeirosIds] = useState<string[]>(service?.barbeiros_ids || []);
+  const hasInitializedBarbeiros = React.useRef(false);
 
   // Sync state helpers
   const [nome, setNome] = useState(service?.nome || service?.name || '');
@@ -508,14 +510,23 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
     const qProf = query(collection(db, 'usuarios'), orderBy('nome', 'asc'));
     const unsubscribeProf = onSnapshot(qProf, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
-      const barbersOnly = docs.filter(u => u.tipo === 'barbeiro' || u.tipo === 'gerente');
+      // Show only active barbers/managers
+      const barbersOnly = docs.filter(u => (u.tipo === 'barbeiro' || u.tipo === 'gerente') && u.ativo !== false);
       setProfessionals(barbersOnly);
+
+      // Default to all active barbers if service is new or has no saved barbeiros_ids yet
+      if (!hasInitializedBarbeiros.current) {
+        if (!service || !service.barbeiros_ids) {
+          setBarbeirosIds(barbersOnly.map(b => b.uid));
+        }
+        hasInitializedBarbeiros.current = true;
+      }
     }, (error) => {
       console.error("Erro ao carregar profissionais:", error);
     });
 
     return () => unsubscribeProf();
-  }, []);
+  }, [service]);
 
   // Establish fallback category if empty
   useEffect(() => {
@@ -551,6 +562,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
       tipo_comissao: tipoComissao,
       valor_comissao: tipoComissao === 'padrao' ? 0 : valorComissao,
       comissoes_por_profissional: comissoesPorProfissional,
+      barbeiros_ids: barbeirosIds,
       active: service ? service.active : true
     };
 
@@ -707,6 +719,53 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                         <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${permiteCortesia ? 'left-5.5' : 'left-0.5'}`} />
                       </div>
                     </button>
+                  </div>
+
+                  <div className="sm:col-span-2 space-y-3 bg-slate-50 p-4.5 rounded-3xl border border-slate-100">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1 flex items-center gap-1">
+                        👥 Profissionais que Realizam este Serviço
+                      </label>
+                      <p className="text-[9px] text-slate-450 italic font-bold uppercase tracking-wider mt-0.5 ml-1">
+                        Marque apenas os barbeiros ativos que fazem este trabalho específico na escala.
+                      </p>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[160px] overflow-y-auto pr-1">
+                      {professionals.map((prof) => {
+                        const isChecked = barbeirosIds.includes(prof.uid);
+                        return (
+                          <button
+                            key={`link-barber-${prof.uid}`}
+                            type="button"
+                            onClick={() => {
+                              if (isChecked) {
+                                setBarbeirosIds(barbeirosIds.filter(id => id !== prof.uid));
+                              } else {
+                                setBarbeirosIds([...barbeirosIds, prof.uid]);
+                              }
+                            }}
+                            className={`flex items-center gap-3 p-3 rounded-2xl border text-left transition-all ${
+                              isChecked
+                                ? 'bg-indigo-50 border-indigo-200 text-indigo-900 font-extrabold'
+                                : 'bg-white border-slate-100 text-slate-550 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all ${
+                              isChecked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
+                            }`}>
+                              {isChecked && <Check size={11} strokeWidth={3} />}
+                            </div>
+                            <div>
+                              <p className="text-xs leading-none">{prof.nome || prof.name}</p>
+                              <span className="text-[8px] font-black uppercase text-slate-450 mt-1 block leading-none">
+                                {prof.ativo !== false ? '● ATIVO NA ESCALA' : '○ INATIVO'}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>

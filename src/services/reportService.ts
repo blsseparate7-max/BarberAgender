@@ -1,14 +1,8 @@
-
 import { 
   collection, 
   query, 
   where, 
-  getDocs, 
-  orderBy, 
-  limit,
-  Timestamp,
-  startAt,
-  endAt
+  getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getActiveTenantId } from './tenantService';
@@ -18,12 +12,10 @@ import {
   Commission, 
   UserProfile, 
   Comanda, 
-  ClientDebt, 
   InventoryMovement, 
-  Product,
-  DailyCash
+  Product
 } from '../types';
-import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays, parseISO, isWithinInterval } from 'date-fns';
+import { format } from 'date-fns';
 
 export interface ReportFilter {
   startDate: string;
@@ -43,35 +35,32 @@ export const reportService = {
     // Fetch transactions
     const financialQuery = query(
       collection(db, 'financial_transactions'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
+      where('tenantId', '==', currentTenantId)
     );
     const financialSnap = await getDocs(financialQuery);
     const transactions = financialSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
-      .filter(t => !(t as any).tenantId || (t as any).tenantId === currentTenantId);
+      .filter(t => t.date >= startDate && t.date <= endDate);
 
     // Fetch appointments
     const appointmentsQuery = query(
       collection(db, 'appointments'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
+      where('tenantId', '==', currentTenantId)
     );
     const appointmentsSnap = await getDocs(appointmentsQuery);
     const appointments = appointmentsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(a => !(a as any).tenantId || (a as any).tenantId === currentTenantId);
+      .filter(a => a.date >= startDate && a.date <= endDate);
 
     // Fetch comandas
     const comandasQuery = query(
       collection(db, 'comandas'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
+      where('tenantId', '==', currentTenantId)
     );
     const comandasSnap = await getDocs(comandasQuery);
     const comandas = comandasSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Comanda))
-      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
+      .filter(c => c.date >= startDate && c.date <= endDate);
 
     // Calculations
     const grossRevenue = transactions
@@ -108,16 +97,16 @@ export const reportService = {
   async getAppointmentsReport(filter: ReportFilter) {
     const { startDate, endDate, profissional_id, status } = filter;
     const currentTenantId = getActiveTenantId();
+    
     const q = query(
       collection(db, 'appointments'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
+      where('tenantId', '==', currentTenantId)
     );
 
     const snap = await getDocs(q);
     let data = snap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(a => !(a as any).tenantId || (a as any).tenantId === currentTenantId);
+      .filter(a => a.date >= startDate && a.date <= endDate);
 
     if (profissional_id && profissional_id !== 'all') {
       data = data.filter(a => a.profissional_id === profissional_id);
@@ -144,21 +133,23 @@ export const reportService = {
     const { startDate, endDate } = filter;
     const currentTenantId = getActiveTenantId();
     
-    // Fetch all clients to identify new ones in period
-    const clientsSnap = await getDocs(collection(db, 'usuarios'));
-    const allUsers = clientsSnap.docs.map(doc => ({ uid: doc.id, ...doc.data() } as unknown as UserProfile));
-    const clients = allUsers.filter(u => u.tipo === 'cliente' && (!(u as any).tenantId || (u as any).tenantId === currentTenantId));
+    // Fetch all clients of this tenant
+    const clientsSnap = await getDocs(
+      query(collection(db, 'usuarios'), where('tenantId', '==', currentTenantId))
+    );
+    const clients = clientsSnap.docs
+      .map(doc => ({ uid: doc.id, ...doc.data() } as unknown as UserProfile))
+      .filter(u => u.tipo === 'cliente');
 
     // Appointments in period
     const apptsQuery = query(
       collection(db, 'appointments'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
+      where('tenantId', '==', currentTenantId)
     );
     const apptsSnap = await getDocs(apptsQuery);
     const appts = apptsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(a => a.status === 'concluído' && (!(a as any).tenantId || (a as any).tenantId === currentTenantId));
+      .filter(a => a.status === 'concluído' && a.date >= startDate && a.date <= endDate);
 
     const newClients = clients.filter(c => {
       const createdDate = c.createdAt?.toDate ? format(c.createdAt.toDate(), 'yyyy-MM-dd') : null;
@@ -190,23 +181,19 @@ export const reportService = {
     const { startDate, endDate } = filter;
     const currentTenantId = getActiveTenantId();
     
-    const apptsSnap = await getDocs(query(
-      collection(db, 'appointments'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
-    ));
+    const apptsSnap = await getDocs(
+      query(collection(db, 'appointments'), where('tenantId', '==', currentTenantId))
+    );
     const appts = apptsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(a => a.status === 'concluído' && (!(a as any).tenantId || (a as any).tenantId === currentTenantId));
+      .filter(a => a.status === 'concluído' && a.date >= startDate && a.date <= endDate);
 
-    const commissionsSnap = await getDocs(query(
-      collection(db, 'commissions'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
-    ));
+    const commissionsSnap = await getDocs(
+      query(collection(db, 'commissions'), where('tenantId', '==', currentTenantId))
+    );
     const commissions = commissionsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
-      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
+      .filter(c => c.date >= startDate && c.date <= endDate);
 
     const profMap: Record<string, any> = {};
 
@@ -249,19 +236,17 @@ export const reportService = {
     const { startDate, endDate } = filter;
     const currentTenantId = getActiveTenantId();
     
-    const prodSnap = await getDocs(collection(db, 'products'));
-    const products = prodSnap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() } as Product))
-      .filter(p => !(p as any).tenantId || (p as any).tenantId === currentTenantId);
+    const prodSnap = await getDocs(
+      query(collection(db, 'products'), where('tenantId', '==', currentTenantId))
+    );
+    const products = prodSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
 
-    const movementsSnap = await getDocs(query(
-      collection(db, 'inventory_movements'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
-    ));
+    const movementsSnap = await getDocs(
+      query(collection(db, 'inventory_movements'), where('tenantId', '==', currentTenantId))
+    );
     const movements = movementsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement))
-      .filter(m => !(m as any).tenantId || (m as any).tenantId === currentTenantId);
+      .filter(m => m.date >= startDate && m.date <= endDate);
 
     const stats = {
       totalProducts: products.length,
@@ -277,14 +262,12 @@ export const reportService = {
     const { startDate, endDate } = filter;
     const currentTenantId = getActiveTenantId();
     
-    const transactionsSnap = await getDocs(query(
-      collection(db, 'financial_transactions'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
-    ));
+    const transactionsSnap = await getDocs(
+      query(collection(db, 'financial_transactions'), where('tenantId', '==', currentTenantId))
+    );
     const transactions = transactionsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
-      .filter(t => !(t as any).tenantId || (t as any).tenantId === currentTenantId);
+      .filter(t => t.date >= startDate && t.date <= endDate);
 
     const income = transactions.filter(t => t.type === 'income' && t.status === 'pago').reduce((acc, t) => acc + t.amount, 0);
     const expense = transactions.filter(t => t.type === 'expense' && t.status === 'pago').reduce((acc, t) => acc + t.amount, 0);
@@ -308,14 +291,13 @@ export const reportService = {
     
     const q = query(
       collection(db, 'commissions'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
+      where('tenantId', '==', currentTenantId)
     );
 
     const snap = await getDocs(q);
     let data = snap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
-      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
+      .filter(c => c.date >= startDate && c.date <= endDate);
 
     if (profissional_id && profissional_id !== 'all') {
       data = data.filter(c => c.profissional_id === profissional_id);
@@ -337,14 +319,13 @@ export const reportService = {
     
     const q = query(
       collection(db, 'comandas'),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate)
+      where('tenantId', '==', currentTenantId)
     );
 
     const snap = await getDocs(q);
     let data = snap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Comanda))
-      .filter(c => !(c as any).tenantId || (c as any).tenantId === currentTenantId);
+      .filter(c => c.date >= startDate && c.date <= endDate);
 
     if (status && status !== 'all') {
       data = data.filter(c => c.status === status);

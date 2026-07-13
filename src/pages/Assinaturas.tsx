@@ -225,9 +225,11 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   // Package Config form states
   const [pkgName, setPkgName] = useState('');
   const [pkgCuts, setPkgCuts] = useState(5);
+  const [pkgPricePerService, setPkgPricePerService] = useState<number | ''>('');
   const [pkgOrigPrice, setPkgOrigPrice] = useState(250);
   const [pkgPromoPrice, setPkgPromoPrice] = useState(200);
   const [pkgExpires, setPkgExpires] = useState(90);
+  const [pkgNoExpiration, setPkgNoExpiration] = useState(false);
   const [pkgActive, setPkgActive] = useState(true);
   const [pkgServiceId, setPkgServiceId] = useState('');
 
@@ -329,32 +331,41 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     if (editingPackage) {
       setPkgName(editingPackage.name);
       setPkgCuts(editingPackage.cutsCount);
+      setPkgPricePerService(editingPackage.pricePerService !== undefined && editingPackage.pricePerService !== null ? editingPackage.pricePerService : '');
       setPkgOrigPrice(editingPackage.originalPrice);
       setPkgPromoPrice(editingPackage.promotionalPrice);
-      setPkgExpires(editingPackage.expiresDays);
+      setPkgExpires(editingPackage.expiresDays || 0);
+      setPkgNoExpiration(editingPackage.noExpiration || false);
       setPkgActive(editingPackage.active);
       setPkgServiceId(editingPackage.serviceId || '');
     } else {
       setPkgName('');
       setPkgCuts(5);
+      setPkgPricePerService('');
       setPkgOrigPrice(250);
       setPkgPromoPrice(200);
       setPkgExpires(90);
+      setPkgNoExpiration(false);
       setPkgActive(true);
       setPkgServiceId('');
     }
   }, [editingPackage]);
 
-  // Recalculating default pricing when service changes or cuts count changes
+  // Recalculating default pricing when service changes, cuts count changes, or price per service changes
   useEffect(() => {
     if (pkgServiceId && services.length > 0) {
       const selectedService = services.find(s => s.id === pkgServiceId);
       if (selectedService) {
         const servicePrice = selectedService.preco ?? selectedService.price ?? 0;
         setPkgOrigPrice(servicePrice * pkgCuts);
+        
+        // Auto-calculate the promo price based on price per service if provided!
+        if (pkgPricePerService !== '' && Number(pkgPricePerService) > 0) {
+          setPkgPromoPrice(Number(pkgPricePerService) * pkgCuts);
+        }
       }
     }
-  }, [pkgServiceId, pkgCuts, services]);
+  }, [pkgServiceId, pkgCuts, pkgPricePerService, services]);
 
   // Handle plan assignments (assign subscription)
   const { execute: handleAssignSubscription, isLoading: isAssigning } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
@@ -434,7 +445,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       toast.error('Preencha o nome do pacote.');
       return;
     }
-    if (pkgCuts <= 0 || pkgOrigPrice <= 0 || pkgPromoPrice <= 0 || pkgExpires <= 0) {
+    if (pkgCuts <= 0 || pkgOrigPrice <= 0 || pkgPromoPrice <= 0 || (!pkgNoExpiration && pkgExpires <= 0)) {
       toast.error('Insira valores maiores que zero.');
       return;
     }
@@ -444,9 +455,11 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const payload = {
       name: pkgName.trim(),
       cutsCount: Number(pkgCuts),
+      pricePerService: pkgPricePerService !== '' ? Number(pkgPricePerService) : null,
       originalPrice: Number(pkgOrigPrice),
       promotionalPrice: Number(pkgPromoPrice),
-      expiresDays: Number(pkgExpires),
+      expiresDays: pkgNoExpiration ? 0 : Number(pkgExpires),
+      noExpiration: pkgNoExpiration,
       active: pkgActive,
       serviceId: pkgServiceId || '',
       serviceName: selectedService ? (selectedService.nome || selectedService.name || '') : ''
@@ -514,6 +527,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         totalCuts: pkg.cutsCount,
         remainingCuts: pkg.cutsCount,
         pricePaid: Number(salePrice),
+        pricePerService: pkg.pricePerService !== undefined && pkg.pricePerService !== null ? pkg.pricePerService : null,
+        noExpiration: pkg.noExpiration || false,
+        expiresDays: pkg.expiresDays || 0,
         soldAt: new Date().toISOString(),
         usages: [],
         serviceId: pkg.serviceId || '',
@@ -1498,21 +1514,50 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   <div>
                     <label className="text-[10px] uppercase text-slate-500 tracking-wider block mb-1.5 ml-1">Dias de Validade</label>
                     <input 
-                      required
+                      required={!pkgNoExpiration}
+                      disabled={pkgNoExpiration}
                       type="number"
                       min="1"
-                      value={pkgExpires} 
+                      placeholder="Sem validade"
+                      value={pkgNoExpiration ? '' : pkgExpires} 
                       onChange={e => setPkgExpires(Number(e.target.value))}
-                      className="w-full bg-slate-50 border p-3.5 rounded-xl font-bold outline-none focus:bg-white focus:ring-4 focus:ring-slate-50"
+                      className="w-full bg-slate-50 border p-3.5 rounded-xl font-bold outline-none focus:bg-white focus:ring-4 focus:ring-slate-50 disabled:opacity-50"
                     />
+                    <div className="flex items-center gap-1.5 mt-1.5 ml-1">
+                      <input 
+                        type="checkbox" 
+                        id="pkgNoExpCheck" 
+                        checked={pkgNoExpiration} 
+                        onChange={e => setPkgNoExpiration(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer" 
+                      />
+                      <label htmlFor="pkgNoExpCheck" className="text-[10px] font-bold text-slate-500 cursor-pointer selection:bg-transparent">Sem validade (não expira)</label>
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] uppercase text-slate-500 tracking-wider block mb-1.5 ml-1">Preço Regular (Balcão)</label>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="col-span-1">
+                    <label className="text-[10px] uppercase text-slate-500 tracking-wider block mb-1.5 ml-1">Preço Unitário</label>
                     <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">R$</span>
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">R$</span>
+                      <input 
+                        type="number" 
+                        min="0.01"
+                        step="0.01"
+                        placeholder="25.00"
+                        value={pkgPricePerService} 
+                        onChange={e => setPkgPricePerService(e.target.value === '' ? '' : Number(e.target.value))}
+                        className="w-full bg-slate-50 border py-3.5 pl-7 pr-2 rounded-xl text-xs font-bold outline-none focus:bg-white focus:ring-4 focus:ring-indigo-50"
+                      />
+                    </div>
+                    <span className="text-[8px] text-slate-400 mt-1 block text-center italic leading-none">Ex: 25.00</span>
+                  </div>
+                  
+                  <div className="col-span-1">
+                    <label className="text-[10px] uppercase text-slate-500 tracking-wider block mb-1.5 ml-1">Total Balcão</label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">R$</span>
                       <input 
                         required
                         type="number" 
@@ -1520,14 +1565,15 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         step="0.01"
                         value={pkgOrigPrice} 
                         onChange={e => setPkgOrigPrice(Number(e.target.value))}
-                        className="w-full bg-slate-50 border py-3.5 pl-9 pr-4 rounded-xl font-bold outline-none focus:bg-white focus:ring-4 focus:ring-slate-50"
+                        className="w-full bg-slate-50 border py-3.5 pl-7 pr-2 rounded-xl text-xs font-bold outline-none focus:bg-white focus:ring-4 focus:ring-slate-50"
                       />
                     </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] uppercase text-slate-500 tracking-wider block mb-1.5 ml-1">Preço Pacote Desconto</label>
+
+                  <div className="col-span-1">
+                    <label className="text-[10px] uppercase text-slate-500 tracking-wider block mb-1.5 ml-1">Total Pacote</label>
                     <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-emerald-600 font-extrabold">R$</span>
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-emerald-600 font-extrabold">R$</span>
                       <input 
                         required
                         type="number" 
@@ -1535,7 +1581,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         step="0.01"
                         value={pkgPromoPrice} 
                         onChange={e => setPkgPromoPrice(Number(e.target.value))}
-                        className="w-full bg-slate-50 border py-3.5 pl-9 pr-4 rounded-xl font-bold outline-none focus:bg-white focus:ring-4 focus:ring-slate-50"
+                        className="w-full bg-slate-50 border py-3.5 pl-7 pr-2 rounded-xl text-xs font-bold outline-none focus:bg-white focus:ring-4 focus:ring-slate-50"
                       />
                     </div>
                   </div>

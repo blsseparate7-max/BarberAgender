@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, UserRole } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'usuarios';
 
@@ -23,7 +24,7 @@ export const userService = {
     let q = query(
       collection(db, COLLECTION), 
       where('tipo', '==', role),
-      orderBy('nome', 'asc')
+      where('tenantId', '==', getActiveTenantId())
     );
     
     if (onlyActive) {
@@ -31,7 +32,8 @@ export const userService = {
     }
 
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+    const users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+    return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
   async getAllBarbers(onlyActive = true) {
@@ -166,6 +168,7 @@ export const userService = {
       email: data.email || '',
       tipo: data.tipo || 'cliente',
       ativo: data.ativo !== undefined ? data.ativo : true,
+      tenantId: data.tenantId || getActiveTenantId(),
       telefone: data.telefone || '',
       phone: data.telefone || '', // dual storage for safety
       observacoes: data.observacoes || '',

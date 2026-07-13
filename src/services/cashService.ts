@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { DailyCash, CashMovement, TransactionType, PaymentMethod } from '../types';
+import { getActiveTenantId } from './tenantService';
 
 const COLLECTION_CASH = 'cash_sessions';
 const COLLECTION_MOVEMENTS = 'cash_movements';
@@ -25,6 +26,7 @@ export const cashService = {
   async getCurrentCash() {
     const q = query(
       collection(db, COLLECTION_CASH), 
+      where('tenantId', '==', getActiveTenantId()),
       where('status', 'in', ['open', 'reopened'])
     );
     const querySnapshot = await getDocs(q);
@@ -67,6 +69,7 @@ export const cashService = {
   subscribeToCurrentCash(callback: (cash: DailyCash | null) => void) {
     const q = query(
       collection(db, COLLECTION_CASH), 
+      where('tenantId', '==', getActiveTenantId()),
       where('status', 'in', ['open', 'reopened'])
     );
     
@@ -123,6 +126,7 @@ export const cashService = {
     
     const newCash: DailyCash = {
       id: docRef.id,
+      tenantId: getActiveTenantId(),
       date: today,
       opening_balance: data.opening_balance,
       total_income: 0,
@@ -148,6 +152,7 @@ export const cashService = {
 
     const newMovement: CashMovement = {
       ...data,
+      tenantId: getActiveTenantId(),
       id: movementRef.id,
       createdAt: serverTimestamp()
     };
@@ -266,13 +271,12 @@ export const cashService = {
   async getCashHistory(startDate: string, endDate: string) {
     const q = query(
       collection(db, COLLECTION_CASH),
+      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startDate),
-      where('date', '<=', endDate),
-      orderBy('date', 'desc'),
-      orderBy('openedAt', 'desc')
+      where('date', '<=', endDate)
     );
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
+    const history = querySnapshot.docs.map(doc => {
       const data = doc.data() as any;
       return { 
         id: doc.id, 
@@ -297,6 +301,17 @@ export const cashService = {
         closing_balance: data.closing_balance ?? data.closingBalance ?? 0,
         closingBalance: data.closing_balance ?? data.closingBalance ?? 0
       } as DailyCash;
+    });
+
+    return history.sort((a, b) => {
+      const aDate = a.date || '';
+      const bDate = b.date || '';
+      if (aDate !== bDate) {
+        return bDate.localeCompare(aDate);
+      }
+      const aTime = a.openedAt?.seconds || 0;
+      const bTime = b.openedAt?.seconds || 0;
+      return bTime - aTime;
     });
   },
 

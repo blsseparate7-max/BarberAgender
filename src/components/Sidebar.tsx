@@ -348,25 +348,27 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         </nav>
 
         <div className="pt-6 border-t border-slate-100 space-y-4">
-          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 shadow-inner">
-            <span className="block text-[9px] font-black uppercase tracking-widest text-[#94a3b8] mb-2.5 text-center">
-              ⚙️ Simulador de Perfil
-            </span>
-            <select
-              value={profile?.tipo || 'cliente'}
-              onChange={(e) => {
-                if (setOverrideRole) {
-                  setOverrideRole(e.target.value as any);
-                }
-              }}
-              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-[10px] font-extrabold uppercase tracking-widest text-primary focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all cursor-pointer text-center outline-none"
-            >
-              <option value="admin">👑 Dono (Admin)</option>
-              <option value="gerente">💼 Gerente</option>
-              <option value="barbeiro">💈 Barbeiro</option>
-              <option value="cliente">👤 Cliente</option>
-            </select>
-          </div>
+          {profile?.isSaaSAdmin && (
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 shadow-inner">
+              <span className="block text-[9px] font-black uppercase tracking-widest text-[#94a3b8] mb-2.5 text-center">
+                ⚙️ Simulador de Perfil
+              </span>
+              <select
+                value={profile?.tipo || 'cliente'}
+                onChange={(e) => {
+                  if (setOverrideRole) {
+                    setOverrideRole(e.target.value as any);
+                  }
+                }}
+                className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-[10px] font-extrabold uppercase tracking-widest text-primary focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all cursor-pointer text-center outline-none"
+              >
+                <option value="admin">👑 Dono (Admin)</option>
+                <option value="gerente">💼 Gerente</option>
+                <option value="barbeiro">💈 Barbeiro</option>
+                <option value="cliente">👤 Cliente</option>
+              </select>
+            </div>
+          )}
 
           <button 
             onClick={handleLogout}

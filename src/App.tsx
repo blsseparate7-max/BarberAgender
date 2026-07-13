@@ -38,6 +38,7 @@ import { NoticiasPromocoes } from './pages/NoticiasPromocoes';
 import { PesquisaSatisfacao } from './pages/PesquisaSatisfacao';
 import { Lembretes } from './pages/Lembretes';
 import { CuponsDesconto } from './pages/CuponsDesconto';
+import { LandingPage } from './pages/LandingPage';
 
 const initialStats: Stats = {
   revenue: 12450.00,
@@ -52,6 +53,8 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authView, setAuthView] = useState<'login' | 'register' | 'forgot'>('login');
+  const [showLanding, setShowLanding] = useState(true);
+  const [initialRegisterRole, setInitialRegisterRole] = useState<'cliente' | 'admin'>('cliente');
 
   // Redirect to permitted tabs based on role to avoid missing permissions errors on mounted pages
   useEffect(() => {
@@ -100,16 +103,49 @@ function MainApp() {
   }
 
   if (!user) {
+    if (showLanding) {
+      return (
+        <LandingPage 
+          activeTenant={tenant}
+          onSelectRole={(roleType) => {
+            if (roleType === 'dono-registro') {
+              setInitialRegisterRole('admin');
+              setAuthView('register');
+              setShowLanding(false);
+            } else if (roleType === 'cliente') {
+              setInitialRegisterRole('cliente');
+              setAuthView('login');
+              setShowLanding(false);
+            } else { // 'profissional'
+              setInitialRegisterRole('cliente');
+              setAuthView('login');
+              setShowLanding(false);
+            }
+          }}
+        />
+      );
+    }
+
     if (authView === 'register') {
-      return <RegisterPage onLoginClick={() => setAuthView('login')} />;
+      return (
+        <RegisterPage 
+          initialRole={initialRegisterRole}
+          onLoginClick={() => setAuthView('login')} 
+          onBackToLanding={() => setShowLanding(true)}
+        />
+      );
     }
     if (authView === 'forgot') {
       return <ForgotPasswordPage onLoginClick={() => setAuthView('login')} />;
     }
     return (
       <LoginPage 
-        onRegisterClick={() => setAuthView('register')} 
+        onRegisterClick={() => {
+          setInitialRegisterRole('cliente');
+          setAuthView('register');
+        }} 
         onForgotClick={() => setAuthView('forgot')}
+        onBackToLanding={() => setShowLanding(true)}
       />
     );
   }

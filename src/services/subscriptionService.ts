@@ -187,5 +187,11 @@ export const subscriptionService = {
       const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
       return bTime - aTime;
     });
+  },
+
+  async getAllSubscriptionsSystem() {
+    const q = query(collection(db, SUBSCRIPTIONS_COLLECTION));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
   }
 };

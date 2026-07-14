@@ -148,6 +148,7 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding }: L
             )}
           </button>
 
+
           <div className="text-center pt-4 space-y-4">
             <p className="text-xs text-zinc-500">
               Não tem uma conta?{' '}

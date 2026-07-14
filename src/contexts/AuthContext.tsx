@@ -13,6 +13,7 @@ interface AuthContextType {
   isGerente: boolean;
   isBarbeiro: boolean;
   isCliente: boolean;
+  isSaaSAdmin: boolean;
   overrideRole: UserRole | null;
   setOverrideRole: (role: UserRole | null) => void;
 }
@@ -25,6 +26,7 @@ const AuthContext = createContext<AuthContextType>({
   isGerente: false,
   isBarbeiro: false,
   isCliente: false,
+  isSaaSAdmin: false,
   overrideRole: null,
   setOverrideRole: () => {},
 });
@@ -78,7 +80,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribeAuth();
   }, []);
 
-  const activeRole = overrideRole || profile?.tipo || 'cliente';
+  const activeRole = overrideRole || 
+    (profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' 
+      ? 'saas_admin' 
+      : (profile?.tipo || 'cliente'));
 
   const adjustedProfile = React.useMemo(() => {
     if (profile) {
@@ -102,6 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isGerente: activeRole === 'gerente',
       isBarbeiro: activeRole === 'barbeiro',
       isCliente: activeRole === 'cliente',
+      isSaaSAdmin: activeRole === 'saas_admin',
       overrideRole,
       setOverrideRole,
     };

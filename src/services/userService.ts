@@ -204,6 +204,12 @@ export const userService = {
     return newUser;
   },
 
+  async getAllUsersSystem() {
+    const q = query(collection(db, COLLECTION));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+  },
+
   async deleteUser(uid: string) {
     const docRef = doc(db, COLLECTION, uid);
     const snap = await getDoc(docRef);

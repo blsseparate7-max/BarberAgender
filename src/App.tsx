@@ -39,6 +39,10 @@ import { PesquisaSatisfacao } from './pages/PesquisaSatisfacao';
 import { Lembretes } from './pages/Lembretes';
 import { CuponsDesconto } from './pages/CuponsDesconto';
 import { LandingPage } from './pages/LandingPage';
+import { PortalCliente } from './pages/PortalCliente';
+import { PortalBarbeiro } from './pages/PortalBarbeiro';
+import PortalSaaSAdmin from './pages/PortalSaaSAdmin';
+import { OnboardingWelcome } from './components/OnboardingWelcome';
 
 const initialStats: Stats = {
   revenue: 12450.00,
@@ -55,6 +59,15 @@ function MainApp() {
   const [authView, setAuthView] = useState<'login' | 'register' | 'forgot'>('login');
   const [showLanding, setShowLanding] = useState(true);
   const [initialRegisterRole, setInitialRegisterRole] = useState<'cliente' | 'admin'>('cliente');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    if (profile && (profile.tipo === 'admin' || profile.tipo === 'gerente') && !profile.onboardingCompleted) {
+      setShowOnboarding(true);
+    } else {
+      setShowOnboarding(false);
+    }
+  }, [profile]);
 
   // Redirect to permitted tabs based on role to avoid missing permissions errors on mounted pages
   useEffect(() => {
@@ -150,6 +163,21 @@ function MainApp() {
     );
   }
 
+  // Portal do Superadministrador SaaS
+  if (profile && profile.tipo === 'saas_admin') {
+    return <PortalSaaSAdmin />;
+  }
+
+  // Portal do Cliente
+  if (profile && profile.tipo === 'cliente') {
+    return <PortalCliente profile={profile} />;
+  }
+
+  // Portal do Barbeiro
+  if (profile && profile.tipo === 'barbeiro') {
+    return <PortalBarbeiro profile={profile} />;
+  }
+
   const renderContent = () => {
     // Dashboard
     if (activeTab === 'dashboard' || activeTab.startsWith('dashboard-')) {
@@ -232,6 +260,16 @@ function MainApp() {
             exit={{ opacity: 0 }}
             onClick={() => setSidebarOpen(false)}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showOnboarding && (
+          <OnboardingWelcome 
+            profile={profile!} 
+            onClose={() => setShowOnboarding(false)} 
+            onNavigate={(tabId) => setActiveTab(tabId as any)} 
           />
         )}
       </AnimatePresence>

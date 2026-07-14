@@ -29,6 +29,8 @@ import {
   Users,
   Search,
   Send,
+  Trash2,
+  Sparkles,
   HelpCircle as QuestionIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,6 +39,7 @@ import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { settingsService, BarbershopProfile } from '../services/settingsService';
 import { userService } from '../services/userService';
+import { resetService } from '../services/resetService';
 import { toast } from 'sonner';
 
 export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
@@ -50,6 +53,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [userProfileName, setUserProfileName] = useState(profile?.nome || '');
   const [userProfilePhone, setUserProfilePhone] = useState(profile?.telefone || profile?.phone || '');
   const [isSavingUserProfile, setIsSavingUserProfile] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -1024,6 +1029,46 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                     <FaqItem q="Como cadastro novos profissionais?" r="Vá em Cadastros > Profissionais, clique em Adicionar e preencha o formulário." />
                     <FaqItem q="Como reabrir uma comanda fechada?" r="No painel Comandas > Histórico, selecione a comanda fechada e clique e reabrir." />
                     <FaqItem q="A taxa de comissão aceita percentuais personalizados por tipo de serviço?" r="Sim! No cadastro de cada serviço você pode associar taxas fixas ou customizadas." />
+
+                    <div className="bg-indigo-50/50 border border-indigo-100 p-6 rounded-3xl mt-6 space-y-3">
+                      <p className="text-xs font-black text-indigo-900 flex items-center gap-1.5">
+                        <Sparkles size={16} className="text-indigo-600" />
+                        Precisa de Ajuda para Começar?
+                      </p>
+                      <p className="text-[11px] text-indigo-700/80 leading-relaxed font-semibold">
+                        Você pode rever o tutorial interativo de boas-vindas do sistema para aprender sobre as principais telas, abas e tarefas recomendadas.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const loadingToastId = toast.loading("Reiniciando tutorial de boas-vindas...");
+                          try {
+                            const { auth } = await import('../firebase');
+                            const { userService } = await import('../services/userService');
+                            const currentUser = auth.currentUser;
+                            if (currentUser) {
+                              await userService.updateUserProfile(currentUser.uid, {
+                                onboardingCompleted: false
+                              });
+                              toast.dismiss(loadingToastId);
+                              toast.success("Tutorial ativado! Atualizando a página...");
+                              setTimeout(() => {
+                                window.location.reload();
+                              }, 1500);
+                            } else {
+                              toast.dismiss(loadingToastId);
+                              toast.error("Usuário não autenticado.");
+                            }
+                          } catch (err: any) {
+                            toast.dismiss(loadingToastId);
+                            toast.error(`Erro: ${err.message || err}`);
+                          }
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2 px-4 rounded-xl transition-all shadow-sm"
+                      >
+                        Refazer Tour de Boas-vindas
+                      </button>
+                    </div>
                   </div>
 
                   {/* Message form */}
@@ -1062,6 +1107,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                 </div>
               </div>
             )}
+
+
           </motion.div>
         </div>
       </div>

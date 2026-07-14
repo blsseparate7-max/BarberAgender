@@ -12,7 +12,7 @@ export type TabId =
   | 'admin' | 'admin-usuarios' | 'admin-logs' | 'admin-auditoria'
   | 'comissoes' | 'marketing' | 'insights';
 
-export type UserRole = 'admin' | 'gerente' | 'barbeiro' | 'cliente';
+export type UserRole = 'admin' | 'gerente' | 'barbeiro' | 'cliente' | 'saas_admin';
 
 export interface UserProfile {
   uid: string;
@@ -26,6 +26,8 @@ export interface UserProfile {
   observations?: string;
   observacoes?: string; // Nova nomenclatura
   preferences?: string;
+  tenantId?: string;
+  onboardingCompleted?: boolean;
   
   // Cliente specific
   saldo_atual: number; // Substituindo balance
@@ -178,8 +180,9 @@ export interface Appointment {
   duration: number;
   price: number;
   status: AppointmentStatus;
-  origin: 'agenda' | 'encaixe' | 'recorrente';
+  origin: 'agenda' | 'encaixe' | 'recorrente' | 'cliente';
   notes?: string;
+  tenantId?: string;
   comanda_id?: string;
   comanda_number?: string;
   createdAt: any;
@@ -201,6 +204,7 @@ export interface PaymentMethodConfig {
   vai_para_conta_cliente: boolean; // goesToClientAccount
   permite_parcial: boolean; // allowsPartial
   permite_split: boolean; // allowsSplit
+  tenantId?: string;
   name?: string; // legado
   type?: PaymentMethod; // legado
   feePercentage?: number; // legado
@@ -250,6 +254,7 @@ export interface FinancialTransaction {
 
 export interface DailyCash {
   id: string;
+  tenantId?: string;
   date: string;
   opening_balance: number;
   closing_balance?: number;
@@ -285,6 +290,7 @@ export interface DailyCash {
 export interface CashMovement {
   id: string;
   caixa_id: string;
+  tenantId?: string;
   type: TransactionType;
   category: string;
   description: string;
@@ -359,6 +365,7 @@ export interface ComandaLog {
 
 export interface Comanda {
   id: string;
+  tenantId?: string;
   number: string;
   cliente_id: string;
   cliente_name: string;
@@ -369,6 +376,7 @@ export interface Comanda {
   status: ComandaStatus;
   aberto_por_id?: string;
   aberto_por_name?: string;
+  date?: string; // Adding date field to prevent missing property errors on Comanda type in reportService
   
   subtotalServices: number;
   subtotalProducts: number;
@@ -406,6 +414,7 @@ export interface ClientDebt {
 
 export interface DebtPayment {
   id: string;
+  tenantId?: string;
   divida_id: string;
   cliente_id: string;
   amount: number;
@@ -683,6 +692,7 @@ export interface SystemInsight {
 
 export interface AccountPayable {
   id: string;
+  tenantId?: string;
   description: string;
   category: string;
   amount: number;
@@ -700,6 +710,7 @@ export interface AccountPayable {
 
 export interface AccountReceivable {
   id: string;
+  tenantId?: string;
   description: string;
   category: string;
   amount: number;

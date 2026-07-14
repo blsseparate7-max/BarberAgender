@@ -75,8 +75,8 @@ export const tenantService = {
         name: defaultName || (tenantId === 'barber-elite' ? 'BarberElite Premium' : `Barbearia ${tenantId.toUpperCase()}`),
         accentColor: '#6366F1', // default indigo
         isActive: true,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
         phone: '(11) 99999-9999',
         email: `${tenantId}@barberelite.com`,
         address: {
@@ -87,7 +87,14 @@ export const tenantService = {
         }
       };
 
-      await setDoc(doc(db, 'tenants', tenantId), newTenant);
+      // Only persist if it is a real user-created tenant (not the default barber-elite fallback)
+      if (tenantId !== 'barber-elite') {
+        await setDoc(doc(db, 'tenants', tenantId), {
+          ...newTenant,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
       return newTenant;
     } catch (error) {
       console.error(`Error in getOrCreateTenant for ${tenantId}:`, error);

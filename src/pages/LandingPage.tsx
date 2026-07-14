@@ -16,8 +16,8 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   useEffect(() => {
     tenantService.listTenants()
       .then((list) => {
-        // Filter active ones or default
-        setTenants(list.filter(t => t.isActive));
+        // Filter active ones and exclude the default template barber-elite tenant
+        setTenants(list.filter(t => t.isActive && t.id !== 'barber-elite'));
       })
       .catch((err) => console.error('Error fetching tenants list:', err))
       .finally(() => setLoadingTenants(false));

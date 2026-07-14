@@ -3,7 +3,7 @@ import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, sign
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { getActiveTenantId } from '../services/tenantService';
-import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles, Building2, Globe } from 'lucide-react';
+import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles, Building2, Globe, Phone, MapPin } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface RegisterPageProps {
@@ -19,6 +19,9 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
   const [password, setPassword] = useState('');
   const [tenantName, setTenantName] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
+  const [tenantPhone, setTenantPhone] = useState('');
+  const [tenantCity, setTenantCity] = useState('');
+  const [tenantState, setTenantState] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -103,13 +106,13 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
           isActive: true,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          phone: '',
+          phone: tenantPhone || '(11) 99999-9999',
           email: email,
           address: {
-            street: '',
-            city: '',
-            state: '',
-            zipCode: ''
+            street: 'Av. Principal, 100',
+            city: tenantCity || 'São Paulo',
+            state: tenantState || 'SP',
+            zipCode: '01000-000'
           }
         });
         
@@ -117,27 +120,71 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
         localStorage.setItem('barberelite_tenant_id', tenantSlug);
       }
 
-      // 4. Create user profile in Firestore
-      await setDoc(doc(db, 'usuarios', user.uid), {
-        uid: user.uid,
-        email: user.email,
-        nome: name,
-        tipo: role, // 'admin' or 'cliente'
-        ativo: true,
-        tenantId: activeTenantId,
-        indicadoPor: refCode || null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      // 4. Create or migrate user profile in Firestore
+      const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
+      const usersRef = collection(db, 'usuarios');
+      const q = query(usersRef, where('email', '==', email.toLowerCase().trim()));
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        // Found pre-registered user (like a barber or manager)!
+        const preRegisteredDoc = querySnapshot.docs[0];
+        const preRegisteredData = preRegisteredDoc.data();
+        const preRegisteredId = preRegisteredDoc.id;
+
+        // Save under the new Auth UID
+        await setDoc(doc(db, 'usuarios', user.uid), {
+          ...preRegisteredData,
+          uid: user.uid,
+          nome: name || preRegisteredData.nome,
+          email: user.email?.toLowerCase().trim(),
+          ativo: true,
+          updatedAt: serverTimestamp()
+        });
+
+        // Delete old document if different
+        if (preRegisteredId !== user.uid) {
+          await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+        }
+
+        // Migrate appointments (agendamentos)
+        const appointmentsRef = collection(db, 'agendamentos');
+        const apptQuery = query(appointmentsRef, where('barbeiroId', '==', preRegisteredId));
+        const apptSnapshot = await getDocs(apptQuery);
+        for (const apptDoc of apptSnapshot.docs) {
+          await setDoc(doc(db, 'agendamentos', apptDoc.id), { barbeiroId: user.uid }, { merge: true });
+        }
+
+        // Migrate commissions (comissoes)
+        const comissoesRef = collection(db, 'comissoes');
+        const comQuery = query(comissoesRef, where('barbeiroId', '==', preRegisteredId));
+        const comSnapshot = await getDocs(comQuery);
+        for (const comDoc of comSnapshot.docs) {
+          await setDoc(doc(db, 'comissoes', comDoc.id), { barbeiroId: user.uid }, { merge: true });
+        }
+      } else {
+        // Standard user creation
+        await setDoc(doc(db, 'usuarios', user.uid), {
+          uid: user.uid,
+          email: user.email?.toLowerCase().trim() || email.toLowerCase().trim(),
+          nome: name,
+          tipo: role, // 'admin' or 'cliente'
+          ativo: true,
+          tenantId: activeTenantId,
+          indicadoPor: refCode || null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
 
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/operation-not-allowed') {
-        setError('O cadastro por e-mail ainda não foi habilitado no Console do Firebase.');
+        setError('O cadastro por e-mail ainda não foi habilitado no Console do Firebase. Ative "E-mail/senha" em Authentication > Sign-in method.');
       } else if (err.code === 'auth/email-already-in-use') {
         setError('Este e-mail já está em uso.');
       } else {
-        setError('Erro ao criar conta. Tente novamente.');
+        setError(`Erro ao criar conta: ${err.message || err.toString()}`);
       }
     } finally {
       setLoading(false);
@@ -157,17 +204,58 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       const docSnap = await getDoc(docRef);
   
       if (!docSnap.exists()) {
-        await setDoc(docRef, {
-          uid: user.uid,
-          email: user.email,
-          nome: user.displayName || 'Usuário Google',
-          tipo: 'cliente', // default google registration role is cliente
-          ativo: true,
-          tenantId: getActiveTenantId(),
-          indicadoPor: refCode || null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
+        const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
+        const usersRef = collection(db, 'usuarios');
+        const q = query(usersRef, where('email', '==', user.email?.toLowerCase().trim()));
+        const querySnapshot = await getDocs(q);
+
+        if (!querySnapshot.empty) {
+          // Found pre-registered user (like a barber or manager)!
+          const preRegisteredDoc = querySnapshot.docs[0];
+          const preRegisteredData = preRegisteredDoc.data();
+          const preRegisteredId = preRegisteredDoc.id;
+
+          await setDoc(docRef, {
+            ...preRegisteredData,
+            uid: user.uid,
+            nome: user.displayName || preRegisteredData.nome,
+            email: user.email?.toLowerCase().trim(),
+            ativo: true,
+            updatedAt: serverTimestamp()
+          });
+
+          if (preRegisteredId !== user.uid) {
+            await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+          }
+
+          // Migrate appointments (agendamentos)
+          const appointmentsRef = collection(db, 'agendamentos');
+          const apptQuery = query(appointmentsRef, where('barbeiroId', '==', preRegisteredId));
+          const apptSnapshot = await getDocs(apptQuery);
+          for (const apptDoc of apptSnapshot.docs) {
+            await setDoc(doc(db, 'agendamentos', apptDoc.id), { barbeiroId: user.uid }, { merge: true });
+          }
+
+          // Migrate commissions (comissoes)
+          const comissoesRef = collection(db, 'comissoes');
+          const comQuery = query(comissoesRef, where('barbeiroId', '==', preRegisteredId));
+          const comSnapshot = await getDocs(comQuery);
+          for (const comDoc of comSnapshot.docs) {
+            await setDoc(doc(db, 'comissoes', comDoc.id), { barbeiroId: user.uid }, { merge: true });
+          }
+        } else {
+          await setDoc(docRef, {
+            uid: user.uid,
+            email: user.email,
+            nome: user.displayName || 'Usuário Google',
+            tipo: 'cliente', // default google registration role is cliente
+            ativo: true,
+            tenantId: getActiveTenantId(),
+            indicadoPor: refCode || null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
     } catch (err: any) {
       console.error(err);
@@ -275,6 +363,54 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
                     Sua barbearia ficará disponível em: <span className="text-emerald-500">?tenant={tenantSlug}</span>
                   </p>
                 )}
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Telefone da Barbearia</label>
+                <div className="relative">
+                  <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+                  <input 
+                    type="text" 
+                    required
+                    value={tenantPhone}
+                    onChange={(e) => setTenantPhone(e.target.value)}
+                    placeholder="Ex: (11) 99999-9999"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Cidade</label>
+                  <div className="relative">
+                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+                    <input 
+                      type="text" 
+                      required
+                      value={tenantCity}
+                      onChange={(e) => setTenantCity(e.target.value)}
+                      placeholder="Ex: São Paulo"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Estado (UF)</label>
+                  <div className="relative">
+                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+                    <input 
+                      type="text" 
+                      required
+                      maxLength={2}
+                      value={tenantState}
+                      onChange={(e) => setTenantState(e.target.value.toUpperCase())}
+                      placeholder="Ex: SP"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white uppercase"
+                    />
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}

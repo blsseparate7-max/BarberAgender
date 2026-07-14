@@ -82,9 +82,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const params = new URLSearchParams(window.location.search);
     const hasUrlParam = params.get('tenant') || params.get('tenantId');
     
-    if (!hasUrlParam && profile?.indicadoPor) {
-      // Wait, let's see if the user profile specifies a tenantId
-      // We can check if profile has tenantId
+    if (!hasUrlParam && profile) {
+      // Sync tenantId with logged-in user profile's tenantId
       const userTenant = (profile as any).tenantId;
       if (userTenant && userTenant !== tenantId) {
         setTenantId(userTenant);

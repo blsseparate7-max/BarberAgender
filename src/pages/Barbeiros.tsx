@@ -38,7 +38,8 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { Edit2 } from 'lucide-react';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { collection, onSnapshot, query, where, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
 import { toast } from 'sonner';
 
 // Default weekdays list for schedule configuring
@@ -117,7 +118,7 @@ export function Barbeiros() {
 
   // Live Subscription for Commissions to generate live analytics cards
   useEffect(() => {
-    const qCom = query(collection(db, 'comissoes'));
+    const qCom = query(collection(db, 'commissions'));
     const unsubscribeCom = onSnapshot(qCom, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setCommissions(docs);
@@ -139,9 +140,35 @@ export function Barbeiros() {
     }
   };
 
-  const { execute: handleSave, isLoading: isSaving } = useAsyncAction(async (data: Partial<UserProfile>) => {
+  const { execute: handleSave, isLoading: isSaving } = useAsyncAction(async (data: Partial<UserProfile> & { changePasswordDirectly?: string }) => {
     try {
       if (editingBarber) {
+        // If password needs to be changed directly
+        if (data.changePasswordDirectly) {
+          try {
+            const response = await fetch('/api/admin/reset-password', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                uid: editingBarber.uid,
+                password: data.changePasswordDirectly
+              })
+            });
+            const resData = await response.json();
+            if (!response.ok) {
+              throw new Error(resData.error || "Erro ao atualizar a senha no servidor.");
+            }
+            toast.success("Senha do profissional alterada com sucesso!");
+          } catch (passError: any) {
+            console.error("Erro ao alterar senha:", passError);
+            toast.error(passError.message || "Não foi possível alterar a senha diretamente.");
+          }
+          // Remove from payload to prevent saving to Firestore
+          delete data.changePasswordDirectly;
+        }
+
         await userService.updateUserProfile(editingBarber.uid, {
           ...data,
           tipo: data.is_gestor ? 'gerente' : 'barbeiro'
@@ -157,9 +184,9 @@ export function Barbeiros() {
       }
       setIsModalOpen(false);
       setEditingBarber(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro ao salvar barbeiro:", error);
-      toast.error("Ocorreu um erro ao salvar as configurações.");
+      toast.error(error.message || "Ocorreu um erro ao salvar as configurações.");
     }
   });
 
@@ -520,6 +547,27 @@ function BarberCard({ barber, commissions, onEdit, onToggleAtivo, onDelete, canE
               <span>Contrato: <span className="font-extrabold">{new Date(barber.startDate + 'T12:00:00').toLocaleDateString('pt-BR')}</span></span>
             </div>
           )}
+
+          {barber.tipoContrato && (
+            <div className="flex items-center gap-3">
+              <Briefcase size={13} className="text-slate-400" />
+              <span>Regime: <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[9px] font-black uppercase tracking-wider">{barber.tipoContrato}</span></span>
+            </div>
+          )}
+
+          {barber.cpf && (
+            <div className="flex items-center gap-3">
+              <span className="text-[9px] font-black text-slate-400 w-[13px] text-center">CPF</span>
+              <span className="text-slate-500 font-semibold">CPF: {barber.cpf}</span>
+            </div>
+          )}
+
+          {barber.chavePix && (
+            <div className="flex items-center gap-3">
+              <span className="text-[9px] font-black text-emerald-600 w-[13px] text-center">PIX</span>
+              <span className="text-slate-500 font-semibold truncate" title={barber.chavePix}>Pix: {barber.chavePix}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -606,7 +654,7 @@ interface BarberModalProps {
 }
 
 function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
-  const [activeTab, setActiveTab] = useState<'cadastro' | 'agenda'>('cadastro');
+  const [activeTab, setActiveTab] = useState<'cadastro' | 'pessoais' | 'agenda'>('cadastro');
   
   // Field values state
   const [nome, setNome] = useState(barber?.nome ?? '');
@@ -618,6 +666,48 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
   const [startDate, setStartDate] = useState(barber?.startDate ?? new Date().toISOString().split('T')[0]);
   const [is_gestor, setIsGestor] = useState(barber?.is_gestor ?? barber?.is_manager ?? false);
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [isSendingResetEmail, setIsSendingResetEmail] = useState(false);
+
+  // Novos campos: Pessoa Física Completa
+  const [cpf, setCpf] = useState(barber?.cpf ?? '');
+  const [rg, setRg] = useState(barber?.rg ?? '');
+  const [dataNascimento, setDataNascimento] = useState(barber?.dataNascimento ?? '');
+  const [contatoEmergencia, setContatoEmergencia] = useState(barber?.contatoEmergencia ?? '');
+  const [cep, setCep] = useState(barber?.cep ?? '');
+  const [logradouro, setLogradouro] = useState(barber?.logradouro ?? '');
+  const [numero, setNumero] = useState(barber?.numero ?? '');
+  const [complemento, setComplemento] = useState(barber?.complemento ?? '');
+  const [bairro, setBairro] = useState(barber?.bairro ?? '');
+  const [cidade, setCidade] = useState(barber?.cidade ?? '');
+  const [estado, setEstado] = useState(barber?.estado ?? '');
+  const [banco, setBanco] = useState(barber?.banco ?? '');
+  const [agencia, setAgencia] = useState(barber?.agencia ?? '');
+  const [conta, setConta] = useState(barber?.conta ?? '');
+  const [chavePix, setChavePix] = useState(barber?.chavePix ?? '');
+  const [tipoContrato, setTipoContrato] = useState(barber?.tipoContrato ?? 'MEI / Parceiro');
+
+  // CEP lookup automation helper
+  const handleCepBlur = async () => {
+    const cleanedCep = cep.replace(/\D/g, '');
+    if (cleanedCep.length === 8) {
+      try {
+        const res = await fetch(`https://viacep.com.br/ws/${cleanedCep}/json/`);
+        const data = await res.json();
+        if (!data.erro) {
+          setLogradouro(data.logradouro || '');
+          setBairro(data.bairro || '');
+          setCidade(data.localidade || '');
+          setEstado(data.uf || '');
+          toast.success("Endereço preenchido automaticamente via CEP!");
+        } else {
+          toast.error("CEP não encontrado.");
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar CEP:", err);
+      }
+    }
+  };
   
   // Schedule state initialization
   const [schedule, setSchedule] = useState<WorkingHours[]>(() => {
@@ -663,6 +753,20 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
     setEspecialidade(updated.join(', '));
   };
 
+  const handleSendResetEmail = async () => {
+    if (!email.trim()) return;
+    setIsSendingResetEmail(true);
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      toast.success(`E-mail de recuperação de senha enviado para ${email}!`);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Erro ao enviar e-mail de recuperação.");
+    } finally {
+      setIsSendingResetEmail(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!nome.trim()) {
@@ -689,6 +793,22 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
       is_gestor,
       is_manager: is_gestor,
       horario_de_trabalho: schedule,
+      cpf: cpf.trim(),
+      rg: rg.trim(),
+      dataNascimento,
+      contatoEmergencia: contatoEmergencia.trim(),
+      cep: cep.trim(),
+      logradouro: logradouro.trim(),
+      numero: numero.trim(),
+      complemento: complemento.trim(),
+      bairro: bairro.trim(),
+      cidade: cidade.trim(),
+      estado: estado.trim(),
+      banco: banco.trim(),
+      agencia: agencia.trim(),
+      conta: conta.trim(),
+      chavePix: chavePix.trim(),
+      tipoContrato,
     };
 
     if (!barber) {
@@ -697,6 +817,14 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
         return;
       }
       payload.password = password;
+    } else {
+      if (newPassword.trim()) {
+        if (newPassword.trim().length < 6) {
+          toast.error("A nova senha deve ter no mínimo 6 caracteres.");
+          return;
+        }
+        payload.changePasswordDirectly = newPassword.trim();
+      }
     }
 
     onSave(payload);
@@ -731,24 +859,35 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
           <button
             type="button"
             onClick={() => setActiveTab('cadastro')}
-            className={`flex-1 py-3 text-xs uppercase font-black tracking-widest text-center border-b-2 transition ${
+            className={`flex-1 py-3 text-[10px] sm:text-xs uppercase font-black tracking-widest text-center border-b-2 transition ${
               activeTab === 'cadastro' 
                 ? 'border-indigo-600 text-indigo-600 bg-white' 
                 : 'border-transparent text-slate-450 hover:text-slate-700 hover:bg-slate-50/40'
             }`}
           >
-            📋 1. Perfil e Dados Contratuais
+            📋 1. Perfil e Acesso
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('pessoais')}
+            className={`flex-1 py-3 text-[10px] sm:text-xs uppercase font-black tracking-widest text-center border-b-2 transition ${
+              activeTab === 'pessoais' 
+                ? 'border-indigo-600 text-indigo-600 bg-white' 
+                : 'border-transparent text-slate-450 hover:text-slate-700 hover:bg-slate-50/40'
+            }`}
+          >
+            👤 2. Dados Pessoais & Pix
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('agenda')}
-            className={`flex-1 py-3 text-xs uppercase font-black tracking-widest text-center border-b-2 transition ${
+            className={`flex-1 py-3 text-[10px] sm:text-xs uppercase font-black tracking-widest text-center border-b-2 transition ${
               activeTab === 'agenda' 
                 ? 'border-indigo-600 text-indigo-600 bg-white' 
                 : 'border-transparent text-slate-450 hover:text-slate-700 hover:bg-slate-50/40'
             }`}
           >
-            ⏰ 2. Horários e Escala de Trabalho
+            ⏰ 3. Horários & Escala
           </button>
         </div>
 
@@ -864,7 +1003,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                     />
                   </div>
 
-                  {!barber && (
+                  {!barber ? (
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Definir Senha de Acesso</label>
                       <input 
@@ -875,6 +1014,35 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                         className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
                         placeholder="Mínimo 6 caracteres"
                       />
+                    </div>
+                  ) : (
+                    <div className="space-y-3 p-4 bg-slate-50 border border-slate-200/60 rounded-2xl sm:col-span-2">
+                      <h5 className="text-xs font-black uppercase text-slate-750 tracking-wider">🔒 Redefinição de Senha do Acesso</h5>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-wider ml-1">Mudar Senha Diretamente</label>
+                          <input 
+                            type="password" 
+                            value={newPassword}
+                            onChange={e => setNewPassword(e.target.value)}
+                            className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3 text-xs font-bold text-primary outline-none transition"
+                            placeholder="Nova senha (mín. 6 chars)"
+                          />
+                        </div>
+                        <div className="flex flex-col justify-end">
+                          <button
+                            type="button"
+                            disabled={isSendingResetEmail}
+                            onClick={handleSendResetEmail}
+                            className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-650 transition active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                          >
+                            ✉️ {isSendingResetEmail ? 'Enviando...' : 'Enviar E-mail de Recuperação'}
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[9px] font-semibold text-slate-450 leading-relaxed">
+                        Como administrador, você pode forçar uma nova senha diretamente para o profissional, ou enviar um link oficial de redefinição para o e-mail cadastrado dele.
+                      </p>
                     </div>
                   )}
                 </div>
@@ -895,7 +1063,208 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
               </div>
             )}
 
-            {/* TAB 2: WORK DAYS AND DETAILS SCALE */}
+            {/* TAB 2: DADOS PESSOAIS E FINANCEIROS */}
+            {activeTab === 'pessoais' && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* Seção 1: Identificação Básica */}
+                <div className="bg-slate-50/55 border border-slate-200/60 p-5 rounded-3xl space-y-4">
+                  <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-2">
+                    👤 Documentação de Pessoa Física
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">CPF</label>
+                      <input 
+                        type="text" 
+                        value={cpf}
+                        onChange={e => setCpf(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="000.000.000-00"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">RG</label>
+                      <input 
+                        type="text" 
+                        value={rg}
+                        onChange={e => setRg(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="00.000.000-0"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Data de Nascimento</label>
+                      <input 
+                        type="date" 
+                        value={dataNascimento}
+                        onChange={e => setDataNascimento(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition cursor-pointer"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Tipo de Contrato</label>
+                      <select 
+                        value={tipoContrato}
+                        onChange={e => setTipoContrato(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition cursor-pointer"
+                      >
+                        <option value="MEI / Parceiro">Parceria MEI (Salão Parceiro)</option>
+                        <option value="CLT">CLT (Carteira Assinada)</option>
+                        <option value="Prestador de Serviço">Prestador de Serviço (Contrato)</option>
+                        <option value="Autônomo">Autônomo / Free-lancer</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Contato Alternativo / Emergência</label>
+                      <input 
+                        type="text" 
+                        value={contatoEmergencia}
+                        onChange={e => setContatoEmergencia(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Nome e telefone (Ex: Maria - 11 98888-7777)"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Seção 2: Endereço Residencial Completo */}
+                <div className="bg-slate-50/55 border border-slate-200/60 p-5 rounded-3xl space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-2">
+                      📍 Endereço Residencial
+                    </h4>
+                    <span className="text-[8px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                      Busca Automática
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">CEP</label>
+                      <input 
+                        type="text" 
+                        value={cep}
+                        onChange={e => setCep(e.target.value)}
+                        onBlur={handleCepBlur}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="00000-000"
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Logradouro / Rua</label>
+                      <input 
+                        type="text" 
+                        value={logradouro}
+                        onChange={e => setLogradouro(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Av / Rua / Travessa"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Número</label>
+                      <input 
+                        type="text" 
+                        value={numero}
+                        onChange={e => setNumero(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Ex: 123"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Bairro</label>
+                      <input 
+                        type="text" 
+                        value={bairro}
+                        onChange={e => setBairro(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Ex: Centro"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Complemento</label>
+                      <input 
+                        type="text" 
+                        value={complemento}
+                        onChange={e => setComplemento(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Apto / Bloco / Fundos"
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Cidade</label>
+                      <input 
+                        type="text" 
+                        value={cidade}
+                        onChange={e => setCidade(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Ex: São Paulo"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Estado / UF</label>
+                      <input 
+                        type="text" 
+                        value={estado}
+                        onChange={e => setEstado(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition uppercase"
+                        maxLength={2}
+                        placeholder="UF"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Seção 3: Dados Bancários e Chave Pix */}
+                <div className="bg-slate-50/55 border border-slate-200/60 p-5 rounded-3xl space-y-4">
+                  <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-2">
+                    💳 Repasses e Chave PIX Financeira
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Banco</label>
+                      <input 
+                        type="text" 
+                        value={banco}
+                        onChange={e => setBanco(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Ex: Nubank, Itaú"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Agência</label>
+                      <input 
+                        type="text" 
+                        value={agencia}
+                        onChange={e => setAgencia(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Ex: 0001"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Conta Corrente</label>
+                      <input 
+                        type="text" 
+                        value={conta}
+                        onChange={e => setConta(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Ex: 12345-6"
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-3">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Chave Pix Preferencial</label>
+                      <input 
+                        type="text" 
+                        value={chavePix}
+                        onChange={e => setChavePix(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="E-mail, CPF, Celular, ou Chave Aleatória"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: WORK DAYS AND DETAILS SCALE */}
             {activeTab === 'agenda' && (
               <div className="space-y-5">
                 <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-200/50">

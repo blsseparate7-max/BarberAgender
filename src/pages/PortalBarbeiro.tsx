@@ -21,7 +21,10 @@ import {
   AlertTriangle, 
   Scissors,
   Check,
-  AlertCircle
+  AlertCircle,
+  Lock,
+  Unlock,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from '../firebase';
@@ -30,7 +33,8 @@ import { userService } from '../services/userService';
 import { appointmentService } from '../services/appointmentService';
 import { commissionService } from '../services/commissionService';
 import { inventoryService } from '../services/inventoryService';
-import { UserProfile, Appointment, Product, Commission, AppointmentStatus } from '../types';
+import { agendaBlockService } from '../services/agendaBlockService';
+import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock } from '../types';
 import { toast } from 'sonner';
 import { format, parse, addDays, startOfDay, endOfDay, isToday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -46,6 +50,14 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
+  
+  // Tab states: Agenda Blocks
+  const [blocks, setBlocks] = useState<AgendaBlock[]>([]);
+  const [loadingBlocks, setLoadingBlocks] = useState(true);
+  const [isBlockModalOpen, setIsBlockModalOpen] = useState(false);
+  const [blockStartTime, setBlockStartTime] = useState('09:00');
+  const [blockEndTime, setBlockEndTime] = useState('10:00');
+  const [blockReason, setBlockReason] = useState('');
   
   // Tab states: Clientes
   const [clientes, setClientes] = useState<UserProfile[]>([]);
@@ -96,6 +108,19 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       (data) => {
         setAppointments(data);
         setLoadingAppointments(false);
+      }
+    );
+    return () => unsubscribe();
+  }, [selectedDate, profile.uid]);
+
+  // 1.1. Listen to Agenda Blocks
+  useEffect(() => {
+    setLoadingBlocks(true);
+    const unsubscribe = agendaBlockService.subscribeToBlocks(
+      { date: selectedDate, profissional_id: profile.uid },
+      (data) => {
+        setBlocks(data);
+        setLoadingBlocks(false);
       }
     );
     return () => unsubscribe();
@@ -160,6 +185,44 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     } catch (err: any) {
       console.error(err);
       toast.error(`Erro ao atualizar status: ${err.message || err}`);
+    }
+  };
+
+  // Create a block
+  const handleCreateBlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (blockStartTime >= blockEndTime) {
+      toast.error('O horário de término deve ser posterior ao horário de início.');
+      return;
+    }
+
+    try {
+      await agendaBlockService.createBlock({
+        profissional_id: profile.uid,
+        profissional_name: profile.nome,
+        date: selectedDate,
+        startTime: blockStartTime,
+        endTime: blockEndTime,
+        reason: blockReason.trim() || 'Bloqueio de agenda',
+        isGeneral: false
+      });
+      toast.success('Horário bloqueado com sucesso!');
+      setIsBlockModalOpen(false);
+      setBlockReason('');
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Erro ao bloquear horário: ${err.message || err}`);
+    }
+  };
+
+  // Delete/unblock a time
+  const handleUnblockTime = async (blockId: string) => {
+    try {
+      await agendaBlockService.deleteBlock(blockId);
+      toast.success('Horário desbloqueado com sucesso!');
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Erro ao desbloquear horário: ${err.message || err}`);
     }
   };
 
@@ -336,9 +399,18 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
             {/* Appointments list */}
             <div className="space-y-3">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1 mt-2">
-                Agendamentos do Dia
-              </h3>
+              <div className="flex items-center justify-between px-1 mt-2">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                  Agendamentos do Dia
+                </h3>
+                <button
+                  onClick={() => setIsBlockModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 border border-red-100/60 text-red-700 text-[10px] font-black uppercase tracking-wider py-1.5 px-3 rounded-xl transition"
+                >
+                  <Lock size={11} />
+                  Bloquear Horário
+                </button>
+              </div>
 
               {loadingAppointments ? (
                 <div className="bg-white border rounded-3xl p-10 text-center flex flex-col items-center justify-center gap-3 shadow-sm">
@@ -457,6 +529,69 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 </div>
               )}
             </div>
+
+            {/* Blocked Times List */}
+            <div className="space-y-3 pt-2">
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">
+                Horários Bloqueados
+              </h3>
+
+              {loadingBlocks ? (
+                <div className="bg-white border rounded-3xl p-6 text-center flex flex-col items-center justify-center gap-2 shadow-sm">
+                  <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-[10px] font-bold text-slate-400 animate-pulse uppercase tracking-wider">Buscando bloqueios...</p>
+                </div>
+              ) : blocks.length === 0 ? (
+                <div className="bg-white border border-slate-200/80 rounded-3xl p-6 text-center flex flex-col items-center justify-center gap-2 shadow-sm">
+                  <Unlock className="text-slate-300 w-6 h-6" />
+                  <h4 className="font-extrabold text-slate-500 text-xs">Nenhum horário bloqueado</h4>
+                  <p className="text-slate-400 text-[10px] max-w-xs font-semibold leading-relaxed">
+                    Sua agenda está livre de bloqueios para este dia.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {blocks.map((block) => (
+                    <div 
+                      key={block.id}
+                      className="bg-red-50/50 border border-red-100/80 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-sm hover:border-red-200 transition"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-xl bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                          <Lock size={13} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-red-800">
+                              {block.startTime} - {block.endTime}
+                            </span>
+                            {block.isGeneral && (
+                              <span className="bg-red-200 text-red-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                Geral
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-red-650 font-bold">
+                            {block.reason || 'Bloqueio de agenda'}
+                          </p>
+                        </div>
+                      </div>
+                      
+                      {!block.isGeneral && (
+                        <button
+                          onClick={() => handleUnblockTime(block.id)}
+                          className="p-1.5 hover:bg-red-100 rounded-lg text-red-600 transition shrink-0"
+                          title="Desbloquear Horário"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
         )}
 
@@ -599,9 +734,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               <AnimatePresence mode="wait">
                 {isEditingGoal ? (
                   <motion.form 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.12, ease: 'easeOut' }}
                     onSubmit={handleSaveGoals}
                     className="space-y-3 bg-slate-50 border p-3.5 rounded-2xl"
                   >
@@ -1004,6 +1140,92 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
         </div>
       </nav>
+
+      {/* Block Time Modal */}
+      <AnimatePresence>
+        {isBlockModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center bg-slate-900/60 backdrop-blur-xs p-4">
+            <motion.div
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+              className="bg-white rounded-t-[2.5rem] sm:rounded-[2rem] border border-slate-200 shadow-2xl p-6 w-full max-w-sm space-y-4 pb-8 sm:pb-6"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+                  <Lock size={15} className="text-red-600" />
+                  Bloquear Agenda
+                </h3>
+                <button
+                  onClick={() => setIsBlockModalOpen(false)}
+                  className="text-xs font-black uppercase text-slate-400 hover:text-slate-600 px-2 py-1 rounded-xl transition"
+                >
+                  Fechar
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateBlock} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                    Data Selecionada
+                  </label>
+                  <p className="text-xs font-extrabold text-slate-700 bg-slate-50 border p-2.5 rounded-xl">
+                    {dateStrip.find(d => d.iso === selectedDate)?.label || selectedDate}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                      Início
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={blockStartTime}
+                      onChange={(e) => setBlockStartTime(e.target.value)}
+                      className="w-full text-xs font-black text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                      Término
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={blockEndTime}
+                      onChange={(e) => setBlockEndTime(e.target.value)}
+                      className="w-full text-xs font-black text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                    Motivo (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Almoço, Compromisso pessoal..."
+                    value={blockReason}
+                    onChange={(e) => setBlockReason(e.target.value)}
+                    className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-400"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase tracking-wider py-3.5 rounded-2xl shadow-md transition"
+                >
+                  Confirmar Bloqueio
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

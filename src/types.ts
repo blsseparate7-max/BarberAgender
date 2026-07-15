@@ -59,6 +59,24 @@ export interface UserProfile {
   pontos?: number;
   points?: number;
   
+  // Dados de Pessoa Física Completos
+  cpf?: string;
+  rg?: string;
+  dataNascimento?: string;
+  contatoEmergencia?: string;
+  cep?: string;
+  logradouro?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
+  cidade?: string;
+  estado?: string;
+  banco?: string;
+  agencia?: string;
+  conta?: string;
+  chavePix?: string;
+  tipoContrato?: string;
+  
   createdAt: any;
   updatedAt: any;
 }
@@ -228,6 +246,7 @@ export type TransactionStatus = 'pago' | 'pendente' | 'vencido' | 'cancelado';
 
 export interface FinancialTransaction {
   id: string;
+  tenantId?: string;
   type: TransactionType;
   category: string;
   description: string;
@@ -435,6 +454,7 @@ export type CommissionStatus = 'pendente' | 'pago' | 'parcial';
 
 export interface Commission {
   id: string;
+  tenantId?: string;
   profissional_id: string;
   profissional_name: string;
   agendamento_id?: string;
@@ -722,6 +742,19 @@ export interface AccountReceivable {
   paymentMethod?: string;
   transactionId?: string;
   movementId?: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface Combo {
+  id: string;
+  nome: string;
+  descricao?: string;
+  preco: number;
+  servicos_ids: string[];
+  produtos_ids: string[];
+  active: boolean;
+  tenantId?: string;
   createdAt: any;
   updatedAt: any;
 }

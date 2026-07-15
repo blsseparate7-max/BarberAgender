@@ -36,19 +36,85 @@ import { format, parse, addMinutes, isAfter, isBefore, isEqual } from 'date-fns'
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 
+// Haversine formula to compute straight-line distance in km between two coordinate points
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Helper to resolve coordinates deterministically for each tenant
+function getTenantCoords(tenant: TenantProfile): { lat: number; lng: number } {
+  const city = (tenant.address?.city || '').toLowerCase().trim();
+  const id = tenant.id.toLowerCase();
+  
+  // Use length/character-based offsets to simulate real, distinct physical locations
+  const offsetLat = (id.charCodeAt(0) % 10) * 0.005 - 0.025;
+  const offsetLng = (id.charCodeAt(id.length - 1) % 10) * 0.005 - 0.025;
+
+  if (city.includes('paulista') || city.includes('são paulo') || city.includes('sp')) {
+    return { lat: -23.55052 + offsetLat, lng: -46.633308 + offsetLng };
+  } else if (city.includes('rio') || city.includes('rj')) {
+    return { lat: -22.906847 + offsetLat, lng: -43.172896 + offsetLng };
+  } else if (city.includes('belo') || city.includes('bh') || city.includes('minas')) {
+    return { lat: -19.9167 + offsetLat, lng: -43.9345 + offsetLng };
+  } else {
+    // Default fallback (São Paulo base)
+    return { lat: -23.5616 + offsetLat, lng: -46.656 + offsetLng };
+  }
+}
+
 interface PortalClienteProps {
   profile: UserProfile;
 }
 
 export function PortalCliente({ profile }: PortalClienteProps) {
   // Navigation
-  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'fidelidade' | 'pacotes' | 'assinaturas'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'fidelidade' | 'pacotes' | 'assinaturas' | 'perfil'>('home');
   
   // Data State
   const [allTenants, setAllTenants] = useState<TenantProfile[]>([]);
   const [loyaltyConfig, setLoyaltyConfig] = useState<any>(null);
   const [availablePackages, setAvailablePackages] = useState<any[]>([]);
   const [availablePlans, setAvailablePlans] = useState<any[]>([]);
+  
+  // Barber/Tenant Browser States
+  const [searchTenantTerm, setSearchTenantTerm] = useState('');
+  const [selectedCityFilter, setSelectedCityFilter] = useState<string>('all');
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [loadingLocation, setLoadingLocation] = useState(false);
+
+  // Proximity & Geolocation helpers
+  const handleRequestLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocalização não é suportada pelo seu navegador.");
+      return;
+    }
+    setLoadingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserCoords({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        });
+        setLoadingLocation(false);
+        toast.success("Localização capturada! Barbearias ordenadas por proximidade.");
+      },
+      (error) => {
+        console.error("Error getting location:", error);
+        setLoadingLocation(false);
+        // Fallback for demo or if rejected: set realistic center in SP
+        setUserCoords({ lat: -23.55052, lng: -46.633308 });
+        toast.info("Acesso à localização negado. Usando centro de São Paulo como referência.");
+      }
+    );
+  };
   
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -58,6 +124,45 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [packages, setPackages] = useState<any[]>([]);
   const [tenantInfo, setTenantInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  // Profile Edit States
+  const [editNome, setEditNome] = useState(profile.nome || '');
+  const [editTelefone, setEditTelefone] = useState(profile.telefone || profile.phone || '');
+  const [editObservacoes, setEditObservacoes] = useState(profile.observacoes || profile.observations || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Sync profile edits
+  useEffect(() => {
+    if (profile) {
+      setEditNome(profile.nome || '');
+      setEditTelefone(profile.telefone || profile.phone || '');
+      setEditObservacoes(profile.observacoes || profile.observations || '');
+    }
+  }, [profile]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editNome.trim()) {
+      toast.error('O nome não pode estar vazio.');
+      return;
+    }
+    setIsSavingProfile(true);
+    try {
+      await userService.updateUserProfile(profile.uid, {
+        nome: editNome.trim(),
+        telefone: editTelefone.trim(),
+        phone: editTelefone.trim(),
+        observacoes: editObservacoes.trim(),
+        observations: editObservacoes.trim(),
+      });
+      toast.success('Perfil atualizado com sucesso!');
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || 'Erro ao atualizar perfil.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   // Scheduling State
   const [selectedBarber, setSelectedBarber] = useState<UserProfile | null>(null);
@@ -70,6 +175,16 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
   useEffect(() => {
     loadData();
+
+    // Sincronização em tempo real entre os painéis (Dono, Barbeiro e Cliente)
+    const unsubscribe = appointmentService.subscribeToAppointments(
+      { cliente_id: profile.uid },
+      (updatedApps) => {
+        setAppointments(updatedApps);
+      }
+    );
+
+    return () => unsubscribe();
   }, [profile.uid]);
 
   // Load available time slots when scheduling inputs change
@@ -86,69 +201,152 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     try {
       const activeTenantId = getActiveTenantId();
       
-      // Load tenant info
-      const tenantSnap = await getDoc(doc(db, 'tenants', activeTenantId));
-      if (tenantSnap.exists()) {
-        setTenantInfo(tenantSnap.data());
-      }
-
-      // Load all tenants for selector
-      const tenantsList = await tenantService.listTenants();
-      // Ensure the active tenant is in the list, if not already
-      if (tenantsList.length === 0 || !tenantsList.some(t => t.id === activeTenantId)) {
-        const activeTenantSnap = await tenantService.getOrCreateTenant(activeTenantId);
-        if (activeTenantSnap) {
-          tenantsList.unshift(activeTenantSnap);
+      // Load tenant info (defensive)
+      try {
+        const tenantSnap = await getDoc(doc(db, 'tenants', activeTenantId));
+        if (tenantSnap.exists()) {
+          setTenantInfo(tenantSnap.data());
+        } else {
+          const fallbackTenant = await tenantService.getOrCreateTenant(activeTenantId);
+          setTenantInfo(fallbackTenant);
         }
+      } catch (err) {
+        console.warn("Could not load tenant info:", err);
       }
-      setAllTenants(tenantsList);
 
-      // Load loyalty config for dynamic cashback display
-      const config = await loyaltyService.getConfig();
-      setLoyaltyConfig(config);
+      // Load all tenants for selector (defensive + deduplicate by ID & name)
+      try {
+        const tenantsList = await tenantService.listTenants();
+        if (tenantsList.length === 0 || !tenantsList.some(t => t.id.toLowerCase() === activeTenantId.toLowerCase())) {
+          const activeTenantSnap = await tenantService.getOrCreateTenant(activeTenantId);
+          if (activeTenantSnap) {
+            tenantsList.unshift(activeTenantSnap);
+          }
+        }
+        
+        const uniqueTenants: TenantProfile[] = [];
+        const seenIds = new Set<string>();
+        const seenNames = new Set<string>();
+        for (const t of tenantsList) {
+          const lowerId = t.id.toLowerCase();
+          const lowerName = (t.name || '').trim().toLowerCase();
+          if (!seenIds.has(lowerId) && !seenNames.has(lowerName)) {
+            seenIds.add(lowerId);
+            if (lowerName) seenNames.add(lowerName);
+            uniqueTenants.push(t);
+          }
+        }
+        setAllTenants(uniqueTenants);
+      } catch (err) {
+        console.warn("Could not load tenants list:", err);
+      }
+
+      // Load loyalty config
+      try {
+        const config = await loyaltyService.getConfig();
+        setLoyaltyConfig(config);
+      } catch (err) {
+        console.warn("Could not load loyalty config:", err);
+      }
 
       // Load available packages configurations
-      const qPackages = query(collection(db, 'pacotes_config'), where('tenantId', '==', activeTenantId));
-      const configSnap = await getDocs(qPackages);
-      const availableConfigs = configSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setAvailablePackages(availableConfigs.sort((a: any, b: any) => (a.cutsCount || 0) - (b.cutsCount || 0)));
+      try {
+        const qPackages = query(collection(db, 'pacotes_config'), where('tenantId', '==', activeTenantId));
+        const configSnap = await getDocs(qPackages);
+        const availableConfigs = configSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setAvailablePackages(availableConfigs.sort((a: any, b: any) => (a.cutsCount || 0) - (b.cutsCount || 0)));
+      } catch (err) {
+        console.warn("Could not load packages config:", err);
+      }
 
       // Load available plans configurations
-      const plansList = await subscriptionService.getPlans();
-      setAvailablePlans(plansList);
+      try {
+        const plansList = await subscriptionService.getPlans();
+        setAvailablePlans(plansList);
+      } catch (err) {
+        console.warn("Could not load subscription plans list:", err);
+      }
 
       // Load active barbers
-      const activeBarbers = await userService.getAllBarbers(true);
-      setBarbers(activeBarbers);
+      try {
+        const activeBarbers = await userService.getAllBarbers(true);
+        setBarbers(activeBarbers);
+      } catch (err) {
+        console.warn("Could not load barbers list:", err);
+      }
 
       // Load active services
-      const activeServices = await serviceService.getServices(true);
-      setServices(activeServices);
+      try {
+        const activeServices = await serviceService.getServices(true);
+        setServices(activeServices);
+      } catch (err) {
+        console.warn("Could not load services list:", err);
+      }
 
       // Load client's appointments
-      const clientApps = await appointmentService.getAppointments({ cliente_id: profile.uid });
-      setAppointments(clientApps);
+      try {
+        const clientApps = await appointmentService.getAppointments({ cliente_id: profile.uid });
+        setAppointments(clientApps);
+      } catch (err) {
+        console.warn("Could not load client appointments list:", err);
+      }
 
       // Load loyalty points & cashback
-      const loyaltyPoints = await loyaltyService.getClientPoints(profile.uid);
-      setLoyalty(loyaltyPoints);
+      try {
+        const loyaltyPoints = await loyaltyService.getClientPoints(profile.uid);
+        setLoyalty(loyaltyPoints);
+      } catch (err) {
+        console.warn("Could not load client loyalty points:", err);
+      }
 
       // Load subscriptions
-      const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
-      setSubscriptions(clientSubs.filter(s => s.status === 'active'));
+      try {
+        const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
+        setSubscriptions(clientSubs.filter(s => s.status === 'active'));
+      } catch (err) {
+        console.warn("Could not load client subscriptions list:", err);
+      }
 
       // Load package sales
-      const pkgQuery = query(collection(db, 'pacotes_vendas'), where('clientId', '==', profile.uid));
-      const pkgSnap = await getDocs(pkgQuery);
-      const clientPkgs = pkgSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setPackages(clientPkgs);
+      try {
+        const pkgQuery = query(collection(db, 'pacotes_vendas'), where('clientId', '==', profile.uid));
+        const pkgSnap = await getDocs(pkgQuery);
+        const clientPkgs = pkgSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setPackages(clientPkgs);
+      } catch (err) {
+        console.warn("Could not load client packages sales:", err);
+      }
 
     } catch (err) {
-      console.error("Error loading Portal Cliente data:", err);
-      toast.error("Erro ao carregar informações do portal.");
+      console.error("General error loading Portal Cliente data:", err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSelectTenant = async (newTenantId: string) => {
+    localStorage.setItem('barberelite_tenant_id', newTenantId);
+    
+    // Reset selected booking options to prevent mismatch
+    setSelectedBarber(null);
+    setSelectedService(null);
+    setSelectedTime(null);
+    
+    // Update user's tenantId in Firestore so they are registered in this unit
+    try {
+      await userService.updateUserProfile(profile.uid, {
+        tenantId: newTenantId,
+        ativo: true
+      });
+    } catch (err) {
+      console.error("Error updating user tenant association:", err);
+    }
+    
+    const selectedName = allTenants.find(t => t.id.toLowerCase() === newTenantId.toLowerCase())?.name || newTenantId;
+    toast.success(`Unidade alterada para: ${selectedName}`);
+    
+    // Reload data for the new unit
+    await loadData();
   };
 
   const loadSlots = async () => {
@@ -291,6 +489,31 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     tempDate.setDate(tempDate.getDate() + 1);
   }
 
+  const filteredTenants = allTenants.map(t => {
+    if (userCoords) {
+      const tc = getTenantCoords(t);
+      const dist = calculateDistance(userCoords.lat, userCoords.lng, tc.lat, tc.lng);
+      return { ...t, distance: dist };
+    }
+    return { ...t, distance: undefined };
+  }).filter(t => {
+    const term = searchTenantTerm.toLowerCase();
+    const matchesSearch = t.name.toLowerCase().includes(term) || 
+      t.id.toLowerCase().includes(term) ||
+      (t.address?.street || '').toLowerCase().includes(term) ||
+      (t.address?.city || '').toLowerCase().includes(term);
+    
+    if (selectedCityFilter !== 'all') {
+      return matchesSearch && t.address?.city === selectedCityFilter;
+    }
+    return matchesSearch;
+  });
+
+  // Sort by distance ascending (nearest first) if userCoords is active
+  if (userCoords) {
+    filteredTenants.sort((a, b) => (a.distance || 99999) - (b.distance || 99999));
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-24 md:pb-6">
       {/* Header Panel */}
@@ -309,18 +532,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                 <select
                   value={tenantInfo?.id || getActiveTenantId()}
                   onChange={async (e) => {
-                    const newTenantId = e.target.value;
-                    localStorage.setItem('barberelite_tenant_id', newTenantId);
-                    const selectedName = allTenants.find(t => t.id === newTenantId)?.name || newTenantId;
-                    toast.success(`Unidade alterada para: ${selectedName}`);
-                    
-                    // Reset selected booking options to prevent mismatch
-                    setSelectedBarber(null);
-                    setSelectedService(null);
-                    setSelectedTime(null);
-                    
-                    // Reload data for the new unit
-                    await loadData();
+                    await handleSelectTenant(e.target.value);
                   }}
                   className="bg-slate-800 text-white text-[11px] font-bold border border-slate-700/60 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer max-w-[180px] sm:max-w-[240px] truncate"
                 >
@@ -354,9 +566,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           {activeTab === 'home' && (
             <motion.div 
               key="home"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
               {/* Quick Loyalty Card & Stats */}
@@ -460,6 +673,151 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   </div>
                 </div>
 
+              </div>
+
+              {/* Barbearias Browser Widget */}
+              <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                      <MapPin className="text-indigo-500 animate-bounce" size={18} />
+                      Navegador de Barbearias
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                      Digite o nome ou cidade para encontrar a barbearia ideal para você.
+                    </p>
+                  </div>
+                  
+                  <span className="self-start sm:self-center px-2.5 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase rounded-full">
+                    {allTenants.length} {allTenants.length === 1 ? 'Unidade' : 'Unidades'}
+                  </span>
+                </div>
+
+                {/* Search Bar & City Selector */}
+                <div className="flex flex-col md:flex-row gap-3">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      placeholder="Pesquisar barbearia por nome, rua ou cidade..."
+                      value={searchTenantTerm}
+                      onChange={(e) => setSearchTenantTerm(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200/80 rounded-2xl px-4 py-3 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleRequestLocation}
+                      disabled={loadingLocation}
+                      className="px-3.5 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border border-indigo-200/40 disabled:opacity-50"
+                    >
+                      {loadingLocation ? (
+                        <div className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <MapPin size={12} className="text-indigo-600 animate-pulse" />
+                      )}
+                      {userCoords ? "Recalcular Distância" : "Mais Próximas"}
+                    </button>
+
+                    {/* City filter chips */}
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full scrollbar-none">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCityFilter('all')}
+                        className={`px-3.5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
+                          selectedCityFilter === 'all'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200/40'
+                        }`}
+                      >
+                        Todas
+                      </button>
+                      {Array.from(new Set(allTenants.map(t => t.address?.city).filter(Boolean))).map(city => (
+                        <button
+                          key={city}
+                          type="button"
+                          onClick={() => setSelectedCityFilter(city || 'all')}
+                          className={`px-3.5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
+                            selectedCityFilter === city
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200/40'
+                          }`}
+                        >
+                          {city}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Results list */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 max-h-[320px] overflow-y-auto pr-1">
+                  {filteredTenants.length > 0 ? (
+                    filteredTenants.map((item) => {
+                      const isActive = (tenantInfo?.id || getActiveTenantId()).toLowerCase() === item.id.toLowerCase();
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={async () => {
+                            if (isActive) return;
+                            await handleSelectTenant(item.id);
+                          }}
+                          className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-3 hover:shadow-md ${
+                            isActive
+                              ? 'bg-indigo-50/65 border-indigo-200 shadow-sm'
+                              : 'bg-slate-50/50 hover:bg-white border-slate-100'
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                                {item.name}
+                                {isActive && (
+                                  <span className="bg-indigo-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                    Ativa
+                                  </span>
+                                )}
+                              </h4>
+                              {item.distance !== undefined && (
+                                <span className="bg-emerald-50 text-emerald-700 text-[9px] font-black px-2 py-0.5 rounded-full border border-emerald-100/60 flex items-center gap-1 whitespace-nowrap">
+                                  <MapPin size={9} /> {item.distance.toFixed(1)} km
+                                </span>
+                              )}
+                            </div>
+                            {item.address && (
+                              <p className="text-[10px] text-slate-500 font-semibold flex items-center gap-1">
+                                <MapPin size={11} className="text-slate-400" />
+                                {item.address.street}, {item.address.city} - {item.address.state}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between border-t border-slate-100/50 pt-2.5">
+                            <span className="text-[10px] text-slate-400 font-bold">
+                              ID: {item.id}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={isActive}
+                              className={`text-[9px] font-black uppercase tracking-wider px-3 py-1.5 rounded-xl transition-all ${
+                                isActive
+                                  ? 'text-indigo-600 bg-indigo-100/60 font-extrabold cursor-default'
+                                  : 'text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm'
+                              }`}
+                            >
+                              {isActive ? 'Selecionada' : 'Escolher Barbearia'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="col-span-2 py-8 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                      <p className="text-xs text-slate-400 font-semibold">Nenhuma barbearia encontrada com esses filtros.</p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Subscriptions / Packages Widgets */}
@@ -573,9 +931,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           {activeTab === 'schedule' && (
             <motion.div 
               key="schedule"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
               className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-8"
             >
               <div>
@@ -627,8 +986,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               {/* Step 2: Select Service */}
               {selectedBarber && (
                 <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.12, ease: 'easeOut' }}
                   className="space-y-4 border-t border-slate-100 pt-6"
                 >
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
@@ -672,8 +1032,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               {/* Step 3: Select Date & Time */}
               {selectedBarber && selectedService && (
                 <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.12, ease: 'easeOut' }}
                   className="space-y-6 border-t border-slate-100 pt-6"
                 >
                   {/* Date Selector */}
@@ -747,8 +1108,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               {/* Order Summary & Submit button */}
               {selectedBarber && selectedService && selectedTime && (
                 <motion.div 
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.12, ease: 'easeOut' }}
                   className="bg-slate-900 text-white p-6 rounded-[28px] space-y-4 shadow-xl border border-slate-800"
                 >
                   <h4 className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
@@ -803,9 +1165,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           {activeTab === 'history' && (
             <motion.div 
               key="history"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
               className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6"
             >
               <div>
@@ -874,9 +1237,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           {activeTab === 'fidelidade' && (
             <motion.div 
               key="fidelidade"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
               {/* Rules and Explanation card */}
@@ -961,9 +1325,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           {activeTab === 'pacotes' && (
             <motion.div 
               key="pacotes"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
               {/* Active client packages */}
@@ -1112,9 +1477,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           {activeTab === 'assinaturas' && (
             <motion.div 
               key="assinaturas"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
               {/* Active client subscriptions */}
@@ -1262,6 +1628,91 @@ export function PortalCliente({ profile }: PortalClienteProps) {
             </motion.div>
           )}
 
+          {/* TAB: PERFIL */}
+          {activeTab === 'perfil' && (
+            <motion.div 
+              key="perfil"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
+              className="space-y-6"
+            >
+              <div className="bg-white border border-slate-200 rounded-[2rem] p-6 sm:p-8 shadow-sm">
+                <div className="flex flex-col sm:flex-row items-center gap-6 pb-6 border-b border-slate-100">
+                  <div className="w-20 h-20 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center font-black text-2xl text-indigo-650 shadow-inner">
+                    {profile.nome.substring(0, 2).toUpperCase()}
+                  </div>
+                  <div className="text-center sm:text-left space-y-1">
+                    <span className="px-3 py-1 bg-indigo-50 text-[10px] font-black uppercase tracking-wider text-indigo-600 rounded-full border border-indigo-100">
+                      Cliente Registrado
+                    </span>
+                    <h3 className="text-xl font-black text-slate-800 tracking-tight mt-1">{profile.nome}</h3>
+                    <p className="text-xs font-semibold text-slate-450">{profile.email}</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSaveProfile} className="space-y-6 mt-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Nome Completo</label>
+                      <input 
+                        required
+                        type="text" 
+                        value={editNome}
+                        onChange={e => setEditNome(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
+                        placeholder="Seu nome"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">E-mail (Inalterável)</label>
+                      <input 
+                        disabled
+                        type="email" 
+                        value={profile.email}
+                        className="w-full bg-slate-100 border border-slate-200 rounded-xl py-3 px-4 text-sm font-bold text-slate-450 outline-none transition opacity-70 cursor-not-allowed"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Telefone WhatsApp</label>
+                      <input 
+                        type="tel" 
+                        value={editTelefone}
+                        onChange={e => setEditTelefone(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
+                        placeholder="(11) 99999-9999"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Minhas Preferências / Observações</label>
+                      <textarea 
+                        value={editObservacoes}
+                        onChange={e => setEditObservacoes(e.target.value)}
+                        rows={3}
+                        className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition resize-none"
+                        placeholder="Ex: Prefiro máquina 2 nas laterais e tesoura em cima..."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-4 border-t border-slate-100">
+                    <button
+                      type="submit"
+                      disabled={isSavingProfile}
+                      className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-md hover:shadow-lg active:scale-95 disabled:opacity-50"
+                    >
+                      {isSavingProfile ? 'Salvando...' : 'Salvar Alterações'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          )}
+
         </AnimatePresence>
 
       </main>
@@ -1326,6 +1777,16 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         >
           <Sparkles size={18} />
           <span className="text-[8px] font-black uppercase tracking-wider">Assinar</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('perfil')}
+          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+            activeTab === 'perfil' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <User size={18} />
+          <span className="text-[8px] font-black uppercase tracking-wider">Perfil</span>
         </button>
       </nav>
     </div>

@@ -11,11 +11,15 @@ import {
   setDoc,
   collection as firestoreCollection,
   serverTimestamp,
-  limit
+  limit,
+  onSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, UserRole } from '../types';
 import { getActiveTenantId } from './tenantService';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 const COLLECTION = 'usuarios';
 
@@ -34,6 +38,32 @@ export const userService = {
     const querySnapshot = await getDocs(q);
     const users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
     return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+  },
+
+  subscribeToUsersByRole(role: UserRole, onlyActive = true, callback: (users: UserProfile[]) => void) {
+    let q = query(
+      collection(db, COLLECTION), 
+      where('tipo', '==', role),
+      where('tenantId', '==', getActiveTenantId())
+    );
+    
+    if (onlyActive) {
+      q = query(q, where('ativo', '==', true));
+    }
+
+    return onSnapshot(q, (snapshot) => {
+      const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+      const sorted = users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      callback(sorted);
+    });
+  },
+
+  subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void) {
+    return this.subscribeToUsersByRole('barbeiro', onlyActive, callback);
+  },
+
+  subscribeToAllClients(onlyActive = true, callback: (clients: UserProfile[]) => void) {
+    return this.subscribeToUsersByRole('cliente', onlyActive, callback);
   },
 
   async getAllBarbers(onlyActive = true) {
@@ -158,12 +188,37 @@ export const userService = {
     }
   },
 
-  async createUser(data: Partial<UserProfile>) {
-    const docRef = doc(firestoreCollection(db, COLLECTION));
-    const uid = docRef.id;
+  async createUser(data: Partial<UserProfile> & { password?: string }) {
+    let uid = data.uid || '';
+    
+    if (data.password && data.email) {
+      const tempAppName = `temp-auth-app-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+      const tempApp = initializeApp(firebaseConfig, tempAppName);
+      const tempAuth = getAuth(tempApp);
+      try {
+        const userCredential = await createUserWithEmailAndPassword(tempAuth, data.email, data.password);
+        uid = userCredential.user.uid;
+        await signOut(tempAuth);
+      } catch (authError: any) {
+        console.error("Erro ao criar usuário de autenticação no Firebase:", authError);
+        if (authError.code === 'auth/email-already-in-use') {
+          throw new Error('Este e-mail já está sendo utilizado por outro usuário.');
+        } else if (authError.code === 'auth/invalid-email') {
+          throw new Error('O e-mail fornecido é inválido.');
+        } else if (authError.code === 'auth/weak-password') {
+          throw new Error('A senha é muito fraca. Deve ter no mínimo 6 caracteres.');
+        }
+        throw authError;
+      } finally {
+        await deleteApp(tempApp);
+      }
+    }
+
+    const docRef = uid ? doc(db, COLLECTION, uid) : doc(firestoreCollection(db, COLLECTION));
+    const finalUid = docRef.id;
     
     const newUser: UserProfile = {
-      uid,
+      uid: finalUid,
       nome: data.nome || '',
       email: data.email || '',
       tipo: data.tipo || 'cliente',
@@ -199,6 +254,11 @@ export const userService = {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
+    
+    // Ensure we don't save the password to the Firestore user profile
+    if ('password' in newUser) {
+      delete (newUser as any).password;
+    }
     
     await setDoc(docRef, newUser);
     return newUser;

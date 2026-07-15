@@ -27,6 +27,7 @@ import { agendaBlockService } from './agendaBlockService';
 import { cashService } from './cashService';
 import { serviceService } from './serviceService';
 import { getActiveTenantId } from './tenantService';
+import { comandaService } from './comandaService';
 
 const COLLECTION = 'appointments';
 const RECURRING_COLLECTION = 'recurring_appointments';
@@ -188,63 +189,82 @@ export const appointmentService = {
   },
 
   async getAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }) {
-    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
-
+    let q;
     if (filters.date) {
-      q = query(q, where('date', '==', filters.date), orderBy('startTime', 'asc'));
+      q = query(collection(db, COLLECTION), where('date', '==', filters.date));
     } else if (filters.startDate && filters.endDate) {
-      q = query(q, 
-      where('date', '>=', filters.startDate), 
-      where('date', '<=', filters.endDate),
-      orderBy('date', 'asc'),
-      orderBy('startTime', 'asc')
+      q = query(collection(db, COLLECTION), 
+        where('date', '>=', filters.startDate), 
+        where('date', '<=', filters.endDate)
       );
+    } else if (filters.cliente_id) {
+      q = query(collection(db, COLLECTION), where('cliente_id', '==', filters.cliente_id));
+    } else if (filters.profissional_id) {
+      q = query(collection(db, COLLECTION), where('profissional_id', '==', filters.profissional_id));
     } else {
-      q = query(q, orderBy('startTime', 'asc'));
-    }
-
-    if (filters.profissional_id) {
-      q = query(q, where('profissional_id', '==', filters.profissional_id));
-    }
-    if (filters.cliente_id) {
-      q = query(q, where('cliente_id', '==', filters.cliente_id));
-    }
-    if (filters.status) {
-      q = query(q, where('status', '==', filters.status));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
     }
 
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+    const rawAppointments = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
+    const activeTenantId = getActiveTenantId();
+    
+    const appointments = rawAppointments.filter(app => {
+      if (app.tenantId !== activeTenantId) return false;
+      if (filters.date && app.date !== filters.date) return false;
+      if (filters.startDate && app.date < filters.startDate) return false;
+      if (filters.endDate && app.date > filters.endDate) return false;
+      if (filters.profissional_id && app.profissional_id !== filters.profissional_id) return false;
+      if (filters.cliente_id && app.cliente_id !== filters.cliente_id) return false;
+      if (filters.status && app.status !== filters.status) return false;
+      return true;
+    });
+
+    return appointments.sort((a, b) => {
+      const dateCompare = (a.date || '').localeCompare(b.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      return (a.startTime || '').localeCompare(b.startTime || '');
+    });
   },
 
   subscribeToAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }, callback: (appointments: Appointment[]) => void) {
-    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
-
+    let q;
     if (filters.date) {
-      q = query(q, where('date', '==', filters.date), orderBy('startTime', 'asc'));
+      q = query(collection(db, COLLECTION), where('date', '==', filters.date));
     } else if (filters.startDate && filters.endDate) {
-      q = query(q, 
+      q = query(collection(db, COLLECTION), 
         where('date', '>=', filters.startDate), 
-        where('date', '<=', filters.endDate),
-        orderBy('date', 'asc'),
-        orderBy('startTime', 'asc')
+        where('date', '<=', filters.endDate)
       );
+    } else if (filters.cliente_id) {
+      q = query(collection(db, COLLECTION), where('cliente_id', '==', filters.cliente_id));
+    } else if (filters.profissional_id) {
+      q = query(collection(db, COLLECTION), where('profissional_id', '==', filters.profissional_id));
     } else {
-      q = query(q, orderBy('startTime', 'asc'));
-    }
-
-    if (filters.profissional_id) {
-      q = query(q, where('profissional_id', '==', filters.profissional_id));
-    }
-    if (filters.cliente_id) {
-      q = query(q, where('cliente_id', '==', filters.cliente_id));
-    }
-    if (filters.status) {
-      q = query(q, where('status', '==', filters.status));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
     }
 
     return onSnapshot(q, (snapshot) => {
-      const appointments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+      const rawAppointments = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
+      const activeTenantId = getActiveTenantId();
+      
+      const appointments = rawAppointments.filter(app => {
+        if (app.tenantId !== activeTenantId) return false;
+        if (filters.date && app.date !== filters.date) return false;
+        if (filters.startDate && app.date < filters.startDate) return false;
+        if (filters.endDate && app.date > filters.endDate) return false;
+        if (filters.profissional_id && app.profissional_id !== filters.profissional_id) return false;
+        if (filters.cliente_id && app.cliente_id !== filters.cliente_id) return false;
+        if (filters.status && app.status !== filters.status) return false;
+        return true;
+      });
+
+      appointments.sort((a, b) => {
+        const dateCompare = (a.date || '').localeCompare(b.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        return (a.startTime || '').localeCompare(b.startTime || '');
+      });
+
       callback(appointments);
     });
   },
@@ -273,6 +293,83 @@ export const appointmentService = {
       updatedAt: serverTimestamp(),
     });
 
+    // Auto-cria ou sincroniza comanda ao iniciar atendimento
+    if (status === 'em_atendimento') {
+      try {
+        const comQuery = query(
+          collection(db, 'comandas'),
+          where('agendamento_id', '==', id)
+        );
+        const comSnap = await getDocs(comQuery);
+        
+        if (comSnap.empty && !appointment.comanda_id) {
+          const items = [{
+            id: `item-${appointment.id}-${Date.now()}`,
+            type: 'servico' as const,
+            referencia_id: appointment.servico_id || '',
+            name: appointment.servico_name || '',
+            quantity: 1,
+            unitPrice: appointment.price || 0,
+            totalPrice: appointment.price || 0,
+            profissional_id: appointment.profissional_id,
+            profissional_name: appointment.profissional_name,
+            isCortesia: false,
+            generateCommission: true
+          }];
+          
+          const newComanda = await comandaService.openComanda({
+            cliente_id: appointment.cliente_id || 'avulso',
+            cliente_name: appointment.cliente_name || 'Cliente Avulso',
+            profissional_id: appointment.profissional_id,
+            profissional_name: appointment.profissional_name,
+            agendamento_id: appointment.id,
+            status: 'em_atendimento',
+            origin: 'agenda',
+            items
+          }, appointment.profissional_id, appointment.profissional_name);
+          
+          await updateDoc(docRef, {
+            comanda_id: newComanda.id,
+            comanda_number: newComanda.number,
+            updatedAt: serverTimestamp()
+          });
+        } else if (!comSnap.empty && !appointment.comanda_id) {
+          const existingComanda = comSnap.docs[0];
+          await updateDoc(docRef, {
+            comanda_id: existingComanda.id,
+            comanda_number: existingComanda.data().number,
+            updatedAt: serverTimestamp()
+          });
+          
+          await updateDoc(existingComanda.ref, {
+            status: 'em_atendimento',
+            updatedAt: serverTimestamp()
+          });
+        }
+      } catch (comErr) {
+        console.error("Erro ao auto-criar/sincronizar comanda para início de atendimento:", comErr);
+      }
+    }
+
+    // Cancela comanda vinculada se o agendamento for cancelado
+    if (status === 'cancelado' && appointment.comanda_id) {
+      try {
+        const comRef = doc(db, 'comandas', appointment.comanda_id);
+        const comSnap = await getDoc(comRef);
+        if (comSnap.exists()) {
+          const comData = comSnap.data();
+          if (comData.status !== 'fechada' && comData.status !== 'cancelada') {
+            await updateDoc(comRef, {
+              status: 'cancelada',
+              updatedAt: serverTimestamp()
+            });
+          }
+        }
+      } catch (comErr) {
+        console.error("Erro ao cancelar comanda vinculada no cancelamento do agendamento:", comErr);
+      }
+    }
+
     // Sincroniza outros agendamentos da mesma comanda se houver comanda_id
     if (appointment.comanda_id) {
       try {
@@ -300,121 +397,158 @@ export const appointmentService = {
 
     // Se concluído, atualiza estatísticas do cliente e gera registro financeiro
     if (status === 'concluído') {
-      // 1. Atualiza Cliente
-      if (appointment.cliente_id) {
-        const clientRef = doc(db, 'usuarios', appointment.cliente_id);
-        const clientSnap = await getDoc(clientRef);
-        
-        if (clientSnap.exists()) {
-          await updateDoc(clientRef, {
-            totalSpent: increment(appointment.price),
-            appointmentsCount: increment(1),
-            lastServiceAt: serverTimestamp(),
-            preferred_profissional_id: appointment.profissional_id,
-            preferred_profissional_name: appointment.profissional_name,
-            ativo: true,
-            updatedAt: serverTimestamp()
-          }).catch(err => console.error("Erro ao atualizar estatísticas do cliente:", err));
+      // Se houver uma comanda vinculada, o faturamento, caixas e comissões 
+      // serão processados exclusivamente pelo fluxo de fechamento/checkout da comanda.
+      // Aqui apenas atualizamos o status da comanda para aguardando pagamento para sinalizar ao caixa.
+      if (appointment.comanda_id) {
+        try {
+          const comRef = doc(db, 'comandas', appointment.comanda_id);
+          const comSnap = await getDoc(comRef);
+          if (comSnap.exists()) {
+            const comData = comSnap.data();
+            if (comData.status === 'aberta' || comData.status === 'em_atendimento') {
+              await updateDoc(comRef, {
+                status: 'aguardando_pagamento',
+                updatedAt: serverTimestamp()
+              });
+            }
+          }
+        } catch (err) {
+          console.error("Erro ao atualizar status da comanda vinculada para aguardando pagamento:", err);
         }
-      }
-
-      // 2. Gera Lançamento Financeiro
-      const pagamento_id = await financialService.createTransaction({
-        type: 'income',
-        category: 'Serviço',
-        description: `Atendimento: ${appointment.servico_name} - ${appointment.cliente_name}`,
-        amount: appointment.price,
-        paymentMethod: paymentMethod,
-        date: appointment.date,
-        status: paymentMethod === 'fiado' ? 'pendente' : 'pago',
-        agendamento_id: appointment.id,
-        cliente_id: appointment.cliente_id,
-        cliente_name: appointment.cliente_name,
-        profissional_id: appointment.profissional_id,
-        profissional_name: appointment.profissional_name,
-        responsavel_id: appointment.profissional_id, 
-        responsavel_name: appointment.profissional_name,
-        net_amount: appointment.price,
-        fee_amount: 0,
-        settlement_date: appointment.date,
-        is_settled: paymentMethod !== 'fiado'
-      }).catch(err => {
-        console.error("Erro ao gerar lançamento financeiro:", err);
-        return null;
-      });
-
-      // 2.1. Registra no Caixa do Dia se houver caixa aberto
-      try {
-        const cashDoc = await cashService.getCurrentCash();
-        if (cashDoc && paymentMethod !== 'fiado') {
-          await cashService.addMovement({
-            caixa_id: cashDoc.id,
-            type: 'income',
-            category: 'Venda',
-            description: `Atendimento: ${appointment.servico_name} - ${appointment.cliente_name}`,
-            amount: appointment.price,
-            paymentMethod: paymentMethod,
-            is_receivable: paymentMethod === 'credito' || paymentMethod === 'debito',
-            settlement_date: appointment.date,
-            referencia_id: appointment.id,
-            usuario_id: appointment.profissional_id,
-            usuario_name: appointment.profissional_name,
-            date: appointment.date
-          });
-        }
-      } catch (err) {
-        console.error("Erro ao registrar movimento de caixa para agendamento concluído:", err);
-      }
-
-      // 3. Gera Comissão para o Barbeiro
-      try {
-        const barberProfile = await userService.getUserProfile(appointment.profissional_id);
-        const defaultPercentage = barberProfile?.commission_percentage || 50; 
-
-        // Fetch custom commission settings from the service
-        const sDoc = appointment.servico_id ? await serviceService.getServiceById(appointment.servico_id) : null;
-        const tipoComissao = sDoc?.tipo_comissao || 'padrao';
-        const valorComissao = sDoc?.valor_comissao !== undefined ? sDoc?.valor_comissao : 0;
-
-        let commission_percentage = defaultPercentage;
-        let commission_value = 0;
-
-        // Check if there's a specific professional-level override for this service
-        const proOverride = sDoc?.comissoes_por_profissional?.[appointment.profissional_id];
-        const effectiveRule = proOverride || { tipo: tipoComissao, valor: valorComissao };
-
-        if (effectiveRule.tipo === 'percentual') {
-          commission_percentage = effectiveRule.valor;
-          commission_value = (appointment.price * commission_percentage) / 100;
-        } else if (effectiveRule.tipo === 'fixo') {
-          commission_percentage = 0;
-          commission_value = effectiveRule.valor;
-        } else {
-          // 'padrao'
-          commission_percentage = defaultPercentage;
-          commission_value = (appointment.price * commission_percentage) / 100;
+      } else {
+        // Fluxo legado / direto (sem comandas): cria lançamentos diretamente para manter retrocompatibilidade
+        // 1. Atualiza Cliente
+        if (appointment.cliente_id) {
+          const clientRef = doc(db, 'usuarios', appointment.cliente_id);
+          const clientSnap = await getDoc(clientRef);
+          
+          if (clientSnap.exists()) {
+            await updateDoc(clientRef, {
+              totalSpent: increment(appointment.price),
+              appointmentsCount: increment(1),
+              lastServiceAt: serverTimestamp(),
+              preferred_profissional_id: appointment.profissional_id,
+              preferred_profissional_name: appointment.profissional_name,
+              ativo: true,
+              updatedAt: serverTimestamp()
+            }).catch(err => console.error("Erro ao atualizar estatísticas do cliente:", err));
+          }
         }
 
-        await commissionService.createCommission({
+        // 2. Gera Lançamento Financeiro
+        const pagamento_id = await financialService.createTransaction({
+          type: 'income',
+          category: 'Serviço',
+          description: `Atendimento: ${appointment.servico_name} - ${appointment.cliente_name}`,
+          amount: appointment.price,
+          paymentMethod: paymentMethod,
+          date: appointment.date,
+          status: paymentMethod === 'fiado' ? 'pendente' : 'pago',
+          agendamento_id: appointment.id,
+          cliente_id: appointment.cliente_id,
+          cliente_name: appointment.cliente_name,
           profissional_id: appointment.profissional_id,
           profissional_name: appointment.profissional_name,
-          agendamento_id: appointment.id,
-          servico_name: appointment.servico_name,
-          base_value: appointment.price,
-          commission_percentage,
-          commission_value,
-          status: 'pendente',
-          date: appointment.date
+          responsavel_id: appointment.profissional_id, 
+          responsavel_name: appointment.profissional_name,
+          net_amount: appointment.price,
+          fee_amount: 0,
+          settlement_date: appointment.date,
+          is_settled: paymentMethod !== 'fiado'
+        }).catch(err => {
+          console.error("Erro ao gerar lançamento financeiro:", err);
+          return null;
         });
-      } catch (err) {
-        console.error("Erro ao gerar comissão:", err);
+
+        // 2.1. Registra no Caixa do Dia se houver caixa aberto
+        try {
+          const cashDoc = await cashService.getCurrentCash();
+          if (cashDoc && paymentMethod !== 'fiado') {
+            await cashService.addMovement({
+              caixa_id: cashDoc.id,
+              type: 'income',
+              category: 'Venda',
+              description: `Atendimento: ${appointment.servico_name} - ${appointment.cliente_name}`,
+              amount: appointment.price,
+              paymentMethod: paymentMethod,
+              is_receivable: paymentMethod === 'credito' || paymentMethod === 'debito',
+              settlement_date: appointment.date,
+              referencia_id: appointment.id,
+              usuario_id: appointment.profissional_id,
+              usuario_name: appointment.profissional_name,
+              date: appointment.date
+            });
+          }
+        } catch (err) {
+          console.error("Erro ao registrar movimento de caixa para agendamento concluído:", err);
+        }
+
+        // 3. Gera Comissão para o Barbeiro
+        try {
+          const barberProfile = await userService.getUserProfile(appointment.profissional_id);
+          const defaultPercentage = barberProfile?.commission_percentage || 50; 
+
+          // Fetch custom commission settings from the service
+          const sDoc = appointment.servico_id ? await serviceService.getServiceById(appointment.servico_id) : null;
+          const tipoComissao = sDoc?.tipo_comissao || 'padrao';
+          const valorComissao = sDoc?.valor_comissao !== undefined ? sDoc?.valor_comissao : 0;
+
+          let commission_percentage = defaultPercentage;
+          let commission_value = 0;
+
+          // Check if there's a specific professional-level override for this service
+          const proOverride = sDoc?.comissoes_por_profissional?.[appointment.profissional_id];
+          const effectiveRule = proOverride || { tipo: tipoComissao, valor: valorComissao };
+
+          if (effectiveRule.tipo === 'percentual') {
+            commission_percentage = effectiveRule.valor;
+            commission_value = (appointment.price * commission_percentage) / 100;
+          } else if (effectiveRule.tipo === 'fixo') {
+            commission_percentage = 0;
+            commission_value = effectiveRule.valor;
+          } else {
+            // 'padrao'
+            commission_percentage = defaultPercentage;
+            commission_value = (appointment.price * commission_percentage) / 100;
+          }
+
+          await commissionService.createCommission({
+            profissional_id: appointment.profissional_id,
+            profissional_name: appointment.profissional_name,
+            agendamento_id: appointment.id,
+            servico_name: appointment.servico_name,
+            base_value: appointment.price,
+            commission_percentage,
+            commission_value,
+            status: 'pendente',
+            date: appointment.date
+          });
+        } catch (err) {
+          console.error("Erro ao gerar comissão:", err);
+        }
       }
     }
   },
 
   async getAvailableSlots(profissional_id: string, date: string, duration: number) {
-    const schedule = await professionalScheduleService.getSchedule(profissional_id);
-    if (!schedule) return [];
+    let schedule = await professionalScheduleService.getSchedule(profissional_id);
+    if (!schedule) {
+      // Fallback default schedule if none exists yet, so the professional is immediately bookable
+      schedule = {
+        workingHours: [
+          { dayOfWeek: 1, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+          { dayOfWeek: 2, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+          { dayOfWeek: 3, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+          { dayOfWeek: 4, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+          { dayOfWeek: 5, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+          { dayOfWeek: 6, isOpen: true, startTime: '09:00', endTime: '17:00', lunchStart: '12:00', lunchEnd: '13:00' },
+          { dayOfWeek: 0, isOpen: false, startTime: '09:00', endTime: '19:00' },
+        ],
+        exceptions: [],
+        vacations: []
+      } as any;
+    }
 
     const dateObj = parse(date, 'yyyy-MM-dd', new Date());
     const dayOfWeek = getDay(dateObj);

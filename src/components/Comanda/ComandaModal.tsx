@@ -262,6 +262,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   
   useEffect(() => {
     loadData();
+    const unsubscribeBarbers = userService.subscribeToAllBarbers(true, (data) => {
+      setBarbers(data);
+    });
+    const unsubscribeClients = userService.subscribeToAllClients(true, (data) => {
+      setClients(data);
+    });
+    return () => {
+      unsubscribeBarbers();
+      unsubscribeClients();
+    };
   }, []);
 
   useEffect(() => {
@@ -313,17 +323,13 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   const loadData = async () => {
     try {
-      const [s, p, b, c, pm] = await Promise.all([
+      const [s, p, pm] = await Promise.all([
         serviceService.getServices(),
         inventoryService.getProducts(),
-        userService.getAllBarbers(),
-        userService.getAllClients(),
         paymentMethodService.getPaymentMethods()
       ]);
       setServices(s);
       setProducts(p);
-      setBarbers(b);
-      setClients(c);
       setPaymentMethods(pm.filter(m => m.status === 'active'));
     } catch (error) {
       console.error("Erro ao carregar dados:", error);

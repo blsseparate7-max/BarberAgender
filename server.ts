@@ -3,9 +3,31 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
+import { initializeApp, getApps, App } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize Firebase Admin lazily
+let adminApp: App | null = null;
+function getFirebaseAdmin() {
+  if (!adminApp) {
+    try {
+      const apps = getApps();
+      if (apps.length === 0) {
+        adminApp = initializeApp({
+          projectId: "gbagender"
+        });
+      } else {
+        adminApp = apps[0];
+      }
+    } catch (err) {
+      console.error("Error initializing Firebase Admin SDK:", err);
+    }
+  }
+  return adminApp;
+}
 
 // Initialize Gemini client lazily
 let ai: GoogleGenAI | null = null;
@@ -26,6 +48,36 @@ async function startServer() {
 
   // Middleware para JSON
   app.use(express.json());
+
+  // API Route to reset another user's password (e.g. barber) using Firebase Admin
+  app.post("/api/admin/reset-password", async (req, res) => {
+    try {
+      const { uid, password } = req.body;
+      if (!uid || !password) {
+        return res.status(400).json({ error: "UID e senha são obrigatórios." });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({ error: "A senha deve ter pelo menos 6 caracteres." });
+      }
+
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(500).json({ 
+          error: "Não foi possível inicializar o Firebase Admin SDK no servidor. Use a redefinição de senha por e-mail." 
+        });
+      }
+
+      await getAuth(fbAdmin).updateUser(uid, { password });
+      res.json({ success: true, message: "Senha alterada com sucesso!" });
+    } catch (error: any) {
+      console.error("Erro ao alterar senha do barbeiro no servidor:", error);
+      res.status(500).json({ 
+        error: error.message || "Erro desconhecido ao alterar a senha.",
+        code: error.code || "unknown"
+      });
+    }
+  });
 
   // API Route para o SaaS AI Co-Pilot Insights
   app.post("/api/saas/insights", async (req, res) => {

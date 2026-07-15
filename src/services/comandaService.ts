@@ -629,11 +629,14 @@ export const comandaService = {
       // However, we can use a standard logic: 1 point per Real, 5% cashback (matching default config)
       const pointsToAdd = Math.floor(comanda.totalAmount); // 1 point per Real
       const cashbackToAdd = (comanda.totalAmount * 5) / 100; // 5% cashback
+      const activeTenantId = comanda.tenantId || getActiveTenantId();
+      const pointsDocId = `${activeTenantId}_${comanda.cliente_id}`;
 
-      const pointsRef = doc(db, 'loyalty_points', comanda.cliente_id);
+      const pointsRef = doc(db, 'loyalty_points', pointsDocId);
       // We use set with merge: true to create if not exists
       transaction.set(pointsRef, {
         cliente_id: comanda.cliente_id,
+        tenantId: activeTenantId,
         points: increment(pointsToAdd),
         cashback: increment(cashbackToAdd),
         updatedAt: serverTimestamp()
@@ -642,6 +645,7 @@ export const comandaService = {
       const historyRef = doc(collection(db, 'loyalty_history'));
       transaction.set(historyRef, {
         cliente_id: comanda.cliente_id,
+        tenantId: activeTenantId,
         type: 'earn',
         source: comanda.origin === 'agenda' ? 'appointment' : 'purchase',
         points: pointsToAdd,

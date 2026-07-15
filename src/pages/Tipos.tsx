@@ -83,8 +83,8 @@ interface TypeItem {
   body?: string; // ready messages
 }
 
-export function Tipos() {
-  const [activeSub, setActiveSub] = useState<SubTypeId>('categorias');
+export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId }) {
+  const [activeSub, setActiveSub] = useState<SubTypeId>(defaultTab);
   const [items, setItems] = useState<TypeItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');

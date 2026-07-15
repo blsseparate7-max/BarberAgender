@@ -436,12 +436,65 @@ function ReportGeneral({ data, filters, plans, subscriptions }: { data: any, fil
           .map(([name, count]) => ({ name, count }))
           .sort((a, b) => b.count - a.count)[0] || { name: 'Sem assinatura ativa', count: 0 };
 
+        // F. Calculated revenue breakdowns (BI)
+        const totalServiceRevenue = completedAppts.reduce((acc: number, a: any) => acc + (a.price || 0), 0);
+        const totalProductRevenue = movementsList
+          .filter((m: any) => m.type === 'venda')
+          .reduce((acc: number, m: any) => acc + (Number(m.valorTotal || m.totalPrice || 0)), 0);
+
+        // G. Service Categories Breakdown Heuristics
+        const catStats = {
+          corte: { name: 'Cortes & Cabelo', qty: 0, revenue: 0 },
+          barba: { name: 'Barboterapia & Barba', qty: 0, revenue: 0 },
+          combo: { name: 'Combos Especiais', qty: 0, revenue: 0 },
+          quimica: { name: 'Química, Sombr. & Outros', qty: 0, revenue: 0 }
+        };
+
+        completedAppts.forEach((a: any) => {
+          const sName = (a.servico_name || '').toLowerCase();
+          const price = a.price || 0;
+
+          if (sName.includes('combo') || sName.includes('completo') || sName.includes('casadinha') || sName.includes('+') || sName.includes(' e ')) {
+            catStats.combo.qty++;
+            catStats.combo.revenue += price;
+          } else if (sName.includes('barba') || sName.includes('barbo') || sName.includes('navalha')) {
+            catStats.barba.qty++;
+            catStats.barba.revenue += price;
+          } else if (sName.includes('corte') || sName.includes('social') || sName.includes('degrad') || sName.includes('maquina') || sName.includes('máquina') || sName.includes('tesoura') || sName.includes('cabelo')) {
+            catStats.corte.qty++;
+            catStats.corte.revenue += price;
+          } else {
+            catStats.quimica.qty++;
+            catStats.quimica.revenue += price;
+          }
+        });
+
+        // H. Client retention calculations
+        const clientVisits: Record<string, number> = {};
+        completedAppts.forEach((a: any) => {
+          if (a.cliente_id) {
+            clientVisits[a.cliente_id] = (clientVisits[a.cliente_id] || 0) + 1;
+          }
+        });
+        const clientValues = Object.values(clientVisits);
+        const totalUniqueClientsPeriod = clientValues.length;
+        const recurringClientsPeriod = clientValues.filter(v => v >= 2).length;
+        const recurringPercent = totalUniqueClientsPeriod > 0 ? Math.round((recurringClientsPeriod / totalUniqueClientsPeriod) * 100) : 0;
+
         setGeneralStats({
           topService,
           topClientBySpend,
           topBarber,
           topProduct,
-          topPlan
+          topPlan,
+          totalServiceRevenue,
+          totalProductRevenue,
+          catStats,
+          retentionStats: {
+            totalUnique: totalUniqueClientsPeriod,
+            recurring: recurringClientsPeriod,
+            percent: recurringPercent
+          }
         });
       } catch (err) {
         console.error("Error gathering general stats dashboard:", err);
@@ -629,6 +682,149 @@ function ReportGeneral({ data, filters, plans, subscriptions }: { data: any, fil
           </div>
         </div>
       </div>
+
+      {/* NEW SECTION: RAIO-X COMPLETO DO DONO (BI DE CATEGORIAS E PRODUTOS) */}
+      {generalStats && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8" id="owner-xray-bi-dashboard">
+          {/* COMPARATIVO SERVIÇOS VS PRODUTOS */}
+          <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm flex flex-col justify-between col-span-1">
+            <div>
+              <div className="w-12 h-12 bg-sky-50 rounded-2xl flex items-center justify-center text-sky-600 shadow-inner mb-6">
+                <BarChart3 size={24} />
+              </div>
+              <h3 className="font-black text-xl text-primary tracking-tighter">
+                Serviços vs. Venda de Produtos
+              </h3>
+              <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1">Comparação de representatividade no caixa</p>
+              
+              <div className="space-y-6 mt-8">
+                {/* Serviços */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-bold">
+                    <span className="text-slate-500 uppercase tracking-wider">Serviços Prestados</span>
+                    <span className="text-primary">R$ {(generalStats.totalServiceRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-indigo-500 rounded-full" 
+                      style={{ 
+                        width: `${
+                          (generalStats.totalServiceRevenue || generalStats.totalProductRevenue) 
+                            ? Math.round((generalStats.totalServiceRevenue / (generalStats.totalServiceRevenue + generalStats.totalProductRevenue)) * 100) 
+                            : 100
+                        }%` 
+                      }} 
+                    />
+                  </div>
+                  <p className="text-[10px] text-right font-black text-indigo-600">
+                    {Math.round(((generalStats.totalServiceRevenue || 0) / ((generalStats.totalServiceRevenue + generalStats.totalProductRevenue) || 1)) * 100)}% de participação
+                  </p>
+                </div>
+
+                {/* Produtos */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-bold">
+                    <span className="text-slate-500 uppercase tracking-wider">Venda de Produtos</span>
+                    <span className="text-primary">R$ {(generalStats.totalProductRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-emerald-500 rounded-full" 
+                      style={{ 
+                        width: `${
+                          (generalStats.totalServiceRevenue || generalStats.totalProductRevenue) 
+                            ? Math.round((generalStats.totalProductRevenue / (generalStats.totalServiceRevenue + generalStats.totalProductRevenue)) * 100) 
+                            : 0
+                        }%` 
+                      }} 
+                    />
+                  </div>
+                  <p className="text-[10px] text-right font-black text-emerald-600">
+                    {Math.round(((generalStats.totalProductRevenue || 0) / ((generalStats.totalServiceRevenue + generalStats.totalProductRevenue) || 1)) * 100)}% de participação
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-8 bg-slate-50/70 border border-slate-100 p-4 rounded-2xl text-xs text-slate-600 font-medium leading-relaxed">
+              📌 {generalStats.totalProductRevenue > 0 
+                ? `A barbearia possui uma excelente ativação de vendas físicas. Para cada R$ 100,00 faturados em serviços, R$ ${Math.round((generalStats.totalProductRevenue / (generalStats.totalServiceRevenue || 1)) * 100)} são agregados em produtos.`
+                : 'Nenhuma venda de produto registrada no período. Que tal treinar a equipe para oferecer pomadas, óleos ou cervejas ao finalizar o serviço?'}
+            </div>
+          </div>
+
+          {/* RAIO-X DETALHADO POR CATEGORIAS */}
+          <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm flex flex-col justify-between col-span-2">
+            <div>
+              <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shadow-inner mb-6">
+                <PieChart size={24} />
+              </div>
+              <h3 className="font-black text-xl text-primary tracking-tighter">
+                X-Ray de Receita por Categorias de Serviços
+              </h3>
+              <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1">Análise volumétrica e faturamento por categoria principal</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-8">
+                {Object.entries(generalStats.catStats || {}).map(([key, cat]: [string, any]) => {
+                  const part = generalStats.totalServiceRevenue > 0 
+                    ? Math.round((cat.revenue / generalStats.totalServiceRevenue) * 100)
+                    : 0;
+                  
+                  const colors: Record<string, string> = {
+                    corte: 'border-l-indigo-500 bg-indigo-50/20 text-indigo-800',
+                    barba: 'border-l-amber-500 bg-amber-50/20 text-amber-800',
+                    combo: 'border-l-teal-500 bg-teal-50/20 text-teal-800',
+                    quimica: 'border-l-purple-500 bg-purple-50/20 text-purple-800'
+                  };
+
+                  return (
+                    <div 
+                      key={key} 
+                      className={`border-l-4 p-4 rounded-r-2xl border border-slate-100 flex flex-col justify-between ${colors[key] || 'border-l-slate-400 bg-slate-50'}`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{cat.name}</p>
+                          <h4 className="text-base font-black mt-1 text-primary">R$ {cat.revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                        </div>
+                        <span className="text-xs font-black bg-white px-2 py-0.5 rounded-lg shadow-sm border border-slate-150">
+                          {part}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center mt-4 pt-3 border-t border-slate-100/30 text-[10px] font-bold text-slate-500">
+                        <span>Quantidade: <span className="font-extrabold text-primary">{cat.qty}x</span></span>
+                        <span>Ticket M.: <span className="font-extrabold text-primary">R$ {cat.qty > 0 ? Math.round(cat.revenue / cat.qty) : 0}</span></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* FIDELIDADE & RECORRÊNCIA DE CLIENTES */}
+            <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center font-black shrink-0">
+                  <Activity size={20} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-primary">Índice de Recorrência & Retenção</h4>
+                  <p className="text-[10px] text-muted font-bold uppercase tracking-wider">Proporção de clientes fiéis atendidos no período</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-2xl border shrink-0">
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-500">Clientes Atendidos: <strong className="text-primary">{generalStats.retentionStats?.totalUnique || 0}</strong></p>
+                  <p className="text-[10px] font-bold text-slate-500">Recorrentes (2+ visitas): <strong className="text-indigo-600">{generalStats.retentionStats?.recurring || 0}</strong></p>
+                </div>
+                <div className="px-3.5 py-2 bg-indigo-600 text-white font-black text-sm rounded-xl shadow-md">
+                  {generalStats.retentionStats?.percent || 0}% de Retenção
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

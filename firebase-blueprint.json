@@ -144,6 +144,21 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "name", "accentColor", "isActive"]
+    },
+    "Combo": {
+      "title": "Combo",
+      "description": "Combo promocional de serviços e produtos",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "descricao": { "type": "string" },
+        "preco": { "type": "number" },
+        "servicos_ids": { "type": "array" },
+        "produtos_ids": { "type": "array" },
+        "active": { "type": "boolean" },
+        "tenantId": { "type": "string" }
+      },
+      "required": ["nome", "preco", "active"]
     }
   },
   "firestore": {
@@ -186,6 +201,10 @@
     "/professional_payments/{paymentId}": {
       "schema": "ProfessionalPayment",
       "description": "Pagamentos/Repasses Efetuados"
+    },
+    "/combos/{comboId}": {
+      "schema": "Combo",
+      "description": "Combos promocionais de serviços e produtos"
     }
   }
 }

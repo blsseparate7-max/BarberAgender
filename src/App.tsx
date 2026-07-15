@@ -33,6 +33,7 @@ import { PagePlaceholder } from './components/PagePlaceholder';
 
 // Novas importações de submenus solicitados
 import { Tipos } from './pages/Tipos';
+import { Combos } from './pages/Combos';
 import { MensagensUsuarios } from './pages/MensagensUsuarios';
 import { NoticiasPromocoes } from './pages/NoticiasPromocoes';
 import { PesquisaSatisfacao } from './pages/PesquisaSatisfacao';
@@ -207,8 +208,8 @@ function MainApp() {
     if (activeTab === 'cadastros-produtos') return <Estoque />;
     if (activeTab === 'cadastros-cupons') return <CuponsDesconto />;
     if (activeTab === 'cadastros-metodos-pagamento') return <PaymentMethodManager />;
-    if (activeTab === 'cadastros-combos') return <PagePlaceholder title="Gestão de Combos" tabId={activeTab} onBack={() => setActiveTab('dashboard')} />;
-    if (activeTab === 'cadastros-categorias') return <PagePlaceholder title="Categorias" tabId={activeTab} onBack={() => setActiveTab('dashboard')} />;
+    if (activeTab === 'cadastros-combos') return <Combos />;
+    if (activeTab === 'cadastros-categorias') return <Tipos defaultTab="categorias" />;
     
     if (activeTab.startsWith('cadastros-')) return <Clientes />; 
 
@@ -305,15 +306,21 @@ function MainApp() {
   );
 }
 
+import { APIProvider } from '@vis.gl/react-google-maps';
+
 export default function App() {
+  const mapsApiKey = process.env.GOOGLE_MAPS_PLATFORM_KEY || '';
+
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <TenantProvider>
-          <Toaster position="top-right" richColors closeButton />
-          <MainApp />
-        </TenantProvider>
-      </AuthProvider>
+      <APIProvider apiKey={mapsApiKey} version="weekly">
+        <AuthProvider>
+          <TenantProvider>
+            <Toaster position="top-right" richColors closeButton />
+            <MainApp />
+          </TenantProvider>
+        </AuthProvider>
+      </APIProvider>
     </ErrorBoundary>
   );
 }

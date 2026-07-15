@@ -34,11 +34,16 @@ export const loyaltyService = {
         cashbackPercentage: 5,
         minRedemptionPoints: 100,
         vipThreshold: 1000,
-        updatedAt: serverTimestamp()
+        updatedAt: new Date()
       };
-      const docRef = doc(collection(db, CONFIG_COLLECTION));
-      await setDoc(docRef, defaultConfig);
-      return { id: docRef.id, ...defaultConfig } as unknown as LoyaltyConfig;
+      try {
+        const docRef = doc(collection(db, CONFIG_COLLECTION));
+        await setDoc(docRef, { ...defaultConfig, updatedAt: serverTimestamp() });
+        return { id: docRef.id, ...defaultConfig } as unknown as LoyaltyConfig;
+      } catch (err) {
+        console.warn("Could not persist default loyalty config (permission restricted):", err);
+        return { id: 'temp-loyalty-config', ...defaultConfig } as unknown as LoyaltyConfig;
+      }
     }
     const docData = querySnapshot.docs[0];
     return { id: docData.id, ...docData.data() } as LoyaltyConfig;

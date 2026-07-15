@@ -137,8 +137,13 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
   }, [selectedAppointment]);
 
   useEffect(() => {
-    loadBarbers();
-    loadClients();
+    const unsubscribeBarbers = userService.subscribeToAllBarbers(true, (data) => {
+      setBarbers(data);
+    });
+
+    const unsubscribeClients = userService.subscribeToAllClients(true, (data) => {
+      setClients(data);
+    });
     
     // Subscribe to Cash Status for Alert
     const unsubscribeCash = cashService.subscribeToCurrentCash((cash) => {
@@ -150,6 +155,8 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
     });
 
     return () => {
+      unsubscribeBarbers();
+      unsubscribeClients();
       unsubscribeCash();
       unsubscribeBlocks();
     };

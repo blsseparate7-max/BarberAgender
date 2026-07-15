@@ -25,36 +25,41 @@ export const dashboardService = {
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     const monthStartStr = format(startOfMonth(new Date()), 'yyyy-MM-dd');
 
+    const activeTenantId = getActiveTenantId();
+
     // 1. Fetch Appointments in period
     const appointmentsQuery = query(
       collection(db, 'appointments'),
-      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
     const appointmentsSnap = await getDocs(appointmentsQuery);
-    const appointments = appointmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+    const appointments = appointmentsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
+      .filter(a => a.tenantId === activeTenantId);
     const completedAppointments = appointments.filter(a => a.status === 'concluído');
 
     // 2. Fetch Financial Transactions in period
     const financialQuery = query(
       collection(db, 'financial_transactions'),
-      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
     const financialSnap = await getDocs(financialQuery);
-    const transactions = financialSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+    const transactions = financialSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
+      .filter(t => t.tenantId === activeTenantId);
 
     // 3. Fetch Commissions in period
     const commissionsQuery = query(
       collection(db, 'commissions'),
-      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
     const commissionsSnap = await getDocs(commissionsQuery);
-    const commissions = commissionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+    const commissions = commissionsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
+      .filter(c => c.tenantId === activeTenantId);
 
     // 4. Daily vs Monthly Stats
     const dailyRevenue = transactions
@@ -75,11 +80,12 @@ export const dashboardService = {
     // 6. Active Comandas
     const comandasQuery = query(
       collection(db, 'comandas'),
-      where('tenantId', '==', getActiveTenantId()),
-      where('status', 'not-in', ['fechada', 'cancelada'])
+      where('tenantId', '==', getActiveTenantId())
     );
     const comandasSnap = await getDocs(comandasQuery);
-    const activeComandasCount = comandasSnap.docs.length;
+    const activeComandasCount = comandasSnap.docs
+      .map(doc => doc.data() as any)
+      .filter(c => c.status !== 'fechada' && c.status !== 'cancelada').length;
 
     // 7. Inventory Alerts
     const productsSnap = await getDocs(query(collection(db, 'products'), where('tenantId', '==', getActiveTenantId())));
@@ -179,26 +185,28 @@ export const dashboardService = {
     const startStr = format(startDate, 'yyyy-MM-dd');
     const endStr = format(endDate, 'yyyy-MM-dd');
 
+    const activeTenantId = getActiveTenantId();
+
     const appointmentsQuery = query(
       collection(db, 'appointments'),
-      where('tenantId', '==', getActiveTenantId()),
-      where('profissional_id', '==', profissional_id),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
     const appointmentsSnap = await getDocs(appointmentsQuery);
-    const appointments = appointmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+    const appointments = appointmentsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
+      .filter(a => a.tenantId === activeTenantId && a.profissional_id === profissional_id);
     const completed = appointments.filter(a => a.status === 'concluído');
 
     const commissionsQuery = query(
       collection(db, 'commissions'),
-      where('tenantId', '==', getActiveTenantId()),
-      where('profissional_id', '==', profissional_id),
       where('date', '>=', startStr),
       where('date', '<=', endStr)
     );
     const commissionsSnap = await getDocs(commissionsQuery);
-    const commissions = commissionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+    const commissions = commissionsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
+      .filter(c => c.tenantId === activeTenantId && c.profissional_id === profissional_id);
 
     const production = completed.reduce((acc, a) => acc + a.price, 0);
     const commissionTotal = commissions.reduce((acc, c) => acc + c.commission_value, 0);
@@ -249,7 +257,9 @@ export const dashboardService = {
       .sort((a, b) => b[1] - a[1])[0]?.[0] || 'Nenhum';
 
     // Fetch loyalty points/cashback
-    const pointsRef = doc(db, 'loyalty_points', cliente_id);
+    const activeTenantId = getActiveTenantId();
+    const pointsDocId = `${activeTenantId}_${cliente_id}`;
+    const pointsRef = doc(db, 'loyalty_points', pointsDocId);
     const pointsSnap = await getDoc(pointsRef);
     const pointsData = pointsSnap.exists() ? pointsSnap.data() : { points: 0, cashback: 0 };
 

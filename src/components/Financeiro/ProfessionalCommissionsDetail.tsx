@@ -516,6 +516,27 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
   return (
     <>
+      <style>{`
+        @media print {
+          body {
+            background: white !important;
+            color: black !important;
+          }
+          body * {
+            visibility: hidden !important;
+          }
+          .print-exclusive, .print-exclusive * {
+            visibility: visible !important;
+          }
+          .print-exclusive {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            display: block !important;
+          }
+        }
+      `}</style>
       <div id="professional-commissions-detail" className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 print:hidden">
         {/* Header Detail */}
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 print:hidden">
@@ -1925,8 +1946,96 @@ Assinatura: _______________________________
       </AnimatePresence>
     </div>
 
+    {/* EXCLUSIVO PARA IMPRESSÃO DE RECIBO DE FECHAMENTO (VOUCHER TÉRMICO / MEIA FOLHA) */}
+    <div className={`hidden print:block w-full text-black p-6 font-sans bg-white leading-normal text-left ${showReceiptModal ? 'print-exclusive' : ''}`}>
+      <div className="max-w-md mx-auto border border-dashed border-slate-400 p-6 rounded-lg bg-white">
+        {/* Header */}
+        <div className="text-center border-b border-dashed border-slate-400 pb-4 mb-4">
+          <h2 className="text-xl font-black uppercase tracking-tight">{profile?.nome_barbearia || 'Barbearia'}</h2>
+          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">Comprovante de Repasse de Comissão</p>
+          <p className="text-[10px] text-slate-600 mt-2">Emissão: {format(new Date(), 'dd/MM/yyyy HH:mm:ss')}</p>
+        </div>
+
+        {/* Dados */}
+        <div className="space-y-1 text-xs pb-4 border-b border-dashed border-slate-400 mb-4">
+          <p><strong>Profissional:</strong> {professionalName}</p>
+          <p><strong>Período:</strong> {format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a {format(parseISO(localDateRange.end), 'dd/MM/yyyy')}</p>
+        </div>
+
+        {/* Breakdown */}
+        <div className="space-y-2 text-xs pb-4 border-b border-dashed border-slate-400 mb-4">
+          <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1">Detalhamento dos Valores</p>
+          <div className="flex justify-between">
+            <span>(+) Serviços Realizados:</span>
+            <span>R$ {detailedBreakdown.servicos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+          </div>
+          {detailedBreakdown.produtos > 0 && (
+            <div className="flex justify-between">
+              <span>(+) Produtos Vendidos:</span>
+              <span>R$ {detailedBreakdown.produtos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          {detailedBreakdown.pacotes > 0 && (
+            <div className="flex justify-between">
+              <span>(+) Combos e Pacotes:</span>
+              <span>R$ {detailedBreakdown.pacotes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          {detailedBreakdown.gorjetas > 0 && (
+            <div className="flex justify-between">
+              <span>(+) Gorjetas / Caixinhas:</span>
+              <span>R$ {detailedBreakdown.gorjetas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          {detailedBreakdown.assinaturas > 0 && (
+            <div className="flex justify-between">
+              <span>(+) Assinaturas / Club:</span>
+              <span>R$ {detailedBreakdown.assinaturas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          {detailedBreakdown.vales > 0 && (
+            <div className="flex justify-between text-red-600">
+              <span>(-) Adiantamentos (Vales):</span>
+              <span>R$ {detailedBreakdown.vales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          {detailedBreakdown.descontos > 0 && (
+            <div className="flex justify-between text-red-600">
+              <span>(-) Descontos diversos:</span>
+              <span>R$ {detailedBreakdown.descontos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Total */}
+        <div className="pb-4 border-b border-dashed border-slate-400 mb-6">
+          <div className="flex justify-between items-center font-black text-sm">
+            <span>VALOR LÍQUIDO PAGO:</span>
+            <span>R$ {detailedBreakdown.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+          </div>
+          <p className="text-[9px] font-serif italic text-slate-500 mt-2 text-center">
+            ({extensos(detailedBreakdown.total)})
+          </p>
+        </div>
+
+        {/* Assinaturas */}
+        <div className="space-y-6 pt-2">
+          <div className="text-center">
+            <div className="border-b border-slate-400 w-44 mx-auto h-6 mb-1"></div>
+            <p className="text-[9px] font-bold uppercase tracking-wider">{professionalName}</p>
+            <p className="text-[8px] text-slate-400 uppercase tracking-widest">Beneficiário (Recebe)</p>
+          </div>
+          <div className="text-center">
+            <div className="border-b border-slate-400 w-44 mx-auto h-6 mb-1"></div>
+            <p className="text-[9px] font-bold uppercase tracking-wider">{profile?.nome || 'Administrador'}</p>
+            <p className="text-[8px] text-slate-400 uppercase tracking-widest">Responsável (Paga)</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     {/* EXCLUSIVO PARA IMPRESSÃO DE PDF (Ficha de Produção Escrita / Recibo) */}
-      <div className="hidden print:block w-full text-black p-8 font-sans bg-white leading-normal text-left">
+      <div className={`hidden print:block w-full text-black p-8 font-sans bg-white leading-normal text-left ${!showReceiptModal ? 'print-exclusive' : ''}`}>
         {/* Header - Barber Shop Logo/Name */}
         <div className="border-b-4 border-black pb-6 mb-8 flex justify-between items-end">
           <div>

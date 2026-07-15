@@ -234,11 +234,10 @@ export const cashService = {
   async getMovementsByCashId(caixa_id: string) {
     const q = query(
       collection(db, COLLECTION_MOVEMENTS),
-      where('caixa_id', '==', caixa_id),
-      orderBy('createdAt', 'asc')
+      where('caixa_id', '==', caixa_id)
     );
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => {
+    const movements = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return { 
         id: doc.id, 
@@ -246,13 +245,18 @@ export const cashService = {
         responsavel_name: data.usuario_name || data.responsavel_name
       } as unknown as CashMovement;
     });
+
+    return movements.sort((a, b) => {
+      const valA = a.createdAt?.seconds || (a.createdAt instanceof Date ? a.createdAt.getTime() : 0) || 0;
+      const valB = b.createdAt?.seconds || (b.createdAt instanceof Date ? b.createdAt.getTime() : 0) || 0;
+      return valA - valB;
+    });
   },
 
   subscribeToMovementsByCashId(caixa_id: string, callback: (movements: CashMovement[]) => void) {
     const q = query(
       collection(db, COLLECTION_MOVEMENTS),
-      where('caixa_id', '==', caixa_id),
-      orderBy('createdAt', 'asc')
+      where('caixa_id', '==', caixa_id)
     );
     
     return onSnapshot(q, (snapshot) => {
@@ -264,6 +268,13 @@ export const cashService = {
           responsavel_name: data.usuario_name || data.responsavel_name
         } as unknown as CashMovement;
       });
+
+      movements.sort((a, b) => {
+        const valA = a.createdAt?.seconds || (a.createdAt instanceof Date ? a.createdAt.getTime() : 0) || 0;
+        const valB = b.createdAt?.seconds || (b.createdAt instanceof Date ? b.createdAt.getTime() : 0) || 0;
+        return valA - valB;
+      });
+
       callback(movements);
     });
   },
@@ -271,17 +282,19 @@ export const cashService = {
   async getCashHistory(startDate: string, endDate: string) {
     const q = query(
       collection(db, COLLECTION_CASH),
-      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', startDate),
       where('date', '<=', endDate)
     );
     const querySnapshot = await getDocs(q);
-    const history = querySnapshot.docs.map(doc => {
-      const data = doc.data() as any;
-      return { 
-        id: doc.id, 
-        ...data,
-        openedByName: data.aberto_por_name || data.openedByName,
+    const activeTenantId = getActiveTenantId();
+    const history = querySnapshot.docs
+      .filter(doc => (doc.data() as any).tenantId === activeTenantId)
+      .map(doc => {
+        const data = doc.data() as any;
+        return { 
+          id: doc.id, 
+          ...data,
+          openedByName: data.aberto_por_name || data.openedByName,
         closedByName: data.fechado_por_name || data.closedByName,
         openingBalance: data.opening_balance ?? data.openingBalance ?? 0,
         total_income: data.total_income ?? data.totalIncome ?? 0,

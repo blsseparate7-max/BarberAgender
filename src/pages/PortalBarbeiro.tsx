@@ -24,7 +24,9 @@ import {
   AlertCircle,
   Lock,
   Unlock,
-  Trash2
+  Trash2,
+  ArrowRightLeft,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from '../firebase';
@@ -34,6 +36,9 @@ import { appointmentService } from '../services/appointmentService';
 import { commissionService } from '../services/commissionService';
 import { inventoryService } from '../services/inventoryService';
 import { agendaBlockService } from '../services/agendaBlockService';
+import { AppointmentModal } from '../components/Agenda/AppointmentModal';
+import { ComandaModal } from '../components/Comanda/ComandaModal';
+import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
 import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock } from '../types';
 import { toast } from 'sonner';
 import { format, parse, addDays, startOfDay, endOfDay, isToday } from 'date-fns';
@@ -47,9 +52,41 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [activeTab, setActiveTab] = useState<'agenda' | 'clientes' | 'comissao' | 'estoque' | 'perfil'>('agenda');
   
   // Tab states: Agenda
-  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
+
+  // New Modals State for Barber manual control
+  const [isAppointmentModalOpen, setIsAppointmentModalOpen] = useState(false);
+  const [isComandaModalOpen, setIsComandaModalOpen] = useState(false);
+  const [isManualComandaOpen, setIsManualComandaOpen] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<{ time: string, profissional_id: string } | null>(null);
+
+  const comandaInitialData = React.useMemo(() => {
+    if (!selectedAppointment) return undefined;
+    return {
+      agendamento_id: selectedAppointment.id,
+      cliente_id: selectedAppointment.cliente_id,
+      cliente_name: selectedAppointment.cliente_name,
+      profissional_id: selectedAppointment.profissional_id,
+      profissional_name: selectedAppointment.profissional_name,
+      observations: selectedAppointment.notes,
+      items: [{
+        id: `item-${selectedAppointment.id}-${Date.now()}`,
+        type: 'servico' as const,
+        referencia_id: selectedAppointment.servico_id,
+        name: selectedAppointment.servico_name,
+        quantity: 1,
+        unitPrice: selectedAppointment.price,
+        totalPrice: selectedAppointment.price,
+        profissional_id: selectedAppointment.profissional_id,
+        profissional_name: selectedAppointment.profissional_name,
+        isCortesia: false,
+        generateCommission: true
+      }]
+    };
+  }, [selectedAppointment]);
   
   // Tab states: Agenda Blocks
   const [blocks, setBlocks] = useState<AgendaBlock[]>([]);
@@ -103,8 +140,9 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   // 1. Listen to Appointments
   useEffect(() => {
     setLoadingAppointments(true);
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
     const unsubscribe = appointmentService.subscribeToAppointments(
-      { date: selectedDate, profissional_id: profile.uid },
+      { date: dateStr, profissional_id: profile.uid },
       (data) => {
         setAppointments(data);
         setLoadingAppointments(false);
@@ -116,8 +154,9 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   // 1.1. Listen to Agenda Blocks
   useEffect(() => {
     setLoadingBlocks(true);
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
     const unsubscribe = agendaBlockService.subscribeToBlocks(
-      { date: selectedDate, profissional_id: profile.uid },
+      { date: dateStr, profissional_id: profile.uid },
       (data) => {
         setBlocks(data);
         setLoadingBlocks(false);
@@ -126,22 +165,13 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     return () => unsubscribe();
   }, [selectedDate, profile.uid]);
 
-  // 2. Fetch Clients when entering Clientes tab
+  // 2. Subscribe to all Clients at mount
   useEffect(() => {
-    if (activeTab === 'clientes') {
-      setLoadingClientes(true);
-      userService.getAllClients()
-        .then(data => {
-          setClientes(data);
-          setLoadingClientes(false);
-        })
-        .catch(err => {
-          console.error(err);
-          toast.error('Erro ao carregar clientes.');
-          setLoadingClientes(false);
-        });
-    }
-  }, [activeTab]);
+    const unsubscribe = userService.subscribeToAllClients(true, (data) => {
+      setClientes(data);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // 3. Fetch Commissions when entering Comissão tab
   useEffect(() => {
@@ -200,7 +230,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       await agendaBlockService.createBlock({
         profissional_id: profile.uid,
         profissional_name: profile.nome,
-        date: selectedDate,
+        date: format(selectedDate, 'yyyy-MM-dd'),
         startTime: blockStartTime,
         endTime: blockEndTime,
         reason: blockReason.trim() || 'Bloqueio de agenda',
@@ -224,6 +254,22 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       console.error(err);
       toast.error(`Erro ao desbloquear horário: ${err.message || err}`);
     }
+  };
+
+  const handleNewAppointment = (time?: string, profissional_id?: string) => {
+    setSelectedTimeSlot(time && profissional_id ? { time, profissional_id } : { time: '09:00', profissional_id: profile.uid });
+    setSelectedAppointment(null);
+    setIsAppointmentModalOpen(true);
+  };
+
+  const handleOpenAppointment = (app: Appointment) => {
+    setSelectedAppointment(app);
+    setIsAppointmentModalOpen(true);
+  };
+
+  const handleOpenComanda = (app: Appointment) => {
+    setSelectedAppointment(app);
+    setIsComandaModalOpen(true);
   };
 
   // Save personal goals
@@ -330,7 +376,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-md w-full mx-auto px-4 -mt-6 relative z-10">
+      <main className={`flex-1 w-full mx-auto px-4 -mt-6 relative z-10 ${activeTab === 'agenda' ? 'max-w-4xl' : 'max-w-md'}`}>
         
         {/* AGENDA TAB */}
         {activeTab === 'agenda' && (
@@ -344,18 +390,18 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   Visualizar Escala
                 </span>
                 <span className="text-xs font-black text-indigo-600">
-                  {dateStrip.find(d => d.iso === selectedDate)?.label || selectedDate}
+                  {dateStrip.find(d => d.iso === format(selectedDate, 'yyyy-MM-dd'))?.label || format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
                 </span>
               </div>
               
               <div className="flex gap-2 overflow-x-auto no-scrollbar py-0.5 pr-2">
                 {dateStrip.map(d => {
-                  const isSelected = d.iso === selectedDate;
+                  const isSelected = d.iso === format(selectedDate, 'yyyy-MM-dd');
                   return (
                     <button
-                      key={d.iso}
-                      onClick={() => setSelectedDate(d.iso)}
-                      className={`flex flex-col items-center justify-center min-w-[50px] h-[64px] rounded-2xl transition border ${
+                       key={d.iso}
+                       onClick={() => setSelectedDate(parse(d.iso, 'yyyy-MM-dd', new Date()))}
+                       className={`flex flex-col items-center justify-center min-w-[50px] h-[64px] rounded-2xl transition border ${
                         isSelected 
                           ? 'bg-slate-900 border-slate-900 text-white shadow-md shadow-slate-950/25 scale-105' 
                           : d.isToday
@@ -397,199 +443,47 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               </div>
             </div>
 
-            {/* Appointments list */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between px-1 mt-2">
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
-                  Agendamentos do Dia
-                </h3>
-                <button
-                  onClick={() => setIsBlockModalOpen(true)}
-                  className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 border border-red-100/60 text-red-700 text-[10px] font-black uppercase tracking-wider py-1.5 px-3 rounded-xl transition"
-                >
-                  <Lock size={11} />
-                  Bloquear Horário
-                </button>
-              </div>
+            {/* Quick Actions Panel */}
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={() => handleNewAppointment('09:00', profile.uid)}
+                className="flex flex-col items-center justify-center p-3.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100/60 text-indigo-700 rounded-2xl transition shadow-sm active:scale-95 text-center gap-1.5"
+              >
+                <Plus size={16} strokeWidth={3} className="text-indigo-600" />
+                <span className="text-[10px] font-black uppercase tracking-wider">Novo Agendamento</span>
+              </button>
 
-              {loadingAppointments ? (
-                <div className="bg-white border rounded-3xl p-10 text-center flex flex-col items-center justify-center gap-3 shadow-sm">
-                  <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-xs font-bold text-slate-400 animate-pulse uppercase tracking-wider">Buscando sua agenda...</p>
-                </div>
-              ) : appointments.length === 0 ? (
-                <div className="bg-white border rounded-3xl p-12 text-center flex flex-col items-center justify-center gap-3 shadow-sm">
-                  <Scissors className="text-slate-300 w-10 h-10" />
-                  <h4 className="font-extrabold text-slate-700 text-sm">Sem agendamentos</h4>
-                  <p className="text-slate-400 text-[11px] max-w-xs font-semibold leading-relaxed">
-                    Você não possui compromissos ou horários agendados para esta data. Aproveite para descansar ou organizar seus materiais!
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {appointments.map((app) => {
-                    const durationInMin = app.duration || 30;
-                    return (
-                      <div 
-                        key={app.id} 
-                        className="bg-white border border-slate-200/80 rounded-3xl p-4 shadow-sm hover:border-slate-300/80 transition"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="space-y-1.5 flex-1 min-w-0">
-                            
-                            {/* Time and Duration badges */}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-[10px] font-black px-2 py-0.5 rounded-lg border border-indigo-100">
-                                <Clock size={11} />
-                                {app.startTime} - {app.endTime}
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-bold">
-                                ({durationInMin} min)
-                              </span>
-                              
-                              {/* Status Badges */}
-                              {app.status === 'agendado' && (
-                                <span className="text-[9px] font-black uppercase tracking-wider text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100">
-                                  Agendado
-                                </span>
-                              )}
-                              {app.status === 'em_atendimento' && (
-                                <span className="text-[9px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100 animate-pulse">
-                                  Em Atendimento
-                                </span>
-                              )}
-                              {app.status === 'concluído' && (
-                                <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
-                                  Concluído
-                                </span>
-                              )}
-                              {app.status === 'cancelado' && (
-                                <span className="text-[9px] font-black uppercase tracking-wider text-red-500 bg-red-50 px-2 py-0.5 rounded-lg border border-red-100">
-                                  Cancelado
-                                </span>
-                              )}
-                            </div>
+              <button
+                onClick={() => setIsManualComandaOpen(true)}
+                className="flex flex-col items-center justify-center p-3.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/60 text-emerald-700 rounded-2xl transition shadow-sm active:scale-95 text-center gap-1.5"
+              >
+                <ArrowRightLeft size={16} strokeWidth={2.5} className="text-emerald-600" />
+                <span className="text-[10px] font-black uppercase tracking-wider">Abrir Comanda</span>
+              </button>
 
-                            {/* Client name */}
-                            <h4 className="text-sm font-black text-slate-800 truncate">
-                              {app.cliente_name}
-                            </h4>
-
-                            {/* Service name & price */}
-                            <p className="text-xs text-slate-500 font-semibold flex items-center gap-1.5">
-                              <span className="text-slate-800 font-bold">{app.servico_name}</span>
-                              <span className="text-slate-300">•</span>
-                              <span className="text-indigo-600 font-black">R$ {(app.price || 0).toFixed(2)}</span>
-                            </p>
-
-                            {/* Notes */}
-                            {app.notes && (
-                              <p className="text-[10px] text-slate-400 font-medium italic mt-1 border-l-2 border-slate-200 pl-2">
-                                Obs: {app.notes}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Quick Interactive Actions */}
-                        {app.status !== 'concluído' && app.status !== 'cancelado' && (
-                          <div className="flex items-center gap-2 mt-4 pt-3.5 border-t border-slate-100/60 justify-end">
-                            {app.status === 'agendado' && (
-                              <button
-                                onClick={() => handleUpdateStatus(app.id, 'em_atendimento')}
-                                className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider py-1.5 px-3.5 rounded-xl transition"
-                              >
-                                <Play size={11} fill="currentColor" />
-                                Iniciar Corte
-                              </button>
-                            )}
-
-                            {app.status === 'em_atendimento' && (
-                              <button
-                                onClick={() => handleUpdateStatus(app.id, 'concluído')}
-                                className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider py-1.5 px-3.5 rounded-xl transition"
-                              >
-                                <Check size={11} strokeWidth={3} />
-                                Concluir
-                              </button>
-                            )}
-
-                            <button
-                              onClick={() => handleUpdateStatus(app.id, 'cancelado')}
-                              className="flex items-center gap-1 bg-slate-100 hover:bg-red-50 hover:text-red-500 text-slate-500 text-[10px] font-black uppercase tracking-wider py-1.5 px-3 rounded-xl transition"
-                            >
-                              <XCircle size={11} />
-                              Cancelar
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <button
+                onClick={() => setIsBlockModalOpen(true)}
+                className="flex flex-col items-center justify-center p-3.5 bg-rose-50 hover:bg-rose-100 border border-rose-100/60 text-rose-700 rounded-2xl transition shadow-sm active:scale-95 text-center gap-1.5"
+              >
+                <Lock size={16} strokeWidth={2.5} className="text-rose-600" />
+                <span className="text-[10px] font-black uppercase tracking-wider">Bloquear Horário</span>
+              </button>
             </div>
 
-            {/* Blocked Times List */}
-            <div className="space-y-3 pt-2">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">
-                Horários Bloqueados
-              </h3>
-
-              {loadingBlocks ? (
-                <div className="bg-white border rounded-3xl p-6 text-center flex flex-col items-center justify-center gap-2 shadow-sm">
-                  <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-[10px] font-bold text-slate-400 animate-pulse uppercase tracking-wider">Buscando bloqueios...</p>
-                </div>
-              ) : blocks.length === 0 ? (
-                <div className="bg-white border border-slate-200/80 rounded-3xl p-6 text-center flex flex-col items-center justify-center gap-2 shadow-sm">
-                  <Unlock className="text-slate-300 w-6 h-6" />
-                  <h4 className="font-extrabold text-slate-500 text-xs">Nenhum horário bloqueado</h4>
-                  <p className="text-slate-400 text-[10px] max-w-xs font-semibold leading-relaxed">
-                    Sua agenda está livre de bloqueios para este dia.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {blocks.map((block) => (
-                    <div 
-                      key={block.id}
-                      className="bg-red-50/50 border border-red-100/80 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-sm hover:border-red-200 transition"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-xl bg-red-100 text-red-700 flex items-center justify-center shrink-0">
-                          <Lock size={13} />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-black text-red-800">
-                              {block.startTime} - {block.endTime}
-                            </span>
-                            {block.isGeneral && (
-                              <span className="bg-red-200 text-red-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
-                                Geral
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-red-650 font-bold">
-                            {block.reason || 'Bloqueio de agenda'}
-                          </p>
-                        </div>
-                      </div>
-                      
-                      {!block.isGeneral && (
-                        <button
-                          onClick={() => handleUnblockTime(block.id)}
-                          className="p-1.5 hover:bg-red-100 rounded-lg text-red-600 transition shrink-0"
-                          title="Desbloquear Horário"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+            {/* Agenda Hourly Grid */}
+            <div className="bg-white border border-slate-200/80 p-1.5 rounded-3xl shadow-sm overflow-hidden">
+              <AgendaGeneral
+                selectedDate={selectedDate}
+                setSelectedDate={setSelectedDate}
+                barbers={[profile]}
+                appointments={appointments}
+                clients={clientes}
+                blocks={blocks}
+                onNewAppointment={handleNewAppointment}
+                onOpenAppointment={handleOpenAppointment}
+                onOpenComanda={handleOpenComanda}
+                loading={loadingAppointments || loadingBlocks}
+              />
             </div>
 
           </div>
@@ -1226,6 +1120,48 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Modals for Manual Management */}
+      <AppointmentModal 
+        isOpen={isAppointmentModalOpen}
+        onClose={() => setIsAppointmentModalOpen(false)}
+        onSuccess={() => {
+          setIsAppointmentModalOpen(false);
+          toast.success("Agenda atualizada!");
+        }}
+        appointment={selectedAppointment}
+        currentUser={profile}
+        initialTime={selectedTimeSlot?.time}
+        initialProfissionalId={selectedTimeSlot?.profissional_id}
+        onOpenComanda={handleOpenComanda}
+      />
+
+      {isComandaModalOpen && selectedAppointment && comandaInitialData && (
+        <ComandaModal 
+          comanda_id={selectedAppointment.comanda_id}
+          onClose={() => setIsComandaModalOpen(false)}
+          onSave={() => {
+            setIsComandaModalOpen(false);
+            setSelectedAppointment(null);
+          }}
+          initialData={comandaInitialData}
+        />
+      )}
+
+      {isManualComandaOpen && (
+        <ComandaModal 
+          onClose={() => setIsManualComandaOpen(false)}
+          onSave={() => {
+            setIsManualComandaOpen(false);
+          }}
+          initialData={{
+            profissional_id: profile.uid,
+            profissional_name: profile.nome,
+            origin: 'balcao',
+            status: 'aberta'
+          }}
+        />
+      )}
 
     </div>
   );

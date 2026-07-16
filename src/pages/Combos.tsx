@@ -39,6 +39,7 @@ export function Combos() {
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [active, setActive] = useState(true);
+  const [showInPortal, setShowInPortal] = useState(true);
 
   useEffect(() => {
     fetchInitialData();
@@ -71,6 +72,7 @@ export function Combos() {
     setSelectedServices([]);
     setSelectedProducts([]);
     setActive(true);
+    setShowInPortal(true);
     setIsFormOpen(true);
   };
 
@@ -82,6 +84,7 @@ export function Combos() {
     setSelectedServices(combo.servicos_ids || []);
     setSelectedProducts(combo.produtos_ids || []);
     setActive(combo.active);
+    setShowInPortal(combo.showInPortal ?? true);
     setIsFormOpen(true);
   };
 
@@ -146,7 +149,8 @@ export function Combos() {
       preco: comboPrecoNum,
       servicos_ids: selectedServices,
       produtos_ids: selectedProducts,
-      active
+      active,
+      showInPortal
     };
 
     try {
@@ -463,6 +467,20 @@ export function Combos() {
                   placeholder="Ex: O corte de cabelo clássico, modelagem da barba e leve uma pomada modeladora de brinde."
                   className="w-full p-3 bg-slate-50 border border-slate-200 outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent text-sm text-primary font-bold rounded-xl shadow-sm transition"
                 />
+              </div>
+
+              <div className="bg-slate-50 border border-slate-150 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                <div>
+                  <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Disponível no Portal do Cliente</h5>
+                  <p className="text-[9px] text-slate-450 font-bold uppercase tracking-widest mt-0.5">Exibir este pacote/combo para compra no portal do cliente</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowInPortal(!showInPortal)}
+                  className={`w-12 h-6 rounded-full transition relative shrink-0 ${showInPortal ? 'bg-emerald-600' : 'bg-slate-350'}`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${showInPortal ? 'left-7' : 'left-1'}`} />
+                </button>
               </div>
 
               {/* Composition Selection */}

@@ -79,6 +79,7 @@ export function Estoque() {
   const [tipoComissao, setTipoComissao] = useState<'padrao' | 'percentual' | 'fixo'>('padrao');
   const [valorComissao, setValorComissao] = useState<number>(0);
   const [comissoesPorProfissional, setComissoesPorProfissional] = useState<Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>>({});
+  const [showInPortal, setShowInPortal] = useState(true);
 
   // Custom Alert / Confirm Modal States
   const [alertModal, setAlertModal] = useState<{
@@ -110,6 +111,7 @@ export function Estoque() {
         setTipoComissao((editingProduct as any).tipo_comissao || 'padrao');
         setValorComissao((editingProduct as any).valor_comissao || 0);
         setComissoesPorProfissional((editingProduct as any).comissoes_por_profissional || {});
+        setShowInPortal(editingProduct.showInPortal ?? true);
       } else {
         const hasValidCategory = categories.some(c => c.id === selectedCategoryId);
         if (!hasValidCategory && categories.length > 0) {
@@ -120,6 +122,7 @@ export function Estoque() {
         setTipoComissao('padrao');
         setValorComissao(0);
         setComissoesPorProfissional({});
+        setShowInPortal(true);
       }
     } else {
       setSelectedCategoryId('');
@@ -250,6 +253,7 @@ export function Estoque() {
       tipo_comissao: tipoComissao,
       valor_comissao: tipoComissao === 'padrao' ? 0 : Number(valorComissao),
       comissoes_por_profissional: comissoesPorProfissional,
+      showInPortal,
     };
 
     try {
@@ -905,6 +909,22 @@ export function Estoque() {
                           <option value="active">Ativo</option>
                           <option value="inactive">Inativo</option>
                         </select>
+                      </div>
+
+                      <div className="space-y-2 md:col-span-2">
+                        <div className="bg-slate-50/55 border border-slate-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                          <div>
+                            <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Disponível no Portal do Cliente</h5>
+                            <p className="text-[9px] text-slate-450 font-bold uppercase tracking-widest mt-0.5">Exibir produto para compra ou visualização online</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowInPortal(!showInPortal)}
+                            className={`w-12 h-6 rounded-full transition relative shrink-0 ${showInPortal ? 'bg-emerald-600' : 'bg-slate-350'}`}
+                          >
+                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${showInPortal ? 'left-7' : 'left-1'}`} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}

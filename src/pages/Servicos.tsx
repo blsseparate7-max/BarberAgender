@@ -487,6 +487,7 @@ interface ServiceModalProps {
 function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
   const [activeTab, setActiveTab] = useState<'dados' | 'comissao'>('dados');
   const [permiteCortesia, setPermiteCortesia] = useState(service?.permite_cortesia || false);
+  const [showInPortal, setShowInPortal] = useState(service?.showInPortal ?? true);
   const [tipoComissao, setTipoComissao] = useState<'padrao' | 'percentual' | 'fixo'>(service?.tipo_comissao || 'padrao');
   const [valorComissao, setValorComissao] = useState<number>(service?.valor_comissao || 0);
 
@@ -563,6 +564,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
       valor_comissao: tipoComissao === 'padrao' ? 0 : valorComissao,
       comissoes_por_profissional: comissoesPorProfissional,
       barbeiros_ids: barbeirosIds,
+      showInPortal,
       active: service ? service.active : true
     };
 
@@ -717,6 +719,24 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                       <span className="text-xs font-black uppercase tracking-wider">Permitido</span>
                       <div className={`w-10 h-5 rounded-full relative transition-all ${permiteCortesia ? 'bg-amber-500' : 'bg-slate-350'}`}>
                         <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${permiteCortesia ? 'left-5.5' : 'left-0.5'}`} />
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Disponível no Portal do Cliente?</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowInPortal(!showInPortal)}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
+                        showInPortal 
+                          ? 'bg-emerald-50 border-emerald-250 text-emerald-700' 
+                          : 'bg-slate-50 border-slate-200 text-slate-500'
+                      }`}
+                    >
+                      <span className="text-xs font-black uppercase tracking-wider">{showInPortal ? 'Exibido' : 'Oculto'}</span>
+                      <div className={`w-10 h-5 rounded-full relative transition-all ${showInPortal ? 'bg-emerald-500' : 'bg-slate-350'}`}>
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${showInPortal ? 'left-5.5' : 'left-0.5'}`} />
                       </div>
                     </button>
                   </div>

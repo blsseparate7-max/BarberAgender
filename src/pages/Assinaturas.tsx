@@ -30,7 +30,12 @@ import {
   Eye,
   Undo2,
   BookOpen,
-  Award
+  Award,
+  DollarSign,
+  Percent,
+  HelpCircle,
+  Briefcase,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -50,7 +55,10 @@ import {
   updateDoc, 
   query, 
   orderBy,
-  where
+  where,
+  getDocs,
+  setDoc,
+  serverTimestamp
 } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
@@ -161,7 +169,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   };
 
   const [activeTab, setActiveTab] = useState<
-    'assinaturas_planos' | 'assinantes_gestao' | 'pacotes_modelos' | 'pacotes_consumo' | 'meu_plano' | 'meus_pacotes'
+    'assinaturas_planos' | 'assinantes_gestao' | 'assinantes_comissoes' | 'assinaturas_rendimento' | 'pacotes_modelos' | 'pacotes_consumo' | 'meu_plano' | 'meus_pacotes'
   >(getInitialTabState());
 
   useEffect(() => {
@@ -232,6 +240,50 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [pkgNoExpiration, setPkgNoExpiration] = useState(false);
   const [pkgActive, setPkgActive] = useState(true);
   const [pkgServiceId, setPkgServiceId] = useState('');
+  const [pkgShowInPortal, setPkgShowInPortal] = useState(true);
+  const [planShowInPortal, setPlanShowInPortal] = useState(true);
+  const [planComissaoTipo, setPlanComissaoTipo] = useState<'fixo' | 'pool_atendimentos' | 'pool_pontos'>('fixo');
+  const [planComissaoPoolPorcentagem, setPlanComissaoPoolPorcentagem] = useState(50);
+  const [planComissaoFixaValor, setPlanComissaoFixaValor] = useState(10.00);
+  const [planPontosCorte, setPlanPontosCorte] = useState(1);
+  const [planPontosBarba, setPlanPontosBarba] = useState(1);
+  const [planPontosOutros, setPlanPontosOutros] = useState(0.5);
+
+  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const [allUsages, setAllUsages] = useState<any[]>([]);
+  const [barbeiros, setBarbeiros] = useState<UserProfile[]>([]);
+  const [releasedRuns, setReleasedRuns] = useState<Record<string, any>>({});
+  const [loadingUsages, setLoadingUsages] = useState(false);
+  const [postingCommissions, setPostingCommissions] = useState(false);
+
+  const loadComissoesData = async () => {
+    setLoadingUsages(true);
+    try {
+      const [usages, b, runsSnap] = await Promise.all([
+        subscriptionService.getAllUsageHistory(),
+        userService.getUsersByRole('barbeiro'),
+        getDocs(collection(db, 'subscription_commission_runs'))
+      ]);
+      setAllUsages(usages);
+      setBarbeiros(b);
+      
+      const runs: Record<string, any> = {};
+      runsSnap.forEach(doc => {
+        runs[doc.id] = doc.data();
+      });
+      setReleasedRuns(runs);
+    } catch (error) {
+      console.error("Erro ao carregar dados de comissão:", error);
+    } finally {
+      setLoadingUsages(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'assinantes_comissoes' || activeTab === 'assinaturas_rendimento') {
+      loadComissoesData();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (profile?.tipo === 'cliente' && activeTab !== 'meu_plano' && activeTab !== 'meus_pacotes') {
@@ -338,6 +390,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       setPkgNoExpiration(editingPackage.noExpiration || false);
       setPkgActive(editingPackage.active);
       setPkgServiceId(editingPackage.serviceId || '');
+      setPkgShowInPortal((editingPackage as any).showInPortal ?? true);
     } else {
       setPkgName('');
       setPkgCuts(5);
@@ -348,8 +401,31 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       setPkgNoExpiration(false);
       setPkgActive(true);
       setPkgServiceId('');
+      setPkgShowInPortal(true);
     }
   }, [editingPackage]);
+
+  useEffect(() => {
+    if (showPlanModal) {
+      if (editingPlan) {
+        setPlanShowInPortal(editingPlan.showInPortal ?? true);
+        setPlanComissaoTipo((editingPlan as any).comissao_tipo || 'fixo');
+        setPlanComissaoPoolPorcentagem((editingPlan as any).comissao_pool_porcentagem ?? 50);
+        setPlanComissaoFixaValor((editingPlan as any).comissao_fixa_valor ?? 10.00);
+        setPlanPontosCorte((editingPlan as any).pontos_corte ?? 1);
+        setPlanPontosBarba((editingPlan as any).pontos_barba ?? 1);
+        setPlanPontosOutros((editingPlan as any).pontos_outros ?? 0.5);
+      } else {
+        setPlanShowInPortal(true);
+        setPlanComissaoTipo('fixo');
+        setPlanComissaoPoolPorcentagem(50);
+        setPlanComissaoFixaValor(10.00);
+        setPlanPontosCorte(1);
+        setPlanPontosBarba(1);
+        setPlanPontosOutros(0.5);
+      }
+    }
+  }, [showPlanModal, editingPlan]);
 
   // Recalculating default pricing when service changes, cuts count changes, or price per service changes
   useEffect(() => {
@@ -419,6 +495,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       beardsPerMonth: Number(formData.get('beardsPerMonth')),
       extraBenefits: (formData.get('extraBenefits') as string).split(',').map(s => s.trim()).filter(Boolean),
       status: formData.get('status') as 'active' | 'inactive',
+      showInPortal: planShowInPortal,
+      comissao_tipo: planComissaoTipo,
+      comissao_pool_porcentagem: planComissaoPoolPorcentagem,
+      comissao_fixa_valor: planComissaoFixaValor,
+      pontos_corte: planPontosCorte,
+      pontos_barba: planPontosBarba,
+      pontos_outros: planPontosOutros,
     };
 
     try {
@@ -462,7 +545,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       noExpiration: pkgNoExpiration,
       active: pkgActive,
       serviceId: pkgServiceId || '',
-      serviceName: selectedService ? (selectedService.nome || selectedService.name || '') : ''
+      serviceName: selectedService ? (selectedService.nome || selectedService.name || '') : '',
+      showInPortal: pkgShowInPortal
     };
 
     const path = 'pacotes_config';
@@ -633,6 +717,214 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const totalCutsSoldObj = sales.reduce((sum, s) => sum + s.totalCuts, 0);
   const totalCutsConsumedObj = totalCutsSoldObj - activeRemainingCutsObj;
 
+  // --- GESTÃO DE COMISSÕES DE ASSINATURA ---
+  // 1. Filter usages for the selected month
+  const filteredUsages = allUsages.filter(u => u.date && u.date.startsWith(selectedMonth));
+
+  // 2. Filter active subscriptions to calculate active plans and revenue
+  const activeSubs = subscriptions.filter(s => s.status === 'active');
+  const totalSubRevenue = activeSubs.reduce((acc, s) => {
+    const plan = plans.find(p => p.id === s.plano_id);
+    return acc + (plan?.price || 0);
+  }, 0);
+
+  // 3. Dynamic Calculation Engine per Professional
+  const calculatedCommissions = barbeiros.map(barber => {
+    let barberCuts = 0;
+    let barberBeards = 0;
+    let barberOthers = 0;
+    let barberPoints = 0;
+    let barberCommission = 0;
+
+    const barberUsages = filteredUsages.filter(u => u.profissional_id === barber.uid);
+
+    barberUsages.forEach(u => {
+      if (u.type === 'haircut') barberCuts++;
+      else if (u.type === 'beard') barberBeards++;
+      else barberOthers++;
+    });
+
+    plans.forEach(plan => {
+      const planActiveSubs = activeSubs.filter(s => s.plano_id === plan.id);
+      const planRevenue = planActiveSubs.length * plan.price;
+      const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
+      const planPool = planRevenue * (poolPct / 100);
+
+      const planType = (plan as any).comissao_tipo || 'fixo';
+
+      const planUsages = filteredUsages.filter(u => u.plano_id === plan.id);
+      const barberPlanUsages = planUsages.filter(u => u.profissional_id === barber.uid);
+
+      if (planType === 'fixo') {
+        const fixedVal = (plan as any).comissao_fixa_valor ?? 10.00;
+        barberCommission += barberPlanUsages.length * fixedVal;
+      } else if (planType === 'pool_atendimentos') {
+        if (planUsages.length > 0) {
+          barberCommission += planPool * (barberPlanUsages.length / planUsages.length);
+        }
+      } else if (planType === 'pool_pontos') {
+        const wCorte = (plan as any).pontos_corte ?? 1;
+        const wBarba = (plan as any).pontos_barba ?? 1;
+        const wOutro = (plan as any).pontos_outros ?? 0.5;
+
+        const totalPlanPoints = planUsages.reduce((sum, u) => {
+          if (u.type === 'haircut') return sum + wCorte;
+          if (u.type === 'beard') return sum + wBarba;
+          return sum + wOutro;
+        }, 0);
+
+        const barberPlanPoints = barberPlanUsages.reduce((sum, u) => {
+          if (u.type === 'haircut') return sum + wCorte;
+          if (u.type === 'beard') return sum + wBarba;
+          return sum + wOutro;
+        }, 0);
+
+        if (totalPlanPoints > 0) {
+          barberCommission += planPool * (barberPlanPoints / totalPlanPoints);
+          barberPoints += barberPlanPoints;
+        }
+      }
+    });
+
+    return {
+      uid: barber.uid,
+      nome: barber.nome || barber.displayName || 'Profissional',
+      foto: barber.foto || barber.photoURL || '',
+      cuts: barberCuts,
+      beards: barberBeards,
+      others: barberOthers,
+      totalServices: barberUsages.length,
+      points: barberPoints,
+      commission: barberCommission
+    };
+  });
+
+  const totalCommissionsToRelease = calculatedCommissions.reduce((acc, c) => acc + c.commission, 0);
+  const isMonthReleased = !!releasedRuns[selectedMonth];
+  const releasedRunInfo = releasedRuns[selectedMonth];
+
+  // --- RENDIMENTO & PERFORMANCE DE ASSINATURAS ---
+  const totalValueIfAvulso = filteredUsages.reduce((sum, u) => sum + (u.valor_servico || (u.type === 'haircut' ? 50 : 35)), 0);
+  const clientSavings = totalValueIfAvulso - totalSubRevenue;
+  const clientSavingsPercent = totalValueIfAvulso > 0 ? (clientSavings / totalValueIfAvulso) * 100 : 0;
+  const avgVisitsPerActiveSub = activeSubs.length > 0 ? (filteredUsages.length / activeSubs.length).toFixed(1) : '0';
+
+  // Group usages by client for frequency analysis
+  const usagesByClient: Record<string, { 
+    name: string; 
+    usages: any[]; 
+    clientId: string;
+  }> = {};
+
+  filteredUsages.forEach(u => {
+    const key = u.cliente_id || u.cliente_name || 'Desconhecido';
+    if (!usagesByClient[key]) {
+      usagesByClient[key] = {
+        name: u.cliente_name || 'Cliente Assinante',
+        usages: [],
+        clientId: u.cliente_id || ''
+      };
+    }
+    usagesByClient[key].usages.push(u);
+  });
+
+  const clientStats = Object.values(usagesByClient).map(item => {
+    const uList = item.usages;
+    const totalCuts = uList.filter(u => u.type === 'haircut').length;
+    const totalBeards = uList.filter(u => u.type === 'beard').length;
+    const totalOthers = uList.length - totalCuts - totalBeards;
+
+    // Find the subscription of this client
+    const sub = subscriptions.find(s => s.cliente_id === item.clientId || s.cliente_name === item.name);
+    const plan = sub ? plans.find(p => p.id === sub.plano_id) : null;
+    const planPrice = plan?.price || 0;
+
+    const avulsoValue = uList.reduce((sum, u) => sum + (u.valor_servico || (u.type === 'haircut' ? 50 : 35)), 0);
+    const savings = avulsoValue - planPrice;
+
+    // Find the client photo if available
+    const matchedClient = clients.find(c => c.uid === item.clientId);
+    const foto = matchedClient?.foto || matchedClient?.photoURL || '';
+
+    return {
+      clientId: item.clientId,
+      name: item.name,
+      foto,
+      totalVisits: uList.length,
+      totalCuts,
+      totalBeards,
+      totalOthers,
+      planName: plan?.name || sub?.planName || 'Plano Personalizado',
+      planPrice,
+      avulsoValue,
+      savings
+    };
+  }).sort((a, b) => b.totalVisits - a.totalVisits);
+
+  // Breakdown of services by type
+  const totalCutsCount = filteredUsages.filter(u => u.type === 'haircut').length;
+  const totalBeardsCount = filteredUsages.filter(u => u.type === 'beard').length;
+  const totalOthersCount = filteredUsages.length - totalCutsCount - totalBeardsCount;
+
+  const cutsPercent = filteredUsages.length > 0 ? Math.round((totalCutsCount / filteredUsages.length) * 100) : 0;
+  const beardsPercent = filteredUsages.length > 0 ? Math.round((totalBeardsCount / filteredUsages.length) * 100) : 0;
+  const othersPercent = filteredUsages.length > 0 ? Math.round((totalOthersCount / filteredUsages.length) * 100) : 0;
+
+  const handleReleaseCommissions = async () => {
+    if (totalCommissionsToRelease === 0) {
+      toast.error("Nenhuma comissão calculada para lançar neste período.");
+      return;
+    }
+    
+    setPostingCommissions(true);
+    try {
+      const monthLabel = format(parseISO(`${selectedMonth}-01`), 'MMMM yyyy', { locale: ptBR });
+      const monthLabelCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+
+      const promises = calculatedCommissions
+        .filter(c => c.commission > 0)
+        .map(async (c) => {
+          const commData = {
+            profissional_id: c.uid,
+            profissional_name: c.nome,
+            servico_name: `Rateio Assinatura - ${monthLabelCap}`,
+            base_value: c.totalServices,
+            commission_percentage: 100,
+            commission_value: Number(c.commission.toFixed(2)),
+            status: 'pendente' as const,
+            commission_type: 'assinatura' as const,
+            date: format(new Date(), 'yyyy-MM-dd'),
+          };
+          
+          await addDoc(collection(db, 'commissions'), {
+            ...commData,
+            tenantId: (profile as any)?.tenantId || 'default',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        });
+
+      await Promise.all(promises);
+
+      await setDoc(doc(db, 'subscription_commission_runs', selectedMonth), {
+        releasedAt: new Date().toISOString(),
+        releasedBy: profile?.nome || 'Administrador',
+        totalAmount: Number(totalCommissionsToRelease.toFixed(2)),
+        subscribersCount: activeSubs.length,
+        servicesCount: filteredUsages.length,
+        period: selectedMonth
+      });
+
+      toast.success(`Comissões de ${monthLabelCap} lançadas com sucesso para os profissionais!`);
+      loadComissoesData();
+    } catch (error) {
+      console.error("Erro ao lançar comissões:", error);
+      toast.error("Erro ao processar lançamento das comissões.");
+    } finally {
+      setPostingCommissions(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -717,6 +1009,24 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               }} 
               label="Assinantes (Gestão)" 
               icon={<Users size={14} />} 
+            />
+            <TabButton 
+              active={activeTab === 'assinantes_comissoes'} 
+              onClick={() => {
+                setSearchQuery('');
+                setActiveTab('assinantes_comissoes');
+              }} 
+              label="Comissões & Relatórios" 
+              icon={<DollarSign size={14} />} 
+            />
+            <TabButton 
+              active={activeTab === 'assinaturas_rendimento'} 
+              onClick={() => {
+                setSearchQuery('');
+                setActiveTab('assinaturas_rendimento');
+              }} 
+              label="Rendimento & Performance" 
+              icon={<TrendingUp size={14} />} 
             />
             <TabButton 
               active={activeTab === 'pacotes_modelos'} 
@@ -851,6 +1161,574 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 2.5: Comissões & Relatórios de Assinatura */}
+      {activeTab === 'assinantes_comissoes' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Header Controls */}
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-slate-50 p-6 border border-slate-100 rounded-[2rem] shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
+                <DollarSign size={20} />
+              </div>
+              <div>
+                <h4 className="text-sm font-black uppercase text-primary tracking-widest">Apuração de Comissões</h4>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Período mensal de fechamento e rateio</p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+              <select 
+                value={selectedMonth} 
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="bg-white border border-slate-200 outline-none rounded-xl py-2.5 px-3 text-xs font-black text-primary cursor-pointer"
+              >
+                {(() => {
+                  const list = [];
+                  const date = new Date();
+                  for (let i = 0; i < 12; i++) {
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const label = format(date, 'MMMM yyyy', { locale: ptBR });
+                    list.push({ value: `${year}-${month}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
+                    date.setMonth(date.getMonth() - 1);
+                  }
+                  return list.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ));
+                })()}
+              </select>
+
+              <button
+                type="button"
+                onClick={loadComissoesData}
+                disabled={loadingUsages}
+                className="p-3 border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-100 transition flex items-center justify-center"
+                title="Atualizar dados"
+              >
+                <RefreshCw size={14} className={loadingUsages ? "animate-spin" : ""} />
+              </button>
+
+              {isMonthReleased ? (
+                <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm">
+                  <CheckCircle size={14} />
+                  <span>Lançado no Financeiro</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleReleaseCommissions}
+                  disabled={postingCommissions || loadingUsages || totalCommissionsToRelease === 0}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider px-5 py-3 rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center gap-2"
+                >
+                  {postingCommissions ? <Loader2 className="animate-spin" size={14} /> : <DollarSign size={14} />}
+                  <span>Lançar Comissões</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita de Assinaturas Ativas</span>
+              <span className="text-xl font-black text-slate-800">
+                R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase">Soma de {activeSubs.length} planos ativos</span>
+            </div>
+            
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Total de Atendimentos</span>
+              <span className="text-xl font-black text-slate-800">
+                {filteredUsages.length} serviços
+              </span>
+              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase">Consumidos no período</span>
+            </div>
+
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Total Comissões Apuradas</span>
+              <span className="text-xl font-black text-indigo-600">
+                R$ {totalCommissionsToRelease.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase">A pagar aos profissionais</span>
+            </div>
+
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm flex flex-col justify-center">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-0.5">Status de Lançamento</span>
+              {isMonthReleased ? (
+                <div>
+                  <span className="inline-block bg-emerald-100 text-emerald-800 text-[9px] font-black px-2.5 py-1 rounded-full uppercase">
+                    LANÇADO
+                  </span>
+                  <span className="text-[8px] font-bold text-slate-400 block mt-1">Por {releasedRunInfo?.releasedBy || 'Admin'} em {releasedRunInfo?.releasedAt ? new Date(releasedRunInfo.releasedAt).toLocaleDateString('pt-BR') : ''}</span>
+                </div>
+              ) : (
+                <div>
+                  <span className="inline-block bg-amber-100 text-amber-800 text-[9px] font-black px-2.5 py-1 rounded-full uppercase">
+                    PENDENTE
+                  </span>
+                  <span className="text-[8px] font-bold text-slate-400 block mt-1">Clique em "Lançar Comissões" para liberar</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Table: Professional Commission Breakdown */}
+          <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                <Users size={14} className="text-slate-500" />
+                <span>Consolidado por Profissional</span>
+              </h5>
+              <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-full uppercase tracking-wider">
+                Cálculo em Tempo Real
+              </span>
+            </div>
+
+            {loadingUsages ? (
+              <div className="py-20 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                <Loader2 className="animate-spin text-indigo-600" size={28} />
+                <span className="text-xs font-bold uppercase tracking-widest">Carregando dados comissionamento...</span>
+              </div>
+            ) : barbeiros.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 font-bold italic">Nenhum barbeiro/profissional cadastrado.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-[10px] font-black text-slate-450 uppercase tracking-widest border-b">
+                      <th className="p-5">Profissional</th>
+                      <th className="p-5 text-center">Cortes Realizados</th>
+                      <th className="p-5 text-center">Barbas Realizadas</th>
+                      <th className="p-5 text-center">Sobrancelhas/Outros</th>
+                      <th className="p-5 text-center">Total Serviços</th>
+                      <th className="p-5 text-center">Pontos Totais</th>
+                      <th className="p-5 text-right">Comissão a Receber</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {calculatedCommissions.map(c => (
+                      <tr key={c.uid} className="hover:bg-slate-50/50 transition">
+                        <td className="p-5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full bg-slate-100 border overflow-hidden flex items-center justify-center shrink-0">
+                              {c.foto ? (
+                                <img src={c.foto} alt={c.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <Users size={16} className="text-slate-400" />
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-xs font-black text-slate-800 leading-tight">{c.nome}</p>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase">Barbeiro Parceiro</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-5 text-center text-xs font-bold text-slate-700">{c.cuts}</td>
+                        <td className="p-5 text-center text-xs font-bold text-slate-700">{c.beards}</td>
+                        <td className="p-5 text-center text-xs font-bold text-slate-700">{c.others}</td>
+                        <td className="p-5 text-center text-xs font-black text-slate-800 bg-slate-50/30">{c.totalServices}</td>
+                        <td className="p-5 text-center text-xs font-black text-indigo-600 bg-indigo-50/10">{c.points.toFixed(1)} pts</td>
+                        <td className="p-5 text-right font-black text-xs text-emerald-600">
+                          R$ {c.commission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Audit: Detailed Usage Logs */}
+          <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                <History size={14} className="text-slate-500" />
+                <span>Histórico Detalhado de Atendimento das Assinaturas</span>
+              </h5>
+              <span className="text-[9px] font-black text-slate-400 uppercase">
+                {filteredUsages.length} registros encontrados
+              </span>
+            </div>
+
+            {loadingUsages ? (
+              <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                <Loader2 className="animate-spin text-slate-400" size={24} />
+              </div>
+            ) : filteredUsages.length === 0 ? (
+              <div className="py-16 text-center text-slate-400 font-bold italic text-xs">
+                Nenhum atendimento registrado sob assinatura neste mês.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-[10px] font-black text-slate-450 uppercase tracking-widest border-b">
+                      <th className="p-5">Data</th>
+                      <th className="p-5">Cliente Assinante</th>
+                      <th className="p-5">Plano Contratado</th>
+                      <th className="p-5">Serviço Usufruído</th>
+                      <th className="p-5">Atendido por</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredUsages.map(usage => (
+                      <tr key={usage.id} className="hover:bg-slate-50/40 transition">
+                        <td className="p-5 text-xs text-slate-600 font-medium">
+                          {usage.date ? new Date(usage.date + 'T12:00:00').toLocaleDateString('pt-BR') : 'Sem data'}
+                        </td>
+                        <td className="p-5">
+                          <p className="text-xs font-black text-slate-800">{usage.cliente_name || 'Assinante'}</p>
+                        </td>
+                        <td className="p-5">
+                          <span className="inline-block bg-slate-100 border border-slate-150 text-slate-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase">
+                            {usage.plano_name || 'Plano Assinatura'}
+                          </span>
+                        </td>
+                        <td className="p-5">
+                          <span className="text-xs font-bold text-slate-700 uppercase">
+                            {usage.type === 'haircut' ? 'Corte' : usage.type === 'beard' ? 'Barba' : 'Outro'}
+                          </span>
+                        </td>
+                        <td className="p-5">
+                          <span className="text-xs font-bold text-primary">
+                            {usage.profissional_name || 'Não atribuído'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2.75: Rendimento & Performance das Assinaturas */}
+      {activeTab === 'assinaturas_rendimento' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Header Controls */}
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-slate-50 p-6 border border-slate-100 rounded-[2rem] shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
+                <TrendingUp size={20} />
+              </div>
+              <div>
+                <h4 className="text-sm font-black uppercase text-primary tracking-widest">Rendimento & Analytics</h4>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Métricas de saúde e viabilidade financeira</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              <select 
+                value={selectedMonth} 
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="bg-white border border-slate-200 outline-none rounded-xl py-2.5 px-3 text-xs font-black text-primary cursor-pointer"
+              >
+                {(() => {
+                  const list = [];
+                  const date = new Date();
+                  for (let i = 0; i < 12; i++) {
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const label = format(date, 'MMMM yyyy', { locale: ptBR });
+                    list.push({ value: `${year}-${month}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
+                    date.setMonth(date.getMonth() - 1);
+                  }
+                  return list.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ));
+                })()}
+              </select>
+
+              <button
+                type="button"
+                onClick={loadComissoesData}
+                disabled={loadingUsages}
+                className="p-3 border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-100 transition flex items-center justify-center"
+                title="Atualizar dados"
+              >
+                <RefreshCw size={14} className={loadingUsages ? "animate-spin" : ""} />
+              </button>
+            </div>
+          </div>
+
+          {/* Core Analytics Bento Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Real das Assinaturas</span>
+                <span className="text-xl font-black text-slate-800 block">
+                  R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <span className="text-[9px] font-bold text-slate-450 block mt-2 uppercase">
+                {activeSubs.length} assinantes ativos no mês
+              </span>
+            </div>
+
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Equivalente se Fosse Avulso</span>
+                <span className="text-xl font-black text-slate-800 block">
+                  R$ {totalValueIfAvulso.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <span className="text-[9px] font-bold text-indigo-600 block mt-2 uppercase">
+                Faturamento avulso projetado
+              </span>
+            </div>
+
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Economia Líquida dos Clientes</span>
+                <span className={`text-xl font-black block ${clientSavings > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  R$ {Math.abs(clientSavings).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <span className="text-[9px] font-bold text-slate-450 block mt-2 uppercase">
+                {clientSavings > 0 
+                  ? `${clientSavingsPercent.toFixed(0)}% de economia média` 
+                  : 'Geração de margem de retenção'}
+              </span>
+            </div>
+
+            <div className="bg-white border p-5 rounded-[2rem] shadow-sm flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Utilização das Assinaturas</span>
+                <span className="text-xl font-black text-slate-800 block">
+                  {avgVisitsPerActiveSub} visitas/mês
+                </span>
+              </div>
+              <span className="text-[9px] font-bold text-indigo-600 block mt-2 uppercase">
+                Média por assinante ativo
+              </span>
+            </div>
+          </div>
+
+          {/* Breakdown & Charts Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Service Type Breakdown */}
+            <div className="bg-white border border-slate-200 p-6 rounded-[2rem] shadow-sm">
+              <h5 className="text-xs font-black text-primary uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Scissors size={14} className="text-slate-500" />
+                <span>Perfil de Consumo das Assinaturas</span>
+              </h5>
+
+              {filteredUsages.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 font-bold italic text-xs">
+                  Sem serviços registrados neste período.
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Progress Bar Group */}
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex justify-between text-[10px] font-black uppercase text-slate-500 mb-1">
+                        <span>Cortes de Cabelo</span>
+                        <span>{totalCutsCount} ({cutsPercent}%)</span>
+                      </div>
+                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${cutsPercent}%` }} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[10px] font-black uppercase text-slate-500 mb-1">
+                        <span>Serviços de Barba</span>
+                        <span>{totalBeardsCount} ({beardsPercent}%)</span>
+                      </div>
+                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-amber-500 rounded-full" style={{ width: `${beardsPercent}%` }} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[10px] font-black uppercase text-slate-500 mb-1">
+                        <span>Sobrancelha & Outros adicionais</span>
+                        <span>{totalOthersCount} ({othersPercent}%)</span>
+                      </div>
+                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-slate-400 rounded-full" style={{ width: `${othersPercent}%` }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Summary Callout */}
+                  <div className="bg-slate-50 p-4 border rounded-2xl text-[11px] font-medium text-slate-600">
+                    O ticket médio que seria gerado por atendimento sob assinatura é de{' '}
+                    <strong className="text-slate-800 font-black">
+                      R$ {((filteredUsages.length > 0 ? totalValueIfAvulso / filteredUsages.length : 0)).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}
+                    </strong>{' '}
+                    com base no valor de tabela dos serviços.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Barber Workload Share */}
+            <div className="bg-white border border-slate-200 p-6 rounded-[2rem] shadow-sm">
+              <h5 className="text-xs font-black text-primary uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Users size={14} className="text-slate-500" />
+                <span>Distribuição por Barbeiro</span>
+              </h5>
+
+              {filteredUsages.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 font-bold italic text-xs">
+                  Sem atendimentos registrados por profissionais neste mês.
+                </div>
+              ) : (
+                <div className="space-y-4 max-h-[220px] overflow-y-auto pr-1">
+                  {calculatedCommissions.map(barber => {
+                    const sharePct = filteredUsages.length > 0 
+                      ? Math.round((barber.totalServices / filteredUsages.length) * 100) 
+                      : 0;
+
+                    return (
+                      <div key={barber.uid} className="flex items-center gap-4">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 border overflow-hidden flex items-center justify-center shrink-0">
+                          {barber.foto ? (
+                            <img src={barber.foto} alt={barber.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <Users size={14} className="text-slate-400" />
+                          )}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-center text-[10px] font-black uppercase text-slate-700">
+                            <span className="truncate">{barber.nome}</span>
+                            <span>{barber.totalServices} serviços ({sharePct}%)</span>
+                          </div>
+                          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1">
+                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${sharePct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Subscriber Engagement Table (Visits list) */}
+          <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                <History size={14} className="text-slate-500" />
+                <span>Ranking de Engajamento de Clientes</span>
+              </h5>
+              <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-full uppercase tracking-wider">
+                Quem mais usa a Assinatura
+              </span>
+            </div>
+
+            {loadingUsages ? (
+              <div className="py-20 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                <Loader2 className="animate-spin text-indigo-600" size={28} />
+                <span className="text-xs font-bold uppercase tracking-widest">Carregando métricas de engajamento...</span>
+              </div>
+            ) : clientStats.length === 0 ? (
+              <div className="py-16 text-center text-slate-400 font-bold italic text-xs">
+                Nenhum cliente ativo utilizou a assinatura no mês selecionado.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-[10px] font-black text-slate-450 uppercase tracking-widest border-b">
+                      <th className="p-5">Assinante</th>
+                      <th className="p-5">Plano Vigente</th>
+                      <th className="p-5 text-center">Frequência no Mês</th>
+                      <th className="p-5 text-center">Detalhamento</th>
+                      <th className="p-5 text-right">Custo Avulso Equivalente</th>
+                      <th className="p-5 text-right">Saldo do Cliente (Mês)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {clientStats.map((client, idx) => {
+                      const isHighUser = client.totalVisits >= 3;
+
+                      return (
+                        <tr key={client.clientId || idx} className="hover:bg-slate-50/50 transition">
+                          <td className="p-5">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-slate-100 border overflow-hidden flex items-center justify-center shrink-0">
+                                {client.foto ? (
+                                  <img src={client.foto} alt={client.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <Users size={16} className="text-slate-400" />
+                                )}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-black text-slate-800 leading-tight">{client.name}</p>
+                                  {isHighUser && (
+                                    <span className="bg-indigo-100 text-indigo-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">
+                                      SUPER ATIVO
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase">Assinante Recorrente</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-5">
+                            <div>
+                              <span className="inline-block bg-slate-100 border border-slate-150 text-slate-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase mb-0.5">
+                                {client.planName}
+                              </span>
+                              <p className="text-[9px] font-bold text-slate-400">
+                                Pago: R$ {client.planPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês
+                              </p>
+                            </div>
+                          </td>
+                          <td className="p-5 text-center">
+                            <span className="text-sm font-black text-slate-800">{client.totalVisits}x</span>
+                            <span className="text-[9px] font-bold text-slate-400 block uppercase">atendimentos</span>
+                          </td>
+                          <td className="p-5 text-center">
+                            <div className="flex items-center justify-center gap-2 text-[10px] font-bold text-slate-500">
+                              <span className="bg-slate-100 px-2 py-0.5 rounded-full">{client.totalCuts} Cortes</span>
+                              <span className="bg-slate-100 px-2 py-0.5 rounded-full">{client.totalBeards} Barbas</span>
+                              {client.totalOthers > 0 && (
+                                <span className="bg-slate-100 px-2 py-0.5 rounded-full">{client.totalOthers} Outros</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-5 text-right font-bold text-xs text-slate-700">
+                            R$ {client.avulsoValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-5 text-right">
+                            {client.savings > 0 ? (
+                              <div>
+                                <span className="text-xs font-black text-emerald-600">
+                                  Economizou R$ {client.savings.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </span>
+                                <span className="text-[8px] font-bold text-slate-400 block uppercase font-black tracking-wider text-emerald-500">cliente economizou</span>
+                              </div>
+                            ) : (
+                              <div>
+                                <span className="text-xs font-black text-slate-600">
+                                  Roteou R$ {Math.abs(client.savings).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </span>
+                                <span className="text-[8px] font-bold text-slate-400 block uppercase tracking-wider text-slate-400 font-black">margem barbearia</span>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1374,6 +2252,111 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       <option value="inactive">Inativo</option>
                     </select>
                   </div>
+
+                  {/* CONFIGURAÇÃO DE COMISSIONAMENTO */}
+                  <div className="md:col-span-2 border border-slate-150 p-5 rounded-2xl bg-indigo-50/20 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <DollarSign className="text-indigo-600" size={18} />
+                      <h4 className="text-xs font-black text-indigo-900 uppercase tracking-widest">Regra de Comissionamento da Assinatura</h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Tipo de Comissão</label>
+                        <select 
+                          value={planComissaoTipo} 
+                          onChange={(e) => setPlanComissaoTipo(e.target.value as any)}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm text-primary outline-none cursor-pointer font-bold"
+                        >
+                          <option value="fixo">Comissão Fixa por Atendimento</option>
+                          <option value="pool_atendimentos">Rateio (%) por Qtd de Atendimentos</option>
+                          <option value="pool_pontos">Rateio (%) por Pontuação de Serviços</option>
+                        </select>
+                      </div>
+
+                      {planComissaoTipo === 'fixo' && (
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Valor Fixo por Atendimento (R$)</label>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            value={planComissaoFixaValor} 
+                            onChange={(e) => setPlanComissaoFixaValor(Number(e.target.value))}
+                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm text-primary outline-none font-semibold" 
+                          />
+                        </div>
+                      )}
+
+                      {(planComissaoTipo === 'pool_atendimentos' || planComissaoTipo === 'pool_pontos') && (
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">% do Bruto da Assinatura para Rateio</label>
+                          <div className="relative">
+                            <input 
+                              type="number" 
+                              min="1" 
+                              max="100" 
+                              value={planComissaoPoolPorcentagem} 
+                              onChange={(e) => setPlanComissaoPoolPorcentagem(Number(e.target.value))}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-3 pr-8 text-sm text-primary outline-none font-semibold" 
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400">%</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {planComissaoTipo === 'pool_pontos' && (
+                      <div className="bg-white border border-slate-100 p-3.5 rounded-xl space-y-3">
+                        <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-widest block">Pesos de Pontuação por Serviço</span>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Corte (pts)</label>
+                            <input 
+                              type="number" 
+                              step="0.1" 
+                              value={planPontosCorte} 
+                              onChange={(e) => setPlanPontosCorte(Number(e.target.value))}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs text-primary outline-none text-center font-bold" 
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Barba (pts)</label>
+                            <input 
+                              type="number" 
+                              step="0.1" 
+                              value={planPontosBarba} 
+                              onChange={(e) => setPlanPontosBarba(Number(e.target.value))}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs text-primary outline-none text-center font-bold" 
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Sobrancelha/Outro (pts)</label>
+                            <input 
+                              type="number" 
+                              step="0.1" 
+                              value={planPontosOutros} 
+                              onChange={(e) => setPlanPontosOutros(Number(e.target.value))}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs text-primary outline-none text-center font-bold" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="md:col-span-2 bg-slate-50 border border-slate-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                    <div>
+                      <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Disponível no Portal do Cliente</h5>
+                      <p className="text-[9px] text-slate-450 font-bold uppercase tracking-widest mt-0.5">Exibir este plano para assinatura online</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPlanShowInPortal(!planShowInPortal)}
+                      className={`w-12 h-6 rounded-full transition relative shrink-0 ${planShowInPortal ? 'bg-emerald-600' : 'bg-slate-350'}`}
+                    >
+                      <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${planShowInPortal ? 'left-7' : 'left-1'}`} />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex gap-3 pt-4 font-bold">
                   <button type="button" onClick={() => setShowPlanModal(false)} className="flex-1 py-4 border border-slate-200 rounded-xl text-sm text-muted uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
@@ -1596,6 +2579,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     className="w-4 h-4 accent-indigo-600 cursor-pointer" 
                   />
                   <label htmlFor="pkgActiveCheck" className="text-xs font-bold text-slate-705 cursor-pointer selection:bg-transparent">Modelo Ativo e Disponível para Faturamento</label>
+                </div>
+
+                <div className="flex items-center gap-2 mt-1">
+                  <input 
+                    type="checkbox" 
+                    id="pkgShowInPortalCheck" 
+                    checked={pkgShowInPortal} 
+                    onChange={e => setPkgShowInPortal(e.target.checked)}
+                    className="w-4 h-4 accent-emerald-600 cursor-pointer" 
+                  />
+                  <label htmlFor="pkgShowInPortalCheck" className="text-xs font-bold text-emerald-700 cursor-pointer selection:bg-transparent">Disponível no Portal do Cliente (Comprar online)</label>
                 </div>
               </div>
 

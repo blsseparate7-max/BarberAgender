@@ -129,7 +129,14 @@ export const subscriptionService = {
   },
 
   // Usage
-  async registerUsage(subscriptionId: string, type: 'haircut' | 'beard', agendamento_id?: string) {
+  async registerUsage(
+    subscriptionId: string, 
+    type: 'haircut' | 'beard', 
+    agendamento_id?: string,
+    profissional_id?: string,
+    profissional_name?: string,
+    valor_servico?: number
+  ) {
     const activeTenantId = getActiveTenantId();
     return await runTransaction(db, async (transaction) => {
       const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, subscriptionId);
@@ -144,10 +151,13 @@ export const subscriptionService = {
       const plan = planSnap.data() as SubscriptionPlan;
 
       // Check limits
-      if (type === 'haircut' && sub.haircutsUsed >= plan.haircutsPerMonth) {
+      const isUnlimitedCuts = !plan.haircutsPerMonth || plan.haircutsPerMonth >= 999 || plan.haircutsPerMonth === 0;
+      const isUnlimitedBeards = !plan.beardsPerMonth || plan.beardsPerMonth >= 999 || plan.beardsPerMonth === 0;
+
+      if (!isUnlimitedCuts && type === 'haircut' && sub.haircutsUsed >= plan.haircutsPerMonth) {
         throw new Error("Limite de cortes mensais atingido");
       }
-      if (type === 'beard' && sub.beardsUsed >= plan.beardsPerMonth) {
+      if (!isUnlimitedBeards && type === 'beard' && sub.beardsUsed >= plan.beardsPerMonth) {
         throw new Error("Limite de barbas mensais atingido");
       }
 
@@ -157,9 +167,15 @@ export const subscriptionService = {
         tenantId: activeTenantId,
         assinatura_id: subscriptionId,
         cliente_id: sub.cliente_id,
+        cliente_name: sub.cliente_name || '',
+        plano_id: sub.plano_id,
+        plano_name: sub.planName || plan.name || '',
         type,
         date: format(new Date(), 'yyyy-MM-dd'),
-        agendamento_id,
+        agendamento_id: agendamento_id || null,
+        profissional_id: profissional_id || null,
+        profissional_name: profissional_name || null,
+        valor_servico: valor_servico || 0,
         createdAt: serverTimestamp()
       });
 
@@ -182,6 +198,20 @@ export const subscriptionService = {
     );
     const querySnapshot = await getDocs(q);
     const usage = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SubscriptionUsage));
+    return usage.sort((a, b) => {
+      const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    });
+  },
+
+  async getAllUsageHistory() {
+    const q = query(
+      collection(db, USAGE_COLLECTION), 
+      where('tenantId', '==', getActiveTenantId())
+    );
+    const querySnapshot = await getDocs(q);
+    const usage = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
     return usage.sort((a, b) => {
       const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
       const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;

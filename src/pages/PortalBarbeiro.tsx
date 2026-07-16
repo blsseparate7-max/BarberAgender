@@ -376,7 +376,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       </header>
 
       {/* Main Content Area */}
-      <main className={`flex-1 w-full mx-auto px-4 -mt-6 relative z-10 ${activeTab === 'agenda' ? 'max-w-4xl' : 'max-w-md'}`}>
+      <main className="flex-1 w-full mx-auto px-4 -mt-6 relative z-10 max-w-4xl pb-24">
         
         {/* AGENDA TAB */}
         {activeTab === 'agenda' && (

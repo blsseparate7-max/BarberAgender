@@ -803,7 +803,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
           const typeLabel: 'haircut' | 'beard' = isCut ? 'haircut' : 'beard';
           
-          await subscriptionService.registerUsage(item.subscriptionId, typeLabel, comanda.agendamento_id);
+          await subscriptionService.registerUsage(
+            item.subscriptionId, 
+            typeLabel, 
+            comanda.agendamento_id,
+            item.profissional_id,
+            item.profissional_name,
+            item.unitPrice || item.totalPrice || 0
+          );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
         }
       }
@@ -850,7 +857,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
           const typeLabel: 'haircut' | 'beard' = isCut ? 'haircut' : 'beard';
           
-          await subscriptionService.registerUsage(item.subscriptionId, typeLabel, comanda.agendamento_id);
+          await subscriptionService.registerUsage(
+            item.subscriptionId, 
+            typeLabel, 
+            comanda.agendamento_id,
+            item.profissional_id,
+            item.profissional_name,
+            item.unitPrice || item.totalPrice || 0
+          );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
         }
       }

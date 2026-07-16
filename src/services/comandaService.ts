@@ -267,7 +267,11 @@ export const comandaService = {
     // 1. Pre-fetch non-transactional data
     const methods = await paymentMethodService.getPaymentMethods();
     const today = new Date().toISOString().split('T')[0];
-    const cashQuery = query(collection(db, 'cash_sessions'), where('status', 'in', ['open', 'reopened']));
+    const cashQuery = query(
+      collection(db, 'cash_sessions'),
+      where('tenantId', '==', getActiveTenantId()),
+      where('status', 'in', ['open', 'reopened'])
+    );
     const cashDocs = await getDocs(cashQuery);
     let cashDoc = null;
     if (!cashDocs.empty) {
@@ -916,7 +920,11 @@ export const comandaService = {
     
     // 1. Pre-fetch non-transactional data
     const today = new Date().toISOString().split('T')[0];
-    const cashQuery = query(collection(db, 'cash_sessions'), where('status', 'in', ['open', 'reopened']));
+    const cashQuery = query(
+      collection(db, 'cash_sessions'),
+      where('tenantId', '==', getActiveTenantId()),
+      where('status', 'in', ['open', 'reopened'])
+    );
     const cashDocs = await getDocs(cashQuery);
     let cashDoc = null;
     if (!cashDocs.empty) {

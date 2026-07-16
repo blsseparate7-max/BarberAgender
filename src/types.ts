@@ -76,6 +76,7 @@ export interface UserProfile {
   conta?: string;
   chavePix?: string;
   tipoContrato?: string;
+  showInPortal?: boolean;
   
   createdAt: any;
   updatedAt: any;
@@ -94,6 +95,7 @@ export interface Service {
   valor_comissao?: number;
   comissoes_por_profissional?: Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>;
   barbeiros_ids?: string[];
+  showInPortal?: boolean;
   name?: string; // legado
   duration?: number; // legado
   price?: number; // legado
@@ -534,6 +536,7 @@ export interface Product {
   status: 'active' | 'inactive';
   fornecedor_id?: string;
   fornecedor_name?: string;
+  showInPortal?: boolean;
   createdAt: any;
   updatedAt: any;
 }
@@ -583,6 +586,7 @@ export interface SubscriptionPlan {
   beardsPerMonth: number;
   extraBenefits: string[];
   status: 'active' | 'inactive';
+  showInPortal?: boolean;
   createdAt: any;
   updatedAt: any;
 }
@@ -754,6 +758,7 @@ export interface Combo {
   servicos_ids: string[];
   produtos_ids: string[];
   active: boolean;
+  showInPortal?: boolean;
   tenantId?: string;
   createdAt: any;
   updatedAt: any;

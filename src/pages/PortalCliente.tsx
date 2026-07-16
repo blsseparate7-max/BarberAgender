@@ -253,7 +253,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       try {
         const qPackages = query(collection(db, 'pacotes_config'), where('tenantId', '==', activeTenantId));
         const configSnap = await getDocs(qPackages);
-        const availableConfigs = configSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const availableConfigs = configSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as any))
+          .filter(p => p.active !== false && p.showInPortal !== false);
         setAvailablePackages(availableConfigs.sort((a: any, b: any) => (a.cutsCount || 0) - (b.cutsCount || 0)));
       } catch (err) {
         console.warn("Could not load packages config:", err);
@@ -262,7 +264,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       // Load available plans configurations
       try {
         const plansList = await subscriptionService.getPlans();
-        setAvailablePlans(plansList);
+        setAvailablePlans(plansList.filter(p => p.status !== 'inactive' && p.showInPortal !== false));
       } catch (err) {
         console.warn("Could not load subscription plans list:", err);
       }
@@ -270,7 +272,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       // Load active barbers
       try {
         const activeBarbers = await userService.getAllBarbers(true);
-        setBarbers(activeBarbers);
+        setBarbers(activeBarbers.filter(b => b.showInPortal !== false));
       } catch (err) {
         console.warn("Could not load barbers list:", err);
       }
@@ -278,7 +280,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       // Load active services
       try {
         const activeServices = await serviceService.getServices(true);
-        setServices(activeServices);
+        setServices(activeServices.filter(s => s.active !== false && s.showInPortal !== false));
       } catch (err) {
         console.warn("Could not load services list:", err);
       }

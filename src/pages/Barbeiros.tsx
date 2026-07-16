@@ -665,6 +665,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
   const [metaMensal, setMetaMensal] = useState(barber?.meta_mensal ?? barber?.monthly_goal ?? 3000);
   const [startDate, setStartDate] = useState(barber?.startDate ?? new Date().toISOString().split('T')[0]);
   const [is_gestor, setIsGestor] = useState(barber?.is_gestor ?? barber?.is_manager ?? false);
+  const [showInPortal, setShowInPortal] = useState(barber?.showInPortal ?? true);
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [isSendingResetEmail, setIsSendingResetEmail] = useState(false);
@@ -809,6 +810,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
       conta: conta.trim(),
       chavePix: chavePix.trim(),
       tipoContrato,
+      showInPortal,
     };
 
     if (!barber) {
@@ -1058,6 +1060,20 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                     className={`w-12 h-6 rounded-full transition relative ${is_gestor ? 'bg-indigo-600' : 'bg-slate-350'}`}
                   >
                     <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${is_gestor ? 'left-7' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl flex items-center justify-between shadow-sm mt-4">
+                  <div>
+                    <h5 className="text-sm font-extrabold text-primary">Disponível no Portal do Cliente</h5>
+                    <p className="text-[10px] text-muted font-bold text-slate-450 uppercase tracking-widest mt-0.5">Exibir profissional para agendamento online</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowInPortal(!showInPortal)}
+                    className={`w-12 h-6 rounded-full transition relative ${showInPortal ? 'bg-emerald-600' : 'bg-slate-350'}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${showInPortal ? 'left-7' : 'left-1'}`} />
                   </button>
                 </div>
               </div>

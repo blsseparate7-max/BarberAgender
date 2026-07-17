@@ -1169,8 +1169,10 @@ function ReportAppointments({ data, filters }: { data: any, filters: ReportFilte
 // 3. REPORT CLIENTS (RANK DE CONSUMO DE CLIENTES E DEVEDORES)
 // ==========================================
 function ReportClients({ data, filters }: { data: any, filters: ReportFilter }) {
-  const [clientRankTab, setClientRankTab] = useState<'ranking' | 'debtors'>('ranking');
+  const [clientRankTab, setClientRankTab] = useState<'ranking' | 'debtors' | 'sem_cadastro'>('ranking');
   const [clientRankings, setClientRankings] = useState<any[]>([]);
+  const [semCadastroAppointments, setSemCadastroAppointments] = useState<any[]>([]);
+  const [semCadastroStats, setSemCadastroStats] = useState({ count: 0, revenue: 0, ticket: 0 });
 
   if (!data || !data.stats || !data.debtors) return null;
   const { stats, debtors } = data;
@@ -1183,8 +1185,10 @@ function ReportClients({ data, filters }: { data: any, filters: ReportFilter }) 
         const appts = apptsRes.data || [];
         const completed = appts.filter((a: any) => a.status === 'concluído');
         
+        // Filter out guest checkouts for VIP Client Rankings
+        const vipCompleted = completed.filter((a: any) => a.cliente_id && a.cliente_id !== 'sem_cadastro' && a.cliente_id !== 'avulso');
         const clientMap: Record<string, any> = {};
-        completed.forEach((a: any) => {
+        vipCompleted.forEach((a: any) => {
           if (a.cliente_id && a.cliente_name) {
             if (!clientMap[a.cliente_id]) {
               clientMap[a.cliente_id] = {
@@ -1226,6 +1230,16 @@ function ReportClients({ data, filters }: { data: any, filters: ReportFilter }) 
         // Rank by total spent
         rankingsList.sort((a, b) => b.totalSpend - a.totalSpend);
         setClientRankings(rankingsList.slice(0, 15)); // Top 15 Customer Spend
+
+        // Calculate Sem Cadastro statistics
+        const semCadastro = completed.filter((a: any) => a.cliente_id === 'sem_cadastro' || a.cliente_id === 'avulso' || !a.cliente_id);
+        const scRevenue = semCadastro.reduce((acc: number, a: any) => acc + (a.price || 0), 0);
+        setSemCadastroAppointments(semCadastro);
+        setSemCadastroStats({
+          count: semCadastro.length,
+          revenue: scRevenue,
+          ticket: semCadastro.length > 0 ? scRevenue / semCadastro.length : 0
+        });
       } catch (err) {
         console.error("Error creating client rankings:", err);
       }
@@ -1240,7 +1254,7 @@ function ReportClients({ data, filters }: { data: any, filters: ReportFilter }) 
         <ReportKpi title="Novos Clientes Cadastrados" value={stats.newClients} isCurrency={false} color="blue" />
         <ReportKpi title="Clientes Recorrentes (Periodo)" value={stats.recurringClients} isCurrency={false} color="emerald" />
         <ReportKpi title="Clientes com Fiados" value={stats.debtorClients} isCurrency={false} color="red" />
-        <ReportKpi title="Gasto Médio Base Total" value={stats.debtTotal / (stats.totalClients || 1)} isCurrency color="zinc" />
+        <ReportKpi title="Atendimentos Sem Cadastro" value={semCadastroStats.count} isCurrency={false} color="indigo" />
       </div>
 
       <div className="flex border-b border-border gap-6 pb-2" id="clients-sub-tabs">
@@ -1251,6 +1265,14 @@ function ReportClients({ data, filters }: { data: any, filters: ReportFilter }) 
           }`}
         >
           🏆 Ranking de Consumo (Clientes VIP)
+        </button>
+        <button
+          onClick={() => setClientRankTab('sem_cadastro')}
+          className={`pb-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${
+            clientRankTab === 'sem_cadastro' ? 'border-primary text-primary font-extrabold' : 'border-transparent text-muted hover:text-primary'
+          }`}
+        >
+          👤 Sem Cadastro / Avulsos ({semCadastroStats.count})
         </button>
         <button
           onClick={() => setClientRankTab('debtors')}
@@ -1351,6 +1373,99 @@ function ReportClients({ data, filters }: { data: any, filters: ReportFilter }) 
                 <p className="text-xs text-muted leading-relaxed font-semibold bg-indigo-50/30 p-4 border border-indigo-100/20 rounded-2xl text-left mt-6">
                   💡 <strong>Insight de Retenção:</strong> Sua barbearia possui {Math.round((stats.recurringClients / (stats.totalClients || 1)) * 100)}% dos clientes retornando no período selecionado. Excelente índice de fidelidade!
                 </p>
+              </div>
+            </div>
+          </motion.div>
+        ) : clientRankTab === 'sem_cadastro' ? (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-8"
+            key="tab-client-sem-cadastro"
+          >
+            {/* Cards of statistics of sem cadastro */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm flex items-center gap-5">
+                <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl">
+                  <Activity size={24} />
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted font-black uppercase tracking-widest">Atendimentos Efetuados</p>
+                  <h4 className="text-2xl font-black text-primary mt-1">{semCadastroStats.count}x</h4>
+                </div>
+              </div>
+              <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm flex items-center gap-5">
+                <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl">
+                  <DollarSign size={24} />
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted font-black uppercase tracking-widest">Faturamento Acumulado</p>
+                  <h4 className="text-2xl font-black text-emerald-600 mt-1">R$ {semCadastroStats.revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                </div>
+              </div>
+              <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm flex items-center gap-5">
+                <div className="p-4 bg-zinc-50 text-zinc-600 rounded-2xl">
+                  <Zap size={24} />
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted font-black uppercase tracking-widest">Ticket Médio Avulso</p>
+                  <h4 className="text-2xl font-black text-primary mt-1">R$ {semCadastroStats.ticket.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                </div>
+              </div>
+            </div>
+
+            {/* List of un-registered appointments */}
+            <div className="bg-surface border border-border rounded-[2.5rem] overflow-hidden shadow-sm">
+              <div className="p-8 border-b border-border bg-indigo-50/10 flex justify-between items-center">
+                <div>
+                  <h3 className="font-black text-lg text-primary tracking-tighter">Histórico de Atendimentos Sem Cadastro</h3>
+                  <p className="text-muted text-[10px] font-bold uppercase tracking-wider mt-0.5">Vendas rápidas e clientes sem identificação cadastral</p>
+                </div>
+                <span className="text-[10px] bg-indigo-50 text-indigo-600 border border-indigo-100 font-extrabold px-3 py-1 rounded-lg uppercase tracking-widest">Fluxo Rápido</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-border">
+                      <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Identificação Informada</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Profissional</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Serviço Prestado</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Data</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Valor Pago</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {semCadastroAppointments.map((a: any, i: number) => (
+                      <tr key={`sem-cad-appt-${a.id || i}`} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-8 py-4">
+                          <p className="text-xs font-bold text-primary">{a.cliente_name || 'Sem Cadastro / Avulso'}</p>
+                          <span className="text-[9px] bg-slate-100 text-slate-500 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider">Avulso</span>
+                        </td>
+                        <td className="px-8 py-4">
+                          <p className="text-xs font-semibold text-primary">{a.profissional_name || 'Qualquer'}</p>
+                        </td>
+                        <td className="px-8 py-4">
+                          <p className="text-xs font-semibold text-primary">{a.servico_name || 'Serviço'}</p>
+                        </td>
+                        <td className="px-8 py-4 text-center">
+                          <p className="text-xs font-mono font-bold text-slate-500">
+                            {a.date ? format(parseISO(a.date), 'dd/MM/yyyy') : '-'}
+                          </p>
+                        </td>
+                        <td className="px-8 py-4 text-right">
+                          <p className="text-xs font-black text-indigo-600">R$ {(a.price || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        </td>
+                      </tr>
+                    ))}
+                    {semCadastroAppointments.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-8 py-16 text-center text-muted italic text-xs font-bold uppercase tracking-widest">Nenhum atendimento avulso/sem cadastro finalizado no período selecionado.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </motion.div>

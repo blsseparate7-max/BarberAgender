@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { 
   Settings, 
   User, 
@@ -55,56 +54,6 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [city, setCity] = useState(tenant?.address?.city || '');
   const [state, setState] = useState(tenant?.address?.state || '');
   const [zipCode, setZipCode] = useState(tenant?.address?.zipCode || '');
-
-  const placesLib = useMapsLibrary('places');
-  const autocompleteInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!placesLib || !autocompleteInputRef.current) return;
-
-    try {
-      const autocomplete = new placesLib.Autocomplete(autocompleteInputRef.current, {
-        types: ['address'],
-        componentRestrictions: { country: 'br' },
-        fields: ['address_components', 'formatted_address']
-      });
-
-      autocomplete.addListener('place_changed', () => {
-        const place = autocomplete.getPlace();
-        if (!place.address_components) return;
-
-        let streetName = '';
-        let streetNumber = '';
-        let cityVal = '';
-        let stateVal = '';
-        let zipCodeVal = '';
-
-        for (const component of place.address_components) {
-          const types = component.types;
-          if (types.includes('route')) {
-            streetName = component.long_name;
-          } else if (types.includes('street_number')) {
-            streetNumber = component.long_name;
-          } else if (types.includes('administrative_area_level_2')) {
-            cityVal = component.long_name;
-          } else if (types.includes('administrative_area_level_1')) {
-            stateVal = component.short_name;
-          } else if (types.includes('postal_code')) {
-            zipCodeVal = component.long_name;
-          }
-        }
-
-        const fullStreet = streetName + (streetNumber ? `, ${streetNumber}` : '');
-        if (fullStreet) setStreet(fullStreet);
-        if (cityVal) setCity(cityVal);
-        if (stateVal) setState(stateVal);
-        if (zipCodeVal) setZipCode(zipCodeVal);
-        toast.success("Endereço preenchido via Google Maps!");
-      });
-    } catch (e) {
-      console.error("Erro ao inicializar Google Places Autocomplete:", e);
-    }
-  }, [placesLib]);
 
   // Personal profile states
   const [userProfileName, setUserProfileName] = useState(profile?.nome || '');
@@ -713,15 +662,6 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                     Endereço Estratégico
                   </h3>
                   <div className="space-y-6">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Pesquisar Endereço (Google Maps)</label>
-                      <input 
-                        type="text" 
-                        ref={autocompleteInputRef}
-                        placeholder="Pesquise o endereço para preencher tudo automaticamente..."
-                        className="w-full bg-emerald-50/40 border border-emerald-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner placeholder-zinc-400"
-                      />
-                    </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Logradouro</label>
                       <input 

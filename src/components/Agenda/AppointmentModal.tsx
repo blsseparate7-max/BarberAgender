@@ -166,7 +166,11 @@ export function AppointmentModal({
     try {
       const service = services.find(s => s.id === formData.servico_id);
       const barber = barbers.find(b => b.uid === formData.profissional_id);
-      const client = currentUser.tipo === 'cliente' ? currentUser : clients.find(c => c.uid === formData.cliente_id);
+      const client = currentUser.tipo === 'cliente' 
+        ? currentUser 
+        : (formData.cliente_id === 'sem_cadastro' 
+            ? { uid: 'sem_cadastro', nome: formData.cliente_name || 'Sem Cadastro' } 
+            : clients.find(c => c.uid === formData.cliente_id));
 
       if (!service || !barber || !client) {
         throw new Error('Por favor, selecione todos os campos obrigatórios.');
@@ -265,20 +269,46 @@ export function AppointmentModal({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
             {/* Seleção de Cliente (Admin/Gerente) */}
             {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente') && (
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Cliente</label>
-                <div className="relative">
-                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                  <select 
-                    required
-                    value={formData.cliente_id}
-                    onChange={(e) => setFormData({...formData, cliente_id: e.target.value})}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
-                  >
-                    <option value="" className="text-muted">Selecione o cliente</option>
-                    {clients.map(c => <option key={c.uid} value={c.uid} className="text-primary font-medium">{c.nome}</option>)}
-                  </select>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Cliente</label>
+                  <div className="relative">
+                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                    <select 
+                      required
+                      value={formData.cliente_id}
+                      onChange={(e) => {
+                        const cid = e.target.value;
+                        setFormData({
+                          ...formData, 
+                          cliente_id: cid,
+                          cliente_name: cid === 'sem_cadastro' ? 'Sem Cadastro' : (clients.find(c => c.uid === cid)?.nome || '')
+                        });
+                      }}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
+                    >
+                      <option value="" className="text-muted">Selecione o cliente</option>
+                      <option value="sem_cadastro" className="text-indigo-600 font-bold">★ Sem Cadastro (Avulso) ★</option>
+                      {clients.map(c => <option key={c.uid} value={c.uid} className="text-primary font-medium">{c.nome}</option>)}
+                    </select>
+                  </div>
                 </div>
+
+                {formData.cliente_id === 'sem_cadastro' && (
+                  <div className="space-y-2 animate-in slide-in-from-top duration-200">
+                    <label className="text-xs font-bold text-indigo-600 uppercase tracking-wider ml-1">Nome do Cliente (Opcional)</label>
+                    <div className="relative">
+                      <User className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-500" size={18} />
+                      <input
+                        type="text"
+                        value={formData.cliente_name === 'Sem Cadastro' ? '' : formData.cliente_name}
+                        onChange={(e) => setFormData({ ...formData, cliente_name: e.target.value || 'Sem Cadastro' })}
+                        placeholder="Ex: Carlos (Sem cadastro)"
+                        className="w-full bg-slate-50 border border-indigo-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 transition-all text-primary font-medium"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

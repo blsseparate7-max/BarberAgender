@@ -5,7 +5,6 @@ import { auth, db } from '../firebase';
 import { getActiveTenantId } from '../services/tenantService';
 import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles, Building2, Globe, Phone, MapPin } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useMapsLibrary } from '@vis.gl/react-google-maps';
 
 interface RegisterPageProps {
   onLoginClick: () => void;
@@ -30,55 +29,6 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [refCode, setRefCode] = useState<string | null>(null);
-
-  const placesLib = useMapsLibrary('places');
-  const autocompleteInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!placesLib || !autocompleteInputRef.current) return;
-
-    try {
-      const autocomplete = new placesLib.Autocomplete(autocompleteInputRef.current, {
-        types: ['address'],
-        componentRestrictions: { country: 'br' },
-        fields: ['address_components', 'formatted_address']
-      });
-
-      autocomplete.addListener('place_changed', () => {
-        const place = autocomplete.getPlace();
-        if (!place.address_components) return;
-
-        let streetName = '';
-        let streetNumber = '';
-        let city = '';
-        let state = '';
-        let zipCode = '';
-
-        for (const component of place.address_components) {
-          const types = component.types;
-          if (types.includes('route')) {
-            streetName = component.long_name;
-          } else if (types.includes('street_number')) {
-            streetNumber = component.long_name;
-          } else if (types.includes('administrative_area_level_2')) {
-            city = component.long_name;
-          } else if (types.includes('administrative_area_level_1')) {
-            state = component.short_name;
-          } else if (types.includes('postal_code')) {
-            zipCode = component.long_name;
-          }
-        }
-
-        const fullStreet = streetName + (streetNumber ? `, ${streetNumber}` : '');
-        if (fullStreet) setTenantStreet(fullStreet);
-        if (city) setTenantCity(city);
-        if (state) setTenantState(state);
-        if (zipCode) setTenantZipCode(zipCode);
-      });
-    } catch (e) {
-      console.error("Erro ao inicializar Google Places Autocomplete:", e);
-    }
-  }, [placesLib]);
 
   useEffect(() => {
     setRole(initialRole);
@@ -430,20 +380,6 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
                   />
                 </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Pesquisar Endereço (Google Maps)</label>
-                <div className="relative">
-                  <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-500" size={18} />
-                  <input 
-                    type="text" 
-                    ref={autocompleteInputRef}
-                    placeholder="Comece a digitar o endereço de sua barbearia..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
-                  />
-                </div>
-                <p className="text-[9px] text-zinc-500 ml-1">Preenche automaticamente a rua, cidade e estado!</p>
               </div>
 
               <div className="space-y-1">

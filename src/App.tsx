@@ -307,21 +307,15 @@ function MainApp() {
   );
 }
 
-import { APIProvider } from '@vis.gl/react-google-maps';
-
 export default function App() {
-  const mapsApiKey = process.env.GOOGLE_MAPS_PLATFORM_KEY || '';
-
   return (
     <ErrorBoundary>
-      <APIProvider apiKey={mapsApiKey} version="weekly">
-        <AuthProvider>
-          <TenantProvider>
-            <Toaster position="top-right" richColors closeButton />
-            <MainApp />
-          </TenantProvider>
-        </AuthProvider>
-      </APIProvider>
+      <AuthProvider>
+        <TenantProvider>
+          <Toaster position="top-right" richColors closeButton />
+          <MainApp />
+        </TenantProvider>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }

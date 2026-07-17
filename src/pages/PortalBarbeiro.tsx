@@ -31,9 +31,11 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Info,
-  ChevronDown
+  ChevronDown,
+  Star
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
@@ -54,7 +56,7 @@ interface PortalBarbeiroProps {
 }
 
 export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
-  const [activeTab, setActiveTab] = useState<'agenda' | 'clientes' | 'comissao' | 'estoque' | 'perfil'>('agenda');
+  const [activeTab, setActiveTab] = useState<'agenda' | 'clientes' | 'comissao' | 'estoque' | 'perfil' | 'avaliacoes'>('agenda');
   
   // Tab states: Agenda
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -135,11 +137,11 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [productSearchTerm, setProductSearchTerm] = useState('');
 
-  // Horizontal date-strip list
+  // Horizontal date-strip list centered around selectedDate
   const dateStrip = React.useMemo(() => {
     const dates = [];
-    for (let i = -2; i < 6; i++) {
-      const d = addDays(new Date(), i);
+    for (let i = -3; i <= 3; i++) {
+      const d = addDays(selectedDate, i);
       dates.push({
         iso: format(d, 'yyyy-MM-dd'),
         dayName: format(d, 'EEE', { locale: ptBR }).replace('.', ''),
@@ -149,7 +151,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       });
     }
     return dates;
-  }, []);
+  }, [selectedDate]);
 
   // 1. Listen to Appointments
   useEffect(() => {
@@ -207,6 +209,35 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       });
     }
   }, [activeTab, profile.uid]);
+
+  // Tab states: Avaliações
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(false);
+
+  // Subscribe to reviews in real-time
+  useEffect(() => {
+    if (!profile?.uid) return;
+    setLoadingReviews(true);
+    const q = query(
+      collection(db, 'avaliacoes'),
+      where('profissional_id', '==', profile.uid)
+    );
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const loadedReviews = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Sort reviews newest first
+      const sorted = loadedReviews.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.seconds || 0;
+        const timeB = b.createdAt?.seconds || 0;
+        return timeB - timeA;
+      });
+      setReviews(sorted);
+      setLoadingReviews(false);
+    }, (err) => {
+      console.error("Error loading reviews:", err);
+      setLoadingReviews(false);
+    });
+    return () => unsubscribe();
+  }, [profile?.uid]);
 
   // 4. Fetch Products when entering Estoque tab
   useEffect(() => {
@@ -487,15 +518,45 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           <div className="space-y-4">
             
             {/* Horizontal date selection bar */}
-            <div className="bg-white border border-slate-200/80 p-3.5 rounded-3xl shadow-sm space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
-                  <Calendar size={13} className="text-indigo-600" />
-                  Visualizar Escala
-                </span>
-                <span className="text-xs font-black text-indigo-600">
-                  {dateStrip.find(d => d.iso === format(selectedDate, 'yyyy-MM-dd'))?.label || format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
-                </span>
+            <div className="bg-white border border-slate-200/80 p-4 rounded-3xl shadow-sm space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-1.5">
+                  <Calendar size={14} className="text-indigo-600" />
+                  <span className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                    Visualizar Escala
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  {!isToday(selectedDate) && (
+                    <button
+                      onClick={() => setSelectedDate(new Date())}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg border border-indigo-100 transition active:scale-95"
+                    >
+                      Hoje
+                    </button>
+                  )}
+                  
+                  <span className="text-xs font-black text-indigo-600">
+                    {format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
+                  </span>
+
+                  <div className="relative">
+                    <input
+                      type="date"
+                      value={format(selectedDate, 'yyyy-MM-dd')}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedDate(parse(e.target.value, 'yyyy-MM-dd', new Date()));
+                        }
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                    />
+                    <button className="bg-slate-50 hover:bg-slate-100 text-slate-600 p-1.5 rounded-lg border border-slate-200 transition flex items-center justify-center">
+                      <Calendar size={14} />
+                    </button>
+                  </div>
+                </div>
               </div>
               
               <div className="flex gap-2 overflow-x-auto no-scrollbar py-0.5 pr-2">
@@ -1142,6 +1203,113 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           </div>
         )}
 
+        {/* AVALIACOES TAB */}
+        {activeTab === 'avaliacoes' && (
+          <div className="space-y-4">
+            <div className="bg-white border border-slate-200/80 p-6 rounded-[2rem] shadow-sm text-center space-y-4">
+              <div>
+                <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">Sua Média de Avaliação</h3>
+                <div className="flex items-center justify-center gap-2 mt-2">
+                  <span className="text-5xl font-black text-slate-800">
+                    {reviews.length > 0 
+                      ? (reviews.reduce((acc, r) => acc + (r.rating || 0), 0) / reviews.length).toFixed(1)
+                      : '0.0'}
+                  </span>
+                  <div className="flex flex-col items-start">
+                    <div className="flex text-amber-500">
+                      {Array.from({ length: 5 }).map((_, i) => {
+                        const score = reviews.length > 0 ? (reviews.reduce((acc, r) => acc + (r.rating || 0), 0) / reviews.length) : 0;
+                        return (
+                          <Star 
+                            key={i} 
+                            size={16} 
+                            fill={i < Math.round(score) ? 'currentColor' : 'none'} 
+                            className={i < Math.round(score) ? 'text-amber-500' : 'text-slate-300'} 
+                          />
+                        );
+                      })}
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                      {reviews.length} {reviews.length === 1 ? 'avaliação' : 'avaliações'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Distibution bars */}
+              <div className="space-y-1.5 pt-2 border-t border-slate-150">
+                {[5, 4, 3, 2, 1].map((stars) => {
+                  const count = reviews.filter((r) => r.rating === stars).length;
+                  const pct = reviews.length > 0 ? (count / reviews.length) * 100 : 0;
+                  return (
+                    <div key={stars} className="flex items-center gap-3 text-xs font-bold text-slate-600">
+                      <span className="w-3 text-right">{stars}</span>
+                      <Star size={10} fill="currentColor" className="text-amber-500" />
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-amber-500 rounded-full transition-all duration-500" 
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="w-8 text-right text-slate-400 text-[10px]">{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* List of Reviews */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider block ml-1">Comentários dos Clientes</h4>
+
+              {loadingReviews ? (
+                <div className="py-12 flex justify-center text-slate-400">
+                  <Loader2 size={24} className="animate-spin" />
+                </div>
+              ) : reviews.length > 0 ? (
+                <div className="space-y-3">
+                  {reviews.map((review) => (
+                    <div key={review.id} className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h5 className="font-bold text-xs text-slate-800">{review.cliente_name}</h5>
+                          <p className="text-[9px] text-slate-400 font-medium">
+                            {review.createdAt?.seconds 
+                              ? format(new Date(review.createdAt.seconds * 1000), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })
+                              : 'Recentemente'}
+                          </p>
+                        </div>
+                        <div className="flex text-amber-500">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <Star 
+                              key={i} 
+                              size={12} 
+                              fill={i < review.rating ? 'currentColor' : 'none'} 
+                              className={i < review.rating ? 'text-amber-500' : 'text-slate-200'} 
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      {review.comentario ? (
+                        <p className="text-xs text-slate-600 font-medium italic bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                          "{review.comentario}"
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-450 italic font-semibold">Sem comentário escrito.</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-12 text-center bg-white border border-dashed border-slate-200 rounded-[2rem]">
+                  <p className="text-xs text-slate-400 font-semibold">Nenhuma avaliação recebida ainda.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* PERFIL TAB */}
         {activeTab === 'perfil' && (
           <div className="space-y-4">
@@ -1155,7 +1323,18 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 <div>
                   <h3 className="text-base font-black text-slate-800 leading-tight">{profile.nome}</h3>
                   <p className="text-xs text-slate-400 font-semibold mt-0.5">{profile.email}</p>
-                  <p className="text-[10px] bg-indigo-50 text-indigo-700 font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border border-indigo-100 mt-2 inline-block">
+                  
+                  <div className="flex items-center gap-1 mt-1.5 text-xs text-slate-500 font-semibold">
+                    <Star size={12} fill="currentColor" className="text-amber-500" />
+                    <span className="font-extrabold text-slate-700">
+                      {reviews.length > 0 
+                        ? (reviews.reduce((acc, r) => acc + (r.rating || 0), 0) / reviews.length).toFixed(1)
+                        : '0.0'}
+                    </span>
+                    <span>({reviews.length} {reviews.length === 1 ? 'avaliação' : 'avaliações'})</span>
+                  </div>
+
+                  <p className="text-[10px] bg-indigo-50 text-indigo-700 font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border border-indigo-100 mt-2.5 inline-block">
                     Barbeiro Parceiro
                   </p>
                 </div>
@@ -1242,7 +1421,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
       {/* Fixed bottom simple bottom navigation menu bar */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200/80 px-2 py-2 shadow-2xl z-50 rounded-t-3xl max-w-md mx-auto">
-        <div className="grid grid-cols-5 gap-1 text-center">
+        <div className="grid grid-cols-6 gap-1 text-center">
           
           <button
             onClick={() => setActiveTab('agenda')}
@@ -1278,6 +1457,18 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           >
             <DollarSign size={18} className={`mb-1 transition-transform ${activeTab === 'comissao' ? 'scale-110 text-indigo-600' : 'text-slate-400'}`} />
             <span className="text-[9px] uppercase tracking-wider">Comissão</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('avaliacoes')}
+            className={`flex flex-col items-center justify-center py-1.5 rounded-2xl transition-all ${
+              activeTab === 'avaliacoes' 
+                ? 'text-indigo-600 font-black' 
+                : 'text-slate-450 hover:text-slate-700 font-bold'
+            }`}
+          >
+            <Star size={18} className={`mb-1 transition-transform ${activeTab === 'avaliacoes' ? 'scale-110 text-indigo-600' : 'text-slate-400'}`} />
+            <span className="text-[9px] uppercase tracking-wider">Avaliar</span>
           </button>
 
           <button
@@ -1337,7 +1528,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                     Data Selecionada
                   </label>
                   <p className="text-xs font-extrabold text-slate-700 bg-slate-50 border p-2.5 rounded-xl">
-                    {dateStrip.find(d => d.iso === selectedDate)?.label || selectedDate}
+                    {dateStrip.find(d => d.iso === format(selectedDate, 'yyyy-MM-dd'))?.label || format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
                   </p>
                 </div>
 

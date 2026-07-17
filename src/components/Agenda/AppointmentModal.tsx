@@ -492,7 +492,7 @@ export function AppointmentModal({
                   </button>
                 )}
 
-                {(appointment.status === 'em_atendimento' || appointment.status === 'confirmado') && onOpenComanda && (
+                {['agendado', 'confirmado', 'em_atendimento'].includes(appointment.status) && onOpenComanda && (
                   <button 
                     type="button"
                     onClick={() => {

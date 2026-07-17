@@ -350,7 +350,8 @@ export type ComandaStatus =
   | 'parcialmente_paga' 
   | 'nao_paga' 
   | 'fechada' 
-  | 'cancelada';
+  | 'cancelada'
+  | 'ausente';
 
 export type ComandaOrigin = 'agenda' | 'encaixe' | 'balcao';
 export type ComandaItemType = 'servico' | 'produto' | 'ajuste';

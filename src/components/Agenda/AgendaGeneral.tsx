@@ -352,13 +352,13 @@ export function AgendaGeneral({
                                     <Clock size={12} />
                                   </button>
                                 )}
-                                {app.status === 'em_atendimento' && (
+                                {['agendado', 'confirmado', 'em_atendimento'].includes(app.status) && (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       onOpenComanda(app);
                                     }}
-                                    title="Finalizar Atendimento"
+                                    title="Finalizar e Abrir Comanda"
                                     className="p-1 hover:bg-black/5 rounded transition-colors"
                                   >
                                     <Receipt size={12} />

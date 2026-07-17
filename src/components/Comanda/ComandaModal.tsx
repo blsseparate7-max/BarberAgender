@@ -77,6 +77,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmAusente, setConfirmAusente] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const [reopenReasonType, setReopenReasonType] = useState<'erro_lancamento' | 'ajuste_pagamento' | 'cortesia' | 'outro'>('erro_lancamento');
   
@@ -390,7 +391,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         profissional_name: barber?.nome || initialData?.profissional_name || '',
         origin: initialData?.origin || 'balcao',
         agendamento_id: initialData?.agendamento_id,
-        status: initialData?.agendamento_id ? 'aguardando_pagamento' : 'aberta',
+        status: 'aberta',
         items: initialData?.items || [],
         aberto_por_id: user.uid,
         aberto_por_name: profile?.nome || user.email || 'Usuário'
@@ -1019,6 +1020,22 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     } catch (error) {
       console.error("Erro ao cancelar comanda:", error);
       toast.error("Erro ao cancelar comanda: " + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAusenteComanda = async () => {
+    if (!comanda || !user || loading) return;
+    setLoading(true);
+    try {
+      await comandaService.closeComanda(comanda.id, user.uid, profile?.nome || user.email || 'Usuário', 'ausente');
+      toast.success("Cliente marcado como ausente e comanda cancelada.");
+      setConfirmAusente(false);
+      onSave();
+    } catch (error) {
+      console.error("Erro ao registrar ausência:", error);
+      toast.error("Erro ao registrar ausência: " + (error instanceof Error ? error.message : String(error)));
     } finally {
       setLoading(false);
     }
@@ -2141,18 +2158,26 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <span>Finalizar Conta</span>
                     </button>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-2">
                       <button 
                         onClick={() => setConfirmCancel(true)}
                         disabled={loading}
-                        className="py-3 bg-white border border-slate-200 text-red-500 rounded-xl font-bold text-xs hover:bg-red-50 transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
+                        className="py-3 bg-white border border-red-100 text-red-500 rounded-xl font-bold text-[10px] hover:bg-red-50 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
                       >
                         {loading ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
                         <span>Cancelar</span>
                       </button>
                       <button 
+                        onClick={() => setConfirmAusente(true)}
+                        disabled={loading}
+                        className="py-3 bg-white border border-amber-100 text-amber-600 rounded-xl font-bold text-[10px] hover:bg-amber-50 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
+                      >
+                        {loading ? <Loader2 className="animate-spin" size={14} /> : <AlertCircle size={14} />}
+                        <span>Ausente</span>
+                      </button>
+                      <button 
                         onClick={onClose}
-                        className="py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95"
+                        className="py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-[10px] transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95"
                       >
                         <EyeOff size={14} className="text-slate-500" />
                         <span>Ocultar</span>
@@ -2554,6 +2579,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         description="Deseja cancelar esta comanda? Esta ação não pode ser desfeita."
         variant="danger"
         confirmLabel="Cancelar"
+      />
+
+      <ConfirmationModal
+        isOpen={confirmAusente}
+        onClose={() => setConfirmAusente(false)}
+        onConfirm={handleAusenteComanda}
+        title="Cliente Ausente"
+        description="Deseja marcar este cliente como ausente (Faltou)? Isso irá cancelar a comanda e marcar o agendamento como 'Faltou'."
+        variant="danger"
+        confirmLabel="Confirmar"
       />
 
       <ConfirmationModal

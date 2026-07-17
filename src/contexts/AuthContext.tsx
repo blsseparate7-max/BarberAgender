@@ -80,8 +80,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribeAuth();
   }, []);
 
-  const activeRole = overrideRole || 
-    (profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' 
+  const isSaaSAdminUser = profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' || profile?.tipo === 'saas_admin';
+  const activeRole = (isSaaSAdminUser && overrideRole) || 
+    (isSaaSAdminUser
       ? 'saas_admin' 
       : (profile?.tipo || 'cliente'));
 

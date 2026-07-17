@@ -27,6 +27,7 @@ import { collection, query, where, onSnapshot, doc, addDoc, updateDoc, deleteDoc
 import { getActiveTenantId } from '../../services/tenantService';
 import { UserProfile, Service, DailyFlowItem } from '../../types';
 import { serviceService } from '../../services/serviceService';
+import { userService } from '../../services/userService';
 import { toast } from 'sonner';
 
 export function OperationsManager() {
@@ -37,6 +38,13 @@ export function OperationsManager() {
   const [showModal, setShowModal] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedFlowItem, setSelectedFlowItem] = useState<DailyFlowItem | null>(null);
+
+  // Waitlist selection states
+  const [clientSelectionType, setClientSelectionType] = useState<'sem_cadastro' | 'cadastrado' | 'novo_cadastro'>('sem_cadastro');
+  const [selectedClientId, setSelectedClientId] = useState('');
+  const [newClientPhone, setNewClientPhone] = useState('');
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [registeredClients, setRegisteredClients] = useState<UserProfile[]>([]);
 
   // Form states for adding to queue
   const [clientName, setClientName] = useState('');
@@ -106,24 +114,75 @@ export function OperationsManager() {
       setServices(res.filter(s => s.active !== false));
     });
 
+    // 4. Fetch registered clients list in real-time
+    const unsubscribeClients = userService.subscribeToAllClients(true, (data) => {
+      setRegisteredClients(data);
+    });
+
     return () => {
       unsubscribeFlow();
       unsubscribeBarbers();
+      unsubscribeClients();
     };
   }, [tenantId]);
 
   // Handler to add walk-in customer to waitlist
   const handleAddToWaitlist = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientName.trim() || !selectedServiceId) {
-      toast.error("Por favor, preencha o nome do cliente e o serviço.");
+    if (!selectedServiceId) {
+      toast.error("Por favor, selecione um serviço.");
       return;
     }
 
-    const service = services.find(s => s.id === selectedServiceId);
-    if (!service) return;
+    let finalClientName = '';
+    let finalClientId: string | null = null;
 
     try {
+      if (clientSelectionType === 'sem_cadastro') {
+        if (!clientName.trim()) {
+          toast.error("Por favor, preencha o nome do cliente.");
+          return;
+        }
+        finalClientName = clientName.trim();
+        finalClientId = null;
+      } else if (clientSelectionType === 'cadastrado') {
+        if (!selectedClientId) {
+          toast.error("Por favor, selecione um cliente cadastrado.");
+          return;
+        }
+        const clientProfile = registeredClients.find(c => c.uid === selectedClientId);
+        if (!clientProfile) {
+          toast.error("Cliente cadastrado não encontrado.");
+          return;
+        }
+        finalClientName = clientProfile.nome;
+        finalClientId = selectedClientId;
+      } else if (clientSelectionType === 'novo_cadastro') {
+        if (!clientName.trim()) {
+          toast.error("Por favor, preencha o nome do novo cliente.");
+          return;
+        }
+        // Create new client on the fly
+        const newClient = await userService.createUser({
+          nome: clientName.trim(),
+          telefone: newClientPhone.trim() || '',
+          phone: newClientPhone.trim() || '',
+          tipo: 'cliente',
+          ativo: true,
+          tenantId: tenantId,
+          saldo_atual: 0,
+          total_gasto: 0,
+          total_pago: 0,
+          total_em_aberto: 0
+        });
+        finalClientName = newClient.nome;
+        finalClientId = newClient.uid;
+        toast.success(`Cliente ${finalClientName} cadastrado com sucesso!`);
+      }
+
+      const service = services.find(s => s.id === selectedServiceId);
+      if (!service) return;
+
       const now = new Date();
       const formatTime = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
@@ -139,7 +198,8 @@ export function OperationsManager() {
       }
 
       await addDoc(collection(db, 'daily_flow'), {
-        cliente_name: clientName.trim(),
+        cliente_name: finalClientName,
+        cliente_id: finalClientId,
         servico_id: service.id,
         servico_name: service.nome || service.name || '',
         profissional_id: profId,
@@ -152,12 +212,16 @@ export function OperationsManager() {
 
       toast.success("Cliente adicionado à fila de espera!");
       setClientName('');
+      setNewClientPhone('');
+      setSelectedClientId('');
+      setClientSearchTerm('');
+      setClientSelectionType('sem_cadastro');
       setSelectedServiceId('');
       setPreferredBarberId('next');
       setShowModal(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("Erro ao adicionar cliente à fila.");
+      toast.error(err.message || "Erro ao adicionar cliente à fila.");
     }
   };
 
@@ -287,7 +351,16 @@ export function OperationsManager() {
           <p className="text-sm text-muted font-medium mt-1">Sincronize o dia corrido do salão, controle a fila de espera e o rodízio sequencial de profissionais.</p>
         </div>
         <button
-          onClick={() => { setShowModal(true); }}
+          onClick={() => {
+            setClientName('');
+            setNewClientPhone('');
+            setSelectedClientId('');
+            setClientSearchTerm('');
+            setClientSelectionType('sem_cadastro');
+            setSelectedServiceId('');
+            setPreferredBarberId('next');
+            setShowModal(true);
+          }}
           className="bg-primary text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2.5 shrink-0"
         >
           <Plus size={16} /> Adicionar na Fila do Dia
@@ -577,28 +650,174 @@ export function OperationsManager() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white border border-slate-200 rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl"
+              className="bg-white border border-slate-200 rounded-[2.5rem] w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
             >
               <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                <h2 className="text-xl font-black text-primary uppercase tracking-tight">Adicionar ao Fluxo</h2>
-                <button onClick={() => setShowModal(false)} className="p-2 bg-white hover:bg-slate-100 rounded-xl text-muted transition-colors border border-slate-100 shadow-sm">
+                <div>
+                  <h2 className="text-xl font-black text-primary uppercase tracking-tight">Adicionar ao Fluxo</h2>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Defina a forma de identificação do cliente</p>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => setShowModal(false)} 
+                  className="p-2 bg-white hover:bg-slate-100 rounded-xl text-muted transition-colors border border-slate-100 shadow-sm"
+                >
                   <X size={18} />
                 </button>
               </div>
 
-              <form onSubmit={handleAddToWaitlist} className="p-8 space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome do Cliente (Walk-In ou Cadastrado)</label>
-                  <input 
-                    required 
-                    type="text"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    placeholder="Ex: João Silva" 
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-inner" 
-                  />
-                </div>
+              {/* Tabs Selector */}
+              <div className="px-8 pt-6">
+                <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSelectionType('sem_cadastro');
+                      setClientName('');
+                    }}
+                    className={`py-2.5 rounded-xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
+                      clientSelectionType === 'sem_cadastro'
+                        ? 'bg-white text-primary shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    <UserX size={14} />
+                    <span className="text-[10px] sm:text-xs">Sem Cadastro</span>
+                  </button>
 
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSelectionType('cadastrado');
+                      setSelectedClientId('');
+                      setClientSearchTerm('');
+                    }}
+                    className={`py-2.5 rounded-xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
+                      clientSelectionType === 'cadastrado'
+                        ? 'bg-white text-primary shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    <UserCheck size={14} />
+                    <span className="text-[10px] sm:text-xs">Cadastrado</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSelectionType('novo_cadastro');
+                      setClientName('');
+                      setNewClientPhone('');
+                    }}
+                    className={`py-2.5 rounded-xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
+                      clientSelectionType === 'novo_cadastro'
+                        ? 'bg-white text-primary shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    <Plus size={14} />
+                    <span className="text-[10px] sm:text-xs">Criar Novo</span>
+                  </button>
+                </div>
+              </div>
+
+              <form onSubmit={handleAddToWaitlist} className="p-8 space-y-5 overflow-y-auto flex-1">
+                {/* 1. Conditional Fields based on Client Type */}
+                {clientSelectionType === 'sem_cadastro' && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome do Cliente Walk-In</label>
+                    <input 
+                      required 
+                      type="text"
+                      value={clientName}
+                      onChange={(e) => setClientName(e.target.value)}
+                      placeholder="Ex: João Silva (Avulso)" 
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-inner" 
+                    />
+                  </div>
+                )}
+
+                {clientSelectionType === 'cadastrado' && (
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Buscar Cliente Cadastrado</label>
+                    <div className="relative">
+                      <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input 
+                        type="text"
+                        value={clientSearchTerm}
+                        onChange={(e) => setClientSearchTerm(e.target.value)}
+                        placeholder="Pesquisar por nome ou celular..." 
+                        className="w-full pl-11 pr-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-inner" 
+                      />
+                    </div>
+
+                    {/* Client search list */}
+                    <div className="border border-slate-100 rounded-2xl max-h-40 overflow-y-auto bg-slate-50/50 p-2 space-y-1">
+                      {registeredClients
+                        .filter(c => 
+                          c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) || 
+                          (c.telefone || '').includes(clientSearchTerm) ||
+                          (c.phone || '').includes(clientSearchTerm)
+                        )
+                        .slice(0, 10)
+                        .map(client => (
+                          <button
+                            key={client.uid}
+                            type="button"
+                            onClick={() => {
+                              setSelectedClientId(client.uid);
+                              setClientSearchTerm(client.nome);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between ${
+                              selectedClientId === client.uid
+                                ? 'bg-indigo-600 text-white'
+                                : 'hover:bg-slate-100 text-slate-700'
+                            }`}
+                          >
+                            <span className="truncate">{client.nome}</span>
+                            <span className={`text-[10px] ${selectedClientId === client.uid ? 'text-indigo-200' : 'text-slate-400'}`}>
+                              {client.telefone || client.phone || 'Sem celular'}
+                            </span>
+                          </button>
+                        ))}
+                      {registeredClients.filter(c => 
+                        c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) || 
+                        (c.telefone || '').includes(clientSearchTerm)
+                      ).length === 0 && (
+                        <p className="text-center py-4 text-xs text-slate-400 italic">Nenhum cliente encontrado</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {clientSelectionType === 'novo_cadastro' && (
+                  <div className="space-y-4 bg-slate-50/50 p-5 rounded-3xl border border-slate-100">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome Completo</label>
+                      <input 
+                        required 
+                        type="text"
+                        value={clientName}
+                        onChange={(e) => setClientName(e.target.value)}
+                        placeholder="Ex: Pedro Henrique" 
+                        className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-sm" 
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Telefone (Celular)</label>
+                      <input 
+                        type="tel"
+                        value={newClientPhone}
+                        onChange={(e) => setNewClientPhone(e.target.value)}
+                        placeholder="Ex: (11) 99999-9999" 
+                        className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 shadow-sm" 
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Common Fields: Service and Barber */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Serviço Pretendido</label>
                   <select 
@@ -624,7 +843,7 @@ export function OperationsManager() {
                   </select>
                 </div>
 
-                <div className="flex gap-4 pt-4 border-t border-slate-50">
+                <div className="flex gap-4 pt-4 border-t border-slate-100">
                   <button 
                     type="button" 
                     onClick={() => setShowModal(false)} 

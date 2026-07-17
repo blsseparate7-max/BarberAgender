@@ -57,8 +57,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { ClientDebt, PaymentMethod } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
+import { useTenant } from '../contexts/TenantContext';
 
 export function Clientes() {
+  const { tenantId } = useTenant();
   const [customers, setCustomers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -74,7 +76,8 @@ export function Clientes() {
   useEffect(() => {
     const q = query(
       collection(db, 'usuarios'),
-      where('tipo', '==', 'cliente')
+      where('tipo', '==', 'cliente'),
+      where('tenantId', '==', tenantId)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -88,7 +91,7 @@ export function Clientes() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [tenantId]);
 
   const filteredAndSortedCustomers = [...customers]
     .filter(c => {

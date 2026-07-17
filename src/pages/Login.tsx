@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import { Scissors, Mail, Lock, Loader2, AlertCircle, Chrome, ArrowLeft } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
@@ -43,7 +43,69 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding }: L
     setError('');
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      // Import Firestore components and check/create profile
+      const { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
+      const { getActiveTenantId } = await import('../services/tenantService');
+
+      const docRef = doc(db, 'usuarios', user.uid);
+      const docSnap = await getDoc(docRef);
+
+      if (!docSnap.exists()) {
+        const usersRef = collection(db, 'usuarios');
+        const q = query(usersRef, where('email', '==', user.email?.toLowerCase().trim()));
+        const querySnapshot = await getDocs(q);
+
+        if (!querySnapshot.empty) {
+          // Found pre-registered user (like a barber or manager)!
+          const preRegisteredDoc = querySnapshot.docs[0];
+          const preRegisteredData = preRegisteredDoc.data();
+          const preRegisteredId = preRegisteredDoc.id;
+
+          await setDoc(docRef, {
+            ...preRegisteredData,
+            uid: user.uid,
+            nome: user.displayName || preRegisteredData.nome,
+            email: user.email?.toLowerCase().trim(),
+            ativo: true,
+            updatedAt: serverTimestamp()
+          });
+
+          if (preRegisteredId !== user.uid) {
+            await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+          }
+
+          // Migrate appointments
+          const appointmentsRef = collection(db, 'appointments');
+          const apptQuery = query(appointmentsRef, where('barbeiroId', '==', preRegisteredId));
+          const apptSnapshot = await getDocs(apptQuery);
+          for (const apptDoc of apptSnapshot.docs) {
+            await setDoc(doc(db, 'appointments', apptDoc.id), { barbeiroId: user.uid }, { merge: true });
+          }
+
+          // Migrate commissions
+          const comissoesRef = collection(db, 'commissions');
+          const comQuery = query(comissoesRef, where('barbeiroId', '==', preRegisteredId));
+          const comSnapshot = await getDocs(comQuery);
+          for (const comDoc of comSnapshot.docs) {
+            await setDoc(doc(db, 'commissions', comDoc.id), { barbeiroId: user.uid }, { merge: true });
+          }
+        } else {
+          // Create a standard 'cliente' profile
+          await setDoc(docRef, {
+            uid: user.uid,
+            email: user.email,
+            nome: user.displayName || 'Usuário Google',
+            tipo: 'cliente',
+            ativo: true,
+            tenantId: getActiveTenantId(),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
     } catch (err: any) {
       console.error(err);
       setError('Erro ao entrar com Google. Tente novamente.');

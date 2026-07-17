@@ -41,6 +41,7 @@ import { collection, onSnapshot, query, where, doc, updateDoc } from 'firebase/f
 import { db, auth } from '../firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { toast } from 'sonner';
+import { useTenant } from '../contexts/TenantContext';
 
 // Default weekdays list for schedule configuring
 const DAYS_OF_WEEK = [
@@ -86,6 +87,7 @@ const SPECIALTY_PRESETS = [
 
 export function Barbeiros() {
   const { isAdmin, isGerente } = useAuth();
+  const { tenantId } = useTenant();
   const [barbeiros, setBarbeiros] = useState<UserProfile[]>([]);
   const [commissions, setCommissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,7 +102,8 @@ export function Barbeiros() {
     setLoading(true);
     const q = query(
       collection(db, 'usuarios'),
-      where('tipo', 'in', ['barbeiro', 'gerente'])
+      where('tipo', 'in', ['barbeiro', 'gerente']),
+      where('tenantId', '==', tenantId)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
@@ -114,11 +117,14 @@ export function Barbeiros() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [tenantId]);
 
   // Live Subscription for Commissions to generate live analytics cards
   useEffect(() => {
-    const qCom = query(collection(db, 'commissions'));
+    const qCom = query(
+      collection(db, 'commissions'),
+      where('tenantId', '==', tenantId)
+    );
     const unsubscribeCom = onSnapshot(qCom, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setCommissions(docs);
@@ -127,7 +133,7 @@ export function Barbeiros() {
     });
 
     return () => unsubscribeCom();
-  }, []);
+  }, [tenantId]);
 
   const handleToggleAtivo = async (uid: string, currentAtivo: boolean) => {
     if (!isAdmin && !isGerente) return;

@@ -29,7 +29,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
 import { signOut } from 'firebase/auth';
-import { collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp, getDoc, onSnapshot } from 'firebase/firestore';
 import { userService } from '../services/userService';
 import { appointmentService } from '../services/appointmentService';
 import { serviceService } from '../services/serviceService';
@@ -81,7 +81,14 @@ interface PortalClienteProps {
 
 export function PortalCliente({ profile }: PortalClienteProps) {
   // Navigation
-  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'fidelidade' | 'pacotes' | 'assinaturas' | 'perfil'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'fidelidade' | 'pacotes' | 'assinaturas' | 'perfil'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab') || params.get('tabId');
+    if (tabParam && ['home', 'schedule', 'history', 'fidelidade', 'pacotes', 'assinaturas', 'perfil'].includes(tabParam)) {
+      return tabParam as any;
+    }
+    return 'home';
+  });
   
   // Data State
   const [allTenants, setAllTenants] = useState<TenantProfile[]>([]);
@@ -140,6 +147,14 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [editObservacoes, setEditObservacoes] = useState(profile.observacoes || profile.observations || '');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
+  // Reviews & Ratings States
+  const [myReviews, setMyReviews] = useState<any[]>([]);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [selectedAppForReview, setSelectedAppForReview] = useState<Appointment | null>(null);
+  const [reviewRating, setReviewRating] = useState<number>(5);
+  const [reviewComment, setReviewComment] = useState<string>('');
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+
   // Sync profile edits
   useEffect(() => {
     if (profile) {
@@ -148,6 +163,19 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       setEditObservacoes(profile.observacoes || profile.observations || '');
     }
   }, [profile]);
+
+  // Subscribe to my reviews
+  useEffect(() => {
+    if (!profile?.uid) return;
+    const q = query(
+      collection(db, 'avaliacoes'),
+      where('cliente_id', '==', profile.uid)
+    );
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setMyReviews(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsubscribe();
+  }, [profile?.uid]);
 
   const [portfolioBarbers, setPortfolioBarbers] = useState<any[]>([]);
   const [loadingPortfolioBarbers, setLoadingPortfolioBarbers] = useState(false);
@@ -364,7 +392,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     }
   };
 
-  const handleSelectTenant = async (newTenantId: string) => {
+  const handleSelectTenant = async (newTenantId: string, targetTab = 'home') => {
     localStorage.setItem('barberelite_tenant_id', newTenantId);
     
     // Reset selected booking options to prevent mismatch
@@ -385,8 +413,11 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     const selectedName = allTenants.find(t => t.id.toLowerCase() === newTenantId.toLowerCase())?.name || newTenantId;
     toast.success(`Unidade alterada para: ${selectedName}`);
     
-    // Reload data for the new unit
-    await loadData();
+    // Gracefully reload with new query params
+    const params = new URLSearchParams(window.location.search);
+    params.set('tenant', newTenantId);
+    params.set('tab', targetTab);
+    window.location.search = params.toString();
   };
 
   const loadSlots = async () => {
@@ -483,6 +514,34 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     } catch (err) {
       console.error("Error canceling appointment:", err);
       toast.error("Erro ao cancelar o agendamento.");
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    if (!selectedAppForReview || !profile?.uid) return;
+    setIsSubmittingReview(true);
+    try {
+      await addDoc(collection(db, 'avaliacoes'), {
+        agendamento_id: selectedAppForReview.id,
+        cliente_id: profile.uid,
+        cliente_name: profile.nome || 'Cliente',
+        profissional_id: selectedAppForReview.profissional_id,
+        profissional_name: selectedAppForReview.profissional_name,
+        rating: reviewRating,
+        comentario: reviewComment,
+        tenantId: selectedAppForReview.tenantId || getActiveTenantId(),
+        createdAt: serverTimestamp()
+      });
+      toast.success("Avaliação enviada com sucesso! Muito obrigado pelo seu feedback.");
+      setReviewModalOpen(false);
+      setSelectedAppForReview(null);
+      setReviewComment('');
+      setReviewRating(5);
+    } catch (err) {
+      console.error("Error saving review:", err);
+      toast.error("Erro ao enviar avaliação. Tente novamente.");
+    } finally {
+      setIsSubmittingReview(false);
     }
   };
 
@@ -852,8 +911,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                           </div>
 
                           <div className="flex items-center justify-between border-t border-slate-100/50 pt-2.5">
-                            <span className="text-[10px] text-slate-400 font-bold">
-                              ID: {item.id}
+                            <span className="text-[10px] text-amber-500 font-extrabold flex items-center gap-1">
+                              ★ 4.9 (Excelente)
                             </span>
                             <button
                               type="button"
@@ -1297,7 +1356,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         </div>
                       </div>
 
-                      <div className="self-end sm:self-center">
+                      <div className="self-end sm:self-center flex flex-col items-end gap-2">
                         <span className={`text-[9px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full ${
                           app.status === 'concluído' 
                             ? 'bg-emerald-100 text-emerald-800' 
@@ -1307,6 +1366,38 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         }`}>
                           {app.status === 'concluído' ? 'Concluído' : app.status === 'cancelado' ? 'Cancelado' : app.status}
                         </span>
+
+                        {app.status === 'concluído' && (() => {
+                          const existingReview = myReviews.find(r => r.agendamento_id === app.id);
+                          if (existingReview) {
+                            return (
+                              <div className="flex text-amber-500 gap-0.5 mt-1" title={existingReview.comentario}>
+                                {Array.from({ length: 5 }).map((_, i) => (
+                                  <Star 
+                                    key={i} 
+                                    size={10} 
+                                    fill={i < existingReview.rating ? 'currentColor' : 'none'} 
+                                    className="text-amber-500" 
+                                  />
+                                ))}
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <button
+                                onClick={() => {
+                                  setSelectedAppForReview(app);
+                                  setReviewRating(5);
+                                  setReviewComment('');
+                                  setReviewModalOpen(true);
+                                }}
+                                className="text-[10px] bg-amber-500 hover:bg-amber-600 text-white font-black px-2.5 py-1 rounded-xl transition-all flex items-center gap-1 shadow-sm active:scale-95 mt-1"
+                              >
+                                <Star size={10} fill="currentColor" /> Avaliar Barbeiro
+                              </button>
+                            );
+                          }
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -2083,11 +2174,12 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                       onClick={async () => {
                         const isCurrentActive = (tenantInfo?.id || getActiveTenantId()).toLowerCase() === selectedPortfolioTenant.id.toLowerCase();
                         if (!isCurrentActive) {
-                          await handleSelectTenant(selectedPortfolioTenant.id);
+                          await handleSelectTenant(selectedPortfolioTenant.id, 'schedule');
+                        } else {
+                          setShowPortfolioModal(false);
+                          setActiveTab('schedule');
+                          toast.success(`Você está navegando na unidade ${selectedPortfolioTenant.name}. Faça seu agendamento!`);
                         }
-                        setShowPortfolioModal(false);
-                        setActiveTab('schedule');
-                        toast.success(`Você está navegando na unidade ${selectedPortfolioTenant.name}. Faça seu agendamento!`);
                       }}
                       className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-600/10 active:scale-95 transition-all flex items-center gap-2"
                     >
@@ -2095,6 +2187,101 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     </button>
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* INTERACTIVE EVALUATION / REVIEW MODAL */}
+        {reviewModalOpen && selectedAppForReview && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl p-6 md:p-8 space-y-6 relative border border-slate-100"
+            >
+              {/* Close Button */}
+              <button
+                onClick={() => {
+                  setReviewModalOpen(false);
+                  setSelectedAppForReview(null);
+                }}
+                className="absolute top-4 right-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full p-2 transition-all active:scale-95"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="text-center space-y-2">
+                <div className="w-16 h-16 bg-amber-50 rounded-full border border-amber-150 flex items-center justify-center mx-auto text-amber-500">
+                  <Star size={32} fill="currentColor" />
+                </div>
+                <h3 className="text-lg font-black tracking-tight text-slate-800">Avaliar Atendimento</h3>
+                <p className="text-xs text-slate-500 font-semibold max-w-xs mx-auto">
+                  Como foi o seu corte ou serviço com o profissional <span className="text-indigo-600 font-extrabold">{selectedAppForReview.profissional_name}</span>?
+                </p>
+              </div>
+
+              {/* Interactive Star Picker */}
+              <div className="flex justify-center gap-3 py-2">
+                {[1, 2, 3, 4, 5].map((starValue) => (
+                  <button
+                    key={starValue}
+                    type="button"
+                    onClick={() => setReviewRating(starValue)}
+                    className="transition-transform duration-100 active:scale-90 hover:scale-110"
+                  >
+                    <Star
+                      size={36}
+                      fill={starValue <= reviewRating ? 'currentColor' : 'none'}
+                      className={starValue <= reviewRating ? 'text-amber-500' : 'text-slate-350'}
+                    />
+                  </button>
+                ))}
+              </div>
+
+              {/* Text feedback comments */}
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase text-slate-400 tracking-wider">Seu Comentário (Opcional)</label>
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="Excelente atendimento, corte cirúrgico e café de primeira! Super recomendo..."
+                  rows={4}
+                  className="w-full text-xs font-semibold text-slate-700 bg-slate-50 rounded-2xl p-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all resize-none"
+                />
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={isSubmittingReview}
+                  onClick={() => {
+                    setReviewModalOpen(false);
+                    setSelectedAppForReview(null);
+                  }}
+                  className="flex-1 py-4 text-xs font-black text-slate-500 hover:text-slate-700 uppercase tracking-widest transition-all bg-slate-100 rounded-2xl border border-slate-200/50 hover:bg-slate-200 active:scale-95"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmittingReview}
+                  onClick={handleSubmitReview}
+                  className="flex-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg shadow-amber-500/15 active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  {isSubmittingReview ? (
+                    <>Enviando...</>
+                  ) : (
+                    <>Enviar Avaliação</>
+                  )}
+                </button>
               </div>
             </motion.div>
           </motion.div>

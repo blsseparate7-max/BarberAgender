@@ -587,6 +587,31 @@ export const comandaService = {
     }
   },
 
+  async markAbsentLinkedAppointments(comandaId: string) {
+    try {
+      const apptsQuery = query(
+        collection(db, 'appointments'),
+        where('comanda_id', '==', comandaId)
+      );
+      const apptsSnap = await getDocs(apptsQuery);
+      if (!apptsSnap.empty) {
+        const batch = writeBatch(db);
+        apptsSnap.forEach((docSnap) => {
+          if (docSnap.data().status !== 'faltou') {
+            batch.update(docSnap.ref, {
+              status: 'faltou',
+              updatedAt: serverTimestamp()
+            });
+          }
+        });
+        await batch.commit();
+        console.log(`Successfully marked linked appointments as faltou for comanda ${comandaId}`);
+      }
+    } catch (err) {
+      console.warn("Error auto-marking absent linked appointments for comanda:", err);
+    }
+  },
+
   async applyComandaClosureWrites(
     comanda: Comanda, 
     transaction: any, 
@@ -864,7 +889,7 @@ export const comandaService = {
         });
       }
 
-      const logAction = finalStatus === 'cancelada' ? 'Comanda cancelada' : 'Comanda fechada';
+      const logAction = finalStatus === 'cancelada' ? 'Comanda cancelada' : finalStatus === 'ausente' ? 'Cliente marcado ausente' : 'Comanda fechada';
       const newLog = {
         userId,
         userName,
@@ -893,11 +918,11 @@ export const comandaService = {
           productExistsMap,
           servicesMap
         );
-      } else if (finalStatus === 'cancelada') {
+      } else if (finalStatus === 'cancelada' || finalStatus === 'ausente') {
         if (comanda.agendamento_id && appSnap?.exists()) {
           const appointmentRef = doc(db, 'appointments', comanda.agendamento_id);
           transaction.update(appointmentRef, {
-            status: 'cancelado',
+            status: finalStatus === 'ausente' ? 'faltou' : 'cancelado',
             updatedAt: serverTimestamp()
           });
         }
@@ -909,6 +934,8 @@ export const comandaService = {
         await this.closeLinkedAppointments(id);
       } else if (status === 'cancelada') {
         await this.cancelLinkedAppointments(id);
+      } else if (status === 'ausente') {
+        await this.markAbsentLinkedAppointments(id);
       }
     } catch (e) {
       console.error("Error updating linked appointments inside closeComanda:", e);

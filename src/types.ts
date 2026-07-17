@@ -77,6 +77,7 @@ export interface UserProfile {
   chavePix?: string;
   tipoContrato?: string;
   showInPortal?: boolean;
+  bloqueadoParaAgendar?: boolean;
   
   createdAt: any;
   updatedAt: any;
@@ -183,6 +184,22 @@ export interface WaitlistEntry {
   preferred_date: string;
   preferred_period: 'morning' | 'afternoon' | 'evening' | 'any';
   status: 'waiting' | 'scheduled' | 'cancelled';
+  createdAt: any;
+}
+
+export interface DailyFlowItem {
+  id: string;
+  cliente_name: string;
+  cliente_id?: string;
+  servico_name: string;
+  servico_id?: string;
+  profissional_id?: string;
+  profissional_name?: string;
+  status: 'waiting' | 'serving' | 'completed' | 'cancelled';
+  chegada_hora: string;
+  inicio_hora?: string;
+  fim_hora?: string;
+  tenantId: string;
   createdAt: any;
 }
 
@@ -577,6 +594,13 @@ export interface Stats {
 
 export type SubscriptionStatus = 'active' | 'expired' | 'canceled' | 'paused' | 'pending';
 
+export interface SubscriptionDiscount {
+  itemId: string; // ID of the service, product, or 'all_services', or 'all_products'
+  itemName: string; // Name for display
+  itemType: 'servico' | 'product' | 'all_services' | 'all_products';
+  percentage: number; // Discount percentage (e.g., 10 for 10%)
+}
+
 export interface SubscriptionPlan {
   id: string;
   name: string;
@@ -587,6 +611,7 @@ export interface SubscriptionPlan {
   extraBenefits: string[];
   status: 'active' | 'inactive';
   showInPortal?: boolean;
+  discounts?: SubscriptionDiscount[];
   createdAt: any;
   updatedAt: any;
 }
@@ -604,6 +629,7 @@ export interface Subscription {
   haircutsUsed: number;
   beardsUsed: number;
   lastRenewalDate: string;
+  discounts?: SubscriptionDiscount[];
   createdAt: any;
   updatedAt: any;
 }

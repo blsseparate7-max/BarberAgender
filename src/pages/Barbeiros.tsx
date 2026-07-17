@@ -143,27 +143,36 @@ export function Barbeiros() {
   const { execute: handleSave, isLoading: isSaving } = useAsyncAction(async (data: Partial<UserProfile> & { changePasswordDirectly?: string }) => {
     try {
       if (editingBarber) {
-        // If password needs to be changed directly
-        if (data.changePasswordDirectly) {
+        const emailChanged = data.email && data.email.trim() !== editingBarber.email;
+        const passwordChanged = !!data.changePasswordDirectly;
+
+        if (emailChanged || passwordChanged) {
           try {
-            const response = await fetch('/api/admin/reset-password', {
+            const response = await fetch('/api/admin/update-user-auth', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
                 uid: editingBarber.uid,
-                password: data.changePasswordDirectly
+                ...(emailChanged ? { email: data.email?.trim() } : {}),
+                ...(passwordChanged ? { password: data.changePasswordDirectly } : {})
               })
             });
             const resData = await response.json();
             if (!response.ok) {
-              throw new Error(resData.error || "Erro ao atualizar a senha no servidor.");
+              throw new Error(resData.error || "Erro ao atualizar os dados de autenticação no servidor.");
             }
-            toast.success("Senha do profissional alterada com sucesso!");
-          } catch (passError: any) {
-            console.error("Erro ao alterar senha:", passError);
-            toast.error(passError.message || "Não foi possível alterar a senha diretamente.");
+            if (passwordChanged) {
+              toast.success("Senha do profissional alterada com sucesso!");
+            }
+            if (emailChanged) {
+              toast.success("E-mail de autenticação do profissional alterado com sucesso!");
+            }
+          } catch (authError: any) {
+            console.error("Erro ao alterar dados de autenticação:", authError);
+            toast.error(authError.message || "Não foi possível alterar o e-mail ou a senha diretamente.");
+            throw authError; // Impedir que salve no Firestore com dados inconsistentes se a autenticação falhar
           }
           // Remove from payload to prevent saving to Firestore
           delete data.changePasswordDirectly;
@@ -669,6 +678,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [isSendingResetEmail, setIsSendingResetEmail] = useState(false);
+  const [generatedResetLink, setGeneratedResetLink] = useState('');
 
   // Novos campos: Pessoa Física Completa
   const [cpf, setCpf] = useState(barber?.cpf ?? '');
@@ -755,14 +765,42 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
   };
 
   const handleSendResetEmail = async () => {
-    if (!email.trim()) return;
+    if (!email.trim()) {
+      toast.error("Por favor, preencha o e-mail primeiro.");
+      return;
+    }
     setIsSendingResetEmail(true);
+    setGeneratedResetLink('');
     try {
       await sendPasswordResetEmail(auth, email.trim());
       toast.success(`E-mail de recuperação de senha enviado para ${email}!`);
     } catch (err: any) {
-      console.error(err);
-      toast.error(err.message || "Erro ao enviar e-mail de recuperação.");
+      console.warn("Client password reset email failed, attempting server-side fallback...", err);
+      try {
+        const response = await fetch('/api/admin/generate-reset-link', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email: email.trim() })
+        });
+        const resData = await response.json();
+        if (!response.ok) {
+          throw new Error(resData.error || "Erro ao gerar link no servidor.");
+        }
+        
+        setGeneratedResetLink(resData.link);
+        
+        try {
+          await navigator.clipboard.writeText(resData.link);
+          toast.success("O e-mail direto falhou, mas geramos o Link de Redefinição e o COPIAMOS para sua Área de Transferência!");
+        } catch (clipErr) {
+          toast.success("Link de redefinição de senha gerado com sucesso no servidor!");
+        }
+      } catch (serverErr: any) {
+        console.error("Server-side fallback also failed:", serverErr);
+        toast.error(serverErr.message || "Erro ao enviar e-mail ou gerar link de redefinição.");
+      }
     } finally {
       setIsSendingResetEmail(false);
     }
@@ -916,11 +954,10 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Email Principal</label>
                     <input 
                       required
-                      disabled={!!barber}
                       type="email" 
                       value={email}
                       onChange={e => setEmail(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition disabled:opacity-50"
+                      className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
                       placeholder="email@exemplo.com"
                     />
                   </div>
@@ -1045,6 +1082,29 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                       <p className="text-[9px] font-semibold text-slate-450 leading-relaxed">
                         Como administrador, você pode forçar uma nova senha diretamente para o profissional, ou enviar um link oficial de redefinição para o e-mail cadastrado dele.
                       </p>
+                      {generatedResetLink && (
+                        <div className="mt-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl space-y-2">
+                          <label className="text-[9px] font-black text-indigo-700 uppercase tracking-wider block">🔗 Link de Redefinição Gerado:</label>
+                          <div className="flex gap-2">
+                            <input
+                              readOnly
+                              type="text"
+                              value={generatedResetLink}
+                              className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-[10px] font-mono text-indigo-850 outline-none select-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(generatedResetLink);
+                                toast.success("Copiado!");
+                              }}
+                              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition"
+                            >
+                              Copiar
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

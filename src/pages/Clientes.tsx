@@ -74,13 +74,13 @@ export function Clientes() {
   useEffect(() => {
     const q = query(
       collection(db, 'usuarios'),
-      where('tipo', '==', 'cliente'),
-      orderBy('nome', 'asc')
+      where('tipo', '==', 'cliente')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserProfile));
-      setCustomers(docs);
+      const sorted = docs.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      setCustomers(sorted);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching customers:", error);
@@ -408,6 +408,11 @@ function CustomerCard({ customer, onViewDetails, onEdit }: CustomerCardProps) {
                   ⚠️ Fiado
                 </span>
               )}
+              {customer.bloqueadoParaAgendar && (
+                <span className="text-[9px] font-black bg-rose-50 text-rose-700 px-2 py-0.5 rounded-md border border-rose-100 uppercase tracking-normal">
+                  🚫 Bloqueado
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -469,7 +474,8 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
     address: customer?.address || '',
     observacoes: customer?.observacoes || customer?.observations || '',
     preferences: customer?.preferences || '',
-    ativo: customer?.ativo !== undefined ? customer.ativo : true
+    ativo: customer?.ativo !== undefined ? customer.ativo : true,
+    bloqueadoParaAgendar: customer?.bloqueadoParaAgendar || false
   });
 
   const { execute: handleSubmit, isLoading: isSaving } = useAsyncAction(async (e: React.FormEvent) => {
@@ -590,7 +596,7 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
             </div>
           </div>
 
-          <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-3xl border border-slate-100 shadow-inner">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 bg-slate-50 rounded-3xl border border-slate-100 shadow-inner">
             <label className="text-sm font-black text-primary uppercase tracking-tight">Status do Cliente:</label>
             <div className="flex gap-3">
               <button 
@@ -608,6 +614,31 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
               >
                 <UserX size={14} />
                 Inativo
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 bg-slate-50 rounded-3xl border border-slate-100 shadow-inner">
+            <div className="space-y-0.5">
+              <label className="text-sm font-black text-primary uppercase tracking-tight">Agendamento pelo App:</label>
+              <p className="text-[10px] text-slate-400 font-semibold leading-none">Se bloqueado, o cliente não conseguirá agendar pelo app.</p>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                type="button"
+                onClick={() => setFormData({...formData, bloqueadoParaAgendar: false})}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm ${!formData.bloqueadoParaAgendar ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-muted'}`}
+              >
+                <UserCheck size={14} />
+                Permitido
+              </button>
+              <button 
+                type="button"
+                onClick={() => setFormData({...formData, bloqueadoParaAgendar: true})}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm ${formData.bloqueadoParaAgendar ? 'bg-rose-600 text-white' : 'bg-white border border-slate-200 text-muted'}`}
+              >
+                <UserX size={14} />
+                Bloqueado
               </button>
             </div>
           </div>

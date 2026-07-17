@@ -19,7 +19,12 @@ import {
   Briefcase,
   ChevronRight,
   ShieldCheck,
-  Star
+  Star,
+  Instagram,
+  Facebook,
+  X,
+  Globe,
+  UserX
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
@@ -125,6 +130,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [tenantInfo, setTenantInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Portfolio / Landing Page States
+  const [selectedPortfolioTenant, setSelectedPortfolioTenant] = useState<any | null>(null);
+  const [showPortfolioModal, setShowPortfolioModal] = useState(false);
+
   // Profile Edit States
   const [editNome, setEditNome] = useState(profile.nome || '');
   const [editTelefone, setEditTelefone] = useState(profile.telefone || profile.phone || '');
@@ -139,6 +148,35 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       setEditObservacoes(profile.observacoes || profile.observations || '');
     }
   }, [profile]);
+
+  const [portfolioBarbers, setPortfolioBarbers] = useState<any[]>([]);
+  const [loadingPortfolioBarbers, setLoadingPortfolioBarbers] = useState(false);
+
+  useEffect(() => {
+    if (!selectedPortfolioTenant) {
+      setPortfolioBarbers([]);
+      return;
+    }
+    const fetchBarbers = async () => {
+      setLoadingPortfolioBarbers(true);
+      try {
+        const q = query(
+          collection(db, 'usuarios'),
+          where('tipo', '==', 'barbeiro'),
+          where('tenantId', '==', selectedPortfolioTenant.id),
+          where('ativo', '==', true)
+        );
+        const snap = await getDocs(q);
+        const list = snap.docs.map(doc => doc.data());
+        setPortfolioBarbers(list);
+      } catch (err) {
+        console.warn("Could not load portfolio barbers:", err);
+      } finally {
+        setLoadingPortfolioBarbers(false);
+      }
+    };
+    fetchBarbers();
+  }, [selectedPortfolioTenant]);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -380,6 +418,11 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   };
 
   const handleCreateAppointment = async () => {
+    if (profile?.bloqueadoParaAgendar) {
+      toast.error("Seu cadastro está bloqueado para agendamentos pelo app. Fale com a gerência.");
+      return;
+    }
+
     if (!selectedBarber || !selectedService || !selectedTime) {
       toast.error("Por favor, preencha todos os dados.");
       return;
@@ -536,7 +579,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   onChange={async (e) => {
                     await handleSelectTenant(e.target.value);
                   }}
-                  className="bg-slate-800 text-white text-[11px] font-bold border border-slate-700/60 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer max-w-[180px] sm:max-w-[240px] truncate"
+                  className="bg-slate-800 text-white text-[11px] font-bold border border-slate-700/60 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer max-w-[150px] truncate"
                 >
                   {allTenants.map((tenant) => (
                     <option key={tenant.id} value={tenant.id} className="bg-slate-900 text-white text-[11px]">
@@ -544,6 +587,19 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentTenant = allTenants.find(t => t.id.toLowerCase() === (tenantInfo?.id || getActiveTenantId()).toLowerCase()) || tenantInfo;
+                    if (currentTenant) {
+                      setSelectedPortfolioTenant(currentTenant);
+                      setShowPortfolioModal(true);
+                    }
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-lg ml-1 transition-all flex items-center gap-1 shadow-sm shrink-0"
+                >
+                  <Globe size={10} /> Conhecer
+                </button>
               </div>
             </div>
           </div>
@@ -761,9 +817,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                       return (
                         <div
                           key={item.id}
-                          onClick={async () => {
-                            if (isActive) return;
-                            await handleSelectTenant(item.id);
+                          onClick={() => {
+                            setSelectedPortfolioTenant(item);
+                            setShowPortfolioModal(true);
                           }}
                           className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-3 hover:shadow-md ${
                             isActive
@@ -801,14 +857,13 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                             </span>
                             <button
                               type="button"
-                              disabled={isActive}
                               className={`text-[9px] font-black uppercase tracking-wider px-3 py-1.5 rounded-xl transition-all ${
                                 isActive
-                                  ? 'text-indigo-600 bg-indigo-100/60 font-extrabold cursor-default'
+                                  ? 'text-indigo-600 bg-indigo-100/60 font-extrabold'
                                   : 'text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm'
                               }`}
                             >
-                              {isActive ? 'Selecionada' : 'Escolher Barbearia'}
+                              {isActive ? 'Ver Portfólio' : 'Conhecer & Agendar'}
                             </button>
                           </div>
                         </div>
@@ -939,15 +994,42 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-8"
             >
-              <div>
-                <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
-                  <Scissors className="text-amber-500" size={20} />
-                  Marcar Novo Horário
-                </h3>
-                <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                  Preencha o formulário interativo abaixo para sincronizar seu horário na agenda de forma instantânea.
-                </p>
-              </div>
+              {profile?.bloqueadoParaAgendar ? (
+                <div className="flex flex-col items-center justify-center text-center py-12 px-4 space-y-6">
+                  <div className="w-20 h-20 bg-rose-50 border border-rose-100 rounded-3xl flex items-center justify-center text-rose-500 shadow-inner">
+                    <UserX size={36} />
+                  </div>
+                  <div className="space-y-2 max-w-md">
+                    <h3 className="text-xl font-black text-slate-800 tracking-tight">Agendamento Suspenso</h3>
+                    <p className="text-sm font-medium text-slate-500 leading-relaxed">
+                      Seu cadastro está temporariamente bloqueado para realizar agendamentos automáticos pelo aplicativo.
+                    </p>
+                    <p className="text-xs font-semibold text-slate-400">
+                      Por favor, entre em contato diretamente com a equipe da barbearia para obter mais informações ou regularizar seu acesso.
+                    </p>
+                  </div>
+                  {(tenantInfo?.phone || tenantInfo?.whatsapp) && (
+                    <a
+                      href={`https://wa.me/${(tenantInfo.whatsapp || tenantInfo.phone || '').replace(/\D/g, '')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-emerald-600/10 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Phone size={14} /> Falar com Atendente
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
+                      <Scissors className="text-amber-500" size={20} />
+                      Marcar Novo Horário
+                    </h3>
+                    <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                      Preencha o formulário interativo abaixo para sincronizar seu horário na agenda de forma instantânea.
+                    </p>
+                  </div>
 
               {/* Step 1: Select Professional */}
               <div className="space-y-4">
@@ -1160,8 +1242,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   </button>
                 </motion.div>
               )}
-            </motion.div>
+            </>
           )}
+        </motion.div>
+      )}
 
           {/* TAB: HISTORY */}
           {activeTab === 'history' && (
@@ -1791,6 +1875,231 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           <span className="text-[8px] font-black uppercase tracking-wider">Perfil</span>
         </button>
       </nav>
+
+      {/* PORTFOLIO / LANDING PAGE MODAL */}
+      <AnimatePresence>
+        {showPortfolioModal && selectedPortfolioTenant && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-2xl rounded-[32px] overflow-hidden shadow-2xl relative flex flex-col max-h-[90vh]"
+            >
+              {/* Header Image Cover */}
+              <div className="relative h-56 md:h-64 bg-slate-900 flex-shrink-0">
+                <img
+                  src={selectedPortfolioTenant.coverImage || "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=1000&q=80"}
+                  alt="Fachada / Portfólio"
+                  className="w-full h-full object-cover opacity-80"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+                
+                {/* Close Button */}
+                <button
+                  onClick={() => setShowPortfolioModal(false)}
+                  className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 text-white rounded-full p-2.5 backdrop-blur-md transition-all active:scale-95 z-10"
+                >
+                  <X size={18} />
+                </button>
+
+                {/* Logo and Name Overlay */}
+                <div className="absolute bottom-6 left-6 right-6 flex items-end gap-4">
+                  <div className="w-16 h-16 bg-white rounded-2xl p-1 shadow-md flex-shrink-0 flex items-center justify-center overflow-hidden">
+                    {selectedPortfolioTenant.logoUrl ? (
+                      <img
+                        src={selectedPortfolioTenant.logoUrl}
+                        alt="Logo"
+                        className="w-full h-full object-cover rounded-xl"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-white font-black text-xl rounded-xl" style={{ backgroundColor: selectedPortfolioTenant.accentColor || '#6366F1' }}>
+                        {selectedPortfolioTenant.name?.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 text-white pb-1">
+                    <span className="text-[10px] uppercase font-black tracking-widest text-indigo-300">Portfólio & Apresentação</span>
+                    <h3 className="text-xl md:text-2xl font-black truncate leading-none mt-1">{selectedPortfolioTenant.name}</h3>
+                  </div>
+                </div>
+              </div>
+
+              {/* Scrollable Body */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 md:p-8 scrollbar-thin">
+                {/* About Section */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Nossa História</h4>
+                  <p className="text-sm font-medium text-slate-600 leading-relaxed">
+                    {selectedPortfolioTenant.aboutText || "Sua barbearia preferida com atendimento de altíssima qualidade, ambiente climatizado, café fresco e os melhores profissionais da região prontos para transformar seu visual!"}
+                  </p>
+                </div>
+
+                {/* Two Column details: Location and Hours */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Location Card */}
+                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+                      <MapPin size={14} className="text-indigo-600" />
+                      Onde nos Encontrar
+                    </h4>
+                    {selectedPortfolioTenant.address ? (
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-slate-700 leading-relaxed">
+                          {selectedPortfolioTenant.address.street}, {selectedPortfolioTenant.address.city} - {selectedPortfolioTenant.address.state}
+                        </p>
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedPortfolioTenant.name + " " + selectedPortfolioTenant.address.street + " " + selectedPortfolioTenant.address.city)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-wider"
+                        >
+                          <Globe size={11} /> Ver Rotas no Google Maps
+                        </a>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400 font-semibold">Endereço não cadastrado.</p>
+                    )}
+                  </div>
+
+                  {/* Hours Card */}
+                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+                      <Clock size={14} className="text-indigo-600" />
+                      Horário de Funcionamento
+                    </h4>
+                    <div className="text-xs font-bold text-slate-700 space-y-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-semibold">Segunda a Sexta:</span>
+                        <span>09:00 às 20:00</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-semibold">Sábados:</span>
+                        <span>09:00 às 18:00</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-semibold">Domingos:</span>
+                        <span className="text-rose-500 font-extrabold uppercase text-[10px]">Fechado</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Team Section */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Nossa Equipe de Profissionais</h4>
+                  {loadingPortfolioBarbers ? (
+                    <div className="flex items-center gap-2 py-2">
+                      <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-xs font-semibold text-slate-400">Carregando especialistas...</span>
+                    </div>
+                  ) : portfolioBarbers.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {portfolioBarbers.map((barber: any, index: number) => (
+                        <div key={index} className="flex items-center gap-2.5 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                          <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center overflow-hidden flex-shrink-0">
+                            {barber.fotoUrl || barber.avatarUrl ? (
+                              <img src={barber.fotoUrl || barber.avatarUrl} alt={barber.nome} className="w-full h-full object-cover" />
+                            ) : (
+                              barber.nome?.charAt(0).toUpperCase()
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <h5 className="text-[11px] font-black text-slate-700 truncate leading-none">{barber.nome}</h5>
+                            <span className="text-[8px] text-slate-400 uppercase tracking-widest font-bold">Especialista</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 font-semibold">Nenhum profissional listado para esta unidade.</p>
+                  )}
+                </div>
+
+                {/* Social and WhatsApp Links */}
+                <div className="flex items-center justify-between border-t border-slate-100 pt-5 flex-wrap gap-4">
+                  <div className="flex items-center gap-3">
+                    {selectedPortfolioTenant.whatsapp ? (
+                      <a
+                        href={`https://wa.me/${selectedPortfolioTenant.whatsapp.replace(/\D/g, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 p-3 rounded-full transition-all active:scale-95 border border-emerald-100 flex items-center gap-2 text-xs font-black uppercase tracking-wider"
+                      >
+                        <Phone size={14} /> WhatsApp
+                      </a>
+                    ) : selectedPortfolioTenant.phone ? (
+                      <a
+                        href={`https://wa.me/${selectedPortfolioTenant.phone.replace(/\D/g, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 p-3 rounded-full transition-all active:scale-95 border border-emerald-100 flex items-center gap-2 text-xs font-black uppercase tracking-wider"
+                      >
+                        <Phone size={14} /> WhatsApp
+                      </a>
+                    ) : null}
+                    {selectedPortfolioTenant.instagram && (
+                      <a
+                        href={selectedPortfolioTenant.instagram}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-3 rounded-full transition-all active:scale-95 border border-indigo-100"
+                        title="Instagram"
+                      >
+                        <Instagram size={14} />
+                      </a>
+                    )}
+                    {selectedPortfolioTenant.facebook && (
+                      <a
+                        href={selectedPortfolioTenant.facebook}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-blue-50 hover:bg-blue-100 text-blue-700 p-3 rounded-full transition-all active:scale-95 border border-blue-100"
+                        title="Facebook"
+                      >
+                        <Facebook size={14} />
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Booking Trigger Button */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowPortfolioModal(false)}
+                      className="px-5 py-3 text-xs font-black text-slate-400 hover:text-slate-600 uppercase tracking-wider transition-all"
+                    >
+                      Voltar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const isCurrentActive = (tenantInfo?.id || getActiveTenantId()).toLowerCase() === selectedPortfolioTenant.id.toLowerCase();
+                        if (!isCurrentActive) {
+                          await handleSelectTenant(selectedPortfolioTenant.id);
+                        }
+                        setShowPortfolioModal(false);
+                        setActiveTab('schedule');
+                        toast.success(`Você está navegando na unidade ${selectedPortfolioTenant.name}. Faça seu agendamento!`);
+                      }}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-600/10 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Calendar size={14} /> Agendar Agora
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

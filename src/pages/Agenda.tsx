@@ -137,6 +137,11 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
   }, [selectedAppointment]);
 
   useEffect(() => {
+    // Sync all recurring appointments
+    appointmentService.syncAllRecurringAppointments().catch(err => {
+      console.error("Error syncing recurring appointments on mount:", err);
+    });
+
     const unsubscribeBarbers = userService.subscribeToAllBarbers(true, (data) => {
       setBarbers(data);
     });

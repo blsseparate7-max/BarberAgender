@@ -5,6 +5,7 @@ import {
   getDocs, 
   addDoc, 
   updateDoc, 
+  deleteDoc,
   doc, 
   increment,
   runTransaction,
@@ -87,6 +88,7 @@ export const subscriptionService = {
         haircutsUsed: 0,
         beardsUsed: 0,
         lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
+        discounts: plan.discounts || [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
@@ -223,5 +225,122 @@ export const subscriptionService = {
     const q = query(collection(db, SUBSCRIPTIONS_COLLECTION));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+  },
+
+  async renewSubscription(id: string) {
+    const activeTenantId = getActiveTenantId();
+    return await runTransaction(db, async (transaction) => {
+      const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
+      const subSnap = await transaction.get(subRef);
+      if (!subSnap.exists()) throw new Error("Assinatura não encontrada");
+      const sub = subSnap.data() as Subscription;
+
+      const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
+      const planSnap = await transaction.get(planRef);
+      if (!planSnap.exists()) throw new Error("Plano do assinante não encontrado");
+      const plan = planSnap.data() as SubscriptionPlan;
+
+      const today = new Date();
+      const currentEndDate = new Date(sub.endDate + 'T12:00:00');
+      
+      let baseDate = today;
+      if (currentEndDate > today) {
+        baseDate = currentEndDate;
+      }
+      
+      const newEndDate = addMonths(baseDate, 1);
+
+      // Update subscription
+      transaction.update(subRef, {
+        endDate: format(newEndDate, 'yyyy-MM-dd'),
+        status: 'active',
+        haircutsUsed: 0,
+        beardsUsed: 0,
+        lastRenewalDate: format(today, 'yyyy-MM-dd'),
+        updatedAt: serverTimestamp()
+      });
+
+      // Create renewal financial transaction
+      const financialRef = doc(collection(db, 'financial_transactions'));
+      transaction.set(financialRef, {
+        tenantId: activeTenantId,
+        type: 'income',
+        amount: plan.price,
+        date: format(today, 'yyyy-MM-dd'),
+        category: 'Assinaturas',
+        description: `Renovação de Assinatura: ${plan.name} - ${sub.cliente_name}`,
+        paymentMethod: 'credito',
+        status: 'pago',
+        cliente_id: sub.cliente_id,
+        cliente_name: sub.cliente_name,
+        responsavel_id: sub.cliente_id,
+        responsavel_name: sub.cliente_name,
+        net_amount: plan.price,
+        fee_amount: 0,
+        settlement_date: format(today, 'yyyy-MM-dd'),
+        is_settled: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      return format(newEndDate, 'yyyy-MM-dd');
+    });
+  },
+
+  async processReactiveRenewals() {
+    const activeTenantId = getActiveTenantId();
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    
+    // Query active subscriptions of the current tenant
+    const q = query(
+      collection(db, SUBSCRIPTIONS_COLLECTION),
+      where('tenantId', '==', activeTenantId),
+      where('status', '==', 'active')
+    );
+    
+    const querySnapshot = await getDocs(q);
+    const results = { renewed: 0, expired: 0 };
+    
+    for (const d of querySnapshot.docs) {
+      const sub = d.data() as Subscription;
+      if (sub.endDate < todayStr) {
+        // Expiration date has passed!
+        if (sub.autoRenew) {
+          try {
+            // Trigger automatic renewal!
+            await this.renewSubscription(d.id);
+            results.renewed++;
+          } catch (err) {
+            console.error(`Erro ao renovar assinatura automática ${d.id}:`, err);
+          }
+        } else {
+          try {
+            // Mark as expired
+            await updateDoc(doc(db, SUBSCRIPTIONS_COLLECTION, d.id), {
+              status: 'expired',
+              updatedAt: serverTimestamp()
+            });
+            results.expired++;
+          } catch (err) {
+            console.error(`Erro ao marcar assinatura como expirada ${d.id}:`, err);
+          }
+        }
+      }
+    }
+    
+    return results;
+  },
+
+  async deleteSubscription(id: string) {
+    const docRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
+    await deleteDoc(docRef);
+  },
+
+  async toggleAutoRenew(id: string, autoRenew: boolean) {
+    const docRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
+    await updateDoc(docRef, {
+      autoRenew,
+      updatedAt: serverTimestamp()
+    });
   }
 };

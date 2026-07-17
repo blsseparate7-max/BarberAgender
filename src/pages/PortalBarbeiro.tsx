@@ -26,7 +26,12 @@ import {
   Unlock,
   Trash2,
   ArrowRightLeft,
-  Loader2
+  Loader2,
+  Filter,
+  ArrowUpRight,
+  ArrowDownRight,
+  Info,
+  ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from '../firebase';
@@ -39,7 +44,7 @@ import { agendaBlockService } from '../services/agendaBlockService';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
-import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock } from '../types';
+import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock, ProfessionalAdvance, ProfessionalPayment } from '../types';
 import { toast } from 'sonner';
 import { format, parse, addDays, startOfDay, endOfDay, isToday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -103,6 +108,15 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   
   // Tab states: Comissão
   const [commissions, setCommissions] = useState<Commission[]>([]);
+  const [advances, setAdvances] = useState<ProfessionalAdvance[]>([]);
+  const [payouts, setPayouts] = useState<ProfessionalPayment[]>([]);
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = new Date();
+    return format(new Date(d.getFullYear(), d.getMonth(), 1), 'yyyy-MM-dd');
+  });
+  const [endDate, setEndDate] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
+  const [statusFilter, setStatusFilter] = useState<'todos' | 'pendente' | 'pago'>('todos');
+  const [typeFilter, setTypeFilter] = useState<'todos' | 'comissao' | 'vale'>('todos');
   const [loadingCommissions, setLoadingCommissions] = useState(true);
   const [isEditingGoal, setIsEditingGoal] = useState(false);
   const [personalDailyGoal, setPersonalDailyGoal] = useState<number>(() => {
@@ -173,20 +187,24 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     return () => unsubscribe();
   }, []);
 
-  // 3. Fetch Commissions when entering Comissão tab
+  // 3. Fetch Commissions and Financial Data when entering Comissão tab
   useEffect(() => {
     if (activeTab === 'comissao' || activeTab === 'agenda') {
       setLoadingCommissions(true);
-      commissionService.getCommissions({ profissional_id: profile.uid })
-        .then(data => {
-          setCommissions(data);
-          setLoadingCommissions(false);
-        })
-        .catch(err => {
-          console.error(err);
-          toast.error('Erro ao carregar comissões.');
-          setLoadingCommissions(false);
-        });
+      Promise.all([
+        commissionService.getCommissions({ profissional_id: profile.uid }),
+        commissionService.getAdvances({ profissional_id: profile.uid }),
+        commissionService.getPayouts(profile.uid)
+      ]).then(([commsData, advsData, payoutsData]) => {
+        setCommissions(commsData);
+        setAdvances(advsData);
+        setPayouts(payoutsData);
+        setLoadingCommissions(false);
+      }).catch(err => {
+        console.error(err);
+        toast.error('Erro ao carregar dados financeiros.');
+        setLoadingCommissions(false);
+      });
     }
   }, [activeTab, profile.uid]);
 
@@ -312,10 +330,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
   // Calculate statistics for Commission tab
   const stats = React.useMemo(() => {
-    // 1. Pending commission only (Apenas comissão a receber)
+    // 1. Pending commission only (Apenas comissão a receber) - absolute total
     const toReceive = commissions
       .filter(c => c.status === 'pendente')
-      .reduce((sum, c) => sum + (c.amount || 0), 0);
+      .reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
 
     // 2. Customers served today (Tanto de cliente atendido hoje)
     const servedTodayCount = appointments
@@ -328,7 +346,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       .filter(c => c.date.startsWith(currentYearMonth));
       
     const receivedThisMonth = monthlyCommissions
-      .reduce((sum, c) => sum + (c.amount || 0), 0);
+      .reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
 
     return {
       toReceive,
@@ -336,6 +354,92 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       receivedThisMonth
     };
   }, [commissions, appointments]);
+
+  // Filtered commissions and advances based on the selected date range and status/type filters
+  const filteredCommissions = React.useMemo(() => {
+    return commissions.filter(c => {
+      // Date filter
+      if (startDate && c.date < startDate) return false;
+      if (endDate && c.date > endDate) return false;
+      // Status filter
+      if (statusFilter !== 'todos' && c.status !== statusFilter) return false;
+      return true;
+    });
+  }, [commissions, startDate, endDate, statusFilter]);
+
+  const filteredAdvances = React.useMemo(() => {
+    return advances.filter(a => {
+      // Date filter
+      if (startDate && a.date < startDate) return false;
+      if (endDate && a.date > endDate) return false;
+      // Status filter
+      if (statusFilter !== 'todos' && a.status !== statusFilter) return false;
+      return true;
+    });
+  }, [advances, startDate, endDate, statusFilter]);
+
+  // Combined and sorted transactions list for the detailed statement
+  const transactionsList = React.useMemo(() => {
+    const list: Array<
+      | { type: 'comissao'; id: string; date: string; title: string; clientName?: string; value: number; status: string; commissionType?: string }
+      | { type: 'vale'; id: string; date: string; title: string; description: string; value: number; status: string }
+    > = [];
+
+    if (typeFilter === 'todos' || typeFilter === 'comissao') {
+      filteredCommissions.forEach(c => {
+        list.push({
+          type: 'comissao',
+          id: c.id,
+          date: c.date,
+          title: c.servico_name || 'Comissão de Atendimento',
+          clientName: c.cliente_name || 'Cliente Avulso',
+          value: c.commission_value || c.amount || 0,
+          status: c.status || 'pendente',
+          commissionType: c.commission_type
+        });
+      });
+    }
+
+    if (typeFilter === 'todos' || typeFilter === 'vale') {
+      filteredAdvances.forEach(a => {
+        list.push({
+          type: 'vale',
+          id: a.id,
+          date: a.date,
+          title: 'Retirada / Vale',
+          description: a.description || 'Adiantamento',
+          value: a.amount || 0,
+          status: a.status || 'pendente'
+        });
+      });
+    }
+
+    // Sort transactions by date descending, then by value/id
+    return list.sort((a, b) => b.date.localeCompare(a.date));
+  }, [filteredCommissions, filteredAdvances, typeFilter]);
+
+  // Summaries based strictly on the selected filters
+  const periodStats = React.useMemo(() => {
+    const totalComissoesGeradas = filteredCommissions.reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
+    const totalComissoesPagas = filteredCommissions.filter(c => c.status === 'pago').reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
+    const totalComissoesPendentes = filteredCommissions.filter(c => c.status === 'pendente').reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
+    
+    const totalVales = filteredAdvances.reduce((sum, a) => sum + (a.amount || 0), 0);
+    const totalValesPagos = filteredAdvances.filter(a => a.status === 'pago').reduce((sum, a) => sum + (a.amount || 0), 0);
+    const totalValesPendentes = filteredAdvances.filter(a => a.status !== 'pago').reduce((sum, a) => sum + (a.amount || 0), 0);
+
+    const saldoLiquidoPeriodo = totalComissoesGeradas - totalVales;
+
+    return {
+      totalComissoesGeradas,
+      totalComissoesPagas,
+      totalComissoesPendentes,
+      totalVales,
+      totalValesPagos,
+      totalValesPendentes,
+      saldoLiquidoPeriodo
+    };
+  }, [filteredCommissions, filteredAdvances]);
 
   const handleLogout = async () => {
     try {
@@ -591,7 +695,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   Sua Comissão Acumulada
                 </span>
                 <span className="text-[9px] bg-indigo-500/20 text-indigo-300 font-bold px-2 py-0.5 rounded-full border border-indigo-500/20">
-                  Pendente
+                  Total Pendente Geral
                 </span>
               </div>
 
@@ -600,8 +704,147 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   R$ {stats.toReceive.toFixed(2)}
                 </p>
                 <p className="text-[10px] text-slate-400 font-semibold leading-relaxed mt-1">
-                  Este é o valor líquido total de comissão pendente a receber (já deduzidos os custos da barbearia).
+                  Este é o valor líquido total de todas as suas comissões pendentes acumuladas.
                 </p>
+              </div>
+            </div>
+
+            {/* Filtros de Data e Status */}
+            <div className="bg-white border border-slate-200/80 p-4.5 rounded-3xl shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+                  <Filter size={13} className="text-indigo-600" />
+                  Filtrar Produção & Vales
+                </span>
+                <button
+                  onClick={() => {
+                    const d = new Date();
+                    setStartDate(format(new Date(d.getFullYear(), d.getMonth(), 1), 'yyyy-MM-dd'));
+                    setEndDate(format(new Date(), 'yyyy-MM-dd'));
+                    setStatusFilter('todos');
+                    setTypeFilter('todos');
+                    toast.success('Filtros restaurados!');
+                  }}
+                  className="text-[10px] font-bold text-indigo-600 hover:underline uppercase"
+                >
+                  Limpar Filtros
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">De (Início)</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">Até (Fim)</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">Status de Repasse</label>
+                  <select
+                    value={statusFilter}
+                    onChange={(e: any) => setStatusFilter(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
+                  >
+                    <option value="todos">Todos os Status</option>
+                    <option value="pendente">Pendente (A receber)</option>
+                    <option value="pago">Pago (Repassado)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">Tipo de Registro</label>
+                  <select
+                    value={typeFilter}
+                    onChange={(e: any) => setTypeFilter(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
+                  >
+                    <option value="todos">Todos os Registros</option>
+                    <option value="comissao">Comissões Apenas</option>
+                    <option value="vale">Vales/Retiradas</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Resumo Financeiro do Período */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                    Gerado
+                  </p>
+                  <p className="text-sm font-black text-slate-800">
+                    R$ {periodStats.totalComissoesGeradas.toFixed(2)}
+                  </p>
+                </div>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Comissões produzidas</p>
+              </div>
+
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-[9px] font-black text-emerald-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Recebido
+                  </p>
+                  <p className="text-sm font-black text-emerald-600">
+                    R$ {periodStats.totalComissoesPagas.toFixed(2)}
+                  </p>
+                </div>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Valores repassados</p>
+              </div>
+
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-[9px] font-black text-amber-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    Pendente
+                  </p>
+                  <p className="text-sm font-black text-amber-600">
+                    R$ {periodStats.totalComissoesPendentes.toFixed(2)}
+                  </p>
+                </div>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">A receber no período</p>
+              </div>
+
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-[9px] font-black text-rose-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                    Retiradas
+                  </p>
+                  <p className="text-sm font-black text-rose-600">
+                    R$ {periodStats.totalVales.toFixed(2)}
+                  </p>
+                </div>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Adiantamentos pegos</p>
+              </div>
+
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm col-span-2 sm:col-span-1 flex flex-col justify-between">
+                <div>
+                  <p className="text-[9px] font-black text-indigo-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                    Saldo Líquido
+                  </p>
+                  <p className={`text-sm font-black ${periodStats.saldoLiquidoPeriodo >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                    R$ {periodStats.saldoLiquidoPeriodo.toFixed(2)}
+                  </p>
+                </div>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Comissão menos vales</p>
               </div>
             </div>
 
@@ -713,7 +956,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                       {/* Motivational text */}
                       <p className="text-[10px] text-slate-400 font-semibold italic">
                         {stats.receivedThisMonth >= personalMonthlyGoal 
-                          ? 'Extraordinário! Meta de comissão do mês alcançada! Que sucesso! 🚀' 
+                          ? 'Extraordinário! Meta de comissão do mês alcançada! Que success! 🚀' 
                           : `Falta R$ ${(personalMonthlyGoal - stats.receivedThisMonth).toFixed(2)} para alcançar a sua meta financeira pessoal.`}
                       </p>
                     </div>
@@ -722,55 +965,84 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               </AnimatePresence>
             </div>
 
-            {/* Commissions List Log */}
+            {/* Detailed Transaction Statement */}
             <div className="space-y-3">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">
-                Histórico Recente de Comissões
-              </h3>
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                  Extrato Detalhado do Período ({transactionsList.length})
+                </h3>
+                <span className="text-[9px] bg-indigo-50 text-indigo-700 font-extrabold px-2 py-0.5 rounded-full border border-indigo-100">
+                  Apenas Valores Líquidos
+                </span>
+              </div>
 
               {loadingCommissions ? (
                 <div className="bg-white border rounded-3xl p-10 text-center flex flex-col items-center justify-center gap-3 shadow-sm">
                   <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
                   <p className="text-xs font-bold text-slate-400 animate-pulse uppercase tracking-wider">Carregando repasses e histórico...</p>
                 </div>
-              ) : commissions.length === 0 ? (
+              ) : transactionsList.length === 0 ? (
                 <div className="bg-white border rounded-3xl p-10 text-center flex flex-col items-center justify-center gap-3 shadow-sm">
                   <DollarSign className="text-slate-300 w-10 h-10 mx-auto" />
-                  <h4 className="font-extrabold text-slate-700 text-sm">Sem comissões registradas</h4>
+                  <h4 className="font-extrabold text-slate-700 text-sm">Sem movimentações</h4>
                   <p className="text-slate-400 text-[10px] max-w-xs font-semibold leading-relaxed">
-                    Você ainda não possui comissões registradas no histórico recente da barbearia.
+                    Nenhuma comissão ou retirada encontrada no período selecionado com os filtros ativos.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {commissions.slice(0, 15).map((com) => (
-                    <div 
-                      key={com.id}
-                      className="bg-white border border-slate-200/80 p-3.5 rounded-2xl shadow-sm flex items-center justify-between"
-                    >
-                      <div className="space-y-0.5">
-                        <p className="text-xs font-black text-slate-800">
-                          {com.description || 'Comissão de Atendimento'}
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-bold">
-                          {com.date ? new Date(com.date + 'T12:00:00').toLocaleDateString('pt-BR') : 'Data Indefinida'}
-                        </p>
-                      </div>
+                  {transactionsList.map((item) => {
+                    const isComm = item.type === 'comissao';
+                    return (
+                      <div 
+                        key={`${item.type}-${item.id}`}
+                        className="bg-white border border-slate-200/80 p-3.5 rounded-2xl shadow-sm flex items-center justify-between hover:border-indigo-100 transition-colors duration-150"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                            isComm 
+                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
+                              : 'bg-rose-50 text-rose-600 border border-rose-100'
+                          }`}>
+                            {isComm ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-black text-slate-800 truncate">
+                              {item.title}
+                            </p>
+                            <p className="text-[10px] text-slate-400 font-bold flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                              <span>{item.date ? new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR') : 'Data Indefinida'}</span>
+                              {isComm && (
+                                <>
+                                  <span className="w-1 h-1 rounded-full bg-slate-300" />
+                                  <span className="text-slate-500 truncate">Cliente: {item.clientName}</span>
+                                </>
+                              )}
+                              {!isComm && (
+                                <>
+                                  <span className="w-1 h-1 rounded-full bg-slate-300" />
+                                  <span className="text-rose-500/80 font-bold truncate">{item.description}</span>
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        </div>
 
-                      <div className="text-right">
-                        <p className="text-sm font-black text-indigo-600">
-                          + R$ {(com.amount || 0).toFixed(2)}
-                        </p>
-                        <span className={`text-[8px] font-black uppercase tracking-wider ${
-                          com.status === 'pago' 
-                            ? 'text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100' 
-                            : 'text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100'
-                        }`}>
-                          {com.status || 'pendente'}
-                        </span>
+                        <div className="text-right shrink-0 ml-3">
+                          <p className={`text-xs font-black ${isComm ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {isComm ? '+' : '-'} R$ {item.value.toFixed(2)}
+                          </p>
+                          <span className={`text-[8px] font-black uppercase tracking-wider ${
+                            item.status === 'pago' 
+                              ? 'text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100' 
+                              : 'text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100'
+                          }`}>
+                            {item.status || 'pendente'}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

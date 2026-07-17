@@ -14,7 +14,8 @@ import {
   increment,
   runTransaction,
   writeBatch,
-  onSnapshot
+  onSnapshot,
+  deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Appointment, AppointmentStatus, UserProfile, PaymentMethod, ProfessionalSchedule, AgendaBlock, RecurringAppointment } from '../types';
@@ -643,7 +644,38 @@ export const appointmentService = {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+    // Trigger generation for this newly created recurrence immediately
+    const fullRec: RecurringAppointment = {
+      id: docRef.id,
+      ...data,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as any;
+    await this.generateAppointmentsForRecurring(fullRec).catch(err => console.error("Error generating initial appointments:", err));
     return docRef.id;
+  },
+
+  async deleteRecurringAppointment(id: string) {
+    // Delete the recurring record itself
+    await deleteDoc(doc(db, RECURRING_COLLECTION, id));
+    
+    // Also, optionally delete future 'recorrente' appointments that are in 'agendamento' status
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const q = query(
+      collection(db, COLLECTION),
+      where('tenantId', '==', getActiveTenantId()),
+      where('recurringAppointmentId', '==', id),
+      where('date', '>=', todayStr)
+    );
+    const snap = await getDocs(q);
+    const batch = writeBatch(db);
+    snap.docs.forEach(docSnap => {
+      const appData = docSnap.data();
+      if (appData.status === 'agendado') {
+        batch.delete(docSnap.ref);
+      }
+    });
+    await batch.commit();
   },
 
   async getRecurringAppointments(profissional_id?: string) {
@@ -653,5 +685,104 @@ export const appointmentService = {
     }
     const snap = await getDocs(q);
     return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RecurringAppointment));
+  },
+
+  async generateAppointmentsForRecurring(recurring: RecurringAppointment) {
+    const today = startOfDay(new Date());
+    const endWindow = addDays(today, 30); // 30 days window
+    const startDateObj = parse(recurring.startDate, 'yyyy-MM-dd', new Date());
+    const endDateObj = recurring.endDate ? parse(recurring.endDate, 'yyyy-MM-dd', new Date()) : null;
+
+    const targetDates: string[] = [];
+
+    // Let's loop for the next 30 days
+    let current = today;
+    while (isBefore(current, endWindow) || isEqual(current, endWindow)) {
+      if (isBefore(current, startDateObj)) {
+        current = addDays(current, 1);
+        continue;
+      }
+      if (endDateObj && isAfter(current, endDateObj)) {
+        break;
+      }
+
+      const dateStr = format(current, 'yyyy-MM-dd');
+      if (recurring.excludedDates?.includes(dateStr)) {
+        current = addDays(current, 1);
+        continue;
+      }
+
+      const dayOfWeek = getDay(current); // 0 = Sunday, 6 = Saturday
+      const dayOfMonth = current.getDate();
+
+      if (recurring.pattern === 'weekly') {
+        if (recurring.dayOfWeek === dayOfWeek) {
+          targetDates.push(dateStr);
+        }
+      } else if (recurring.pattern === 'biweekly') {
+        if (recurring.dayOfWeek === dayOfWeek) {
+          const diffMs = current.getTime() - startDateObj.getTime();
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          const diffWeeks = Math.floor(diffDays / 7);
+          if (diffWeeks % 2 === 0) {
+            targetDates.push(dateStr);
+          }
+        }
+      } else if (recurring.pattern === 'monthly') {
+        if (recurring.dayOfMonth === dayOfMonth) {
+          targetDates.push(dateStr);
+        }
+      }
+
+      current = addDays(current, 1);
+    }
+
+    // Now, for each target date, check if appointment already exists
+    for (const date of targetDates) {
+      const q = query(
+        collection(db, COLLECTION),
+        where('tenantId', '==', getActiveTenantId()),
+        where('recurringAppointmentId', '==', recurring.id),
+        where('date', '==', date)
+      );
+      const snap = await getDocs(q);
+      
+      if (snap.empty) {
+        const template = recurring.appointmentTemplate;
+        
+        // Double check if professional is available for this slot
+        const avail = await this.checkAvailability(
+          template.profissional_id,
+          date,
+          template.startTime,
+          template.endTime
+        );
+
+        if (avail.available) {
+          await addDoc(collection(db, COLLECTION), {
+            ...template,
+            date,
+            origin: 'recorrente',
+            recurringAppointmentId: recurring.id,
+            tenantId: getActiveTenantId(),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+    }
+  },
+
+  async syncAllRecurringAppointments() {
+    try {
+      const recurringList = await this.getRecurringAppointments();
+      for (const rec of recurringList) {
+        await this.generateAppointmentsForRecurring(rec).catch(err => 
+          console.error("Error generating for", rec.id, err)
+        );
+      }
+    } catch (err) {
+      console.error("Error syncing recurring appointments:", err);
+    }
   }
 };

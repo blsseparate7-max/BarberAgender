@@ -274,6 +274,11 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       cnpj: formData.get('cnpj') as string,
       accentColor,
       logoUrl,
+      instagram: formData.get('instagram') as string,
+      facebook: formData.get('facebook') as string,
+      whatsapp: formData.get('whatsapp') as string,
+      aboutText: formData.get('aboutText') as string,
+      coverImage: formData.get('coverImage') as string,
       address: {
         street: formData.get('street') as string,
         city: formData.get('city') as string,
@@ -328,8 +333,11 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     );
   }
 
-  // Filter users lists based on search
+  // Filter users lists based on search (excluding clients, managed in Clientes tab)
   const filteredUsers = users.filter(u => {
+    const role = u.tipo || 'cliente';
+    if (role === 'cliente') return false;
+
     const nome = u.nome || u.name || '';
     const email = u.email || '';
     const phone = u.telefone || u.phone || '';
@@ -631,6 +639,70 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                         placeholder="00.000.000/0000-00" 
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                       />
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-100 pt-8 mt-8 space-y-6">
+                    <div>
+                      <h4 className="text-sm font-bold text-primary">Apresentação & Portfólio (Landing Page do Cliente)</h4>
+                      <p className="text-xs text-muted mt-1">Insira informações adicionais para criar uma mini landing page personalizada onde os clientes conhecem sua barbearia antes de agendar.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Sobre a Barbearia (Breve Descrição)</label>
+                        <textarea 
+                          name="aboutText"
+                          defaultValue={tenant?.aboutText || ""}
+                          placeholder="Ex: Fundada em 2018, nossa barbearia combina o estilo clássico com as técnicas mais modernas..."
+                          rows={3}
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner resize-none"
+                        />
+                      </div>
+
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">URL da Imagem de Capa / Fachada (Portfólio)</label>
+                        <input 
+                          name="coverImage"
+                          type="text"
+                          defaultValue={tenant?.coverImage || ""}
+                          placeholder="https://exemplo.com/sua-fachada-ou-portfolio.jpg"
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">WhatsApp para Atendimento (Ex: 11999998888)</label>
+                        <input 
+                          name="whatsapp"
+                          type="text"
+                          defaultValue={tenant?.whatsapp || ""}
+                          placeholder="Somente números com DDD"
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Link do Instagram (Completo)</label>
+                        <input 
+                          name="instagram"
+                          type="text"
+                          defaultValue={tenant?.instagram || ""}
+                          placeholder="https://instagram.com/seu_perfil"
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Link do Facebook (Completo)</label>
+                        <input 
+                          name="facebook"
+                          type="text"
+                          defaultValue={tenant?.facebook || ""}
+                          placeholder="https://facebook.com/sua_pagina"
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -984,7 +1056,6 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                                     <option value="admin">Administrador</option>
                                     <option value="gerente">Gerente</option>
                                     <option value="barbeiro">Barbeiro</option>
-                                    <option value="cliente">Cliente</option>
                                   </select>
                                 </td>
                                 <td className="p-5">

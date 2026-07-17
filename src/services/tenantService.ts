@@ -27,6 +27,11 @@ export interface TenantProfile {
   isActive: boolean;
   createdAt?: any;
   updatedAt?: any;
+  instagram?: string;
+  facebook?: string;
+  whatsapp?: string;
+  aboutText?: string;
+  coverImage?: string;
 }
 
 export function getActiveTenantId(): string {

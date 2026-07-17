@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp, getApps, App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import admin from "firebase-admin";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,14 +17,29 @@ function getFirebaseAdmin() {
     try {
       const apps = getApps();
       if (apps.length === 0) {
+        // Try applicationDefault first for standard GCP/Cloud Run context
         adminApp = initializeApp({
+          credential: (admin as any).credential.applicationDefault(),
           projectId: "gbagender"
         });
       } else {
         adminApp = apps[0];
       }
     } catch (err) {
-      console.error("Error initializing Firebase Admin SDK:", err);
+      console.error("Error initializing Firebase Admin SDK with applicationDefault:", err);
+      // Fallback try without applicationDefault
+      try {
+        const apps = getApps();
+        if (apps.length === 0) {
+          adminApp = initializeApp({
+            projectId: "gbagender"
+          });
+        } else {
+          adminApp = apps[0];
+        }
+      } catch (innerErr) {
+        console.error("Critical: Fallback Firebase Admin initialization also failed:", innerErr);
+      }
     }
   }
   return adminApp;
@@ -74,6 +90,85 @@ async function startServer() {
       console.error("Erro ao alterar senha do barbeiro no servidor:", error);
       res.status(500).json({ 
         error: error.message || "Erro desconhecido ao alterar a senha.",
+        code: error.code || "unknown"
+      });
+    }
+  });
+
+  // API Route to update another user's auth (email and/or password) using Firebase Admin
+  app.post("/api/admin/update-user-auth", async (req, res) => {
+    try {
+      const { uid, email, password } = req.body;
+      if (!uid) {
+        return res.status(400).json({ error: "UID é obrigatório." });
+      }
+
+      const updateParams: any = {};
+      if (email) {
+        updateParams.email = email.trim();
+      }
+      if (password) {
+        if (password.length < 6) {
+          return res.status(400).json({ error: "A senha deve ter pelo menos 6 caracteres." });
+        }
+        updateParams.password = password;
+      }
+
+      if (Object.keys(updateParams).length === 0) {
+        return res.json({ success: true, message: "Nenhum campo para atualizar na autenticação." });
+      }
+
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(500).json({ 
+          error: "Não foi possível inicializar o Firebase Admin SDK no servidor. Use o e-mail de recuperação para senha." 
+        });
+      }
+
+      await getAuth(fbAdmin).updateUser(uid, updateParams);
+      res.json({ success: true, message: "Autenticação atualizada com sucesso!" });
+    } catch (error: any) {
+      console.error("Erro ao atualizar autenticação do barbeiro no servidor:", error);
+      
+      let clientError = "Erro ao atualizar dados de acesso.";
+      if (error.code === 'auth/email-already-exists') {
+        clientError = 'Este e-mail já está sendo utilizado por outro usuário.';
+      } else if (error.code === 'auth/invalid-email') {
+        clientError = 'O e-mail fornecido é inválido.';
+      } else if (error.code === 'auth/weak-password') {
+        clientError = 'A senha é muito fraca. Deve ter no mínimo 6 caracteres.';
+      } else if (error.message) {
+        clientError = error.message;
+      }
+
+      res.status(500).json({ 
+        error: clientError,
+        code: error.code || "unknown"
+      });
+    }
+  });
+
+  // API Route to generate a password reset link using Firebase Admin
+  app.post("/api/admin/generate-reset-link", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: "E-mail é obrigatório." });
+      }
+
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(500).json({ 
+          error: "Não foi possível inicializar o Firebase Admin SDK no servidor." 
+        });
+      }
+
+      const link = await getAuth(fbAdmin).generatePasswordResetLink(email.trim());
+      res.json({ success: true, link });
+    } catch (error: any) {
+      console.error("Erro ao gerar link de redefinição no servidor:", error);
+      res.status(500).json({ 
+        error: error.message || "Erro ao gerar link de redefinição de senha.",
         code: error.code || "unknown"
       });
     }

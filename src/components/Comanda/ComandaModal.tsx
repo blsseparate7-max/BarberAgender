@@ -33,7 +33,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt } from '../../types';
+import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt, SubscriptionPlan, SubscriptionDiscount } from '../../types';
+import { getActiveTenantId } from '../../services/tenantService';
 import { comandaService } from '../../services/comandaService';
 import { debtService } from '../../services/debtService';
 import { marketingService } from '../../services/marketingService';
@@ -237,6 +238,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   const [clientPackages, setClientPackages] = useState<any[]>([]);
   const [clientSubscriptions, setClientSubscriptions] = useState<any[]>([]);
+  const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
 
   useEffect(() => {
     if (comanda?.cliente_id) {
@@ -249,6 +251,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       const unsubSubscriptions = onSnapshot(qSubscriptions, (snap) => {
         setClientSubscriptions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       });
+
+      getDocs(query(collection(db, 'subscription_plans'), where('tenantId', '==', getActiveTenantId())))
+        .then(snap => {
+          setSubscriptionPlans(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SubscriptionPlan)));
+        })
+        .catch(err => console.error("Erro ao carregar planos de assinatura no ComandaModal:", err));
 
       return () => {
         unsubPackages();
@@ -409,6 +417,41 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
+  const getSubscriptionDiscount = (item: Service | Product, itemType: 'servico' | 'product'): number => {
+    const activeSub = clientSubscriptions.find(s => s.status === 'active');
+    if (!activeSub) return 0;
+
+    let discounts: SubscriptionDiscount[] = activeSub.discounts || [];
+    if ((!discounts || discounts.length === 0) && subscriptionPlans.length > 0) {
+      const plan = subscriptionPlans.find(p => p.id === activeSub.plano_id);
+      if (plan && plan.discounts) {
+        discounts = plan.discounts;
+      }
+    }
+
+    if (!discounts || discounts.length === 0) return 0;
+
+    // Match order:
+    // 1. Exact match (specific service or specific product)
+    // 2. Generic match (all_services or all_products)
+    
+    // Exact match search
+    const exactPrefix = itemType === 'servico' ? `servico_${item.id}` : `product_${item.id}`;
+    const exactDiscount = discounts.find(d => d.itemId === exactPrefix || d.itemId === item.id);
+    if (exactDiscount) {
+      return exactDiscount.percentage;
+    }
+
+    // Generic match search
+    const genericType = itemType === 'servico' ? 'all_services' : 'all_products';
+    const genericDiscount = discounts.find(d => d.itemId === genericType || d.itemType === genericType);
+    if (genericDiscount) {
+      return genericDiscount.percentage;
+    }
+
+    return 0;
+  };
+
   const addItem = async (item: Service | Product, type: 'servico' | 'product', isCortesia: boolean = false) => {
     if (!comanda || !user || loading) return;
 
@@ -420,14 +463,21 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     // Duplication protection: check if item is already being added
     setLoading(true);
     try {
-      const unitPrice = type === 'servico' ? (item as Service).price : (item as Product).salePrice;
+      const originalPrice = type === 'servico' ? (item as Service).preco ?? (item as Service).price ?? 0 : (item as Product).salePrice ?? 0;
+      const subDiscount = getSubscriptionDiscount(item, type);
+      const unitPrice = subDiscount > 0 ? originalPrice * (1 - subDiscount / 100) : originalPrice;
       const totalPrice = isCortesia ? 0 : unitPrice;
+
+      if (subDiscount > 0 && !isCortesia) {
+        const itemDisplayName = (item as Service).nome || item.name || '';
+        toast.info(`Desconto de ${subDiscount}% de assinante aplicado ao item: ${itemDisplayName}!`);
+      }
 
       const newItem: ComandaItem = {
         id: `${item.id}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         type: type === 'servico' ? 'servico' : 'produto',
         referencia_id: item.id,
-        name: item.name,
+        name: (item as Service).nome || item.name || '',
         quantity: 1,
         unitPrice,
         totalPrice,

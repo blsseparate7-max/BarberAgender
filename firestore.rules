@@ -275,6 +275,10 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
 
+    match /subscription_commission_runs/{runId} {
+      allow read, write: if isStaff();
+    }
+
     // --- Marketing e Automações ---
     match /marketing_campaigns/{campaignId} {
       allow read, write: if isStaff();

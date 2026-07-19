@@ -337,7 +337,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
       // Load active barbers
       try {
-        const activeBarbers = await userService.getAllBarbers(true);
+        const activeBarbers = await userService.getAllBarbers(true, activeTenantId);
         setBarbers(activeBarbers.filter(b => b.showInPortal !== false));
       } catch (err) {
         console.warn("Could not load barbers list:", err);
@@ -345,7 +345,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
       // Load active services
       try {
-        const activeServices = await serviceService.getServices(true);
+        const activeServices = await serviceService.getServices(true, undefined, activeTenantId);
         setServices(activeServices.filter(s => s.active !== false && s.showInPortal !== false));
       } catch (err) {
         console.warn("Could not load services list:", err);

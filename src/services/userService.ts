@@ -24,11 +24,12 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const COLLECTION = 'usuarios';
 
 export const userService = {
-  async getUsersByRole(role: UserRole, onlyActive = true) {
+  async getUsersByRole(role: UserRole, onlyActive = true, tenantId?: string) {
+    const tid = tenantId || getActiveTenantId();
     let q = query(
       collection(db, COLLECTION), 
       where('tipo', '==', role),
-      where('tenantId', '==', getActiveTenantId())
+      where('tenantId', '==', tid)
     );
     
     if (onlyActive) {
@@ -66,8 +67,19 @@ export const userService = {
     return this.subscribeToUsersByRole('cliente', onlyActive, callback);
   },
 
-  async getAllBarbers(onlyActive = true) {
-    return this.getUsersByRole('barbeiro', onlyActive);
+  async getAllBarbers(onlyActive = true, tenantId?: string) {
+    const tid = tenantId || getActiveTenantId();
+    let q = query(
+      collection(db, COLLECTION),
+      where('tipo', 'in', ['barbeiro', 'gerente']),
+      where('tenantId', '==', tid)
+    );
+    if (onlyActive) {
+      q = query(q, where('ativo', '==', true));
+    }
+    const querySnapshot = await getDocs(q);
+    const users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+    return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
   async getAllClients(onlyActive = true) {

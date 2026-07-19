@@ -29,6 +29,9 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [refCode, setRefCode] = useState<string | null>(null);
+  const [linkClientId, setLinkClientId] = useState<string | null>(null);
+  const [linkingProfile, setLinkingProfile] = useState<any | null>(null);
+  const [loadingLinkingProfile, setLoadingLinkingProfile] = useState(false);
 
   useEffect(() => {
     setRole(initialRole);
@@ -40,7 +43,32 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
     if (ref) {
       setRefCode(ref);
     }
+
+    const linkId = params.get('link_client_id') || params.get('link_id');
+    if (linkId) {
+      setLinkClientId(linkId);
+      loadLinkingProfile(linkId);
+    }
   }, []);
+
+  const loadLinkingProfile = async (id: string) => {
+    setLoadingLinkingProfile(true);
+    try {
+      const snap = await getDoc(doc(db, 'usuarios', id));
+      if (snap.exists()) {
+        const data = snap.data();
+        setLinkingProfile(data);
+        setName(data.nome || '');
+        if (data.email && !data.email.includes('placeholder') && !data.email.includes('manual_')) {
+          setEmail(data.email);
+        }
+      }
+    } catch (err) {
+      console.warn("Erro ao buscar perfil para vinculação:", err);
+    } finally {
+      setLoadingLinkingProfile(false);
+    }
+  };
 
   const cleanSlug = (text: string) => {
     return text
@@ -54,6 +82,135 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
 
   const handleSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setTenantSlug(cleanSlug(e.target.value));
+  };
+
+  const migrateClientProfile = async (userUid: string, userEmail: string, userDisplayName: string) => {
+    const { doc, setDoc, getDoc, deleteDoc, collection, query, where, getDocs, writeBatch, serverTimestamp } = await import('firebase/firestore');
+    
+    // Fetch manual client profile
+    const oldDocRef = doc(db, 'usuarios', linkClientId || '');
+    const oldSnap = await getDoc(oldDocRef);
+    let oldData: any = {};
+    if (oldSnap.exists()) {
+      oldData = oldSnap.data();
+    }
+
+    const resolvedName = name || userDisplayName || oldData.nome || '';
+    const resolvedEmail = userEmail || email || oldData.email || '';
+    const activeTenantId = getActiveTenantId();
+
+    // 1. Create/override the new profile under the Auth UID
+    await setDoc(doc(db, 'usuarios', userUid), {
+      ...oldData,
+      uid: userUid,
+      nome: resolvedName,
+      email: resolvedEmail.toLowerCase().trim(),
+      tipo: 'cliente',
+      ativo: true,
+      tenantId: activeTenantId,
+      updatedAt: serverTimestamp(),
+    });
+
+    // 2. Delete old manual client doc if different
+    if (linkClientId && linkClientId !== userUid) {
+      await deleteDoc(oldDocRef);
+    }
+
+    // 3. Migrate appointments
+    const appointmentsRef = collection(db, 'appointments');
+    const apptQuery = query(appointmentsRef, where('cliente_id', '==', linkClientId));
+    const apptSnapshot = await getDocs(apptQuery);
+    if (!apptSnapshot.empty) {
+      const batch = writeBatch(db);
+      apptSnapshot.docs.forEach((docSnap) => {
+        batch.update(docSnap.ref, { 
+          cliente_id: userUid,
+          cliente_name: resolvedName,
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    }
+
+    // 4. Migrate loyalty record
+    const oldLoyaltyId = `${activeTenantId}_${linkClientId}`;
+    const newLoyaltyId = `${activeTenantId}_${userUid}`;
+    if (oldLoyaltyId !== newLoyaltyId) {
+      const oldLoyaltyRef = doc(db, 'loyalty_points', oldLoyaltyId);
+      const oldLoyaltySnap = await getDoc(oldLoyaltyRef);
+      if (oldLoyaltySnap.exists()) {
+        const oldLoyaltyData = oldLoyaltySnap.data();
+        await setDoc(doc(db, 'loyalty_points', newLoyaltyId), {
+          ...oldLoyaltyData,
+          cliente_id: userUid,
+          updatedAt: serverTimestamp()
+        });
+        await deleteDoc(oldLoyaltyRef);
+      }
+    }
+
+    // 5. Migrate loyalty history
+    const loyaltyHistoryRef = collection(db, 'loyalty_history');
+    const historyQuery = query(loyaltyHistoryRef, where('cliente_id', '==', linkClientId));
+    const historySnapshot = await getDocs(historyQuery);
+    if (!historySnapshot.empty) {
+      const batch = writeBatch(db);
+      historySnapshot.docs.forEach((docSnap) => {
+        batch.update(docSnap.ref, { 
+          cliente_id: userUid,
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    }
+
+    // 6. Migrate package sales (pacotes_vendas)
+    const pkgsRef = collection(db, 'pacotes_vendas');
+    const pkgsQuery = query(pkgsRef, where('clientId', '==', linkClientId));
+    const pkgsSnapshot = await getDocs(pkgsQuery);
+    if (!pkgsSnapshot.empty) {
+      const batch = writeBatch(db);
+      pkgsSnapshot.docs.forEach((docSnap) => {
+        batch.update(docSnap.ref, { 
+          clientId: userUid,
+          clientName: resolvedName,
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    }
+
+    // 7. Migrate subscriptions (assinaturas)
+    const subsRef = collection(db, 'assinaturas');
+    const subsQuery = query(subsRef, where('clientId', '==', linkClientId));
+    const subsSnapshot = await getDocs(subsQuery);
+    if (!subsSnapshot.empty) {
+      const batch = writeBatch(db);
+      subsSnapshot.docs.forEach((docSnap) => {
+        batch.update(docSnap.ref, { 
+          clientId: userUid,
+          clientName: resolvedName,
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    }
+
+    // 8. Migrate comandas
+    const comandasRef = collection(db, 'comandas');
+    const comandasQuery = query(comandasRef, where('cliente_id', '==', linkClientId));
+    const comandasSnapshot = await getDocs(comandasQuery);
+    if (!comandasSnapshot.empty) {
+      const batch = writeBatch(db);
+      comandasSnapshot.docs.forEach((docSnap) => {
+        batch.update(docSnap.ref, { 
+          cliente_id: userUid,
+          cliente_nome: resolvedName,
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -123,60 +280,64 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       }
 
       // 4. Create or migrate user profile in Firestore
-      const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
-      const usersRef = collection(db, 'usuarios');
-      const q = query(usersRef, where('email', '==', email.toLowerCase().trim()));
-      const querySnapshot = await getDocs(q);
-
-      if (!querySnapshot.empty) {
-        // Found pre-registered user (like a barber or manager)!
-        const preRegisteredDoc = querySnapshot.docs[0];
-        const preRegisteredData = preRegisteredDoc.data();
-        const preRegisteredId = preRegisteredDoc.id;
-
-        // Save under the new Auth UID
-        await setDoc(doc(db, 'usuarios', user.uid), {
-          ...preRegisteredData,
-          uid: user.uid,
-          nome: name || preRegisteredData.nome,
-          email: user.email?.toLowerCase().trim(),
-          ativo: true,
-          updatedAt: serverTimestamp()
-        });
-
-        // Delete old document if different
-        if (preRegisteredId !== user.uid) {
-          await deleteDoc(doc(db, 'usuarios', preRegisteredId));
-        }
-
-        // Migrate appointments (appointments)
-        const appointmentsRef = collection(db, 'appointments');
-        const apptQuery = query(appointmentsRef, where('barbeiroId', '==', preRegisteredId));
-        const apptSnapshot = await getDocs(apptQuery);
-        for (const apptDoc of apptSnapshot.docs) {
-          await setDoc(doc(db, 'appointments', apptDoc.id), { barbeiroId: user.uid }, { merge: true });
-        }
-
-        // Migrate commissions (commissions)
-        const comissoesRef = collection(db, 'commissions');
-        const comQuery = query(comissoesRef, where('barbeiroId', '==', preRegisteredId));
-        const comSnapshot = await getDocs(comQuery);
-        for (const comDoc of comSnapshot.docs) {
-          await setDoc(doc(db, 'commissions', comDoc.id), { barbeiroId: user.uid }, { merge: true });
-        }
+      if (linkClientId) {
+        await migrateClientProfile(user.uid, user.email || email, name);
       } else {
-        // Standard user creation
-        await setDoc(doc(db, 'usuarios', user.uid), {
-          uid: user.uid,
-          email: user.email?.toLowerCase().trim() || email.toLowerCase().trim(),
-          nome: name,
-          tipo: role, // 'admin' or 'cliente'
-          ativo: true,
-          tenantId: activeTenantId,
-          indicadoPor: refCode || null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
+        const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
+        const usersRef = collection(db, 'usuarios');
+        const q = query(usersRef, where('email', '==', email.toLowerCase().trim()));
+        const querySnapshot = await getDocs(q);
+
+        if (!querySnapshot.empty) {
+          // Found pre-registered user (like a barber or manager)!
+          const preRegisteredDoc = querySnapshot.docs[0];
+          const preRegisteredData = preRegisteredDoc.data();
+          const preRegisteredId = preRegisteredDoc.id;
+
+          // Save under the new Auth UID
+          await setDoc(doc(db, 'usuarios', user.uid), {
+            ...preRegisteredData,
+            uid: user.uid,
+            nome: name || preRegisteredData.nome,
+            email: user.email?.toLowerCase().trim(),
+            ativo: true,
+            updatedAt: serverTimestamp()
+          });
+
+          // Delete old document if different
+          if (preRegisteredId !== user.uid) {
+            await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+          }
+
+          // Migrate appointments (appointments)
+          const appointmentsRef = collection(db, 'appointments');
+          const apptQuery = query(appointmentsRef, where('barbeiroId', '==', preRegisteredId));
+          const apptSnapshot = await getDocs(apptQuery);
+          for (const apptDoc of apptSnapshot.docs) {
+            await setDoc(doc(db, 'appointments', apptDoc.id), { barbeiroId: user.uid }, { merge: true });
+          }
+
+          // Migrate commissions (commissions)
+          const comissoesRef = collection(db, 'commissions');
+          const comQuery = query(comissoesRef, where('barbeiroId', '==', preRegisteredId));
+          const comSnapshot = await getDocs(comQuery);
+          for (const comDoc of comSnapshot.docs) {
+            await setDoc(doc(db, 'commissions', comDoc.id), { barbeiroId: user.uid }, { merge: true });
+          }
+        } else {
+          // Standard user creation
+          await setDoc(doc(db, 'usuarios', user.uid), {
+            uid: user.uid,
+            email: user.email?.toLowerCase().trim() || email.toLowerCase().trim(),
+            nome: name,
+            tipo: role, // 'admin' or 'cliente'
+            ativo: true,
+            tenantId: activeTenantId,
+            indicadoPor: refCode || null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
 
     } catch (err: any) {
@@ -206,57 +367,61 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       const docSnap = await getDoc(docRef);
   
       if (!docSnap.exists()) {
-        const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
-        const usersRef = collection(db, 'usuarios');
-        const q = query(usersRef, where('email', '==', user.email?.toLowerCase().trim()));
-        const querySnapshot = await getDocs(q);
-
-        if (!querySnapshot.empty) {
-          // Found pre-registered user (like a barber or manager)!
-          const preRegisteredDoc = querySnapshot.docs[0];
-          const preRegisteredData = preRegisteredDoc.data();
-          const preRegisteredId = preRegisteredDoc.id;
-
-          await setDoc(docRef, {
-            ...preRegisteredData,
-            uid: user.uid,
-            nome: user.displayName || preRegisteredData.nome,
-            email: user.email?.toLowerCase().trim(),
-            ativo: true,
-            updatedAt: serverTimestamp()
-          });
-
-          if (preRegisteredId !== user.uid) {
-            await deleteDoc(doc(db, 'usuarios', preRegisteredId));
-          }
-
-          // Migrate appointments (appointments)
-          const appointmentsRef = collection(db, 'appointments');
-          const apptQuery = query(appointmentsRef, where('barbeiroId', '==', preRegisteredId));
-          const apptSnapshot = await getDocs(apptQuery);
-          for (const apptDoc of apptSnapshot.docs) {
-            await setDoc(doc(db, 'appointments', apptDoc.id), { barbeiroId: user.uid }, { merge: true });
-          }
-
-          // Migrate commissions (commissions)
-          const comissoesRef = collection(db, 'commissions');
-          const comQuery = query(comissoesRef, where('barbeiroId', '==', preRegisteredId));
-          const comSnapshot = await getDocs(comQuery);
-          for (const comDoc of comSnapshot.docs) {
-            await setDoc(doc(db, 'commissions', comDoc.id), { barbeiroId: user.uid }, { merge: true });
-          }
+        if (linkClientId) {
+          await migrateClientProfile(user.uid, user.email || '', user.displayName || '');
         } else {
-          await setDoc(docRef, {
-            uid: user.uid,
-            email: user.email,
-            nome: user.displayName || 'Usuário Google',
-            tipo: 'cliente', // default google registration role is cliente
-            ativo: true,
-            tenantId: getActiveTenantId(),
-            indicadoPor: refCode || null,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
+          const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
+          const usersRef = collection(db, 'usuarios');
+          const q = query(usersRef, where('email', '==', user.email?.toLowerCase().trim()));
+          const querySnapshot = await getDocs(q);
+
+          if (!querySnapshot.empty) {
+            // Found pre-registered user (like a barber or manager)!
+            const preRegisteredDoc = querySnapshot.docs[0];
+            const preRegisteredData = preRegisteredDoc.data();
+            const preRegisteredId = preRegisteredDoc.id;
+
+            await setDoc(docRef, {
+              ...preRegisteredData,
+              uid: user.uid,
+              nome: user.displayName || preRegisteredData.nome,
+              email: user.email?.toLowerCase().trim(),
+              ativo: true,
+              updatedAt: serverTimestamp()
+            });
+
+            if (preRegisteredId !== user.uid) {
+              await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+            }
+
+            // Migrate appointments (appointments)
+            const appointmentsRef = collection(db, 'appointments');
+            const apptQuery = query(appointmentsRef, where('barbeiroId', '==', preRegisteredId));
+            const apptSnapshot = await getDocs(apptQuery);
+            for (const apptDoc of apptSnapshot.docs) {
+              await setDoc(doc(db, 'appointments', apptDoc.id), { barbeiroId: user.uid }, { merge: true });
+            }
+
+            // Migrate commissions (commissions)
+            const comissoesRef = collection(db, 'commissions');
+            const comQuery = query(comissoesRef, where('barbeiroId', '==', preRegisteredId));
+            const comSnapshot = await getDocs(comQuery);
+            for (const comDoc of comSnapshot.docs) {
+              await setDoc(doc(db, 'commissions', comDoc.id), { barbeiroId: user.uid }, { merge: true });
+            }
+          } else {
+            await setDoc(docRef, {
+              uid: user.uid,
+              email: user.email,
+              nome: user.displayName || 'Usuário Google',
+              tipo: 'cliente', // default google registration role is cliente
+              ativo: true,
+              tenantId: getActiveTenantId(),
+              indicadoPor: refCode || null,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
         }
       }
     } catch (err: any) {
@@ -282,33 +447,47 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             <Scissors className="text-zinc-950 w-7 h-7" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white mb-1">
-            {role === 'admin' ? 'Registre sua Barbearia' : 'Crie sua conta'}
+            {linkClientId ? 'Ative seu Cadastro' : (role === 'admin' ? 'Registre sua Barbearia' : 'Crie sua conta')}
           </h1>
           <p className="text-zinc-400 text-sm">
-            {role === 'admin' ? 'Cadastre e gerencie sua barbearia com alta performance' : 'Junte-se a nós para agendar seus serviços em segundos'}
+            {linkClientId 
+              ? (linkingProfile ? `Olá, ${linkingProfile.nome}! Complete seus dados de acesso para começar.` : 'Carregando detalhes do seu convite...')
+              : (role === 'admin' ? 'Cadastre e gerencie sua barbearia com alta performance' : 'Junte-se a nós para agendar seus serviços em segundos')}
           </p>
         </div>
 
         {/* Custom Register Mode Switcher Tabs */}
-        <div className="flex bg-zinc-900 p-1 rounded-xl border border-zinc-800" id="register-mode-tabs">
-          <button
-            type="button"
-            onClick={() => setRole('cliente')}
-            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${role === 'cliente' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-500 hover:text-white'}`}
-          >
-            Sou Cliente
-          </button>
-          <button
-            type="button"
-            onClick={() => setRole('admin')}
-            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${role === 'admin' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-500 hover:text-white'}`}
-          >
-            Sou Barbearia/Dono
-          </button>
-        </div>
+        {!linkClientId && (
+          <div className="flex bg-zinc-900 p-1 rounded-xl border border-zinc-800" id="register-mode-tabs">
+            <button
+              type="button"
+              onClick={() => setRole('cliente')}
+              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${role === 'cliente' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-500 hover:text-white'}`}
+            >
+              Sou Cliente
+            </button>
+            <button
+              type="button"
+              onClick={() => setRole('admin')}
+              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${role === 'admin' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-500 hover:text-white'}`}
+            >
+              Sou Barbearia/Dono
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleRegister} className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl shadow-xl space-y-5">
-          {refCode && role === 'cliente' && (
+          {linkingProfile && (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 p-3.5 rounded-xl flex items-start gap-3 text-emerald-400 text-xs">
+              <Sparkles className="shrink-0 text-emerald-400 mt-0.5 animate-pulse" size={16} />
+              <div>
+                <p className="font-bold uppercase tracking-wider">Perfil Vinculado!</p>
+                <p className="text-zinc-400 text-[10px] mt-0.5">Seu histórico de visitas, pontos de fidelidade e saldo como <strong>{linkingProfile.nome}</strong> serão integrados à sua nova conta.</p>
+              </div>
+            </div>
+          )}
+
+          {refCode && role === 'cliente' && !linkClientId && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl flex items-start gap-3 text-emerald-400 text-xs">
               <Sparkles className="shrink-0 text-emerald-400 mt-0.5 animate-pulse" size={16} />
               <div>

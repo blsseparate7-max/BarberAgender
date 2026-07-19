@@ -45,6 +45,7 @@ import {
   UserX,
   ArrowRight,
   Trash2,
+  Link2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -72,6 +73,13 @@ export function Clientes() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<UserProfile | null>(null);
+  const [linkingCustomer, setLinkingCustomer] = useState<UserProfile | null>(null);
+  const [isLinkingOpen, setIsLinkingOpen] = useState(false);
+
+  const handleLinkAccount = (customer: UserProfile) => {
+    setLinkingCustomer(customer);
+    setIsLinkingOpen(true);
+  };
 
   useEffect(() => {
     const q = query(
@@ -316,6 +324,7 @@ export function Clientes() {
               customer={customer} 
               onViewDetails={() => handleViewDetails(customer)}
               onEdit={() => handleEditCustomer(customer)}
+              onLinkAccount={() => handleLinkAccount(customer)}
             />
           ))}
         </div>
@@ -338,6 +347,13 @@ export function Clientes() {
             }}
           />
         )}
+        {isLinkingOpen && linkingCustomer && (
+          <LinkingModal 
+            customer={linkingCustomer} 
+            tenantId={tenantId}
+            onClose={() => setIsLinkingOpen(false)} 
+          />
+        )}
       </AnimatePresence>
     </div>
   );
@@ -347,10 +363,11 @@ interface CustomerCardProps {
   customer: UserProfile;
   onViewDetails: () => void;
   onEdit: () => void;
+  onLinkAccount: () => void;
   key?: React.Key;
 }
 
-function CustomerCard({ customer, onViewDetails, onEdit }: CustomerCardProps) {
+function CustomerCard({ customer, onViewDetails, onEdit, onLinkAccount }: CustomerCardProps) {
   // Garantir valores para exibição usando campos novos ou legados
   const saldo = customer.saldo_atual ?? customer.balance ?? 0;
   const emAberto = customer.total_em_aberto ?? 0;
@@ -419,12 +436,23 @@ function CustomerCard({ customer, onViewDetails, onEdit }: CustomerCardProps) {
             </div>
           </div>
         </div>
-        <button 
-          onClick={onEdit}
-          className="p-2 text-slate-300 hover:text-primary hover:bg-slate-50 rounded-xl transition-all border border-transparent hover:border-slate-100"
-        >
-          <Edit2 size={18} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button 
+            type="button"
+            onClick={onLinkAccount}
+            title="Vincular Conta / Enviar Convite"
+            className="p-2 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-100"
+          >
+            <Link2 size={18} />
+          </button>
+          <button 
+            type="button"
+            onClick={onEdit}
+            className="p-2 text-slate-300 hover:text-primary hover:bg-slate-50 rounded-xl transition-all border border-transparent hover:border-slate-100"
+          >
+            <Edit2 size={18} />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3 mb-8">
@@ -1537,6 +1565,110 @@ function DetailStat({ label, value, icon, color }: { label: string, value: strin
         <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1">{label}</p>
         <p className="text-lg font-black text-primary tracking-tight">{value}</p>
       </div>
+    </div>
+  );
+}
+
+function LinkingModal({ customer, tenantId, onClose }: { customer: UserProfile; tenantId: string; onClose: () => void }) {
+  const generatedLink = `${window.location.origin}/register?link_client_id=${customer.uid}&tenant=${tenantId}`;
+  
+  const formattedPhone = (customer.telefone || customer.phone || '').replace(/\D/g, '');
+  const whatsappText = `Olá, ${customer.nome}! Para fazer seus agendamentos online, acompanhar seus pontos de fidelidade e ver seu histórico, clique no link abaixo para ativar sua conta:\n\n🔗 ${generatedLink}`;
+  
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(generatedLink);
+    toast.success("Link copiado com sucesso!");
+  };
+
+  const handleCopyMessage = () => {
+    navigator.clipboard.writeText(whatsappText);
+    toast.success("Mensagem do WhatsApp copiada!");
+  };
+
+  const handleShareWhatsApp = () => {
+    const url = `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodeURIComponent(whatsappText)}`;
+    window.open(url, '_blank');
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-surface border border-border w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col"
+      >
+        <div className="p-8 border-b border-border flex items-center justify-between bg-slate-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100">
+              <Link2 size={20} />
+            </div>
+            <h2 className="text-xl font-black text-primary tracking-tight">
+              Vincular Conta do Cliente
+            </h2>
+          </div>
+          <button onClick={onClose} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100 shadow-sm">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div>
+            <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Cliente Selecionado</p>
+            <h3 className="text-lg font-black text-primary">{customer.nome}</h3>
+            {customer.email && <p className="text-xs text-muted font-bold">{customer.email}</p>}
+          </div>
+
+          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed font-semibold">
+            Este cliente foi cadastrado diretamente na barbearia. Gerando o link abaixo, ele poderá criar as credenciais de login dele e se vincular a este histórico completo de agendamentos, saldos e pontos de fidelidade!
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Link de Ativação Único</label>
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                readOnly
+                value={generatedLink}
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-mono focus:outline-none text-primary"
+              />
+              <button 
+                onClick={handleCopyLink}
+                className="bg-primary text-white hover:bg-primary-hover px-4 rounded-xl text-xs font-black transition-all shadow-sm active:scale-95"
+              >
+                Copiar
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Mensagem Pronta para WhatsApp</label>
+            <div className="relative">
+              <textarea 
+                readOnly
+                value={whatsappText}
+                rows={4}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs focus:outline-none text-primary leading-relaxed font-semibold"
+              />
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <button 
+                onClick={handleCopyMessage}
+                className="flex-1 py-3.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-sm"
+              >
+                Copiar Mensagem
+              </button>
+              <button 
+                onClick={handleShareWhatsApp}
+                className="flex-1 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-emerald-500/10"
+              >
+                <MessageCircle size={16} />
+                Enviar via WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }

@@ -21,10 +21,11 @@ const CATEGORIES_COLLECTION = 'service_categories';
 
 export const serviceService = {
   // --- Services ---
-  async getServices(onlyActive = true, category?: string) {
+  async getServices(onlyActive = true, category?: string, tenantId?: string) {
+    const tid = tenantId || getActiveTenantId();
     let q = query(
       collection(db, SERVICES_COLLECTION),
-      where('tenantId', '==', getActiveTenantId())
+      where('tenantId', '==', tid)
     );
     
     if (onlyActive) {

@@ -338,7 +338,36 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       // Load active barbers
       try {
         const activeBarbers = await userService.getAllBarbers(true, activeTenantId);
-        setBarbers(activeBarbers.filter(b => b.showInPortal !== false));
+        const filtered = activeBarbers.filter(b => b.showInPortal !== false);
+        const list: UserProfile[] = [];
+        
+        // Virtual barber for automatic allocation
+        const virtualBarber: UserProfile = {
+          uid: 'any',
+          email: 'any@profissional.com',
+          nome: 'Qualquer Profissional',
+          tipo: 'barbeiro',
+          ativo: true,
+          especialidade: 'Melhor horário disponível',
+          saldo_atual: 0,
+          total_gasto: 0,
+          total_pago: 0,
+          total_em_aberto: 0,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
+        if (filtered.length > 0) {
+          list.push(virtualBarber, ...filtered);
+        } else {
+          // If empty, supply a "Profissional da Casa" to prevent empty/blank UI
+          list.push({
+            ...virtualBarber,
+            nome: 'Profissional da Casa',
+            especialidade: 'Atendimento geral'
+          });
+        }
+        setBarbers(list);
       } catch (err) {
         console.warn("Could not load barbers list:", err);
       }
@@ -424,12 +453,30 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     if (!selectedBarber || !selectedService) return;
     setLoadingSlots(true);
     try {
-      const slots = await appointmentService.getAvailableSlots(
-        selectedBarber.uid,
-        selectedDate,
-        selectedService.duracao_minutos || selectedService.duration || 30
-      );
-      setAvailableSlots(slots);
+      const duration = selectedService.duracao_minutos || selectedService.duration || 30;
+      if (selectedBarber.uid === 'any') {
+        const realBarbers = barbers.filter(b => b.uid !== 'any');
+        if (realBarbers.length > 0) {
+          const allSlotsPromises = realBarbers.map(b => 
+            appointmentService.getAvailableSlots(b.uid, selectedDate, duration)
+          );
+          const results = await Promise.all(allSlotsPromises);
+          // Get the union of all available slots and sort them
+          const unionSlots = Array.from(new Set(results.flat())).sort();
+          setAvailableSlots(unionSlots);
+        } else {
+          // If no physical barbers exist, simulate standard business slots for testing
+          const simulatedSlots = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00'];
+          setAvailableSlots(simulatedSlots);
+        }
+      } else {
+        const slots = await appointmentService.getAvailableSlots(
+          selectedBarber.uid,
+          selectedDate,
+          duration
+        );
+        setAvailableSlots(slots);
+      }
       setSelectedTime(null);
     } catch (err) {
       console.error("Error fetching available slots:", err);
@@ -466,12 +513,39 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       const endParsed = addMinutes(startParsed, duration);
       const endTimeStr = format(endParsed, 'HH:mm');
 
+      let assignedBarberId = selectedBarber.uid;
+      let assignedBarberName = selectedBarber.nome;
+
+      if (selectedBarber.uid === 'any') {
+        // Find the first barber that has this slot available
+        const realBarbers = barbers.filter(b => b.uid !== 'any');
+        let foundBarber = null;
+        for (const b of realBarbers) {
+          const slots = await appointmentService.getAvailableSlots(b.uid, selectedDate, duration);
+          if (slots.includes(selectedTime)) {
+            foundBarber = b;
+            break;
+          }
+        }
+
+        if (foundBarber) {
+          assignedBarberId = foundBarber.uid;
+          assignedBarberName = foundBarber.nome;
+        } else if (realBarbers.length > 0) {
+          assignedBarberId = realBarbers[0].uid;
+          assignedBarberName = realBarbers[0].nome;
+        } else {
+          assignedBarberId = 'casa';
+          assignedBarberName = 'Profissional da Casa';
+        }
+      }
+
       const newApp = {
         cliente_id: profile.uid,
         cliente_name: profile.nome,
         cliente_telefone: profile.telefone || profile.phone || '',
-        profissional_id: selectedBarber.uid,
-        profissional_name: selectedBarber.nome,
+        profissional_id: assignedBarberId,
+        profissional_name: assignedBarberName,
         servico_id: selectedService.id,
         servico_name: selectedService.nome || selectedService.name || '',
         date: selectedDate,
@@ -576,10 +650,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     );
   }
 
-  // Generate date options (next 14 working days)
+  // Generate date options (next 30 working days)
   const dateOptions: { dateStr: string; dayLabel: string; monthLabel: string }[] = [];
   let tempDate = new Date();
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 30; i++) {
     const formatted = format(tempDate, 'yyyy-MM-dd');
     const dayName = format(tempDate, 'EEE', { locale: ptBR }).replace('.', '');
     const dayNum = format(tempDate, 'dd');
@@ -618,6 +692,25 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     filteredTenants.sort((a, b) => (a.distance || 99999) - (b.distance || 99999));
   }
 
+  const getSlotsByPeriod = () => {
+    const morning: string[] = [];
+    const afternoon: string[] = [];
+    const evening: string[] = [];
+
+    availableSlots.forEach(slot => {
+      const hour = parseInt(slot.split(':')[0], 10);
+      if (hour < 12) {
+        morning.push(slot);
+      } else if (hour < 18) {
+        afternoon.push(slot);
+      } else {
+        evening.push(slot);
+      }
+    });
+
+    return { morning, afternoon, evening };
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-24 md:pb-6">
       {/* Header Panel */}
@@ -626,7 +719,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         <div className="max-w-4xl mx-auto px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-lg">
-              {profile.nome.substring(0, 2).toUpperCase()}
+              {(profile?.nome || 'Cliente').substring(0, 2).toUpperCase()}
             </div>
             <div>
               <p className="text-[10px] text-amber-400 font-extrabold uppercase tracking-widest">Seja bem-vindo!</p>
@@ -1080,231 +1173,428 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                 </div>
               ) : (
                 <>
-                  <div>
-                    <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
-                      <Scissors className="text-amber-500" size={20} />
-                      Marcar Novo Horário
-                    </h3>
-                    <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                      Preencha o formulário interativo abaixo para sincronizar seu horário na agenda de forma instantânea.
-                    </p>
-                  </div>
-
-              {/* Step 1: Select Professional */}
-              <div className="space-y-4">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
-                  1. Escolha o Profissional
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {barbers.map(b => (
-                    <button
-                      key={b.uid}
-                      type="button"
-                      onClick={() => setSelectedBarber(b)}
-                      className={`p-4 rounded-2xl border transition-all text-center flex flex-col items-center gap-2.5 relative group ${
-                        selectedBarber?.uid === b.uid 
-                          ? 'border-indigo-600 bg-indigo-50/50 shadow-sm' 
-                          : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-slate-200'
-                      }`}
-                    >
-                      {selectedBarber?.uid === b.uid && (
-                        <div className="absolute top-2.5 right-2.5 bg-indigo-600 text-white p-0.5 rounded-full">
-                          <Check size={10} />
-                        </div>
-                      )}
-                      <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-sm transition-all ${
-                        selectedBarber?.uid === b.uid ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-600'
-                      }`}>
-                        {b.nome.substring(0, 2).toUpperCase()}
-                      </div>
-                      <div className="min-w-0 w-full">
-                        <p className="text-xs font-black text-slate-800 truncate">{b.nome}</p>
-                        <p className="text-[9px] text-slate-400 font-bold truncate mt-0.5">{b.especialidade || 'Barbeiro'}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Step 2: Select Service */}
-              {selectedBarber && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.12, ease: 'easeOut' }}
-                  className="space-y-4 border-t border-slate-100 pt-6"
-                >
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
-                    2. Escolha o Serviço
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {services.map(s => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => setSelectedService(s)}
-                        className={`p-4 rounded-2xl border transition-all text-left flex justify-between items-center gap-3 relative group ${
-                          selectedService?.id === s.id 
-                            ? 'border-indigo-600 bg-indigo-50/50 shadow-sm' 
-                            : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-slate-200'
-                        }`}
-                      >
-                        {selectedService?.id === s.id && (
-                          <div className="absolute top-2.5 right-2.5 bg-indigo-600 text-white p-0.5 rounded-full">
-                            <Check size={10} />
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <h4 className="text-xs font-black text-slate-800 truncate">{s.nome || s.name}</h4>
-                          <p className="text-[10px] text-slate-500 font-semibold truncate mt-0.5">{s.descricao || 'Serviço tradicional'}</p>
-                          <div className="flex items-center gap-2 mt-2 font-bold text-[10px]">
-                            <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
-                              R$ {(s.preco || s.price || 0).toFixed(2)}
-                            </span>
-                            <span className="text-slate-500 flex items-center gap-0.5">
-                              <Clock size={10} /> {s.duracao_minutos || s.duration || 30} min
-                            </span>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-
-              {/* Step 3: Select Date & Time */}
-              {selectedBarber && selectedService && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.12, ease: 'easeOut' }}
-                  className="space-y-6 border-t border-slate-100 pt-6"
-                >
-                  {/* Date Selector */}
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
-                      3. Selecione a Data
-                    </label>
-                    <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-none custom-scrollbar-thin">
-                      {dateOptions.map(opt => (
-                        <button
-                          key={opt.dateStr}
-                          type="button"
-                          onClick={() => setSelectedDate(opt.dateStr)}
-                          className={`p-3 rounded-2xl border transition-all flex flex-col items-center min-w-[75px] flex-shrink-0 ${
-                            selectedDate === opt.dateStr 
-                              ? 'border-indigo-600 bg-indigo-600 text-white shadow-md' 
-                              : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-slate-200 text-slate-700'
-                          }`}
-                        >
-                          <span className={`text-[9px] font-black uppercase ${selectedDate === opt.dateStr ? 'text-indigo-200' : 'text-slate-400'}`}>
-                            {opt.monthLabel}
-                          </span>
-                          <span className="text-sm font-black mt-0.5">
-                            {opt.dayLabel.split(', ')[1]}
-                          </span>
-                          <span className={`text-[8px] font-bold uppercase mt-1 ${selectedDate === opt.dateStr ? 'text-indigo-200' : 'text-slate-500'}`}>
-                            {opt.dayLabel.split(', ')[0]}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Time Slots Selector */}
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
-                      4. Horários Disponíveis para {format(parse(selectedDate, 'yyyy-MM-dd', new Date()), "dd 'de' MMMM", { locale: ptBR })}
-                      {loadingSlots && <Clock className="animate-spin text-slate-400" size={12} />}
-                    </label>
-
-                    {loadingSlots ? (
-                      <div className="h-12 flex items-center justify-center">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase animate-pulse">Carregando horários...</span>
-                      </div>
-                    ) : availableSlots.length > 0 ? (
-                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                        {availableSlots.map(time => (
-                          <button
-                            key={time}
-                            type="button"
-                            onClick={() => setSelectedTime(time)}
-                            className={`py-2 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
-                              selectedTime === time 
-                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm' 
-                                : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-slate-200 text-slate-700 font-bold'
-                            }`}
-                          >
-                            {time}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="p-6 text-center bg-rose-50/50 border border-dashed border-rose-100 rounded-2xl">
-                        <p className="text-xs text-rose-600 font-semibold">Não há horários disponíveis para este profissional na data selecionada.</p>
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-
-              {/* Order Summary & Submit button */}
-              {selectedBarber && selectedService && selectedTime && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.12, ease: 'easeOut' }}
-                  className="bg-slate-900 text-white p-6 rounded-[28px] space-y-4 shadow-xl border border-slate-800"
-                >
-                  <h4 className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                    <CheckCircle size={14} /> Resumo da Reserva
-                  </h4>
-
-                  <div className="grid grid-cols-2 gap-4 text-xs font-bold text-slate-300">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
                     <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">Serviço</p>
-                      <p className="text-white mt-1">{selectedService.nome || selectedService.name}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">Barbeiro</p>
-                      <p className="text-white mt-1">{selectedBarber.nome}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">Data e Hora</p>
-                      <p className="text-white mt-1">
-                        {format(parse(selectedDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')} às {selectedTime}
+                      <h3 className="text-xl font-black tracking-tight flex items-center gap-2 text-slate-800">
+                        <Scissors className="text-amber-500 animate-pulse" size={22} />
+                        Reservar Horário
+                      </h3>
+                      <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                        Sua reserva é confirmada instantaneamente na agenda do profissional.
                       </p>
                     </div>
-                    <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">Valor Estimado</p>
-                      <p className="text-amber-400 font-black text-sm mt-0.5">R$ {(selectedService.preco || selectedService.price || 0).toFixed(2)}</p>
+                    {/* Visual Progress Header */}
+                    <div className="flex items-center gap-1.5 self-start sm:self-center bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+                      <span className={`w-2.5 h-2.5 rounded-full ${selectedBarber ? 'bg-indigo-600' : 'bg-slate-300 animate-ping'}`} />
+                      <span className={`w-2.5 h-2.5 rounded-full ${selectedService ? 'bg-indigo-600' : 'bg-slate-300'}`} />
+                      <span className={`w-2.5 h-2.5 rounded-full ${selectedTime ? 'bg-indigo-600' : 'bg-slate-300'}`} />
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">
+                        {!selectedBarber ? 'Profissional' : !selectedService ? 'Serviço' : !selectedTime ? 'Horário' : 'Pronto!'}
+                      </span>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={handleCreateAppointment}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs py-4 rounded-2xl transition-all shadow-lg shadow-amber-500/10 uppercase tracking-wider flex items-center justify-center gap-2"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Clock className="animate-spin" size={14} />
-                        Confirmando Horário...
-                      </>
-                    ) : (
-                      <>
-                        <Check size={14} />
-                        Confirmar Agendamento Instantâneo
-                      </>
-                    )}
-                  </button>
-                </motion.div>
+                  {/* Step 1: Select Professional */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
+                        1. Selecione o Profissional
+                      </label>
+                      {selectedBarber && (
+                        <button 
+                          onClick={() => {
+                            setSelectedBarber(null);
+                            setSelectedService(null);
+                            setSelectedTime(null);
+                          }}
+                          className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-wider"
+                        >
+                          Alterar
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {barbers.map(b => {
+                        const isSelected = selectedBarber?.uid === b.uid;
+                        const isVirtual = b.uid === 'any';
+                        return (
+                          <button
+                            key={b.uid}
+                            type="button"
+                            onClick={() => {
+                              setSelectedBarber(b);
+                              setSelectedService(null);
+                              setSelectedTime(null);
+                            }}
+                            className={`p-4 rounded-2xl border transition-all text-left flex items-center gap-3 relative group ${
+                              isSelected 
+                                ? 'border-indigo-600 bg-indigo-50/40 shadow-md ring-2 ring-indigo-600/10' 
+                                : isVirtual
+                                  ? 'border-amber-100 bg-gradient-to-br from-amber-50/20 to-amber-50/40 hover:from-amber-50/40 hover:to-amber-50/60 hover:border-amber-200'
+                                  : 'border-slate-100 bg-slate-50/50 hover:bg-slate-100/70 hover:border-slate-200'
+                            }`}
+                          >
+                            {isSelected && (
+                              <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow">
+                                <Check size={10} />
+                              </div>
+                            )}
+                            
+                            {isVirtual && !isSelected && (
+                              <div className="absolute top-3 right-3 text-amber-500 animate-bounce">
+                                <Sparkles size={12} />
+                              </div>
+                            )}
+
+                            <div className={`w-11 h-11 rounded-full flex items-center justify-center font-black text-xs transition-all flex-shrink-0 ${
+                              isSelected 
+                                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10' 
+                                : isVirtual 
+                                  ? 'bg-amber-100 text-amber-700' 
+                                  : 'bg-slate-200 text-slate-600'
+                            }`}>
+                              {isVirtual ? (
+                                <Sparkles size={16} />
+                              ) : (
+                                (b.nome || 'B').substring(0, 2).toUpperCase()
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-black text-slate-800 truncate flex items-center gap-1">
+                                {b.nome}
+                                {isVirtual && (
+                                  <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider scale-90">
+                                    Rápido
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[10px] text-slate-400 font-bold truncate mt-0.5">
+                                {b.especialidade || 'Barbeiro especialista'}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Step 2: Select Service */}
+                  {selectedBarber && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-4 border-t border-slate-100 pt-6"
+                    >
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
+                          2. Escolha o Serviço desejado
+                        </label>
+                        {selectedService && (
+                          <button 
+                            onClick={() => {
+                              setSelectedService(null);
+                              setSelectedTime(null);
+                            }}
+                            className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-wider"
+                          >
+                            Alterar
+                          </button>
+                        )}
+                      </div>
+
+                      {services.length === 0 ? (
+                        <div className="p-6 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
+                          <p className="text-xs text-slate-400 font-semibold">Nenhum serviço disponível no portal no momento.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {services.map(s => {
+                            const isSelected = selectedService?.id === s.id;
+                            return (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedService(s);
+                                  setSelectedTime(null);
+                                }}
+                                className={`p-4 rounded-2xl border transition-all text-left flex justify-between items-center gap-3 relative group ${
+                                  isSelected 
+                                    ? 'border-indigo-600 bg-indigo-50/40 shadow-md ring-2 ring-indigo-600/10' 
+                                    : 'border-slate-100 bg-slate-50/50 hover:bg-slate-100/70 hover:border-slate-200'
+                                }`}
+                              >
+                                {isSelected && (
+                                  <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow">
+                                    <Check size={10} />
+                                  </div>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <span className="px-2 py-0.5 bg-slate-100 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
+                                    {s.categoria || 'Serviço'}
+                                  </span>
+                                  <h4 className="text-xs font-black text-slate-800 truncate mt-1.5">{s.nome || s.name}</h4>
+                                  <p className="text-[10px] text-slate-450 font-semibold truncate mt-0.5">
+                                    {s.descricao || 'Atendimento com acabamento premium e toalha quente.'}
+                                  </p>
+                                  <div className="flex items-center gap-3 mt-3 font-bold text-[10px]">
+                                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                                      R$ {(s.preco || s.price || 0).toFixed(2)}
+                                    </span>
+                                    <span className="text-slate-500 flex items-center gap-1 bg-slate-100/50 px-2 py-0.5 rounded-md">
+                                      <Clock size={10} className="text-slate-400" /> {s.duracao_minutos || s.duration || 30} min
+                                    </span>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+
+                  {/* Step 3: Select Date & Time */}
+                  {selectedBarber && selectedService && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-6 border-t border-slate-100 pt-6"
+                    >
+                      {/* Date Selector */}
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
+                          3. Escolha o Dia do Atendimento (Próximos 30 dias)
+                        </label>
+                        <div className="flex gap-2 overflow-x-auto pb-3 pt-1 scrollbar-none custom-scrollbar-thin">
+                          {dateOptions.map(opt => {
+                            const isSelected = selectedDate === opt.dateStr;
+                            const [dayWeek, dayNum] = opt.dayLabel.split(', ');
+                            return (
+                              <button
+                                key={opt.dateStr}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDate(opt.dateStr);
+                                  setSelectedTime(null);
+                                }}
+                                className={`p-3.5 rounded-2xl border transition-all flex flex-col items-center min-w-[72px] flex-shrink-0 relative ${
+                                  isSelected 
+                                    ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-600/20' 
+                                    : 'border-slate-100 bg-slate-50/80 hover:bg-slate-100/80 text-slate-700 hover:border-slate-200'
+                                }`}
+                              >
+                                {isSelected && (
+                                  <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-white" />
+                                )}
+                                <span className={`text-[8px] font-black uppercase tracking-wider ${isSelected ? 'text-indigo-200' : 'text-slate-400'}`}>
+                                  {opt.monthLabel}
+                                </span>
+                                <span className="text-base font-black tracking-tight mt-1">
+                                  {dayNum}
+                                </span>
+                                <span className={`text-[8px] font-extrabold uppercase mt-1 tracking-widest ${isSelected ? 'text-indigo-200' : 'text-slate-500'}`}>
+                                  {dayWeek}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Time Slots Selector (Grouped) */}
+                      <div className="space-y-3 border-t border-slate-100 pt-5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                            4. Horários Disponíveis para {format(parse(selectedDate, 'yyyy-MM-dd', new Date()), "dd 'de' MMMM", { locale: ptBR })}
+                            {loadingSlots && <Clock className="animate-spin text-indigo-500" size={12} />}
+                          </label>
+                        </div>
+
+                        {loadingSlots ? (
+                          <div className="py-12 flex flex-col items-center justify-center gap-2">
+                            <Clock className="animate-spin text-indigo-500" size={24} />
+                            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest animate-pulse">Sincronizando Agenda do Profissional...</span>
+                          </div>
+                        ) : availableSlots.length > 0 ? (
+                          <div className="space-y-4">
+                            {/* Periods grouping */}
+                            {(() => {
+                              const { morning, afternoon, evening } = getSlotsByPeriod();
+                              return (
+                                <>
+                                  {/* Morning Period */}
+                                  {morning.length > 0 && (
+                                    <div className="space-y-2">
+                                      <p className="text-[10px] font-black text-slate-400 flex items-center gap-1 uppercase tracking-wider bg-slate-50 px-2 py-1 rounded-md w-fit">
+                                        <span>🌅</span> Período da Manhã (até 12h)
+                                      </p>
+                                      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+                                        {morning.map(time => (
+                                          <button
+                                            key={time}
+                                            type="button"
+                                            onClick={() => setSelectedTime(time)}
+                                            className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
+                                              selectedTime === time 
+                                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-600/10 font-black shadow-sm' 
+                                                : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-slate-200 text-slate-700 font-bold'
+                                            }`}
+                                          >
+                                            {time}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Afternoon Period */}
+                                  {afternoon.length > 0 && (
+                                    <div className="space-y-2 pt-2">
+                                      <p className="text-[10px] font-black text-slate-400 flex items-center gap-1 uppercase tracking-wider bg-slate-50 px-2 py-1 rounded-md w-fit">
+                                        <span>☀️</span> Período da Tarde (12h às 18h)
+                                      </p>
+                                      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+                                        {afternoon.map(time => (
+                                          <button
+                                            key={time}
+                                            type="button"
+                                            onClick={() => setSelectedTime(time)}
+                                            className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
+                                              selectedTime === time 
+                                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-600/10 font-black shadow-sm' 
+                                                : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-slate-200 text-slate-700 font-bold'
+                                            }`}
+                                          >
+                                            {time}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Evening Period */}
+                                  {evening.length > 0 && (
+                                    <div className="space-y-2 pt-2">
+                                      <p className="text-[10px] font-black text-slate-400 flex items-center gap-1 uppercase tracking-wider bg-slate-50 px-2 py-1 rounded-md w-fit">
+                                        <span>🌙</span> Período da Noite (após 18h)
+                                      </p>
+                                      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+                                        {evening.map(time => (
+                                          <button
+                                            key={time}
+                                            type="button"
+                                            onClick={() => setSelectedTime(time)}
+                                            className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
+                                              selectedTime === time 
+                                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-600/10 font-black shadow-sm' 
+                                                : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-slate-200 text-slate-700 font-bold'
+                                            }`}
+                                          >
+                                            {time}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <div className="p-8 text-center bg-amber-50/20 border border-dashed border-amber-200 rounded-3xl space-y-2">
+                            <span className="text-xl">📅</span>
+                            <p className="text-xs text-slate-600 font-bold">Sem disponibilidade encontrada para esta data.</p>
+                            <p className="text-[10px] text-slate-400 font-medium">Tente alterar o profissional ou navegar pelos dias vizinhos no calendário acima.</p>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Order Summary & Submit button (Apple Wallet Ticket Style) */}
+                  {selectedBarber && selectedService && selectedTime && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.98 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-slate-900 text-white rounded-[2rem] shadow-xl border border-slate-800 overflow-hidden relative"
+                    >
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+                      
+                      {/* Ticket Header */}
+                      <div className="p-6 border-b border-dashed border-slate-800 flex justify-between items-center">
+                        <div className="space-y-1">
+                          <span className="bg-amber-500/10 text-amber-400 text-[8px] font-black tracking-widest px-2.5 py-1 rounded-full uppercase">
+                            Resumo da Reserva
+                          </span>
+                          <h4 className="text-sm font-black text-white tracking-tight pt-1">Confirmar Agendamento</h4>
+                        </div>
+                        <CheckCircle size={24} className="text-amber-500" />
+                      </div>
+
+                      {/* Ticket Content */}
+                      <div className="p-6 grid grid-cols-2 gap-y-5 gap-x-4 text-xs font-semibold text-slate-300">
+                        <div>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Unidade</p>
+                          <p className="text-white mt-1 font-black truncate">{tenantInfo?.name || 'Barbearia Unidade'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Profissional</p>
+                          <p className="text-white mt-1 font-black truncate">{selectedBarber.nome}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Serviço Selecionado</p>
+                          <p className="text-white mt-1 font-black truncate">{selectedService.nome || selectedService.name}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Data e Horário</p>
+                          <p className="text-white mt-1 font-black truncate">
+                            {format(parse(selectedDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')} às {selectedTime}
+                          </p>
+                        </div>
+                        <div className="col-span-2 border-t border-slate-850 pt-4 flex items-center justify-between">
+                          <div>
+                            <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Valor do Serviço</p>
+                            <p className="text-2xl font-black text-amber-400 mt-1">
+                              R$ {(selectedService.preco || selectedService.price || 0).toFixed(2)}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Duração Estimada</p>
+                            <p className="text-white mt-1 font-black">{selectedService.duracao_minutos || selectedService.duration || 30} minutos</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Button */}
+                      <div className="p-6 bg-slate-950/60 border-t border-slate-850">
+                        <button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={handleCreateAppointment}
+                          className="w-full bg-amber-500 hover:bg-amber-600 active:scale-[0.99] text-slate-950 font-black text-xs py-4 rounded-xl transition-all shadow-lg shadow-amber-500/10 uppercase tracking-wider flex items-center justify-center gap-2"
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <Clock className="animate-spin text-slate-950" size={14} />
+                              Processando Agendamento...
+                            </>
+                          ) : (
+                            <>
+                              <Check size={14} className="stroke-[3]" />
+                              Finalizar e Agendar Agora
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </>
               )}
-            </>
+            </motion.div>
           )}
-        </motion.div>
-      )}
 
           {/* TAB: HISTORY */}
           {activeTab === 'history' && (
@@ -1818,7 +2108,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               <div className="bg-white border border-slate-200 rounded-[2rem] p-6 sm:p-8 shadow-sm">
                 <div className="flex flex-col sm:flex-row items-center gap-6 pb-6 border-b border-slate-100">
                   <div className="w-20 h-20 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center font-black text-2xl text-indigo-650 shadow-inner">
-                    {profile.nome.substring(0, 2).toUpperCase()}
+                    {(profile?.nome || 'Cliente').substring(0, 2).toUpperCase()}
                   </div>
                   <div className="text-center sm:text-left space-y-1">
                     <span className="px-3 py-1 bg-indigo-50 text-[10px] font-black uppercase tracking-wider text-indigo-600 rounded-full border border-indigo-100">

@@ -677,6 +677,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
   const [telefone, setTelefone] = useState(barber?.telefone ?? barber?.phone ?? '');
   const [especialidade, setEspecialidade] = useState(barber?.especialidade ?? barber?.specialty ?? '');
   const [percentualComissao, setPercentualComissao] = useState(barber?.percentual_comissao ?? barber?.commission_percentage ?? 50);
+  const [remuneracaoFixa, setRemuneracaoFixa] = useState(barber?.remuneracao_fixa ?? 0);
   const [metaMensal, setMetaMensal] = useState(barber?.meta_mensal ?? barber?.monthly_goal ?? 3000);
   const [startDate, setStartDate] = useState(barber?.startDate ?? new Date().toISOString().split('T')[0]);
   const [is_gestor, setIsGestor] = useState(barber?.is_gestor ?? barber?.is_manager ?? false);
@@ -832,6 +833,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
       specialty: especialidade.trim(),
       percentual_comissao: Number(percentualComissao),
       commission_percentage: Number(percentualComissao),
+      remuneracao_fixa: Number(remuneracaoFixa),
       meta_mensal: Number(metaMensal),
       monthly_goal: Number(metaMensal),
       startDate,
@@ -1029,10 +1031,24 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                       type="number" 
                       min="0"
                       max="100"
-                      value={percentualComissao}
-                      onChange={e => setPercentualComissao(Number(e.target.value))}
+                      value={percentualComissao === 0 ? '' : percentualComissao}
+                      onFocus={(e) => e.target.select()}
+                      onChange={e => setPercentualComissao(e.target.value === '' ? '' : Number(e.target.value))}
                       className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
                       placeholder="Ex: 50"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Remuneração Fixa / Salário (R$)</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      value={remuneracaoFixa === 0 ? '' : remuneracaoFixa}
+                      onFocus={(e) => e.target.select()}
+                      onChange={e => setRemuneracaoFixa(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
+                      placeholder="Ex: 2500"
                     />
                   </div>
 
@@ -1041,8 +1057,9 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                     <input 
                       type="number" 
                       min="0"
-                      value={metaMensal}
-                      onChange={e => setMetaMensal(Number(e.target.value))}
+                      value={metaMensal === 0 ? '' : metaMensal}
+                      onFocus={(e) => e.target.select()}
+                      onChange={e => setMetaMensal(e.target.value === '' ? '' : Number(e.target.value))}
                       className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
                       placeholder="Ex: 3000"
                     />

@@ -2977,6 +2977,7 @@ function ClientAccountDetailsModal({
                       step="0.01"
                       placeholder="Valor opcional (R$)"
                       value={newNoteVal}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setNewNoteVal(e.target.value)}
                       className="bg-white border border-slate-200 rounded-xl py-3 px-4 text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent text-primary font-bold"
                     />
@@ -3072,6 +3073,7 @@ function ClientAccountDetailsModal({
                     <input 
                       type="number"
                       value={paymentAmount}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setPaymentAmount(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-xl font-black focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-primary"
                     />
@@ -3384,6 +3386,7 @@ function ProfessionalAccountDetailsModal({
                       required
                       placeholder="Valor do vale em R$ (Ex: 50.00)"
                       value={advanceAmount}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setAdvanceAmount(e.target.value)}
                       className="bg-white border border-slate-200 rounded-xl py-3 px-4 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500 text-primary font-bold"
                     />
@@ -3841,6 +3844,7 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
                   min="0.01"
                   step="0.01"
                   value={isNaN(formData.amount) ? "" : formData.amount}
+                  onFocus={(e) => e.target.select()}
                   onChange={(e) => {
                     const parsed = parseFloat(e.target.value);
                     setFormData({...formData, amount: isNaN(parsed) ? NaN : parsed});
@@ -3999,6 +4003,7 @@ function CashModal({ currentCash, onOpen, onCloseCash, onClose, loading }: { cur
                 min="0"
                 step="0.01"
                 value={balance}
+                onFocus={(e) => e.target.select()}
                 onChange={(e) => setBalance(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-5 pl-12 pr-5 text-2xl font-black focus:outline-none focus:ring-4 focus:ring-accent/5 focus:border-accent transition-all text-primary shadow-inner"
                 placeholder="0,00"

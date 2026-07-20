@@ -74,6 +74,7 @@ export function InputModal({
                   autoFocus
                   type={type}
                   value={value}
+                  onFocus={(e) => e.target.select()}
                   onChange={(e) => setValue(e.target.value)}
                   placeholder={placeholder}
                   className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-primary focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent shadow-inner outline-none font-bold text-center"

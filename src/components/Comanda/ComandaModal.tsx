@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Plus, 
@@ -31,7 +31,7 @@ import {
   BellRing
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment } from 'firebase/firestore';
+import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt, SubscriptionPlan, SubscriptionDiscount } from '../../types';
 import { getActiveTenantId } from '../../services/tenantService';
@@ -268,6 +268,73 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       setClientSubscriptions([]);
     }
   }, [comanda?.cliente_id]);
+
+  const autoAssociatedItemIdsRef = useRef<Set<string>>(new Set());
+
+  // Clear auto-associated set when comanda ID changes
+  useEffect(() => {
+    autoAssociatedItemIdsRef.current.clear();
+  }, [comanda?.id]);
+
+  // Auto-associate active packages to comanda items
+  useEffect(() => {
+    if (
+      comanda &&
+      comanda.status !== 'fechada' &&
+      comanda.status !== 'cancelada' &&
+      comanda.status !== 'nao_paga' &&
+      clientPackages &&
+      clientPackages.length > 0 &&
+      comanda.items &&
+      comanda.items.length > 0 &&
+      user
+    ) {
+      let changed = false;
+      const updatedItems = comanda.items.map(item => {
+        // If it's a service and hasn't been associated or paid yet
+        if (item.type === 'servico' && !item.deductType && !autoAssociatedItemIdsRef.current.has(item.id)) {
+          // Find if there is an active package for this service
+          const hasPkg = clientPackages.find(
+            p => p.remainingCuts > 0 && (p.serviceId === item.referencia_id || p.packageName.toLowerCase().includes(item.name.toLowerCase()))
+          );
+          if (hasPkg) {
+            const pPrice = hasPkg.pricePerService !== undefined && hasPkg.pricePerService !== null 
+              ? hasPkg.pricePerService 
+              : (hasPkg.pricePaid / hasPkg.totalCuts);
+            
+            changed = true;
+            autoAssociatedItemIdsRef.current.add(item.id);
+            return {
+              ...item,
+              deductType: 'pacote' as const,
+              packageSaleId: hasPkg.id,
+              packageUnitPrice: pPrice,
+              subscriptionId: '',
+              isCortesia: true,
+              totalPrice: 0,
+              generateCommission: true
+            };
+          }
+        }
+        return item;
+      });
+
+      if (changed) {
+        comandaService.updateComandaItems(
+          comanda.id,
+          updatedItems,
+          comanda.discount,
+          comanda.tip,
+          user.uid,
+          profile?.nome || user.email || 'Usuário'
+        ).then(() => {
+          toast.success("Pacote de créditos ativo detectado e associado automaticamente!");
+        }).catch(err => {
+          console.error("Erro ao auto-associar pacote:", err);
+        });
+      }
+    }
+  }, [comanda?.id, comanda?.items, clientPackages, user]);
   
   useEffect(() => {
     loadData();
@@ -863,6 +930,35 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             item.unitPrice || item.totalPrice || 0
           );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
+        } else if (item.type === 'pacote') {
+          // New Package sold! Create doc in pacotes_vendas
+          await addDoc(collection(db, 'pacotes_vendas'), {
+            tenantId: comanda.tenantId || getActiveTenantId(),
+            clientId: comanda.cliente_id,
+            clientName: comanda.cliente_name,
+            packageId: item.referencia_id,
+            packageName: item.name.replace('Venda Pacote: ', ''),
+            totalCuts: item.metadata?.cutsCount || 1,
+            remainingCuts: item.metadata?.cutsCount || 1,
+            pricePaid: item.totalPrice,
+            pricePerService: item.metadata?.pricePerService !== undefined ? item.metadata?.pricePerService : null,
+            noExpiration: item.metadata?.noExpiration || false,
+            expiresDays: item.metadata?.expiresDays || 0,
+            soldAt: new Date().toISOString(),
+            usages: [],
+            serviceId: item.metadata?.serviceId || '',
+            serviceName: item.metadata?.serviceName || ''
+          });
+          console.log(`Created new Package Sale for Client ${comanda.cliente_name}`);
+        } else if (item.type === 'assinatura') {
+          // New Subscription sold! Create subscription doc without duplicating financial logs
+          await subscriptionService.createSubscriptionWithoutFinancial({
+            cliente_id: comanda.cliente_id,
+            cliente_name: comanda.cliente_name,
+            plano_id: item.referencia_id,
+            autoRenew: item.metadata?.autoRenew || false
+          });
+          console.log(`Created new Subscription for Client ${comanda.cliente_name}`);
         }
       }
 
@@ -917,6 +1013,35 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             item.unitPrice || item.totalPrice || 0
           );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
+        } else if (item.type === 'pacote') {
+          // New Package sold! Create doc in pacotes_vendas
+          await addDoc(collection(db, 'pacotes_vendas'), {
+            tenantId: comanda.tenantId || getActiveTenantId(),
+            clientId: comanda.cliente_id,
+            clientName: comanda.cliente_name,
+            packageId: item.referencia_id,
+            packageName: item.name.replace('Venda Pacote: ', ''),
+            totalCuts: item.metadata?.cutsCount || 1,
+            remainingCuts: item.metadata?.cutsCount || 1,
+            pricePaid: item.totalPrice,
+            pricePerService: item.metadata?.pricePerService !== undefined ? item.metadata?.pricePerService : null,
+            noExpiration: item.metadata?.noExpiration || false,
+            expiresDays: item.metadata?.expiresDays || 0,
+            soldAt: new Date().toISOString(),
+            usages: [],
+            serviceId: item.metadata?.serviceId || '',
+            serviceName: item.metadata?.serviceName || ''
+          });
+          console.log(`Created new Package Sale for Client ${comanda.cliente_name}`);
+        } else if (item.type === 'assinatura') {
+          // New Subscription sold! Create subscription doc without duplicating financial logs
+          await subscriptionService.createSubscriptionWithoutFinancial({
+            cliente_id: comanda.cliente_id,
+            cliente_name: comanda.cliente_name,
+            plano_id: item.referencia_id,
+            autoRenew: item.metadata?.autoRenew || false
+          });
+          console.log(`Created new Subscription for Client ${comanda.cliente_name}`);
         }
       }
 
@@ -1551,7 +1676,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {comanda.items.map((item, index) => {
-                          const isService = item.type === 'servico';
+                          const isService = item.type === 'servico' || item.type === 'assinatura';
                           const hasPkg = clientPackages.find(
                             p => p.remainingCuts > 0 && (p.serviceId === item.referencia_id || p.packageName.toLowerCase().includes(item.name.toLowerCase()))
                           );
@@ -1568,9 +1693,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                               <td className="px-6 py-5">
                                 <div className="flex items-center gap-4">
                                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shadow-sm ${
-                                    item.type === 'servico' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'
+                                    isService ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'
                                   }`}>
-                                    {item.type === 'servico' ? <Scissors size={16} /> : <Package size={16} />}
+                                    {isService ? <Scissors size={16} /> : <Package size={16} />}
                                   </div>
                                   <div>
                                     <div className="flex items-center gap-2 flex-wrap">

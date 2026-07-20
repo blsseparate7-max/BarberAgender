@@ -876,22 +876,22 @@ export function Estoque() {
 
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
-                        <input name="costPrice" type="number" step="0.01" defaultValue={editingProduct?.costPrice} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                        <input name="costPrice" type="number" step="0.01" defaultValue={editingProduct?.costPrice} onFocus={(e) => e.target.select()} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
                       </div>
 
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
-                        <input name="salePrice" type="number" step="0.01" defaultValue={editingProduct?.salePrice} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                        <input name="salePrice" type="number" step="0.01" defaultValue={editingProduct?.salePrice} onFocus={(e) => e.target.select()} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
                       </div>
 
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Estoque Inicial</label>
-                        <input name="currentStock" type="number" defaultValue={editingProduct?.currentStock || 0} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                        <input name="currentStock" type="number" defaultValue={editingProduct?.currentStock || 0} onFocus={(e) => e.target.select()} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
                       </div>
 
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Estoque Mínimo</label>
-                        <input name="minStock" type="number" defaultValue={editingProduct?.minStock || 5} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                        <input name="minStock" type="number" defaultValue={editingProduct?.minStock || 5} onFocus={(e) => e.target.select()} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
                       </div>
 
                       <div className="space-y-2">

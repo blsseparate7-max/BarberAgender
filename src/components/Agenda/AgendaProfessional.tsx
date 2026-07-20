@@ -26,6 +26,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { getActiveTenantId } from '../../services/tenantService';
 import { Appointment, AppointmentStatus, UserProfile, AgendaBlock } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
 import { agendaBlockService } from '../../services/agendaBlockService';
@@ -125,7 +126,12 @@ export function AgendaProfessional({
   };
 
   useEffect(() => {
-    const qPackages = query(collection(db, 'pacotes_vendas'), where('remainingCuts', '>', 0));
+    const tid = getActiveTenantId();
+    const qPackages = query(
+      collection(db, 'pacotes_vendas'),
+      where('tenantId', '==', tid),
+      where('remainingCuts', '>', 0)
+    );
     const unsubPackages = onSnapshot(qPackages, (snap) => {
       const uids = new Set<string>();
       snap.forEach(doc => {
@@ -135,7 +141,11 @@ export function AgendaProfessional({
       setClientsWithPackages(uids);
     });
 
-    const qSubscriptions = query(collection(db, 'subscriptions'), where('status', '==', 'active'));
+    const qSubscriptions = query(
+      collection(db, 'subscriptions'),
+      where('tenantId', '==', tid),
+      where('status', '==', 'active')
+    );
     const unsubSubscriptions = onSnapshot(qSubscriptions, (snap) => {
       const uids = new Set<string>();
       snap.forEach(doc => {

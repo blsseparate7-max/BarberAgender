@@ -122,6 +122,42 @@ export const subscriptionService = {
     });
   },
 
+  async createSubscriptionWithoutFinancial(data: { cliente_id: string; cliente_name: string; plano_id: string; autoRenew: boolean }) {
+    const activeTenantId = getActiveTenantId();
+    return await runTransaction(db, async (transaction) => {
+      const planRef = doc(db, PLANS_COLLECTION, data.plano_id);
+      const planSnap = await transaction.get(planRef);
+      
+      if (!planSnap.exists()) throw new Error("Plano não encontrado");
+      const plan = planSnap.data() as SubscriptionPlan;
+
+      const startDate = new Date();
+      const endDate = addMonths(startDate, 1);
+
+      const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
+      const subscriptionData = {
+        tenantId: activeTenantId,
+        cliente_id: data.cliente_id,
+        cliente_name: data.cliente_name,
+        plano_id: data.plano_id,
+        planName: plan.name,
+        startDate: format(startDate, 'yyyy-MM-dd'),
+        endDate: format(endDate, 'yyyy-MM-dd'),
+        status: 'active',
+        autoRenew: data.autoRenew,
+        haircutsUsed: 0,
+        beardsUsed: 0,
+        lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
+        discounts: plan.discounts || [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      transaction.set(subscriptionRef, subscriptionData);
+      return subscriptionRef.id;
+    });
+  },
+
   async updateSubscriptionStatus(id: string, status: SubscriptionStatus) {
     const docRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
     await updateDoc(docRef, {

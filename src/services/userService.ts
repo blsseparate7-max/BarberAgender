@@ -60,7 +60,21 @@ export const userService = {
   },
 
   subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void) {
-    return this.subscribeToUsersByRole('barbeiro', onlyActive, callback);
+    let q = query(
+      collection(db, COLLECTION), 
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
+      where('tenantId', '==', getActiveTenantId())
+    );
+    
+    if (onlyActive) {
+      q = query(q, where('ativo', '==', true));
+    }
+
+    return onSnapshot(q, (snapshot) => {
+      const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+      const sorted = users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      callback(sorted);
+    });
   },
 
   subscribeToAllClients(onlyActive = true, callback: (clients: UserProfile[]) => void) {
@@ -71,7 +85,7 @@ export const userService = {
     const tid = tenantId || getActiveTenantId();
     let q = query(
       collection(db, COLLECTION),
-      where('tipo', 'in', ['barbeiro', 'gerente']),
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
       where('tenantId', '==', tid)
     );
     if (onlyActive) {

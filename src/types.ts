@@ -47,6 +47,7 @@ export interface UserProfile {
   // Profissional specific
   commission_percentage?: number;
   percentual_comissao?: number; // Nova nomenclatura
+  remuneracao_fixa?: number; // Salário Fixo / Remuneração do Dono/Profissional
   specialty?: string;
   especialidade?: string; // Nova nomenclatura
   monthly_goal?: number;
@@ -354,7 +355,7 @@ export type ComandaStatus =
   | 'ausente';
 
 export type ComandaOrigin = 'agenda' | 'encaixe' | 'balcao';
-export type ComandaItemType = 'servico' | 'produto' | 'ajuste';
+export type ComandaItemType = 'servico' | 'produto' | 'ajuste' | 'pacote' | 'assinatura';
 
 export interface ComandaItem {
   id: string;
@@ -372,6 +373,7 @@ export interface ComandaItem {
   packageSaleId?: string;
   subscriptionId?: string;
   packageUnitPrice?: number;
+  metadata?: any;
 }
 
 export interface ComandaPayment {

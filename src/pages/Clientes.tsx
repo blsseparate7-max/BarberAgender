@@ -567,11 +567,10 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
               <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">E-mail</label>
               <input 
                 type="email"
-                required
                 value={formData.email}
                 onChange={(e) => setFormData({...formData, email: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                placeholder="email@exemplo.com"
+                placeholder="email@exemplo.com (Opcional)"
               />
             </div>
             <div className="space-y-2">

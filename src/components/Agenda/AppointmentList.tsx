@@ -44,7 +44,12 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
   const [clientsWithSubscriptions, setClientsWithSubscriptions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const qPackages = query(collection(db, 'pacotes_vendas'), where('remainingCuts', '>', 0));
+    const tid = currentUser?.tenantId || 'barber-elite';
+    const qPackages = query(
+      collection(db, 'pacotes_vendas'),
+      where('tenantId', '==', tid),
+      where('remainingCuts', '>', 0)
+    );
     const unsubPackages = onSnapshot(qPackages, (snap) => {
       const uids = new Set<string>();
       snap.forEach(doc => {
@@ -54,7 +59,11 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
       setClientsWithPackages(uids);
     });
 
-    const qSubscriptions = query(collection(db, 'subscriptions'), where('status', '==', 'active'));
+    const qSubscriptions = query(
+      collection(db, 'subscriptions'),
+      where('tenantId', '==', tid),
+      where('status', '==', 'active')
+    );
     const unsubSubscriptions = onSnapshot(qSubscriptions, (snap) => {
       const uids = new Set<string>();
       snap.forEach(doc => {
@@ -68,7 +77,7 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
       unsubPackages();
       unsubSubscriptions();
     };
-  }, []);
+  }, [currentUser?.tenantId]);
 
   useEffect(() => {
     loadAppointments();

@@ -159,6 +159,35 @@
         "tenantId": { "type": "string" }
       },
       "required": ["nome", "preco", "active"]
+    },
+    "Avaliacao": {
+      "title": "Avaliacao",
+      "description": "Avaliações dos clientes sobre profissionais ou serviços",
+      "type": "object",
+      "properties": {
+        "cliente_id": { "type": "string" },
+        "cliente_nome": { "type": "string" },
+        "profissional_id": { "type": "string" },
+        "profissional_nome": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cliente_id", "profissional_id", "rating"]
+    },
+    "DailyFlowItem": {
+      "title": "DailyFlowItem",
+      "description": "Fila ou fluxo de atendimento diário",
+      "type": "object",
+      "properties": {
+        "cliente_id": { "type": "string" },
+        "cliente_nome": { "type": "string" },
+        "servico_id": { "type": "string" },
+        "servico_nome": { "type": "string" },
+        "profissional_id": { "type": "string" },
+        "status": { "type": "string" },
+        "tenantId": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -205,6 +234,30 @@
     "/combos/{comboId}": {
       "schema": "Combo",
       "description": "Combos promocionais de serviços e produtos"
+    },
+    "/avaliacoes/{id}": {
+      "schema": "Avaliacao",
+      "description": "Avaliações e Notas"
+    },
+    "/daily_flow/{id}": {
+      "schema": "DailyFlowItem",
+      "description": "Fila / Fluxo Diário de Atendimento"
+    },
+    "/accounts_payable/{id}": {
+      "schema": "AccountPayable",
+      "description": "Contas a Pagar"
+    },
+    "/accounts_receivable/{id}": {
+      "schema": "AccountReceivable",
+      "description": "Contas a Receber"
+    },
+    "/client_ledger_notes/{id}": {
+      "schema": "ClientLedgerNote",
+      "description": "Notas e Histórico de Conta de Clientes"
+    },
+    "/assinaturas/{id}": {
+      "schema": "Subscription",
+      "description": "Assinaturas e Mensalidades dos Clientes"
     }
   }
 }

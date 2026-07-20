@@ -124,11 +124,11 @@ export const comandaService = {
     
     const items = data.items || [];
     const subtotalServices = items
-      .filter(i => i.type === 'servico' && !i.isCortesia)
+      .filter(i => (i.type === 'servico' || i.type === 'assinatura') && !i.isCortesia)
       .reduce((acc, i) => acc + i.totalPrice, 0);
     
     const subtotalProducts = items
-      .filter(i => i.type === 'produto' && !i.isCortesia)
+      .filter(i => (i.type === 'produto' || i.type === 'pacote') && !i.isCortesia)
       .reduce((acc, i) => acc + i.totalPrice, 0);
 
     const totalAmount = subtotalServices + subtotalProducts;
@@ -202,11 +202,11 @@ export const comandaService = {
 
     // Recalcular subtotais (cortesia não entra no subtotal financeiro)
     const subtotalServices = items
-      .filter(i => i.type === 'servico' && !i.isCortesia)
+      .filter(i => (i.type === 'servico' || i.type === 'assinatura') && !i.isCortesia)
       .reduce((acc, i) => acc + i.totalPrice, 0);
     
     const subtotalProducts = items
-      .filter(i => i.type === 'produto' && !i.isCortesia)
+      .filter(i => (i.type === 'produto' || i.type === 'pacote') && !i.isCortesia)
       .reduce((acc, i) => acc + i.totalPrice, 0);
 
     const totalAmount = subtotalServices + subtotalProducts + tip - discount;

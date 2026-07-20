@@ -53,6 +53,7 @@ import {
 } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
+import { ComandaModal } from '../components/Comanda/ComandaModal';
 
 enum OperationType {
   CREATE = 'create',
@@ -139,6 +140,10 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan | null>(null);
+
+  // Comanda Modal Sync
+  const [comandaInitialData, setComandaInitialData] = useState<any | null>(null);
+  const [showComandaModal, setShowComandaModal] = useState(false);
 
   // Product state for discounts
   const [products, setProducts] = useState<Product[]>([]);
@@ -355,7 +360,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   }, [showPlanModal, editingPlan]);
 
   // Handle plan assignments (assign subscription)
-  const { execute: handleAssignSubscription, isLoading: isAssigning } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAssignSubscription = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedPlan) return;
     
@@ -365,22 +370,34 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     
     if (!client) return;
 
-    try {
-      await subscriptionService.createSubscription({
-        cliente_id,
-        cliente_name: client.nome,
-        plano_id: selectedPlan.id,
-        autoRenew: formData.get('autoRenew') === 'on'
-      });
-      setShowAssignModal(false);
-      setSelectedPlan(null);
-      loadData();
-      toast.success(`Assinatura ativada com sucesso para ${client.nome}!`);
-    } catch (error) {
-      console.error("Erro ao vincular assinatura:", error);
-      toast.error("Ocorreu um erro ao vincular a assinatura.");
-    }
-  });
+    const autoRenew = formData.get('autoRenew') === 'on';
+
+    setComandaInitialData({
+      cliente_id: client.uid,
+      cliente_name: client.nome,
+      origin: 'balcao' as const,
+      items: [
+        {
+          id: `subscription-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          type: 'assinatura' as const,
+          referencia_id: selectedPlan.id,
+          name: `Venda Plano: ${selectedPlan.name}`,
+          quantity: 1,
+          unitPrice: selectedPlan.price,
+          totalPrice: selectedPlan.price,
+          isCortesia: false,
+          generateCommission: false,
+          metadata: {
+            autoRenew
+          }
+        }
+      ]
+    });
+
+    setShowAssignModal(false);
+    setSelectedPlan(null);
+    setShowComandaModal(true);
+  };
 
   // Action to register subscriber benefit usage
   const { execute: handleRegisterUsage, isLoading: isRegisteringUsage } = useAsyncAction(async (subId: string, type: 'haircut' | 'beard') => {
@@ -1383,6 +1400,21 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         description="Deseja realmente excluir esta assinatura permanentemente do banco de dados? O cliente perderá o acesso imediato ao Clube de Benefícios."
       />
 
+      {showComandaModal && comandaInitialData && (
+        <ComandaModal
+          initialData={comandaInitialData}
+          onClose={() => {
+            setShowComandaModal(false);
+            setComandaInitialData(null);
+          }}
+          onSave={() => {
+            setShowComandaModal(false);
+            setComandaInitialData(null);
+            loadData();
+          }}
+        />
+      )}
+
       {/* MODAL: CADASTRO / EDIÇÃO DE PLANO */}
       <AnimatePresence>
         {showPlanModal && (
@@ -1711,10 +1743,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   <button type="button" onClick={() => setShowAssignModal(false)} className="flex-1 py-4 border border-slate-205 rounded-xl text-sm text-muted uppercase tracking-widest hover:bg-slate-50 transition-all cursor-pointer">Cancelar</button>
                   <button 
                     type="submit" 
-                    disabled={isAssigning}
                     className="flex-[2] py-4 bg-primary text-white rounded-xl text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
                   >
-                    {isAssigning ? <Loader2 className="animate-spin" size={18} /> : 'Ativar Assinatura'}
+                    Ir para o Caixa / PDV
                   </button>
                 </div>
               </form>

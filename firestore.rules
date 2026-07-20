@@ -437,5 +437,49 @@ service cloud.firestore {
     match /tipos_bandeiras/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
     match /tipos_deducoes/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
     match /tipos_mensagens/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
+
+    // --- Avaliações / Reviews ---
+    match /avaliacoes/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (isStaff() || (resource != null && resource.data.cliente_id == request.auth.uid));
+    }
+
+    // --- Daily Operations Flow ---
+    match /daily_flow/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (isStaff() || isBarbeiro());
+    }
+
+    // --- Accounts Payable / Receivables (Financeiro) ---
+    match /accounts_payable/{id} {
+      allow read, write: if isAuthenticated() && isStaff();
+    }
+
+    match /accounts_receivable/{id} {
+      allow read, write: if isAuthenticated() && isStaff();
+    }
+
+    // --- Client Ledger Notes ---
+    match /client_ledger_notes/{id} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro() || (resource != null && resource.data.cliente_id == request.auth.uid));
+      allow create, update, delete: if isAuthenticated() && (isStaff() || isBarbeiro());
+    }
+
+    // --- Assinaturas (Alternative collection name used in migrate) ---
+    match /assinaturas/{subscriptionId} {
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid) ||
+        (resource != null && resource.data.clientId == request.auth.uid)
+      );
+      allow create: if isAuthenticated() && (isStaff() || request.resource.data.clientId == request.auth.uid);
+      allow update: if isStaff() || (
+        isAuthenticated() && 
+        resource != null && 
+        (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid)
+      );
+      allow delete: if isAdmin();
+    }
   }
 }

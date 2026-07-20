@@ -13,7 +13,7 @@ import { doc, getDoc, collection, addDoc, serverTimestamp, query, where, onSnaps
 import { commissionService } from '../../services/commissionService';
 import { cashService } from '../../services/cashService';
 import { financialService } from '../../services/financialService';
-import { Commission, ProfessionalAdvance, ProfessionalPayment } from '../../types';
+import { Commission, ProfessionalAdvance, ProfessionalPayment, UserProfile } from '../../types';
 
 function extensos(valor: number): string {
   if (valor === 0) return 'zero reais';
@@ -228,6 +228,22 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     };
   }, [professionalId]);
 
+  const [professionalProfile, setProfessionalProfile] = useState<UserProfile | null>(null);
+  const [payoutType, setPayoutType] = useState<'comissoes' | 'remuneracao'>('comissoes');
+  const [remunerationValue, setRemunerationValue] = useState<number>(0);
+
+  useEffect(() => {
+    if (!professionalId) return;
+    const unsubProfile = onSnapshot(doc(db, 'usuarios', professionalId), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setProfessionalProfile({ uid: docSnap.id, ...data } as UserProfile);
+        setRemunerationValue(data.remuneracao_fixa || 0);
+      }
+    });
+    return () => unsubProfile();
+  }, [professionalId]);
+
   // Handle auto calculations on lists changing
   useEffect(() => {
     const activePendingComms = commissions.filter(c => c.status === 'pendente');
@@ -261,9 +277,11 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
   // Handle Register Payment (Repasse)
   const handleRegisterPayment = async () => {
-    const comissaoReceber = totals.pending; // comissões do período
-    if (!user || comissaoReceber <= 0) {
-      toast.error("Não há comissões pendentes no período selecionado para liquidar.");
+    const grossAmount = payoutType === 'comissoes' ? totals.pending : remunerationValue;
+    if (!user || grossAmount <= 0) {
+      toast.error(payoutType === 'comissoes' 
+        ? "Não há comissões pendentes no período selecionado para liquidar." 
+        : "O valor da remuneração deve ser maior que zero.");
       return;
     }
 
@@ -276,14 +294,14 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       const totalAdjustmentDeduction = periodPendingAdvancesTotal;
       const autoSelectedAdvanceIds = deductedAdvances.map(a => a.id);
       
-      // Valor líquido final pago = Commissions selecionadas no período - Vales selecionados no período
-      const finalNetPaidAmount = Math.max(0, comissaoReceber - totalAdjustmentDeduction);
+      // Valor líquido final pago = Gross amount - Vales
+      const finalNetPaidAmount = Math.max(0, grossAmount - totalAdjustmentDeduction);
 
       // 1. Submit payout batch update in commissionService
       await commissionService.registerPayout({
         profissional_id: professionalId,
         profissional_name: professionalName,
-        commission_ids: paymentData.selectedIds,
+        commission_ids: payoutType === 'comissoes' ? paymentData.selectedIds : [],
         advance_ids: autoSelectedAdvanceIds,
         amount: finalNetPaidAmount, // actual net bank transfer/cash amount paid
         date: todayString,
@@ -292,16 +310,23 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         responsible_id: user.uid,
         responsible_name: profile?.nome || 'Admin',
         transaction_id: txId,
-        notes: paymentData.notes + (totalAdjustmentDeduction > 0 ? ` (Dedução Automática de R$ ${totalAdjustmentDeduction.toFixed(2)} em Vales no período)` : '')
+        notes: paymentData.notes + 
+          (payoutType === 'remuneracao' ? ` (Remuneração Fixa de R$ ${grossAmount.toFixed(2)})` : '') +
+          (totalAdjustmentDeduction > 0 ? ` (Dedução Automática de R$ ${totalAdjustmentDeduction.toFixed(2)} em Vales no período)` : '')
       });
 
       // 2. Register financial accounting record
+      const categoryName = payoutType === 'comissoes' ? 'Repasse Comissões (Parceiros)' : 'Salários e Pro-Labore';
+      const descriptionText = payoutType === 'comissoes' 
+        ? `Repasse Líquido - ${professionalName} (Ref ${localDateRange.start} a ${localDateRange.end})`
+        : `Pagamento de Remuneração/Salário - ${professionalName} (Ref ${localDateRange.start} a ${localDateRange.end})`;
+
       if (paymentData.source === 'caixa' && isOpenCash) {
         await cashService.addMovement({
           caixa_id: isOpenCash.id,
           type: 'expense',
-          category: 'Repasse Comissões',
-          description: `Repasse Líquido - ${professionalName} (Ref ${localDateRange.start} a ${localDateRange.end})`,
+          category: payoutType === 'comissoes' ? 'Repasse Comissões' : 'Retirada de Salário',
+          description: descriptionText,
           amount: finalNetPaidAmount,
           paymentMethod: paymentData.paymentMethod as any,
           is_receivable: false,
@@ -312,8 +337,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       } else {
         await financialService.createTransaction({
           type: 'expense',
-          category: 'Repasse Comissões (Parceiros)',
-          description: `Repasse Líquido - ${professionalName} (Ref ${localDateRange.start} a ${localDateRange.end})`,
+          category: categoryName,
+          description: descriptionText,
           amount: finalNetPaidAmount,
           net_amount: finalNetPaidAmount,
           fee_amount: 0,
@@ -329,7 +354,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         });
       }
 
-      toast.success("Pagamento de comissão registrado com sucesso!");
+      toast.success(payoutType === 'comissoes' ? "Pagamento de comissão registrado com sucesso!" : "Pagamento de remuneração registrado com sucesso!");
       setIsPaymentModalOpen(false);
     } catch (error) {
       console.error("Erro ao registrar pagamento:", error);
@@ -1485,25 +1510,88 @@ Assinatura: _______________________________
                     <h3 className="text-2xl font-black text-primary">Liquidar Acerto</h3>
                     <p className="text-xs text-muted font-semibold mt-1">Settle e deduza vales do profissional automaticamente no período</p>
                   </div>
-                  <button onClick={() => setIsPaymentModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-all text-slate-400"><Plus className="rotate-45" size={24} /></button>
+                  <button onClick={() => setIsPaymentModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-all text-slate-400">
+                    <Plus className="rotate-45" size={24} />
+                  </button>
                 </div>
                 
                 <div className="space-y-6">
+                  {/* Tipo de Liquidação Switch */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Tipo de Liquidação</label>
+                    <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-2xl">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPayoutType('comissoes');
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-black tracking-wide transition-all ${
+                          payoutType === 'comissoes'
+                            ? 'bg-white text-primary shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Comissões Pendentes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPayoutType('remuneracao');
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-black tracking-wide transition-all ${
+                          payoutType === 'remuneracao'
+                            ? 'bg-white text-primary shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Salário / Remuneração Fixa
+                      </button>
+                    </div>
+                  </div>
+
+                  {payoutType === 'remuneracao' && (
+                    <div className="space-y-1.5 animate-in fade-in duration-200">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Valor da Remuneração (R$)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={remunerationValue === 0 ? '' : remunerationValue}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setRemunerationValue(e.target.value === '' ? '' : Number(e.target.value))}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs text-primary focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all"
+                        placeholder="Insira o valor da remuneração"
+                      />
+                      {professionalProfile?.remuneracao_fixa ? (
+                        <p className="text-[10px] text-emerald-600 font-semibold ml-1">
+                          Valor padrão cadastrado: R$ {professionalProfile.remuneracao_fixa.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-amber-650 font-semibold ml-1">
+                          Nenhuma remuneração fixa padrão cadastrada para este profissional.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Clean mathematical items requested by the user */}
                   <div className="p-6 bg-slate-50 border border-slate-150 rounded-3xl space-y-4">
                     <div className="flex justify-between items-center text-sm font-bold text-slate-600">
-                      <span>Comissão a receber:</span>
-                      <span className="font-extrabold text-slate-900 font-mono">R$ {totals.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      <span>{payoutType === 'comissoes' ? 'Comissão a receber:' : 'Remuneração Bruta:'}</span>
+                      <span className="font-extrabold text-slate-900 font-mono">
+                        R$ {(payoutType === 'comissoes' ? totals.pending : remunerationValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
 
                     <div className="flex justify-between items-center text-sm font-bold text-red-500">
-                      <span>Vales:</span>
+                      <span>Vales no período:</span>
                       <span className="font-extrabold font-mono">- R$ {periodPendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                     </div>
 
                     <div className="border-t border-slate-200/85 pt-4 flex justify-between items-center">
-                      <span className="text-base font-black text-primary">Total:</span>
-                      <span className="text-2xl font-black text-emerald-600 font-mono">R$ {periodNetTotalToPay.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      <span className="text-base font-black text-primary">Total Líquido:</span>
+                      <span className="text-2xl font-black text-emerald-600 font-mono">
+                        R$ {Math.max(0, (payoutType === 'comissoes' ? totals.pending : remunerationValue) - periodPendingAdvancesTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
                   </div>
 

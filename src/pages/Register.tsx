@@ -211,6 +211,36 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       });
       await batch.commit();
     }
+
+    // 9. Migrate client debts (client_debts)
+    const debtsRef = collection(db, 'client_debts');
+    const debtsQuery = query(debtsRef, where('cliente_id', '==', linkClientId));
+    const debtsSnapshot = await getDocs(debtsQuery);
+    if (!debtsSnapshot.empty) {
+      const batch = writeBatch(db);
+      debtsSnapshot.docs.forEach((docSnap) => {
+        batch.update(docSnap.ref, { 
+          cliente_id: userUid,
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    }
+
+    // 10. Migrate debt payments (debt_payments)
+    const debtPaymentsRef = collection(db, 'debt_payments');
+    const paymentsQuery = query(debtPaymentsRef, where('cliente_id', '==', linkClientId));
+    const paymentsSnapshot = await getDocs(paymentsQuery);
+    if (!paymentsSnapshot.empty) {
+      const batch = writeBatch(db);
+      paymentsSnapshot.docs.forEach((docSnap) => {
+        batch.update(docSnap.ref, { 
+          cliente_id: userUid,
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+    }
   };
 
   const handleRegister = async (e: React.FormEvent) => {

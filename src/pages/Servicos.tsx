@@ -669,8 +669,9 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                         type="number"
                         min="5"
                         step="5"
-                        value={duracao_minutos}
-                        onChange={e => setDuracaoMinutos(Number(e.target.value))}
+                        value={duracao_minutos === 0 ? '' : duracao_minutos}
+                        onFocus={(e) => e.target.select()}
+                        onChange={e => setDuracaoMinutos(e.target.value === '' ? '' : Number(e.target.value))}
                         className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 pl-11 pr-4 text-sm font-semibold text-primary outline-none transition"
                       />
                     </div>
@@ -685,8 +686,9 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                         type="number"
                         min="0"
                         step="0.01"
-                        value={preco}
-                        onChange={e => setPreco(Number(e.target.value))}
+                        value={preco === 0 ? '' : preco}
+                        onFocus={(e) => e.target.select()}
+                        onChange={e => setPreco(e.target.value === '' ? '' : Number(e.target.value))}
                         className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-primary outline-none transition"
                       />
                     </div>
@@ -828,8 +830,9 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                             required
                             min="0"
                             step={tipoComissao === 'percentual' ? '1' : '0.01'}
-                            value={valorComissao}
-                            onChange={(e) => setValorComissao(Number(e.target.value))}
+                            value={valorComissao === 0 ? '' : valorComissao}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => setValorComissao(e.target.value === '' ? '' : Number(e.target.value))}
                             className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-10 pr-3.5 text-xs font-black text-primary outline-none"
                             placeholder={tipoComissao === 'percentual' ? 'Ex: 55' : 'Ex: 27.50'}
                           />
@@ -910,11 +913,12 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                                     required
                                     min="0"
                                     step={override.tipo === 'percentual' ? '1' : '0.01'}
-                                    value={override.valor}
+                                    value={override.valor === 0 ? '' : override.valor}
+                                    onFocus={(e) => e.target.select()}
                                     onChange={(e) => {
                                       setComissoesPorProfissional({
                                         ...comissoesPorProfissional,
-                                        [prof.uid]: { tipo: override.tipo, valor: Number(e.target.value) }
+                                        [prof.uid]: { tipo: override.tipo, valor: e.target.value === '' ? '' : Number(e.target.value) }
                                       });
                                     }}
                                     placeholder={override.tipo === 'percentual' ? '50' : '20.00'}

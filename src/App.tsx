@@ -64,6 +64,14 @@ function MainApp() {
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('link_client_id') || params.get('link_id')) {
+      setShowLanding(false);
+      setAuthView('register');
+    }
+  }, []);
+
+  useEffect(() => {
     if (profile && (profile.tipo === 'admin' || profile.tipo === 'gerente') && !profile.onboardingCompleted) {
       setShowOnboarding(true);
     } else {

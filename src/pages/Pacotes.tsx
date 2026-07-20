@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { userService } from '../services/userService';
 import { UserProfile, Service } from '../types';
 import { db, auth } from '../firebase';
@@ -40,6 +41,7 @@ import {
 } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
+import { ComandaModal } from '../components/Comanda/ComandaModal';
 
 enum OperationType {
   CREATE = 'create',
@@ -116,11 +118,12 @@ interface PackageSale {
 }
 
 interface PacotesProps {
-  defaultTab?: 'pacotes_consumo' | 'pacotes_modelos' | 'meus_pacotes';
+  defaultTab?: 'pacotes_dashboard' | 'pacotes_consumo' | 'pacotes_modelos' | 'meus_pacotes';
 }
 
 export function Pacotes({ defaultTab }: PacotesProps) {
   const { user, profile, isAdmin, isGerente } = useAuth();
+  const { tenantId } = useTenant();
   const canManage = isAdmin || isGerente;
 
   const getInitialTabState = () => {
@@ -130,10 +133,10 @@ export function Pacotes({ defaultTab }: PacotesProps) {
     if (defaultTab) {
       return defaultTab;
     }
-    return 'pacotes_consumo';
+    return 'pacotes_dashboard';
   };
 
-  const [activeTab, setActiveTab] = useState<'pacotes_consumo' | 'pacotes_modelos' | 'meus_pacotes'>(getInitialTabState());
+  const [activeTab, setActiveTab] = useState<'pacotes_dashboard' | 'pacotes_consumo' | 'pacotes_modelos' | 'meus_pacotes'>(getInitialTabState());
 
   useEffect(() => {
     if (profile?.tipo === 'cliente') {
@@ -183,6 +186,10 @@ export function Pacotes({ defaultTab }: PacotesProps) {
   const [pkgServiceId, setPkgServiceId] = useState('');
   const [pkgShowInPortal, setPkgShowInPortal] = useState(true);
 
+  // Comanda Modal Sync
+  const [comandaInitialData, setComandaInitialData] = useState<any | null>(null);
+  const [showComandaModal, setShowComandaModal] = useState(false);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -204,10 +211,11 @@ export function Pacotes({ defaultTab }: PacotesProps) {
 
     const setupListeners = () => {
       const pathConfigs = 'pacotes_config';
-      const qPackages = query(collection(db, pathConfigs), orderBy('cutsCount', 'asc'));
+      const qPackages = query(collection(db, pathConfigs), where('tenantId', '==', tenantId));
       unsubPkg = onSnapshot(qPackages, (snap) => {
         const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as PackageConfig));
-        setPackages(docs);
+        // Sort in memory to avoid requiring a composite index on tenantId + cutsCount
+        setPackages(docs.sort((a, b) => a.cutsCount - b.cutsCount));
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, pathConfigs);
       });
@@ -215,9 +223,9 @@ export function Pacotes({ defaultTab }: PacotesProps) {
       const pathSales = 'pacotes_vendas';
       let qSales;
       if (profile?.tipo === 'cliente') {
-        qSales = query(collection(db, pathSales), where('clientId', '==', user?.uid));
+        qSales = query(collection(db, pathSales), where('tenantId', '==', tenantId), where('clientId', '==', user?.uid));
       } else {
-        qSales = query(collection(db, pathSales), orderBy('soldAt', 'desc'));
+        qSales = query(collection(db, pathSales), where('tenantId', '==', tenantId));
       }
 
       unsubSales = onSnapshot(qSales, (snap) => {
@@ -230,9 +238,8 @@ export function Pacotes({ defaultTab }: PacotesProps) {
           } as PackageSale;
         });
         
-        if (profile?.tipo === 'cliente') {
-          docs = docs.sort((a, b) => b.soldAt.localeCompare(a.soldAt));
-        }
+        // Sort in memory to avoid requiring a composite index on tenantId + soldAt
+        docs = docs.sort((a, b) => b.soldAt.localeCompare(a.soldAt));
         setSales(docs);
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, pathSales);
@@ -240,10 +247,11 @@ export function Pacotes({ defaultTab }: PacotesProps) {
 
       // Services snapshot
       unsubServ = onSnapshot(
-        query(collection(db, 'services'), orderBy('nome', 'asc')),
+        query(collection(db, 'services'), where('tenantId', '==', tenantId)),
         (snap) => {
           const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-          setServices(docs.filter(s => s.active !== false));
+          const filtered = docs.filter(s => s.active !== false);
+          setServices(filtered.sort((a, b) => (a.nome || a.name || '').localeCompare(b.nome || b.name || '')));
         },
         (error) => {
           console.error('Erro ao buscar serviços:', error);
@@ -259,7 +267,7 @@ export function Pacotes({ defaultTab }: PacotesProps) {
       if (unsubSales) unsubSales();
       if (unsubServ) unsubServ();
     };
-  }, [profile?.uid, profile?.tipo, user?.uid, canManage]);
+  }, [profile?.uid, profile?.tipo, user?.uid, canManage, tenantId]);
 
   // Sync edit package config forms
   useEffect(() => {
@@ -318,6 +326,7 @@ export function Pacotes({ defaultTab }: PacotesProps) {
     const selectedService = services.find(s => s.id === pkgServiceId);
 
     const payload = {
+      tenantId: tenantId,
       name: pkgName.trim(),
       cutsCount: Number(pkgCuts),
       pricePerService: pkgPricePerService !== '' ? Number(pkgPricePerService) : null,
@@ -373,7 +382,7 @@ export function Pacotes({ defaultTab }: PacotesProps) {
   };
 
   // Handle active client packages registration (Vender Pacote)
-  const handleSellPackage = async (e: React.FormEvent) => {
+  const handleSellPackage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId || !selectedPkgId) {
       toast.error('Preencha o cliente e o modelo do pacote!');
@@ -383,32 +392,44 @@ export function Pacotes({ defaultTab }: PacotesProps) {
     const pkg = packages.find(p => p.id === selectedPkgId);
     if (!client || !pkg) return;
 
-    const path = 'pacotes_vendas';
-    try {
-      await addDoc(collection(db, path), {
-        clientId: client.uid,
-        clientName: client.nome,
-        packageId: pkg.id,
-        packageName: pkg.name,
-        totalCuts: pkg.cutsCount,
-        remainingCuts: pkg.cutsCount,
-        pricePaid: Number(salePrice),
-        pricePerService: pkg.pricePerService !== undefined && pkg.pricePerService !== null ? pkg.pricePerService : null,
-        noExpiration: pkg.noExpiration || false,
-        expiresDays: pkg.expiresDays || 0,
-        soldAt: new Date().toISOString(),
-        usages: [],
-        serviceId: pkg.serviceId || '',
-        serviceName: pkg.serviceName || ''
-      });
-      toast.success(`Plano fidelidade associado e ativado para ${client.nome}!`);
-      setShowSaleModal(false);
-      setSelectedClientId('');
-      setSelectedPkgId('');
-      setSalePrice('');
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, path);
+    const price = Number(salePrice);
+    if (isNaN(price) || price <= 0) {
+      toast.error('Informe um valor de venda válido!');
+      return;
     }
+
+    setComandaInitialData({
+      cliente_id: client.uid,
+      cliente_name: client.nome,
+      origin: 'balcao' as const,
+      items: [
+        {
+          id: `package-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          type: 'pacote' as const,
+          referencia_id: pkg.id,
+          name: `Venda Pacote: ${pkg.name}`,
+          quantity: 1,
+          unitPrice: price,
+          totalPrice: price,
+          isCortesia: false,
+          generateCommission: false,
+          metadata: {
+            cutsCount: pkg.cutsCount,
+            pricePerService: pkg.pricePerService !== undefined ? pkg.pricePerService : null,
+            noExpiration: pkg.noExpiration || false,
+            expiresDays: pkg.expiresDays || 0,
+            serviceId: pkg.serviceId || '',
+            serviceName: pkg.serviceName || ''
+          }
+        }
+      ]
+    });
+
+    setShowSaleModal(false);
+    setSelectedClientId('');
+    setSelectedPkgId('');
+    setSalePrice('');
+    setShowComandaModal(true);
   };
 
   // Live consumption check-ins for package slices (Usar 1 Corte)
@@ -595,6 +616,22 @@ export function Pacotes({ defaultTab }: PacotesProps) {
           <button 
             type="button"
             onClick={() => {
+              setActiveTab('pacotes_dashboard');
+              setSearchQuery('');
+            }}
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === 'pacotes_dashboard' 
+                ? 'bg-primary text-white shadow-sm' 
+                : 'text-slate-500 hover:text-primary hover:bg-slate-50/50'
+            }`}
+          >
+            <History size={14} />
+            Dashboard & Indicadores
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => {
               setActiveTab('pacotes_consumo');
               setSearchQuery('');
             }}
@@ -627,7 +664,7 @@ export function Pacotes({ defaultTab }: PacotesProps) {
       )}
 
       {/* SEARCH AND FILTERS */}
-      {profile?.tipo !== 'cliente' && (
+      {profile?.tipo !== 'cliente' && activeTab !== 'pacotes_dashboard' && (
         <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
           <div className="relative w-full sm:max-w-sm">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -672,7 +709,333 @@ export function Pacotes({ defaultTab }: PacotesProps) {
 
       {/* CORE WORKSPACE CONTENT PANEL */}
       <div className="space-y-6">
-        
+
+        {/* TAB: Dashboard & Indicadores */}
+        {activeTab === 'pacotes_dashboard' && profile?.tipo !== 'cliente' && (() => {
+          const ticketMedio = totalSalesCount > 0 ? totalRevenueGenerated / totalSalesCount : 0;
+          const totalRemainingCuts = sales.reduce((sum, s) => sum + (s.remainingCuts || 0), 0);
+          const totalCutsContracted = sales.reduce((sum, s) => sum + (s.totalCuts || 0), 0);
+          const totalConsumedCuts = Math.max(0, totalCutsContracted - totalRemainingCuts);
+          const utilizationPercentage = totalCutsContracted > 0 ? Math.round((totalConsumedCuts / totalCutsContracted) * 100) : 0;
+
+          // Clients near expiration or low on balance
+          const clientsNearExpiration = sales.filter(sale => {
+            if (sale.remainingCuts <= 0) return false;
+            if (sale.remainingCuts <= 1) return true;
+            if (!sale.noExpiration && sale.expiresDays) {
+              const soldDate = new Date(sale.soldAt);
+              const daysPassed = (Date.now() - soldDate.getTime()) / (1000 * 60 * 60 * 24);
+              const daysRemaining = sale.expiresDays - daysPassed;
+              if (daysRemaining <= 15) return true;
+            }
+            return false;
+          }).map(sale => {
+            let daysRemaining = Infinity;
+            if (!sale.noExpiration && sale.expiresDays) {
+              const soldDate = new Date(sale.soldAt);
+              const daysPassed = (Date.now() - soldDate.getTime()) / (1000 * 60 * 60 * 24);
+              daysRemaining = Math.max(0, Math.round(sale.expiresDays - daysPassed));
+            }
+            return {
+              ...sale,
+              daysRemaining
+            };
+          }).sort((a, b) => {
+            if (a.remainingCuts !== b.remainingCuts) {
+              return a.remainingCuts - b.remainingCuts;
+            }
+            return a.daysRemaining - b.daysRemaining;
+          }).slice(0, 5);
+
+          // Best selling models ranking
+          const packageRankingMap: { [key: string]: { id: string; name: string; salesCount: number; revenue: number; totalCuts: number } } = {};
+          sales.forEach(sale => {
+            if (!packageRankingMap[sale.packageId]) {
+              packageRankingMap[sale.packageId] = {
+                id: sale.packageId,
+                name: sale.packageName,
+                salesCount: 0,
+                revenue: 0,
+                totalCuts: 0
+              };
+            }
+            packageRankingMap[sale.packageId].salesCount += 1;
+            packageRankingMap[sale.packageId].revenue += sale.pricePaid;
+            packageRankingMap[sale.packageId].totalCuts += sale.totalCuts;
+          });
+          const rankedPackages = Object.values(packageRankingMap)
+            .sort((a, b) => b.salesCount - a.salesCount)
+            .slice(0, 5);
+
+          // Chronological usage logs
+          interface UsageLogItem {
+            clientName: string;
+            packageName: string;
+            serviceName?: string;
+            usedAt: string;
+            index: number;
+          }
+          const allUsageLogs: UsageLogItem[] = [];
+          sales.forEach(sale => {
+            if (sale.usages) {
+              sale.usages.forEach(usage => {
+                allUsageLogs.push({
+                  clientName: sale.clientName,
+                  packageName: sale.packageName,
+                  serviceName: sale.serviceName,
+                  usedAt: usage.usedAt,
+                  index: usage.index
+                });
+              });
+            }
+          });
+          const recentUsageLogs = allUsageLogs
+            .sort((a, b) => b.usedAt.localeCompare(a.usedAt))
+            .slice(0, 6);
+
+          return (
+            <div className="space-y-6 animate-fade-in">
+              {/* Stat Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Revenue Card */}
+                <div className="p-6 bg-white border border-slate-200 rounded-[2rem] shadow-sm flex flex-col justify-between hover:shadow-md transition">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Faturamento Acumulado</span>
+                    <div className="w-8 h-8 bg-emerald-50 border border-emerald-100 rounded-lg flex items-center justify-center text-emerald-600">
+                      <DollarSign size={16} />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-2xl font-black text-slate-800">
+                      R$ {totalRevenueGenerated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-[10px] font-bold text-slate-400 mt-1">Soma de todas as vendas efetivadas</p>
+                  </div>
+                </div>
+
+                {/* Ticket Medio Card */}
+                <div className="p-6 bg-white border border-slate-200 rounded-[2rem] shadow-sm flex flex-col justify-between hover:shadow-md transition">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Ticket Médio</span>
+                    <div className="w-8 h-8 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-center text-indigo-600">
+                      <DollarSign size={16} />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-2xl font-black text-slate-800">
+                      R$ {ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-[10px] font-bold text-slate-400 mt-1">Valor médio arrecadado por venda</p>
+                  </div>
+                </div>
+
+                {/* Total Sales Card */}
+                <div className="p-6 bg-white border border-slate-200 rounded-[2rem] shadow-sm flex flex-col justify-between hover:shadow-md transition">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Pacotes Comercializados</span>
+                    <div className="w-8 h-8 bg-amber-50 border border-amber-100 rounded-lg flex items-center justify-center text-amber-600">
+                      <ShoppingBag size={16} />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-2xl font-black text-slate-800">
+                      {totalSalesCount}
+                    </p>
+                    <p className="text-[10px] font-bold text-slate-400 mt-1">
+                      {activeSalesCount} ativos • {totalSalesCount - activeSalesCount} esgotados
+                    </p>
+                  </div>
+                </div>
+
+                {/* Utilization Rate Card */}
+                <div className="p-6 bg-white border border-slate-200 rounded-[2rem] shadow-sm flex flex-col justify-between hover:shadow-md transition">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Consumo & Utilização</span>
+                    <div className="w-8 h-8 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-center text-indigo-600">
+                      <CheckCircle2 size={16} />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <div className="flex items-baseline justify-between">
+                      <p className="text-2xl font-black text-slate-800">
+                        {utilizationPercentage}%
+                      </p>
+                      <span className="text-[10px] font-bold text-slate-500">
+                        {totalConsumedCuts} / {totalCutsContracted} sessões
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-2 border border-slate-200">
+                      <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${utilizationPercentage}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bento Grid layout for lists */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Card 1: Clientes Próximos de Vencer ou Esgotar */}
+                <div className="bg-white border border-slate-200 rounded-[2.5rem] p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
+                        <Clock size={16} className="text-amber-500" />
+                        <span>Clientes Próximos de Esgotar</span>
+                      </h3>
+                      <p className="text-[10px] font-bold text-slate-400 mt-0.5">Fidelidade ativa com saldo baixo ou expirando</p>
+                    </div>
+                    <span className="text-[9px] bg-amber-50 text-amber-700 font-black px-2 py-0.5 rounded-md uppercase border border-amber-100">Alerta Ativo</span>
+                  </div>
+
+                  {clientsNearExpiration.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 italic text-xs font-semibold">
+                      Nenhum cliente com pacote próximo do vencimento ou fim de saldo.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {clientsNearExpiration.map(sale => {
+                        const isCriticalBalance = sale.remainingCuts <= 1;
+                        const isCriticalDate = sale.daysRemaining !== Infinity && sale.daysRemaining <= 10;
+                        
+                        return (
+                          <div key={`near-exp-${sale.id}`} className="flex items-center justify-between bg-slate-50 border border-slate-100 p-4 rounded-2xl hover:border-slate-300 transition">
+                            <div className="space-y-1">
+                              <p className="text-xs font-extrabold text-slate-800 leading-tight">{sale.clientName}</p>
+                              <p className="text-[10px] text-slate-500 font-bold">{sale.packageName}</p>
+                            </div>
+
+                            <div className="text-right flex items-center gap-4">
+                              <div className="space-y-0.5">
+                                <p className={`text-xs font-black ${isCriticalBalance ? 'text-rose-600' : 'text-amber-600'}`}>
+                                  {sale.remainingCuts} {sale.remainingCuts === 1 ? 'sessão restante' : 'sessões restantes'}
+                                </p>
+                                {sale.daysRemaining !== Infinity && (
+                                  <p className={`text-[9px] font-bold ${isCriticalDate ? 'text-rose-500' : 'text-slate-400'}`}>
+                                    Expira em {sale.daysRemaining} {sale.daysRemaining === 1 ? 'dia' : 'dias'}
+                                  </p>
+                                )}
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedClientId(sale.clientId);
+                                  // Preselect the package
+                                  setSelectedPkgId(sale.packageId);
+                                  const matched = packages.find(p => p.id === sale.packageId);
+                                  if (matched) setSalePrice(matched.promotionalPrice);
+                                  setShowSaleModal(true);
+                                }}
+                                className="bg-white border border-slate-250 text-primary hover:bg-slate-50 text-[9px] font-black uppercase px-3 py-2 rounded-xl transition shadow-sm active:scale-95 cursor-pointer"
+                              >
+                                Renovar
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Card 2: Ranking de Pacotes Mais Vendidos */}
+                <div className="bg-white border border-slate-200 rounded-[2.5rem] p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
+                        <Award size={16} className="text-indigo-600" />
+                        <span>Pacotes Mais Vendidos</span>
+                      </h3>
+                      <p className="text-[10px] font-bold text-slate-400 mt-0.5">Modelos que geram mais receita e fidelidade</p>
+                    </div>
+                    <span className="text-[9px] bg-indigo-50 text-indigo-700 font-black px-2 py-0.5 rounded-md uppercase border border-indigo-100">Desempenho</span>
+                  </div>
+
+                  {rankedPackages.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 italic text-xs font-semibold">
+                      Ainda não há vendas de pacotes registradas para exibir no ranking.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {rankedPackages.map((ranked, index) => {
+                        const maxSales = Math.max(...rankedPackages.map(r => r.salesCount));
+                        const barWidthPercent = maxSales > 0 ? Math.round((ranked.salesCount / maxSales) * 100) : 0;
+                        
+                        return (
+                          <div key={`rank-${ranked.id}`} className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="w-5 h-5 bg-slate-100 text-slate-700 font-black text-[10px] rounded flex items-center justify-center">
+                                  {index + 1}
+                                </span>
+                                <span className="font-extrabold text-slate-800 truncate max-w-xs">{ranked.name}</span>
+                              </div>
+                              <span className="font-black text-slate-700">{ranked.salesCount} vendas • R$ {ranked.revenue.toLocaleString('pt-BR')}</span>
+                            </div>
+                            <div className="w-full bg-slate-50 h-3 rounded-full overflow-hidden border border-slate-100">
+                              <div 
+                                className="h-full bg-gradient-to-r from-indigo-500 to-primary rounded-full transition-all duration-500" 
+                                style={{ width: `${barWidthPercent}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Timeline of Recent Consumption Uses */}
+              <div className="bg-white border border-slate-200 rounded-[2.5rem] p-6 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
+                      <BookOpen size={16} className="text-emerald-500" />
+                      <span>Histórico Recente de Consumo (Utilização)</span>
+                    </h3>
+                    <p className="text-[10px] font-bold text-slate-400 mt-0.5">Logs de utilização e faturamento automático de créditos</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('pacotes_consumo')}
+                    className="text-[10px] font-black uppercase text-indigo-600 hover:underline cursor-pointer"
+                  >
+                    Ver Tudo
+                  </button>
+                </div>
+
+                {recentUsageLogs.length === 0 ? (
+                  <div className="py-12 text-center text-slate-400 italic text-xs font-semibold">
+                    Nenhum crédito de pacote foi consumido ainda. A baixa acontece automaticamente ao finalizar comandas vinculadas.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {recentUsageLogs.map((log, idx) => (
+                      <div key={`usage-log-${idx}`} className="flex items-center justify-between bg-slate-50/50 border border-slate-100 p-4 rounded-2xl hover:border-slate-300 transition">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center justify-center text-emerald-600 text-xs font-black">
+                            #{log.index}
+                          </div>
+                          <div>
+                            <p className="text-xs font-extrabold text-slate-800 leading-tight">{log.clientName}</p>
+                            <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                              {log.packageName} {log.serviceName && `• ${log.serviceName}`}
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className="text-[9px] font-extrabold text-slate-400 bg-white border px-2 py-1 rounded-xl">
+                          {new Date(log.usedAt).toLocaleDateString('pt-BR')} {new Date(log.usedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* TAB 1: Consumo e Venda de Pacotes */}
         {activeTab === 'pacotes_consumo' && profile?.tipo !== 'cliente' && (
           <div className="space-y-4 animate-fade-in">
@@ -1101,6 +1464,21 @@ export function Pacotes({ defaultTab }: PacotesProps) {
         title="Desfazer Lançamento de Consumo"
         description={`Deseja realmente desfazer a utilização nº ${revertCutSale?.usageIndex} e estornar o saldo correspondente de volta para o cliente?`}
       />
+
+      {showComandaModal && comandaInitialData && (
+        <ComandaModal
+          initialData={comandaInitialData}
+          onClose={() => {
+            setShowComandaModal(false);
+            setComandaInitialData(null);
+          }}
+          onSave={() => {
+            setShowComandaModal(false);
+            setComandaInitialData(null);
+            loadData();
+          }}
+        />
+      )}
 
       {/* MODAL: CADASTRO / EDIÇÃO DE MODELO DE PACOTE */}
       <AnimatePresence>

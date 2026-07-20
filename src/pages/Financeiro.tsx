@@ -60,7 +60,9 @@ import {
   limit,
   addDoc,
   serverTimestamp,
-  onSnapshot
+  onSnapshot,
+  doc,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { 
@@ -3533,6 +3535,7 @@ function ProfessionalAccountDetailsModal({
 function CashMovementList({ caixaId }: { caixaId: string }) {
   const [movements, setMovements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedMovement, setSelectedMovement] = useState<any | null>(null);
 
   useEffect(() => {
     const unsubscribe = cashService.subscribeToMovementsByCashId(caixaId, (data) => {
@@ -3547,7 +3550,11 @@ function CashMovementList({ caixaId }: { caixaId: string }) {
   return (
     <div className="space-y-4">
       {movements.map((m, index) => (
-        <div key={`movement-${m.id || index}-${index}`} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+        <div 
+          key={`movement-${m.id || index}-${index}`} 
+          onClick={() => setSelectedMovement(m)}
+          className="flex items-center justify-between p-4 bg-slate-50 hover:bg-slate-100/80 border border-slate-100 rounded-2xl cursor-pointer transition-all hover:scale-[1.01]"
+        >
           <div className="flex items-center gap-4">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
               m.type === 'income' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'
@@ -3569,6 +3576,300 @@ function CashMovementList({ caixaId }: { caixaId: string }) {
       {movements.length === 0 && (
         <div className="text-center py-10 text-muted italic text-sm">Nenhuma movimentação neste caixa.</div>
       )}
+
+      <AnimatePresence>
+        {selectedMovement && (
+          <MovementDetailsModal 
+            movement={selectedMovement} 
+            onClose={() => setSelectedMovement(null)} 
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function MovementDetailsModal({ movement, onClose }: { movement: any, onClose: () => void }) {
+  const { user, profile } = useAuth();
+  const [comanda, setComanda] = useState<any | null>(null);
+  const [loadingComanda, setLoadingComanda] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+  const [showReopenForm, setShowReopenForm] = useState(false);
+  const [submittingReopen, setSubmittingReopen] = useState(false);
+
+  useEffect(() => {
+    if (movement?.referencia_id) {
+      setLoadingComanda(true);
+      const comandaRef = doc(db, 'comandas', movement.referencia_id);
+      getDoc(comandaRef).then((snap) => {
+        if (snap.exists()) {
+          setComanda({ id: snap.id, ...snap.data() });
+        } else {
+          setComanda(null);
+        }
+        setLoadingComanda(false);
+      }).catch((err) => {
+        console.error("Error fetching comanda details:", err);
+        setComanda(null);
+        setLoadingComanda(false);
+      });
+    } else {
+      setComanda(null);
+    }
+  }, [movement]);
+
+  const handleReopenComanda = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reopenReason.trim()) {
+      toast.error("Por favor, informe o motivo da reabertura.");
+      return;
+    }
+    if (!user) return;
+
+    setSubmittingReopen(true);
+    try {
+      await comandaService.reopenComanda(
+        movement.referencia_id,
+        reopenReason,
+        user.uid,
+        profile?.nome || user.email || 'Usuário'
+      );
+      toast.success("Comanda reaberta com sucesso!");
+      onClose();
+    } catch (error) {
+      console.error("Error reopening comanda:", error);
+      toast.error("Erro ao reabrir comanda: " + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setSubmittingReopen(false);
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'aberta': return { label: 'Aberta', color: 'bg-blue-50 text-blue-700 border-blue-100' };
+      case 'fechada': return { label: 'Fechada', color: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
+      case 'nao_paga': return { label: 'Fiado (Pendente)', color: 'bg-red-50 text-red-700 border-red-100' };
+      case 'parcialmente_paga': return { label: 'Parcialmente Paga', color: 'bg-amber-50 text-amber-700 border-amber-100' };
+      case 'cancelada': return { label: 'Cancelada', color: 'bg-slate-100 text-slate-700 border-slate-200' };
+      default: return { label: status, color: 'bg-slate-50 text-slate-700 border-slate-200' };
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+      />
+
+      {/* Modal Box */}
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 15 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 15 }}
+        transition={{ type: "spring", duration: 0.4 }}
+        className="relative bg-white w-full max-w-2xl rounded-[2.5rem] border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50 animate-none">
+          <div>
+            <h3 className="text-lg font-black text-primary tracking-tight">Detalhes do Lançamento</h3>
+            <p className="text-xs text-muted font-medium">Movimentação financeira registrada no caixa</p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="w-10 h-10 bg-white border border-slate-200 hover:bg-slate-50 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors shadow-sm"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Movement Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Informações do Fluxo</span>
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                  movement.type === 'income' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'
+                }`}>
+                  {movement.type === 'income' ? <ArrowUpRight size={18} /> : <ArrowDownLeft size={18} />}
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-primary">{movement.description}</p>
+                  <p className="text-[10px] text-muted font-bold uppercase tracking-wider">{movement.category}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Valor & Pagamento</span>
+              <div className="flex items-center justify-between">
+                <p className="text-lg font-black text-primary">R$ {movement.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-200 rounded-xl text-xs font-bold text-muted">
+                  <PaymentIcon method={movement.paymentMethod} />
+                  <span className="text-[10px] font-black uppercase tracking-widest">{movement.paymentMethod}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Comanda details block */}
+          {movement.referencia_id && (
+            <div className="space-y-4">
+              <h4 className="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2">Comanda Associada</h4>
+
+              {loadingComanda ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="animate-spin text-accent" />
+                </div>
+              ) : comanda ? (
+                <div className="space-y-4">
+                  {/* Comanda Info Header */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <p className="text-sm font-black text-primary">Comanda #{comanda.number}</p>
+                        <p className="text-[10px] text-muted font-bold uppercase tracking-wider">Cliente: {comanda.cliente_name || 'Consumidor Final'}</p>
+                      </div>
+                    </div>
+                    {(() => {
+                      const badge = getStatusLabel(comanda.status);
+                      return (
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${badge.color}`}>
+                          {badge.label}
+                        </span>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Comanda Items List */}
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Itens Consumidos (Serviços / Produtos)</p>
+                    {comanda.items && comanda.items.map((item: any, i: number) => (
+                      <div key={`comanda-item-${item.id || i}`} className="flex justify-between items-center text-xs pb-2 border-b border-slate-100 last:border-0 last:pb-0">
+                        <div>
+                          <p className="font-bold text-primary flex items-center gap-1">
+                            {item.type === 'servico' ? <Sparkles size={12} className="text-amber-500" /> : <Award size={12} className="text-blue-500" />}
+                            {item.name}
+                            {item.quantity > 1 && <span className="text-muted font-normal text-[10px]">x{item.quantity}</span>}
+                          </p>
+                          <p className="text-[10px] text-muted">Por: {item.profissional_name || 'Nenhum'}</p>
+                        </div>
+                        <p className="font-black text-primary">R$ {item.totalPrice?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    ))}
+
+                    {/* Breakdown totals */}
+                    <div className="pt-3 border-t border-slate-200 space-y-2">
+                      <div className="flex justify-between text-[11px] text-muted font-bold uppercase tracking-wider">
+                        <span>Subtotal</span>
+                        <span>R$ {(comanda.totalAmount + (comanda.discountAmount || 0) - (comanda.surchargeAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      {comanda.discountAmount > 0 && (
+                        <div className="flex justify-between text-[11px] text-red-500 font-bold uppercase tracking-wider">
+                          <span>Desconto</span>
+                          <span>- R$ {comanda.discountAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      {comanda.surchargeAmount > 0 && (
+                        <div className="flex justify-between text-[11px] text-emerald-500 font-bold uppercase tracking-wider">
+                          <span>Acréscimo</span>
+                          <span>+ R$ {comanda.surchargeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-xs font-black text-primary uppercase tracking-widest pt-1 border-t border-slate-100">
+                        <span>Total Geral</span>
+                        <span>R$ {comanda.totalAmount?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Payments Breakdown */}
+                  {comanda.payments && comanda.payments.length > 0 && (
+                    <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-3">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Detalhamento Financeiro / Pagamento</p>
+                      {comanda.payments.map((p: any, idx: number) => (
+                        <div key={`pay-breakdown-${idx}`} className="flex justify-between items-center text-xs">
+                          <span className="font-bold text-muted flex items-center gap-1.5">
+                            <PaymentIcon method={p.method} />
+                            {p.method}
+                          </span>
+                          <span className="font-black text-emerald-600">R$ {p.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Reopen Action Panel */}
+                  {(comanda.status === 'fechada' || comanda.status === 'nao_paga' || comanda.status === 'parcialmente_paga') && (
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      {!showReopenForm ? (
+                        <button 
+                          onClick={() => setShowReopenForm(true)}
+                          className="w-full py-3 px-4 bg-slate-100 border border-slate-200 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm"
+                        >
+                          <RefreshCcw size={14} />
+                          Reabrir Esta Comanda
+                        </button>
+                      ) : (
+                        <form onSubmit={handleReopenComanda} className="space-y-4 bg-red-50/50 border border-red-100 p-4 rounded-2xl">
+                          <div>
+                            <label className="block text-[10px] font-black text-red-800 uppercase tracking-widest mb-1.5">Motivo da Reabertura *</label>
+                            <input 
+                              type="text"
+                              value={reopenReason}
+                              onChange={(e) => setReopenReason(e.target.value)}
+                              placeholder="Ex: Cliente decidiu adicionar mais um corte / Correção de valor"
+                              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-red-500 text-primary placeholder-slate-400"
+                              required
+                            />
+                            <p className="text-[10px] text-red-700/60 font-medium mt-1">Ao reabrir a comanda, todas as comissões e lançamentos financeiros deste atendimento serão estornados automaticamente.</p>
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                setShowReopenForm(false);
+                                setReopenReason('');
+                              }}
+                              className="px-3 py-2 border border-slate-200 hover:bg-white text-muted text-[10px] font-black uppercase tracking-widest rounded-lg transition-all"
+                              disabled={submittingReopen}
+                            >
+                              Cancelar
+                            </button>
+                            <button 
+                              type="submit"
+                              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-all flex items-center gap-1.5 shadow-sm"
+                              disabled={submittingReopen}
+                            >
+                              {submittingReopen ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <RefreshCcw size={12} />
+                              )}
+                              Confirmar Reabertura
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-4 bg-amber-50 border border-amber-100 text-amber-800 text-xs rounded-xl font-medium">
+                  Comanda associada não encontrada no banco de dados. Isso pode ocorrer para lançamentos avulsos ou migrados.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }

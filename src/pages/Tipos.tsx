@@ -42,9 +42,11 @@ import {
   query, 
   orderBy,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  where
 } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { useTenant } from '../contexts/TenantContext';
 
 type SubTypeId = 
   | 'categorias' 
@@ -84,6 +86,7 @@ interface TypeItem {
 }
 
 export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId }) {
+  const { tenantId } = useTenant();
   const [activeSub, setActiveSub] = useState<SubTypeId>(defaultTab);
   const [items, setItems] = useState<TypeItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,13 +148,18 @@ export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId })
 
   // Fetch registers
   useEffect(() => {
+    if (!tenantId) return;
     setLoading(true);
     // Reset editing states on tab change
     handleResetForm();
     
-    const q = query(collection(db, currentMenu.collection), orderBy('name', 'asc'));
+    const q = query(
+      collection(db, currentMenu.collection), 
+      where('tenantId', '==', tenantId)
+    );
     const unsubscribe = onSnapshot(q, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as TypeItem));
+      docs.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setItems(docs);
       setLoading(false);
     }, (error) => {
@@ -161,7 +169,7 @@ export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId })
     });
 
     return () => unsubscribe();
-  }, [activeSub]);
+  }, [activeSub, tenantId]);
 
   const handleResetForm = () => {
     setEditingItem(null);
@@ -291,6 +299,7 @@ export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId })
     }
 
     try {
+      payload.tenantId = tenantId;
       if (editingItem) {
         // Mode edit
         const itemRef = doc(db, currentMenu.collection, editingItem.id);

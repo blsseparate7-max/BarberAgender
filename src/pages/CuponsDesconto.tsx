@@ -18,9 +18,11 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  orderBy 
+  orderBy,
+  where
 } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { useTenant } from '../contexts/TenantContext';
 
 interface Coupon {
   id: string;
@@ -28,9 +30,11 @@ interface Coupon {
   discount: number;
   expiresAt: string;
   active: boolean;
+  tenantId?: string;
 }
 
 export function CuponsDesconto() {
+  const { tenantId } = useTenant();
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -41,15 +45,21 @@ export function CuponsDesconto() {
   const [couponExpires, setCouponExpires] = useState('');
 
   useEffect(() => {
-    // 1. Fetch coupons list
-    const q = query(collection(db, 'cupons_desconto'), orderBy('code', 'asc'));
+    if (!tenantId) return;
+    // 1. Fetch coupons list filtered by tenantId
+    const q = query(
+      collection(db, 'cupons_desconto'), 
+      where('tenantId', '==', tenantId)
+    );
     const unsubscribe = onSnapshot(q, (snap) => {
-      setCoupons(snap.docs.map(d => ({ id: d.id, ...d.data() } as Coupon)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Coupon));
+      docs.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+      setCoupons(docs);
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [tenantId]);
 
   const handleCreateCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,6 +70,7 @@ export function CuponsDesconto() {
     const cleanCode = couponCode.toUpperCase().replace(/\s+/g, '');
     try {
       await addDoc(collection(db, 'cupons_desconto'), {
+        tenantId,
         code: cleanCode,
         discount: Number(couponDiscount),
         expiresAt: couponExpires,

@@ -21,13 +21,16 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  orderBy 
+  orderBy,
+  where
 } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { useTenant } from '../contexts/TenantContext';
 
 interface SurveyQuestion {
   id: string;
   title: string;
+  tenantId?: string;
 }
 
 interface SurveyResponse {
@@ -36,9 +39,11 @@ interface SurveyResponse {
   score: number; // 1-10 NPS rating or 1-5 ratings
   comment: string;
   submittedAt: string;
+  tenantId?: string;
 }
 
 export function PesquisaSatisfacao() {
+  const { tenantId } = useTenant();
   const [questions, setQuestions] = useState<SurveyQuestion[]>([]);
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,26 +54,37 @@ export function PesquisaSatisfacao() {
 
   // Pre-seed mock answer if empty
   useEffect(() => {
-    // 1. Fetch questions
-    const q1 = query(collection(db, 'pesquisa_perguntas'), orderBy('title', 'asc'));
+    if (!tenantId) return;
+
+    // 1. Fetch questions filtered by tenantId
+    const q1 = query(
+      collection(db, 'pesquisa_perguntas'), 
+      where('tenantId', '==', tenantId)
+    );
     const unsubQ = onSnapshot(q1, (snap) => {
-      setQuestions(snap.docs.map(d => ({ id: d.id, ...d.data() } as SurveyQuestion)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as SurveyQuestion));
+      docs.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      setQuestions(docs);
     });
 
-    // 2. Fetch responses
-    const q2 = query(collection(db, 'pesquisa_respostas'), orderBy('submittedAt', 'desc'));
+    // 2. Fetch responses filtered by tenantId
+    const q2 = query(
+      collection(db, 'pesquisa_respostas'), 
+      where('tenantId', '==', tenantId)
+    );
     const unsubR = onSnapshot(q2, (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SurveyResponse));
+      data.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
       setResponses(data);
       setLoading(false);
 
       if (data.length === 0) {
         // Seed database with sample real reviews to showcase dashboards
         const sampleReviews = [
-          { clientName: 'Roberto Carlos', score: 10, comment: 'Corte perfeito e excelente atendimento! O barbeiro super pontual.', submittedAt: new Date().toISOString() },
-          { clientName: 'Maurício Souza', score: 9, comment: 'Estacionamento fácil e cerveja gelada. Recomendo muito.', submittedAt: new Date().toISOString() },
-          { clientName: 'Felipe Camargo', score: 8, comment: 'Ambiente aconchegante, o serviço foi ótimo.', submittedAt: new Date().toISOString() },
-          { clientName: 'Igor Santos', score: 5, comment: 'Atrasou 10 minutos mas gostei do cabelo.', submittedAt: new Date().toISOString() }
+          { tenantId, clientName: 'Roberto Carlos', score: 10, comment: 'Corte perfeito e excelente atendimento! O barbeiro super pontual.', submittedAt: new Date().toISOString() },
+          { tenantId, clientName: 'Maurício Souza', score: 9, comment: 'Estacionamento fácil e cerveja gelada. Recomendo muito.', submittedAt: new Date().toISOString() },
+          { tenantId, clientName: 'Felipe Camargo', score: 8, comment: 'Ambiente aconchegante, o serviço foi ótimo.', submittedAt: new Date().toISOString() },
+          { tenantId, clientName: 'Igor Santos', score: 5, comment: 'Atrasou 10 minutos mas gostei do cabelo.', submittedAt: new Date().toISOString() }
         ];
         sampleReviews.forEach(sr => {
           addDoc(collection(db, 'pesquisa_respostas'), sr);
@@ -80,7 +96,7 @@ export function PesquisaSatisfacao() {
       unsubQ();
       unsubR();
     };
-  }, []);
+  }, [tenantId]);
 
   const handleCreateQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,6 +106,7 @@ export function PesquisaSatisfacao() {
     }
     try {
       await addDoc(collection(db, 'pesquisa_perguntas'), {
+        tenantId,
         title: questionTitle.trim()
       });
       toast.success('Pergunta adicionada para envio aos clientes!');

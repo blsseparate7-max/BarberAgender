@@ -35,11 +35,13 @@ import {
   updateDoc,
   doc, 
   query, 
-  orderBy 
+  orderBy,
+  where
 } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import { userService } from '../services/userService';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 
@@ -104,6 +106,7 @@ const MONTHS_LIST = [
 ];
 
 export function Lembretes() {
+  const { tenantId } = useTenant();
   const { isAdmin, isGerente } = useAuth();
   const canManage = isAdmin || isGerente;
 

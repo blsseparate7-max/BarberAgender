@@ -269,6 +269,40 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   }, [comanda?.cliente_id]);
 
+  // Virtual packages purchased in the active comanda but not finalized/saved to DB yet
+  const virtualPackages = React.useMemo(() => {
+    if (!comanda?.items || !comanda?.cliente_id) return [];
+    return comanda.items
+      .filter(item => item.type === 'pacote')
+      .map(item => ({
+        id: item.id, // Use comanda item's ID as the virtual package ID
+        clientId: comanda.cliente_id,
+        clientName: comanda.cliente_name,
+        packageId: item.referencia_id,
+        packageName: item.name.replace('Venda Pacote: ', ''),
+        totalCuts: item.metadata?.cutsCount || 1,
+        remainingCuts: item.metadata?.cutsCount || 1,
+        pricePaid: item.totalPrice,
+        pricePerService: item.metadata?.pricePerService !== undefined ? item.metadata?.pricePerService : null,
+        noExpiration: item.metadata?.noExpiration || false,
+        expiresDays: item.metadata?.expiresDays || 0,
+        serviceId: item.metadata?.serviceId || '',
+        serviceName: item.metadata?.serviceName || '',
+        isVirtual: true
+      }));
+  }, [comanda?.items, comanda?.cliente_id, comanda?.cliente_name]);
+
+  // Combined packages list (saved packages from DB + virtual packages being purchased right now)
+  const allAvailablePackages = React.useMemo(() => {
+    const list = [...clientPackages];
+    virtualPackages.forEach(vPkg => {
+      if (!list.some(p => p.id === vPkg.id)) {
+        list.push(vPkg);
+      }
+    });
+    return list;
+  }, [clientPackages, virtualPackages]);
+
   const autoAssociatedItemIdsRef = useRef<Set<string>>(new Set());
 
   // Clear auto-associated set when comanda ID changes
@@ -283,8 +317,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       comanda.status !== 'fechada' &&
       comanda.status !== 'cancelada' &&
       comanda.status !== 'nao_paga' &&
-      clientPackages &&
-      clientPackages.length > 0 &&
+      allAvailablePackages &&
+      allAvailablePackages.length > 0 &&
       comanda.items &&
       comanda.items.length > 0 &&
       user
@@ -294,7 +328,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         // If it's a service and hasn't been associated or paid yet
         if (item.type === 'servico' && !item.deductType && !autoAssociatedItemIdsRef.current.has(item.id)) {
           // Find if there is an active package for this service
-          const hasPkg = clientPackages.find(
+          const hasPkg = allAvailablePackages.find(
             p => p.remainingCuts > 0 && (p.serviceId === item.referencia_id || p.packageName.toLowerCase().includes(item.name.toLowerCase()))
           );
           if (hasPkg) {
@@ -334,7 +368,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         });
       }
     }
-  }, [comanda?.id, comanda?.items, clientPackages, user]);
+  }, [comanda?.id, comanda?.items, allAvailablePackages, user]);
   
   useEffect(() => {
     loadData();
@@ -778,8 +812,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         if (i.id === itemId) {
           if (type === 'pacote') {
             const hasPkg = specificPackageSaleId 
-              ? clientPackages.find(p => p.id === specificPackageSaleId)
-              : clientPackages.find(
+              ? allAvailablePackages.find(p => p.id === specificPackageSaleId)
+              : allAvailablePackages.find(
                   p => p.remainingCuts > 0 && (p.serviceId === i.referencia_id || p.packageName.toLowerCase().includes(i.name.toLowerCase()))
                 );
             const pPrice = hasPkg 
@@ -899,23 +933,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       // 1. Process package/subscription deductions before closing
       for (const item of comanda.items) {
         if (item.deductType === 'pacote' && item.packageSaleId) {
-          const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
-          const pkgSnap = await getDoc(pkgRef);
-          if (pkgSnap.exists()) {
-            const pkgData = pkgSnap.data();
-            const currentUsages = pkgData.usages || [];
-            const newIndex = currentUsages.length + 1;
-            const newUsage = {
-              usedAt: new Date().toISOString(),
-              notes: `Consumo automático na Comanda #${comanda.number}`,
-              index: newIndex,
-              comanda_id: comanda.id
-            };
-            await updateDoc(pkgRef, {
-              remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
-              usages: [...currentUsages, newUsage]
-            });
-            console.log(`Deducted 1 cut from Package Sale ID ${item.packageSaleId}`);
+          // Check if packageSaleId is a virtual package sale (sold in this exact comanda)
+          const isVirtual = comanda.items.find(i => i.id === item.packageSaleId && i.type === 'pacote');
+          if (isVirtual) {
+            console.log(`Skipping DB update for virtual package deduction ${item.packageSaleId} - will be handled upon creation.`);
+          } else {
+            const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
+            const pkgSnap = await getDoc(pkgRef);
+            if (pkgSnap.exists()) {
+              const pkgData = pkgSnap.data();
+              const currentUsages = pkgData.usages || [];
+              const newIndex = currentUsages.length + 1;
+              const newUsage = {
+                usedAt: new Date().toISOString(),
+                notes: `Consumo automático na Comanda #${comanda.number}`,
+                index: newIndex,
+                comanda_id: comanda.id
+              };
+              await updateDoc(pkgRef, {
+                remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
+                usages: [...currentUsages, newUsage]
+              });
+              console.log(`Deducted 1 cut from Package Sale ID ${item.packageSaleId}`);
+            }
           }
         } else if (item.deductType === 'assinatura' && item.subscriptionId) {
           const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
@@ -932,24 +972,38 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
         } else if (item.type === 'pacote') {
           // New Package sold! Create doc in pacotes_vendas
+          // Check if there are services in this comanda deducted using this package item's ID
+          const deductedServicesInComanda = comanda.items.filter(i => i.deductType === 'pacote' && i.packageSaleId === item.id);
+          const cutsUsedCount = deductedServicesInComanda.length;
+          
+          const totalCuts = item.metadata?.cutsCount || 1;
+          const remainingCuts = Math.max(0, totalCuts - cutsUsedCount);
+          
+          const initialUsages = deductedServicesInComanda.map((ds, idx) => ({
+            usedAt: new Date().toISOString(),
+            notes: `Consumo automático na venda do Pacote (Comanda #${comanda.number})`,
+            index: idx + 1,
+            comanda_id: comanda.id
+          }));
+
           await addDoc(collection(db, 'pacotes_vendas'), {
             tenantId: comanda.tenantId || getActiveTenantId(),
             clientId: comanda.cliente_id,
             clientName: comanda.cliente_name,
             packageId: item.referencia_id,
             packageName: item.name.replace('Venda Pacote: ', ''),
-            totalCuts: item.metadata?.cutsCount || 1,
-            remainingCuts: item.metadata?.cutsCount || 1,
+            totalCuts,
+            remainingCuts,
             pricePaid: item.totalPrice,
             pricePerService: item.metadata?.pricePerService !== undefined ? item.metadata?.pricePerService : null,
             noExpiration: item.metadata?.noExpiration || false,
             expiresDays: item.metadata?.expiresDays || 0,
             soldAt: new Date().toISOString(),
-            usages: [],
+            usages: initialUsages,
             serviceId: item.metadata?.serviceId || '',
             serviceName: item.metadata?.serviceName || ''
           });
-          console.log(`Created new Package Sale for Client ${comanda.cliente_name}`);
+          console.log(`Created new Package Sale for Client ${comanda.cliente_name} with ${cutsUsedCount} immediate usages.`);
         } else if (item.type === 'assinatura') {
           // New Subscription sold! Create subscription doc without duplicating financial logs
           await subscriptionService.createSubscriptionWithoutFinancial({
@@ -982,23 +1036,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       // 1. Process package/subscription deductions before closing
       for (const item of comanda.items) {
         if (item.deductType === 'pacote' && item.packageSaleId) {
-          const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
-          const pkgSnap = await getDoc(pkgRef);
-          if (pkgSnap.exists()) {
-            const pkgData = pkgSnap.data();
-            const currentUsages = pkgData.usages || [];
-            const newIndex = currentUsages.length + 1;
-            const newUsage = {
-              usedAt: new Date().toISOString(),
-              notes: `Consumo automático na Comanda #${comanda.number}`,
-              index: newIndex,
-              comanda_id: comanda.id
-            };
-            await updateDoc(pkgRef, {
-              remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
-              usages: [...currentUsages, newUsage]
-            });
-            console.log(`Deducted 1 cut from Package Sale ID ${item.packageSaleId}`);
+          // Check if packageSaleId is a virtual package sale (sold in this exact comanda)
+          const isVirtual = comanda.items.find(i => i.id === item.packageSaleId && i.type === 'pacote');
+          if (isVirtual) {
+            console.log(`Skipping DB update for virtual package deduction ${item.packageSaleId} - will be handled upon creation.`);
+          } else {
+            const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
+            const pkgSnap = await getDoc(pkgRef);
+            if (pkgSnap.exists()) {
+              const pkgData = pkgSnap.data();
+              const currentUsages = pkgData.usages || [];
+              const newIndex = currentUsages.length + 1;
+              const newUsage = {
+                usedAt: new Date().toISOString(),
+                notes: `Consumo automático na Comanda #${comanda.number}`,
+                index: newIndex,
+                comanda_id: comanda.id
+              };
+              await updateDoc(pkgRef, {
+                remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
+                usages: [...currentUsages, newUsage]
+              });
+              console.log(`Deducted 1 cut from Package Sale ID ${item.packageSaleId}`);
+            }
           }
         } else if (item.deductType === 'assinatura' && item.subscriptionId) {
           const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
@@ -1015,24 +1075,38 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
         } else if (item.type === 'pacote') {
           // New Package sold! Create doc in pacotes_vendas
+          // Check if there are services in this comanda deducted using this package item's ID
+          const deductedServicesInComanda = comanda.items.filter(i => i.deductType === 'pacote' && i.packageSaleId === item.id);
+          const cutsUsedCount = deductedServicesInComanda.length;
+          
+          const totalCuts = item.metadata?.cutsCount || 1;
+          const remainingCuts = Math.max(0, totalCuts - cutsUsedCount);
+          
+          const initialUsages = deductedServicesInComanda.map((ds, idx) => ({
+            usedAt: new Date().toISOString(),
+            notes: `Consumo automático na venda do Pacote (Comanda #${comanda.number})`,
+            index: idx + 1,
+            comanda_id: comanda.id
+          }));
+
           await addDoc(collection(db, 'pacotes_vendas'), {
             tenantId: comanda.tenantId || getActiveTenantId(),
             clientId: comanda.cliente_id,
             clientName: comanda.cliente_name,
             packageId: item.referencia_id,
             packageName: item.name.replace('Venda Pacote: ', ''),
-            totalCuts: item.metadata?.cutsCount || 1,
-            remainingCuts: item.metadata?.cutsCount || 1,
+            totalCuts,
+            remainingCuts,
             pricePaid: item.totalPrice,
             pricePerService: item.metadata?.pricePerService !== undefined ? item.metadata?.pricePerService : null,
             noExpiration: item.metadata?.noExpiration || false,
             expiresDays: item.metadata?.expiresDays || 0,
             soldAt: new Date().toISOString(),
-            usages: [],
+            usages: initialUsages,
             serviceId: item.metadata?.serviceId || '',
             serviceName: item.metadata?.serviceName || ''
           });
-          console.log(`Created new Package Sale for Client ${comanda.cliente_name}`);
+          console.log(`Created new Package Sale for Client ${comanda.cliente_name} with ${cutsUsedCount} immediate usages.`);
         } else if (item.type === 'assinatura') {
           // New Subscription sold! Create subscription doc without duplicating financial logs
           await subscriptionService.createSubscriptionWithoutFinancial({
@@ -1623,7 +1697,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     )}
                   </div>
 
-                  {comanda.cliente_id && (clientPackages.some(p => p.remainingCuts > 0) || clientSubscriptions.some(s => s.status === 'active')) && (
+                  {comanda.cliente_id && (allAvailablePackages.some(p => p.remainingCuts > 0) || clientSubscriptions.some(s => s.status === 'active')) && (
                     <div className="p-5 bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-100 rounded-3xl space-y-3.5 shadow-sm">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2.5">
@@ -1638,7 +1712,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {clientPackages.filter(p => p.remainingCuts > 0).map((pkg) => (
+                        {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg) => (
                           <div key={pkg.id} className="p-3 bg-white/80 rounded-2xl border border-emerald-100/50 flex items-center justify-between shadow-sm">
                             <div>
                               <p className="text-[10px] font-black text-emerald-950 uppercase tracking-wide truncate max-w-[200px]">{pkg.packageName}</p>
@@ -1677,7 +1751,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <tbody className="divide-y divide-slate-50">
                         {comanda.items.map((item, index) => {
                           const isService = item.type === 'servico' || item.type === 'assinatura';
-                          const hasPkg = clientPackages.find(
+                          const hasPkg = allAvailablePackages.find(
                             p => p.remainingCuts > 0 && (p.serviceId === item.referencia_id || p.packageName.toLowerCase().includes(item.name.toLowerCase()))
                           );
                           const activeSub = clientSubscriptions.find(s => s.status === 'active');
@@ -1718,7 +1792,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                     </div>
 
                                     {/* Action buttons to toggle deduction */}
-                                    {isService && (clientPackages.some(p => p.remainingCuts > 0) || hasSub) && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                                    {isService && (allAvailablePackages.some(p => p.remainingCuts > 0) || hasSub) && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                                       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                                         <button
                                           type="button"
@@ -1732,7 +1806,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                           Pagar R$
                                         </button>
                                         
-                                        {clientPackages.filter(p => p.remainingCuts > 0).map((pkg) => {
+                                        {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg) => {
                                           const isSelectedPkg = item.deductType === 'pacote' && item.packageSaleId === pkg.id;
                                           const pPrice = pkg.pricePerService !== undefined && pkg.pricePerService !== null 
                                             ? pkg.pricePerService 

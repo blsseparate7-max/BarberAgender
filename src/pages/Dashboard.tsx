@@ -176,30 +176,33 @@ export function Dashboard({ stats: initialStats, setActiveTab, activeSubTab }: {
 
 // --- ADMIN / MANAGER DASHBOARD ---
 function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, activeTab = 'overview' }: any) {
+  const { tenantId } = useTenant();
   const [comandasAbertas, setComandasAbertas] = useState<any[]>([]);
   const [clientesDevedores, setClientesDevedores] = useState<any[]>([]);
   const [baixoEstoque, setBaixoEstoque] = useState<any[]>([]);
   const [loadingAlerts, setLoadingAlerts] = useState(false);
 
   useEffect(() => {
-    if (activeTab === 'alerts') {
+    if (activeTab === 'alerts' && tenantId) {
       const fetchAlertsDetails = async () => {
         setLoadingAlerts(true);
         try {
           // 1. Get Comandas
           const comandasSnap = await getDocs(
-            query(collection(db, 'comandas'), where('status', 'not-in', ['fechada', 'cancelada']))
+            query(collection(db, 'comandas'), where('tenantId', '==', tenantId), where('status', 'not-in', ['fechada', 'cancelada']))
           );
           setComandasAbertas(comandasSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
           // 2. Get Debts
           const debtsSnap = await getDocs(
-            query(collection(db, 'client_debts'), where('status', 'not-in', ['paga', 'cancelada']))
+            query(collection(db, 'client_debts'), where('tenantId', '==', tenantId), where('status', 'not-in', ['paga', 'cancelada']))
           );
           setClientesDevedores(debtsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
           // 3. Get Low Stock
-          const productsSnap = await getDocs(collection(db, 'products'));
+          const productsSnap = await getDocs(
+            query(collection(db, 'products'), where('tenantId', '==', tenantId))
+          );
           const lowStock = productsSnap.docs
             .map(d => ({ id: d.id, ...d.data() }))
             .filter((p: any) => p.currentStock <= p.minStock && p.status === 'active');
@@ -212,7 +215,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
       };
       fetchAlertsDetails();
     }
-  }, [activeTab]);
+  }, [activeTab, tenantId]);
 
   const topBarbers = data?.topBarbers || [];
   const topServices = data?.topServices || [];

@@ -420,7 +420,8 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         isStaff() || 
         isBarbeiro() || 
-        (resource != null && resource.data.clientId == request.auth.uid)
+        resource.data.clientId == request.auth.uid ||
+        resource.data.cliente_id == request.auth.uid
       );
       allow create, update, delete: if isAuthenticated() && (isStaff() || isBarbeiro());
     }

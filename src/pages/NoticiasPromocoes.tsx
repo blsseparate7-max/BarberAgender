@@ -23,11 +23,13 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  orderBy 
+  orderBy,
+  where
 } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import { userService } from '../services/userService';
 import { toast } from 'sonner';
+import { useTenant } from '../contexts/TenantContext';
 
 interface Announcement {
   id: string;
@@ -35,6 +37,7 @@ interface Announcement {
   content: string;
   date: string;
   category: string;
+  tenantId?: string;
 }
 
 interface PromoCampaign {
@@ -43,9 +46,11 @@ interface PromoCampaign {
   discount: number;
   targetGroup: string;
   expiresAt: string;
+  tenantId?: string;
 }
 
 export function NoticiasPromocoes() {
+  const { tenantId } = useTenant();
   const [activeTab, setActiveTab] = useState<'news' | 'groups'>('news');
   const [news, setNews] = useState<Announcement[]>([]);
   const [campaigns, setCampaigns] = useState<PromoCampaign[]>([]);
@@ -66,16 +71,28 @@ export function NoticiasPromocoes() {
   const [promoExpires, setPromoExpires] = useState('');
 
   useEffect(() => {
-    // 1. news
-    const qNews = query(collection(db, 'noticias_noticias'), orderBy('date', 'desc'));
+    if (!tenantId) return;
+
+    // 1. news filtered by tenantId
+    const qNews = query(
+      collection(db, 'noticias_noticias'), 
+      where('tenantId', '==', tenantId)
+    );
     const unsubNews = onSnapshot(qNews, (snap) => {
-      setNews(snap.docs.map(d => ({ id: d.id, ...d.data() } as Announcement)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Announcement));
+      docs.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      setNews(docs);
     });
 
-    // 2. campaigns
-    const qCampaigns = query(collection(db, 'noticias_campanhas'), orderBy('expiresAt', 'asc'));
+    // 2. campaigns filtered by tenantId
+    const qCampaigns = query(
+      collection(db, 'noticias_campanhas'), 
+      where('tenantId', '==', tenantId)
+    );
     const unsubC = onSnapshot(qCampaigns, (snap) => {
-      setCampaigns(snap.docs.map(d => ({ id: d.id, ...d.data() } as PromoCampaign)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as PromoCampaign));
+      docs.sort((a, b) => (a.expiresAt || '').localeCompare(b.expiresAt || ''));
+      setCampaigns(docs);
     });
 
     // 3. clients
@@ -87,7 +104,7 @@ export function NoticiasPromocoes() {
       unsubNews();
       unsubC();
     };
-  }, []);
+  }, [tenantId]);
 
   const handleCreateNews = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,6 +114,7 @@ export function NoticiasPromocoes() {
     }
     try {
       await addDoc(collection(db, 'noticias_noticias'), {
+        tenantId,
         title: newsTitle,
         content: newsContent,
         category: newsCategory,
@@ -130,6 +148,7 @@ export function NoticiasPromocoes() {
     }
     try {
       await addDoc(collection(db, 'noticias_campanhas'), {
+        tenantId,
         name: promoName,
         discount: Number(promoDiscount),
         targetGroup: promoTarget,

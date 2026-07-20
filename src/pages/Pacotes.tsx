@@ -19,7 +19,8 @@ import {
   Award, 
   Info,
   Calendar,
-  DollarSign
+  DollarSign,
+  MessageCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
@@ -1068,7 +1069,14 @@ export function Pacotes({ defaultTab }: PacotesProps) {
 
                         return (
                           <React.Fragment key={sale.id}>
-                            <tr className="hover:bg-slate-50/40 transition-all font-bold text-primary">
+                            <tr 
+                              className="hover:bg-slate-50/40 transition-all font-bold text-primary cursor-pointer"
+                              onClick={(e) => {
+                                const target = e.target as HTMLElement;
+                                if (target.closest('button') || target.closest('a') || target.closest('input')) return;
+                                setExpandedSaleId(isExpanded ? null : sale.id);
+                              }}
+                            >
                               <td className="p-5">
                                 <div>
                                   <p className="font-extrabold text-slate-800 leading-tight">{sale.clientName}</p>
@@ -1158,10 +1166,32 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                                 <td colSpan={5} className="bg-slate-50/60 p-6 border-b border-slate-100">
                                   <div className="max-w-3xl mx-auto space-y-4">
                                     <div className="flex items-center justify-between border-b pb-2">
-                                      <h4 className="text-xs font-black uppercase text-primary tracking-widest flex items-center gap-1.5">
-                                        <BookOpen size={14} className="text-indigo-600" />
-                                        <span>Log do Cartão de Consumo</span>
-                                      </h4>
+                                      <div className="flex items-center gap-4">
+                                        <h4 className="text-xs font-black uppercase text-primary tracking-widest flex items-center gap-1.5">
+                                          <BookOpen size={14} className="text-indigo-600" />
+                                          <span>Log do Cartão de Consumo</span>
+                                        </h4>
+                                        <a
+                                          href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
+                                            `*Extrato de Uso do Pacote - ${sale.clientName}*\n` +
+                                            `----------------------------------------\n` +
+                                            `🎁 *Pacote:* ${sale.packageName}\n` +
+                                            `📅 *Data de Compra:* ${new Date(sale.soldAt).toLocaleDateString('pt-BR')}\n` +
+                                            `📊 *Sessões:* ${sale.totalCuts - sale.remainingCuts} de ${sale.totalCuts} consumidas\n` +
+                                            `✨ *Saldo Restante:* ${sale.remainingCuts} sessões\n\n` +
+                                            `*Histórico de Consumo:*\n` +
+                                            (sale.usages && sale.usages.length > 0 
+                                              ? sale.usages.map(u => `• Sessão #${u.index}: ${new Date(u.usedAt).toLocaleDateString('pt-BR')}`).join('\n')
+                                              : `Nenhum corte do pacote foi utilizado ainda.`)
+                                          )}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-150 px-2.5 py-1 rounded-xl transition text-[9px] font-black uppercase tracking-widest cursor-pointer shadow-sm"
+                                        >
+                                          <MessageCircle size={10} />
+                                          <span>Enviar p/ WhatsApp</span>
+                                        </a>
+                                      </div>
                                       <span className="text-[9px] font-black text-slate-400 uppercase">
                                         Vendido em: {new Date(sale.soldAt).toLocaleDateString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                       </span>

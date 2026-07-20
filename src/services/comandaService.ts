@@ -418,6 +418,7 @@ export const comandaService = {
         
         const financialTx: FinancialTransaction = {
           id: financialRef.id,
+          tenantId: comanda.tenantId || getActiveTenantId(),
           type: 'income',
           category: 'Serviços/Produtos',
           description: `Pagamento Comanda #${comanda.number} - ${comanda.cliente_name}`,

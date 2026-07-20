@@ -22,19 +22,23 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  orderBy 
+  orderBy,
+  where
 } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import { userService } from '../services/userService';
 import { toast } from 'sonner';
+import { useTenant } from '../contexts/TenantContext';
 
 interface MessageTemplate {
   id: string;
   title: string;
   body: string;
+  tenantId?: string;
 }
 
 export function MensagensUsuarios() {
+  const { tenantId } = useTenant();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,18 +55,23 @@ export function MensagensUsuarios() {
   const [customMessageBody, setCustomMessageBody] = useState('');
 
   useEffect(() => {
+    if (!tenantId) return;
     // 1. Fetch template messages
-    const q = query(collection(db, 'mensagens_modelos'), orderBy('title', 'asc'));
+    const q = query(
+      collection(db, 'mensagens_modelos'), 
+      where('tenantId', '==', tenantId)
+    );
     const unsubTemplates = onSnapshot(q, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as MessageTemplate));
+      docs.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
       setTemplates(docs);
       
       // Auto seed some templates if empty
       if (docs.length === 0) {
         const sampleDrafts = [
-          { title: 'Lembrete de Agendamento', body: 'Olá [NOME], passando para lembrar do seu horário hoje na BarberElite às [HORA]. Te esperamos!' },
-          { title: 'Promoção Especial da Semana', body: 'Olá [NOME]! Combo premium (Corte + Barba + Toalha Quente) com 20% OFF de Terça à Quinta nesta semana. Agende já!' },
-          { title: 'Clube de Assinaturas', body: 'Fala [NOME], venha assinar o nosso Clube Barbearia e tenha cortes ilimitados todo mês com parcelas fixas!' }
+          { tenantId, title: 'Lembrete de Agendamento', body: 'Olá [NOME], passando para lembrar do seu horário hoje na BarberElite às [HORA]. Te esperamos!' },
+          { tenantId, title: 'Promoção Especial da Semana', body: 'Olá [NOME]! Combo premium (Corte + Barba + Toalha Quente) com 20% OFF de Terça à Quinta nesta semana. Agende já!' },
+          { tenantId, title: 'Clube de Assinaturas', body: 'Fala [NOME], venha assinar o nosso Clube Barbearia e tenha cortes ilimitados todo mês com parcelas fixas!' }
         ];
         sampleDrafts.forEach(sd => {
           addDoc(collection(db, 'mensagens_modelos'), sd);
@@ -75,7 +84,7 @@ export function MensagensUsuarios() {
     setLoading(false);
 
     return () => unsubTemplates();
-  }, []);
+  }, [tenantId]);
 
   const handleCreateDraft = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,6 +94,7 @@ export function MensagensUsuarios() {
     }
     try {
       await addDoc(collection(db, 'mensagens_modelos'), {
+        tenantId,
         title: draftTitle,
         body: draftBody
       });

@@ -57,6 +57,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
+import { getActiveTenantId } from '../services/tenantService';
 import { dashboardService } from '../services/dashboardService';
 import { settingsService } from '../services/settingsService';
 import { toast } from 'sonner';
@@ -1126,7 +1127,7 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
   const [showUnitsModal, setShowUnitsModal] = useState(false);
   const [linkingUnit, setLinkingUnit] = useState<string | null>(null);
 
-  const invitationLink = `${window.location.origin}/register?tenant=${tenant?.id || 'barber-elite'}&ref=${profile?.uid || ''}`;
+  const invitationLink = `${window.location.origin}/register?tenant=${tenant?.id || getActiveTenantId() || ''}&ref=${profile?.uid || ''}`;
 
   const copyInvitation = () => {
     navigator.clipboard.writeText(invitationLink);

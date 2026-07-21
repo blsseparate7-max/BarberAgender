@@ -269,42 +269,24 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         localStorage.setItem('barberelite_tenant_id', activeTenantId);
       }
 
-      // Load tenant info (defensive)
-      try {
-        const tenantSnap = await getDoc(doc(db, 'tenants', activeTenantId));
-        if (tenantSnap.exists()) {
-          setTenantInfo(tenantSnap.data());
-        } else {
-          const fallbackTenant = await tenantService.getOrCreateTenant(activeTenantId);
-          setTenantInfo(fallbackTenant);
-        }
-      } catch (err) {
-        console.warn("Could not load tenant info:", err);
-      }
-
-      // Load all tenants for selector (defensive + deduplicate by ID & name)
+      // Load real tenants from DB
       try {
         const tenantsList = await tenantService.listTenants();
-        if (tenantsList.length === 0 || !tenantsList.some(t => t.id.toLowerCase() === activeTenantId.toLowerCase())) {
-          const activeTenantSnap = await tenantService.getOrCreateTenant(activeTenantId);
-          if (activeTenantSnap) {
-            tenantsList.unshift(activeTenantSnap);
+        if (tenantsList.length > 0) {
+          const matchingTenant = tenantsList.find(t => t.id.toLowerCase() === activeTenantId.toLowerCase());
+          if (matchingTenant) {
+            setTenantInfo(matchingTenant);
+          } else {
+            activeTenantId = tenantsList[0].id;
+            localStorage.setItem('barberelite_tenant_id', activeTenantId);
+            setTenantInfo(tenantsList[0]);
           }
+          setAllTenants(tenantsList);
+        } else {
+          localStorage.removeItem('barberelite_tenant_id');
+          setTenantInfo(null);
+          setAllTenants([]);
         }
-        
-        const uniqueTenants: TenantProfile[] = [];
-        const seenIds = new Set<string>();
-        const seenNames = new Set<string>();
-        for (const t of tenantsList) {
-          const lowerId = t.id.toLowerCase();
-          const lowerName = (t.name || '').trim().toLowerCase();
-          if (!seenIds.has(lowerId) && !seenNames.has(lowerName)) {
-            seenIds.add(lowerId);
-            if (lowerName) seenNames.add(lowerName);
-            uniqueTenants.push(t);
-          }
-        }
-        setAllTenants(uniqueTenants);
       } catch (err) {
         console.warn("Could not load tenants list:", err);
       }
@@ -467,9 +449,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           const unionSlots = Array.from(new Set(results.flat())).sort();
           setAvailableSlots(unionSlots);
         } else {
-          // If no physical barbers exist, simulate standard business slots for testing
-          const simulatedSlots = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00'];
-          setAvailableSlots(simulatedSlots);
+          setAvailableSlots([]);
         }
       } else {
         const slots = await appointmentService.getAvailableSlots(
@@ -729,17 +709,23 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               <div className="mt-1 flex items-center gap-1.5">
                 <MapPin size={11} className="text-amber-500 flex-shrink-0" />
                 <select
-                  value={tenantInfo?.id || getActiveTenantId()}
+                  value={tenantInfo?.id || getActiveTenantId() || ''}
                   onChange={async (e) => {
-                    await handleSelectTenant(e.target.value);
+                    if (e.target.value) {
+                      await handleSelectTenant(e.target.value);
+                    }
                   }}
                   className="bg-slate-800 text-white text-[11px] font-bold border border-slate-700/60 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer max-w-[150px] truncate"
                 >
-                  {allTenants.map((tenant) => (
-                    <option key={tenant.id} value={tenant.id} className="bg-slate-900 text-white text-[11px]">
-                      {tenant.name}
-                    </option>
-                  ))}
+                  {allTenants.length === 0 ? (
+                    <option value="" className="bg-slate-900 text-slate-400 text-[11px]">Nenhuma barbearia cadastrada</option>
+                  ) : (
+                    allTenants.map((tenant) => (
+                      <option key={tenant.id} value={tenant.id} className="bg-slate-900 text-white text-[11px]">
+                        {tenant.name}
+                      </option>
+                    ))
+                  )}
                 </select>
                 <button
                   type="button"
@@ -784,107 +770,67 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
-              {/* Quick Loyalty Card & Stats */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                
-                {/* Loyalty Balance Card */}
-                <div className="bg-gradient-to-br from-slate-900 to-slate-950 p-6 rounded-[32px] border border-slate-800 text-white relative overflow-hidden flex flex-col justify-between min-h-[160px] shadow-xl">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Award className="text-amber-400" size={20} />
-                      <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Cashback Acumulado</span>
-                    </div>
-                    {loyalty?.isVip && (
-                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-black uppercase px-2.5 py-1 rounded-full border border-amber-500/30">
-                        Cliente VIP
+              {/* Next Appointment Card */}
+              <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col justify-between min-h-[140px]">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <CalendarClock size={20} className="text-indigo-500" />
+                    <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Próximo Agendamento</span>
+                  </div>
+                </div>
+
+                {futureAppointments.length > 0 ? (
+                  <div className="my-3 flex items-start gap-3.5">
+                    <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600 flex flex-col items-center">
+                      <span className="text-[9px] font-black uppercase">
+                        {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR })}
                       </span>
-                    )}
-                  </div>
-                  
-                  <div className="my-3">
-                    <span className="text-4xl font-black text-amber-400">
-                      R$ {loyalty?.cashback?.toFixed(2) || '0,00'}
-                    </span>
-                    <p className="text-[10px] text-slate-400 font-bold mt-1">
-                      Pontos Acumulados: <span className="text-white">{loyalty?.points || 0} pts</span>
-                    </p>
-                  </div>
-
-                  <div className="text-[9px] text-slate-400 font-semibold border-t border-slate-800 pt-2.5 flex items-center justify-between">
-                    <span>Use como desconto no próximo corte</span>
-                    <button 
-                      onClick={() => setActiveTab('fidelidade')}
-                      className="text-amber-400 font-extrabold flex items-center gap-0.5 hover:underline"
-                    >
-                      Ver Extrato <ChevronRight size={12} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Next Appointment Card */}
-                <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col justify-between min-h-[160px]">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-slate-500">
-                      <CalendarClock size={20} className="text-indigo-500" />
-                      <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Próximo Agendamento</span>
+                      <span className="text-xl font-black">
+                        {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'dd')}
+                      </span>
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-black text-slate-800 truncate">{futureAppointments[0].servico_name}</h4>
+                      <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Profissional: {futureAppointments[0].profissional_name}</p>
+                      <p className="text-xs font-bold text-indigo-600 mt-1 flex items-center gap-1">
+                        <Clock size={12} />
+                        {futureAppointments[0].startTime} ({futureAppointments[0].endTime})
+                      </p>
                     </div>
                   </div>
+                ) : (
+                  <div className="my-4 text-center">
+                    <p className="text-xs text-slate-400 font-semibold">Nenhum horário marcado atualmente.</p>
+                  </div>
+                )}
 
+                <div className="border-t border-slate-100 pt-2.5 flex items-center justify-between gap-2">
                   {futureAppointments.length > 0 ? (
-                    <div className="my-3 flex items-start gap-3.5">
-                      <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600 flex flex-col items-center">
-                        <span className="text-[9px] font-black uppercase">
-                          {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR })}
-                        </span>
-                        <span className="text-xl font-black">
-                          {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'dd')}
-                        </span>
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-black text-slate-800 truncate">{futureAppointments[0].servico_name}</h4>
-                        <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Profissional: {futureAppointments[0].profissional_name}</p>
-                        <p className="text-xs font-bold text-indigo-600 mt-1 flex items-center gap-1">
-                          <Clock size={12} />
-                          {futureAppointments[0].startTime} ({futureAppointments[0].endTime})
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="my-4 text-center">
-                      <p className="text-xs text-slate-400 font-semibold">Nenhum horário marcado atualmente.</p>
-                    </div>
-                  )}
-
-                  <div className="border-t border-slate-100 pt-2.5 flex items-center justify-between gap-2">
-                    {futureAppointments.length > 0 ? (
-                      <>
-                        <button 
-                          onClick={() => handleCancelAppointment(futureAppointments[0].id)}
-                          className="text-[10px] text-rose-500 font-black hover:underline uppercase tracking-wider"
-                        >
-                          Cancelar Horário
-                        </button>
-                        <a 
-                          href={`https://wa.me/${tenantInfo?.phone || ''}`} 
-                          target="_blank" 
-                          rel="noreferrer"
-                          className="text-[10px] text-indigo-600 font-black hover:underline uppercase tracking-wider flex items-center gap-1"
-                        >
-                          Falar no WhatsApp
-                        </a>
-                      </>
-                    ) : (
+                    <>
                       <button 
-                        onClick={() => setActiveTab('schedule')}
-                        className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl py-2 text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1"
+                        onClick={() => handleCancelAppointment(futureAppointments[0].id)}
+                        className="text-[10px] text-rose-500 font-black hover:underline uppercase tracking-wider"
                       >
-                        <Plus size={12} /> Marcar meu primeiro horário
+                        Cancelar Horário
                       </button>
-                    )}
-                  </div>
+                      <a 
+                        href={`https://wa.me/${tenantInfo?.phone || ''}`} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="text-[10px] text-indigo-600 font-black hover:underline uppercase tracking-wider flex items-center gap-1"
+                      >
+                        Falar no WhatsApp
+                      </a>
+                    </>
+                  ) : (
+                    <button 
+                      onClick={() => setActiveTab('schedule')}
+                      className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl py-2 text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1"
+                    >
+                      <Plus size={12} /> Marcar meu primeiro horário
+                    </button>
+                  )}
                 </div>
-
               </div>
 
               {/* Barbearias Browser Widget */}

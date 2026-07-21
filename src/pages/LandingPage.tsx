@@ -14,7 +14,7 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   const [loadingTenants, setLoadingTenants] = useState(true);
   const [activeTab, setActiveTab] = useState<'inicio' | 'barbearias'>('inicio');
 
-  const isSpecificTenant = activeTenant && activeTenant.id !== 'barber-elite';
+  const isSpecificTenant = Boolean(activeTenant);
 
   const handleDisconnect = () => {
     localStorage.removeItem('barberelite_tenant_id');
@@ -28,8 +28,7 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   useEffect(() => {
     tenantService.listTenants()
       .then((list) => {
-        // Filter active ones and exclude the default template barber-elite tenant
-        setTenants(list.filter(t => t.isActive && t.id !== 'barber-elite'));
+        setTenants(list.filter(t => t.isActive));
       })
       .catch((err) => console.error('Error fetching tenants list:', err))
       .finally(() => setLoadingTenants(false));

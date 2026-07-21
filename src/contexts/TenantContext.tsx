@@ -15,7 +15,7 @@ interface TenantContextType {
 }
 
 const TenantContext = createContext<TenantContextType>({
-  tenantId: 'barber-elite',
+  tenantId: '',
   tenant: null,
   loading: true,
   refreshTenant: async () => {},

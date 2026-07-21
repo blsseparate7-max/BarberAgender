@@ -35,7 +35,7 @@ export interface TenantProfile {
 }
 
 export function getActiveTenantId(): string {
-  if (typeof window === 'undefined') return 'barber-elite';
+  if (typeof window === 'undefined') return '';
 
   // 1. Try URL parameters first
   const params = new URLSearchParams(window.location.search);
@@ -51,11 +51,12 @@ export function getActiveTenantId(): string {
   if (saved) return saved.trim().toLowerCase();
 
   // 3. Default fallback
-  return 'barber-elite';
+  return '';
 }
 
 export const tenantService = {
   async getTenant(tenantId: string): Promise<TenantProfile | null> {
+    if (!tenantId) return null;
     try {
       const docRef = doc(db, 'tenants', tenantId);
       const docSnap = await getDoc(docRef);
@@ -69,47 +70,29 @@ export const tenantService = {
     }
   },
 
-  async getOrCreateTenant(tenantId: string, defaultName?: string): Promise<TenantProfile> {
+  async getOrCreateTenant(tenantId: string, defaultName?: string): Promise<TenantProfile | null> {
+    if (!tenantId) return null;
     try {
       const tenant = await this.getTenant(tenantId);
       if (tenant) return tenant;
 
-      // Auto-create with default values if it doesn't exist
-      const newTenant: TenantProfile = {
-        id: tenantId,
-        name: defaultName || (tenantId === 'barber-elite' ? 'BarberElite Premium' : `Barbearia ${tenantId.toUpperCase()}`),
-        accentColor: '#6366F1', // default indigo
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        phone: '(11) 99999-9999',
-        email: `${tenantId}@barberelite.com`,
-        address: {
-          street: 'Av. Paulista, 1000',
-          city: 'São Paulo',
-          state: 'SP',
-          zipCode: '01310-100'
-        }
-      };
-
-      // Only persist if it is a real user-created tenant (not the default barber-elite fallback)
-      if (tenantId !== 'barber-elite') {
-        await setDoc(doc(db, 'tenants', tenantId), {
-          ...newTenant,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+      // Only return temporary object if a custom defaultName is explicitly provided
+      if (defaultName) {
+        const newTenant: TenantProfile = {
+          id: tenantId,
+          name: defaultName,
+          accentColor: '#6366F1', // default indigo
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        return newTenant;
       }
-      return newTenant;
+
+      return null;
     } catch (error) {
       console.error(`Error in getOrCreateTenant for ${tenantId}:`, error);
-      // Return safe fallback
-      return {
-        id: tenantId,
-        name: tenantId === 'barber-elite' ? 'BarberElite Premium' : `Barbearia ${tenantId}`,
-        accentColor: '#6366F1',
-        isActive: true
-      };
+      return null;
     }
   },
 

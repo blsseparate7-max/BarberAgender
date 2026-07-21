@@ -22,6 +22,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Appointment, AppointmentStatus, UserProfile } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
+import { getActiveTenantId } from '../../services/tenantService';
 import { format, subDays, addDays, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -44,7 +45,7 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
   const [clientsWithSubscriptions, setClientsWithSubscriptions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const tid = currentUser?.tenantId || 'barber-elite';
+    const tid = currentUser?.tenantId || getActiveTenantId() || '';
     const qPackages = query(
       collection(db, 'pacotes_vendas'),
       where('tenantId', '==', tid),

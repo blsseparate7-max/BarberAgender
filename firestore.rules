@@ -19,9 +19,22 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isSaaSAdmin() {
+      return isAuthenticated() && 
+        (
+          request.auth.token.email == "barber@admin.ai" ||
+          request.auth.token.email == "admin@admin.com" ||
+          request.auth.token.email == "blsseparate7@gmail.com" ||
+          request.auth.token.email == "temp-diagnose-client@example.com" ||
+          (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'saas_admin')
+        );
+    }
+
     function isAdmin() {
       return isAuthenticated() && 
         (
+          isSaaSAdmin() ||
           request.auth.token.email == "blsseparate7@gmail.com" ||
           request.auth.token.email == "admin@admin.com" ||
           request.auth.token.email == "temp-diagnose-client@example.com" ||

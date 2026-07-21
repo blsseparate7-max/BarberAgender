@@ -50,9 +50,9 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
       {/* Header */}
       <header className="relative z-10 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0" id="landing-header">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <button 
+          <div 
             onClick={() => setActiveTab('inicio')} 
-            className="flex items-center gap-3 text-left hover:opacity-90 transition-opacity"
+            className="cursor-pointer flex items-center gap-3 text-left hover:opacity-90 transition-opacity"
           >
             <div 
               className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg font-black text-sm text-zinc-950 shrink-0"
@@ -86,7 +86,7 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
                 )}
               </div>
             </div>
-          </button>
+          </div>
 
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-zinc-400">
             <button 

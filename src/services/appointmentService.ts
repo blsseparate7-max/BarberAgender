@@ -567,10 +567,21 @@ export const appointmentService = {
       endTime = exception.endTime || endTime;
       isOpen = true;
     } else {
-      const workingDay = schedule.workingHours.find(wh => wh.dayOfWeek === dayOfWeek);
-      if (!workingDay || !workingDay.isOpen) return [];
-      startTime = workingDay.startTime;
-      endTime = workingDay.endTime;
+      let workingDay = schedule.workingHours ? schedule.workingHours.find(wh => wh.dayOfWeek === dayOfWeek) : null;
+      if (!workingDay) {
+        // Fallback default open hours if this day was missing from the custom configuration
+        workingDay = { 
+          dayOfWeek, 
+          isOpen: dayOfWeek !== 0, 
+          startTime: '09:00', 
+          endTime: dayOfWeek === 6 ? '17:00' : '19:00',
+          lunchStart: '12:00', 
+          lunchEnd: '13:00' 
+        };
+      }
+      if (!workingDay.isOpen) return [];
+      startTime = workingDay.startTime || '09:00';
+      endTime = workingDay.endTime || '19:00';
       lunchStart = workingDay.lunchStart;
       lunchEnd = workingDay.lunchEnd;
       isOpen = true;

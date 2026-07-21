@@ -14,6 +14,7 @@ import { collection, query, where, getDocs, onSnapshot, orderBy } from 'firebase
 import { db } from '../firebase';
 import { commissionService } from '../services/commissionService';
 import { financialService } from '../services/financialService';
+import { getActiveTenantId } from '../services/tenantService';
 
 interface AccountsPayableManagerProps {
   userId: string;
@@ -117,7 +118,11 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
   const fetchBarbers = async () => {
     try {
-      const q = query(collection(db, 'usuarios'), where('tipo', '==', 'barbeiro'));
+      const q = query(
+        collection(db, 'usuarios'), 
+        where('tenantId', '==', getActiveTenantId()),
+        where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
+      );
       const snap = await getDocs(q);
       const list = snap.docs.map(doc => ({ id: doc.id, nome: doc.data().nome || 'Barbeiro' }));
       setBarbers(list);

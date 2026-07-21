@@ -188,14 +188,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     const fetchBarbers = async () => {
       setLoadingPortfolioBarbers(true);
       try {
-        const q = query(
-          collection(db, 'usuarios'),
-          where('tipo', '==', 'barbeiro'),
-          where('tenantId', '==', selectedPortfolioTenant.id),
-          where('ativo', '==', true)
-        );
-        const snap = await getDocs(q);
-        const list = snap.docs.map(doc => doc.data());
+        const list = await userService.getAllBarbers(true, selectedPortfolioTenant.id);
         setPortfolioBarbers(list);
       } catch (err) {
         console.warn("Could not load portfolio barbers:", err);
@@ -251,7 +244,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     );
 
     return () => unsubscribe();
-  }, [profile.uid]);
+  }, [profile.uid, profile?.tenantId]);
 
   // Load available time slots when scheduling inputs change
   useEffect(() => {
@@ -265,8 +258,17 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const activeTenantId = getActiveTenantId();
+      let activeTenantId = getActiveTenantId();
       
+      // Se o cliente tem um tenantId no perfil e não há parâmetro explicitamente na URL,
+      // prioriza o tenantId do perfil para carregar a unidade correta dele.
+      const params = new URLSearchParams(window.location.search);
+      const urlTenant = params.get('tenant') || params.get('tenantId');
+      if (!urlTenant && profile?.tenantId && profile.tenantId !== activeTenantId) {
+        activeTenantId = profile.tenantId;
+        localStorage.setItem('barberelite_tenant_id', activeTenantId);
+      }
+
       // Load tenant info (defensive)
       try {
         const tenantSnap = await getDoc(doc(db, 'tenants', activeTenantId));

@@ -27,6 +27,7 @@ import { commissionService } from '../../services/commissionService';
 import { cashService } from '../../services/cashService';
 import { financialService } from '../../services/financialService';
 import { useAuth } from '../../contexts/AuthContext';
+import { getActiveTenantId } from '../../services/tenantService';
 import { ProfessionalCommissionsDetail } from './ProfessionalCommissionsDetail';
 import { InputModal } from '../InputModal';
 
@@ -89,7 +90,12 @@ export function ProfessionalCommissions({
   useEffect(() => {
     setLoading(true);
 
-    const barbersQuery = query(collection(db, 'usuarios'), where('tipo', '==', 'barbeiro'));
+    const activeTenantId = getActiveTenantId();
+    const barbersQuery = query(
+      collection(db, 'usuarios'), 
+      where('tenantId', '==', activeTenantId),
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
+    );
     const unsubBarbers = onSnapshot(barbersQuery, (snapshot) => {
       const bList = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }));
       setBarbers(bList);
@@ -97,21 +103,24 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar barbeiros:", error);
     });
 
-    const unsubComms = onSnapshot(collection(db, 'commissions'), (snapshot) => {
+    const commsQuery = query(collection(db, 'commissions'), where('tenantId', '==', activeTenantId));
+    const unsubComms = onSnapshot(commsQuery, (snapshot) => {
       const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllCommissions(cList);
     }, (error) => {
       console.error("Erro ao escutar comissões:", error);
     });
 
-    const unsubAdvs = onSnapshot(collection(db, 'professional_advances'), (snapshot) => {
+    const advsQuery = query(collection(db, 'professional_advances'), where('tenantId', '==', activeTenantId));
+    const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
       const aList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllAdvances(aList);
     }, (error) => {
       console.error("Erro ao escutar vales:", error);
     });
 
-    const unsubCash = onSnapshot(collection(db, 'cash_sessions'), (snapshot) => {
+    const cashQuery = query(collection(db, 'cash_sessions'), where('tenantId', '==', activeTenantId));
+    const unsubCash = onSnapshot(cashQuery, (snapshot) => {
       const openCash = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .find((c: any) => c.status === 'open' || c.status === 'reopened');

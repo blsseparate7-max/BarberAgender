@@ -93,9 +93,18 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [profile]);
 
   useEffect(() => {
+    // Safety fallback timeout to prevent infinite loading screen
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 2500);
+
     if (tenantId) {
       loadTenantData(tenantId);
+    } else {
+      setLoading(false);
     }
+
+    return () => clearTimeout(timer);
   }, [tenantId]);
 
   // Fetch list of tenants for admin visibility

@@ -54,6 +54,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    // Safety fallback timeout to prevent infinite loading screen
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 3000);
+
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       
@@ -95,7 +100,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      clearTimeout(timer);
+      unsubscribeAuth();
+    };
   }, []);
 
   const isSaaSAdminUser = profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' || profile?.email === 'blsseparate7@gmail.com' || user?.email === 'blsseparate7@gmail.com' || profile?.tipo === 'saas_admin';

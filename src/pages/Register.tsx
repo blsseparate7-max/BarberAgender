@@ -13,7 +13,7 @@ interface RegisterPageProps {
 }
 
 export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLanding }: RegisterPageProps) {
-  const [role, setRole] = useState<'cliente' | 'admin'>(initialRole);
+  const role = 'cliente';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,10 +32,6 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
   const [linkClientId, setLinkClientId] = useState<string | null>(null);
   const [linkingProfile, setLinkingProfile] = useState<any | null>(null);
   const [loadingLinkingProfile, setLoadingLinkingProfile] = useState(false);
-
-  useEffect(() => {
-    setRole(initialRole);
-  }, [initialRole]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -477,34 +473,14 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             <Scissors className="text-zinc-950 w-7 h-7" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white mb-1">
-            {linkClientId ? 'Ative seu Cadastro' : (role === 'admin' ? 'Registre sua Barbearia' : 'Crie sua conta')}
+            {linkClientId ? 'Ative seu Cadastro' : 'Crie sua conta de Cliente'}
           </h1>
           <p className="text-zinc-400 text-sm">
             {linkClientId 
               ? (linkingProfile ? `Olá, ${linkingProfile.nome}! Complete seus dados de acesso para começar.` : 'Carregando detalhes do seu convite...')
-              : (role === 'admin' ? 'Cadastre e gerencie sua barbearia com alta performance' : 'Junte-se a nós para agendar seus serviços em segundos')}
+              : 'Junte-se a nós para agendar seus serviços e acompanhar seus pontos de fidelidade'}
           </p>
         </div>
-
-        {/* Custom Register Mode Switcher Tabs */}
-        {!linkClientId && (
-          <div className="flex bg-zinc-900 p-1 rounded-xl border border-zinc-800" id="register-mode-tabs">
-            <button
-              type="button"
-              onClick={() => setRole('cliente')}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${role === 'cliente' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-500 hover:text-white'}`}
-            >
-              Sou Cliente
-            </button>
-            <button
-              type="button"
-              onClick={() => setRole('admin')}
-              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${role === 'admin' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-500 hover:text-white'}`}
-            >
-              Sou Barbearia/Dono
-            </button>
-          </div>
-        )}
 
         <form onSubmit={handleRegister} className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl shadow-xl space-y-5">
           {linkingProfile && (

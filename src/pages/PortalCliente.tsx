@@ -36,6 +36,7 @@ import { serviceService } from '../services/serviceService';
 import { loyaltyService } from '../services/loyaltyService';
 import { subscriptionService } from '../services/subscriptionService';
 import { getActiveTenantId, tenantService, TenantProfile } from '../services/tenantService';
+import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Appointment, Service, LoyaltyPoints, Subscription } from '../types';
 import { format, parse, addMinutes, isAfter, isBefore, isEqual } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -80,6 +81,7 @@ interface PortalClienteProps {
 }
 
 export function PortalCliente({ profile }: PortalClienteProps) {
+  const { isSaaSAdminUser, setOverrideRole } = useAuth();
   // Navigation
   const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'fidelidade' | 'pacotes' | 'assinaturas' | 'perfil'>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -695,6 +697,22 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-24 md:pb-6">
+      {/* Superadmin Mode Banner */}
+      {isSaaSAdminUser && (
+        <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-black flex items-center justify-between shadow-md z-30">
+          <div className="flex items-center gap-2">
+            <Sparkles size={16} />
+            <span>Simulação de Perfil (Portal do Cliente)</span>
+          </div>
+          <button
+            onClick={() => setOverrideRole(null)}
+            className="bg-slate-950 hover:bg-slate-900 text-white px-3 py-1 rounded-lg text-[10px] uppercase font-extrabold tracking-wider transition-all"
+          >
+            🚀 Voltar ao Painel SaaS
+          </button>
+        </div>
+      )}
+
       {/* Header Panel */}
       <header className="bg-slate-900 text-white shadow-md relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />

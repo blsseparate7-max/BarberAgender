@@ -45,6 +45,7 @@ import { PortalCliente } from './pages/PortalCliente';
 import { PortalBarbeiro } from './pages/PortalBarbeiro';
 import PortalSaaSAdmin from './pages/PortalSaaSAdmin';
 import { OnboardingWelcome } from './components/OnboardingWelcome';
+import { MobileBottomNav } from './components/MobileBottomNav';
 
 const initialStats: Stats = {
   revenue: 12450.00,
@@ -294,7 +295,7 @@ function MainApp() {
       <div className="flex-1 flex flex-col min-w-0 max-w-full">
         <Header setSidebarOpen={setSidebarOpen} onProfileClick={() => setActiveTab('configuracoes-perfil' as any)} />
         
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8 custom-scrollbar">
           <div className="max-w-7xl mx-auto w-full">
             <AnimatePresence mode="wait">
               <motion.div
@@ -310,6 +311,13 @@ function MainApp() {
           </div>
         </main>
       </div>
+
+      <MobileBottomNav 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        onOpenMenu={() => setSidebarOpen(true)} 
+      />
+
       <CashWidget onNavigate={(tabId) => setActiveTab(tabId as TabId)} />
     </div>
   );

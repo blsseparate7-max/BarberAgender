@@ -14,6 +14,7 @@ interface AuthContextType {
   isBarbeiro: boolean;
   isCliente: boolean;
   isSaaSAdmin: boolean;
+  isSaaSAdminUser: boolean;
   overrideRole: UserRole | null;
   setOverrideRole: (role: UserRole | null) => void;
 }
@@ -27,6 +28,7 @@ const AuthContext = createContext<AuthContextType>({
   isBarbeiro: false,
   isCliente: false,
   isSaaSAdmin: false,
+  isSaaSAdminUser: false,
   overrideRole: null,
   setOverrideRole: () => {},
 });
@@ -57,12 +59,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (firebaseUser) {
         // Listen to profile changes
-        const unsubscribeProfile = onSnapshot(doc(db, 'usuarios', firebaseUser.uid), (docSnap) => {
+        const unsubscribeProfile = onSnapshot(doc(db, 'usuarios', firebaseUser.uid), async (docSnap) => {
           if (docSnap.exists()) {
-            setProfile(docSnap.data() as UserProfile);
+            const data = docSnap.data() as UserProfile;
+            if (data.ativo === false) {
+              console.warn("User profile is inactive. Signing out...");
+              await auth.signOut();
+              setUser(null);
+              setProfile(null);
+            } else {
+              setProfile(data);
+            }
           } else {
-            console.log("No profile document found for UID:", firebaseUser.uid);
-            setProfile(null);
+            console.log("No profile document found in Firestore for UID:", firebaseUser.uid);
+            const isMasterAdmin = firebaseUser.email === 'barber@admin.ai' || firebaseUser.email === 'blsseparate7@gmail.com' || firebaseUser.email === 'temp-diagnose-client@example.com';
+            if (!isMasterAdmin) {
+              console.warn("Account does not exist in Firestore 'usuarios'. Forcing sign-out.");
+              await auth.signOut();
+              setUser(null);
+              setProfile(null);
+            } else {
+              setProfile(null);
+            }
           }
           setLoading(false);
         }, (error) => {
@@ -80,7 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribeAuth();
   }, []);
 
-  const isSaaSAdminUser = profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' || profile?.tipo === 'saas_admin';
+  const isSaaSAdminUser = profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' || profile?.email === 'blsseparate7@gmail.com' || user?.email === 'blsseparate7@gmail.com' || profile?.tipo === 'saas_admin';
   const activeRole = (isSaaSAdminUser && overrideRole) || 
     (isSaaSAdminUser
       ? 'saas_admin' 
@@ -90,14 +108,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (profile) {
       return { ...profile, tipo: activeRole };
     }
-    return {
-      uid: user?.uid || 'temp-uid',
-      email: user?.email || '',
-      nome: user?.displayName || 'Usuário Simulado',
-      tipo: activeRole,
-      ativo: true
-    } as UserProfile;
-  }, [profile, user?.uid, user?.email, user?.displayName, activeRole]);
+    if (isSaaSAdminUser) {
+      return {
+        uid: user?.uid || 'saas-admin-uid',
+        email: user?.email || 'barber@admin.ai',
+        nome: 'Super Administrador SaaS',
+        tipo: 'saas_admin',
+        ativo: true
+      } as UserProfile;
+    }
+    return null;
+  }, [profile, user?.uid, user?.email, activeRole, isSaaSAdminUser]);
 
   const value = React.useMemo(() => {
     return {
@@ -109,10 +130,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isBarbeiro: activeRole === 'barbeiro',
       isCliente: activeRole === 'cliente',
       isSaaSAdmin: activeRole === 'saas_admin',
+      isSaaSAdminUser,
       overrideRole,
       setOverrideRole,
     };
-  }, [user, adjustedProfile, loading, overrideRole, activeRole]);
+  }, [user, adjustedProfile, loading, overrideRole, activeRole, isSaaSAdminUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

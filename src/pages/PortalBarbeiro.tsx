@@ -59,6 +59,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [activeTab, setActiveTab] = useState<'agenda' | 'clientes' | 'comissao' | 'estoque' | 'perfil' | 'avaliacoes'>('agenda');
   
   // Tab states: Agenda
+  const { isSaaSAdminUser, setOverrideRole } = useAuth();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
@@ -484,6 +485,21 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950 flex flex-col pb-24 font-sans selection:bg-indigo-100 selection:text-indigo-900">
       
+      {/* Superadmin Mode Banner */}
+      {isSaaSAdminUser && (
+        <div className="bg-indigo-600 text-white px-4 py-2 text-xs font-black flex items-center justify-between shadow-md z-30">
+          <div className="flex items-center gap-2">
+            <span>Simulação de Perfil (Portal do Barbeiro)</span>
+          </div>
+          <button
+            onClick={() => setOverrideRole(null)}
+            className="bg-white text-indigo-950 hover:bg-slate-100 px-3 py-1 rounded-lg text-[10px] uppercase font-extrabold tracking-wider transition-all"
+          >
+            🚀 Voltar ao Painel SaaS
+          </button>
+        </div>
+      )}
+
       {/* Header Banner */}
       <header className="bg-slate-900 text-white pt-6 pb-12 px-4 shadow-md rounded-b-[2rem] relative overflow-hidden shrink-0">
         <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 opacity-95" />

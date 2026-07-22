@@ -72,7 +72,7 @@ interface MenuItem {
 }
 
 export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarProps) {
-  const { profile, overrideRole, setOverrideRole } = useAuth();
+  const { profile, overrideRole, setOverrideRole, isSaaSAdminUser } = useAuth();
   const { tenant } = useTenant();
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
@@ -321,20 +321,22 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         </nav>
 
         <div className="pt-6 border-t border-slate-100 space-y-4">
-          {profile?.isSaaSAdmin && (
+          {isSaaSAdminUser && (
             <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 shadow-inner">
               <span className="block text-[9px] font-black uppercase tracking-widest text-[#94a3b8] mb-2.5 text-center">
                 ⚙️ Simulador de Perfil
               </span>
               <select
-                value={profile?.tipo || 'cliente'}
+                value={overrideRole || 'saas_admin'}
                 onChange={(e) => {
                   if (setOverrideRole) {
-                    setOverrideRole(e.target.value as any);
+                    const selected = e.target.value as any;
+                    setOverrideRole(selected === 'saas_admin' ? null : selected);
                   }
                 }}
                 className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-[10px] font-extrabold uppercase tracking-widest text-primary focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all cursor-pointer text-center outline-none"
               >
+                <option value="saas_admin">🚀 Portal SaaS Superadmin</option>
                 <option value="admin">👑 Dono (Admin)</option>
                 <option value="gerente">💼 Gerente</option>
                 <option value="barbeiro">💈 Barbeiro</option>

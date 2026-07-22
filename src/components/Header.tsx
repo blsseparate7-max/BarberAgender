@@ -11,7 +11,7 @@ interface HeaderProps {
 }
 
 export function Header({ setSidebarOpen, onProfileClick }: HeaderProps) {
-  const { profile } = useAuth();
+  const { profile, isSaaSAdminUser, overrideRole, setOverrideRole } = useAuth();
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
 
   useEffect(() => {
@@ -43,6 +43,17 @@ export function Header({ setSidebarOpen, onProfileClick }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-3 md:gap-6">
+        {/* Superadmin Return to SaaS Portal Button */}
+        {isSaaSAdminUser && overrideRole && (
+          <button
+            onClick={() => setOverrideRole(null)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider rounded-xl shadow-md shadow-emerald-600/10 transition-all active:scale-95"
+            title="Sair do modo de simulação e retornar ao Painel SaaS Admin"
+          >
+            <span>🚀 Voltar ao Painel SaaS</span>
+          </button>
+        )}
+
         {/* Status do Caixa para Admin/Gerente no Desktop e Tablet */}
         {(profile?.tipo === 'admin' || profile?.tipo === 'gerente') && (
           <div className="hidden md:flex items-center gap-2">

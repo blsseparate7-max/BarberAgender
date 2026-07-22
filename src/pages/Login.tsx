@@ -23,7 +23,24 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding }: L
     setLoading(true);
     setError('');
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCred = await signInWithEmailAndPassword(auth, email, password);
+      
+      // Verify Firestore profile doc exists
+      const { doc, getDoc } = await import('firebase/firestore');
+      const docSnap = await getDoc(doc(db, 'usuarios', userCred.user.uid));
+      const isMasterAdmin = userCred.user.email === 'barber@admin.ai' || userCred.user.email === 'blsseparate7@gmail.com' || userCred.user.email === 'temp-diagnose-client@example.com';
+      
+      if (!docSnap.exists() && !isMasterAdmin) {
+        await auth.signOut();
+        setError('Sua conta não consta no banco de dados do sistema. Por favor, faça um novo cadastro.');
+        return;
+      }
+
+      if (docSnap.exists() && docSnap.data().ativo === false) {
+        await auth.signOut();
+        setError('Sua conta está inativa. Entre em contato com a administração da barbearia.');
+        return;
+      }
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/operation-not-allowed') {

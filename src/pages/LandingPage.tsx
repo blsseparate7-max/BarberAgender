@@ -113,13 +113,13 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
               onClick={() => onSelectRole('profissional')}
               className="px-4 py-2 text-sm font-semibold text-zinc-300 hover:text-white transition-colors"
             >
-              Entrar
+              Entrar no Sistema
             </button>
             <button 
-              onClick={() => onSelectRole('dono-registro')}
+              onClick={() => onSelectRole('cliente')}
               className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-2 rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-500/10 flex items-center gap-2 hover:scale-[1.02]"
             >
-              Registrar Barbearia <ArrowRight size={16} />
+              Área do Cliente <ArrowRight size={16} />
             </button>
           </div>
         </div>
@@ -150,18 +150,18 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
 
               <div className="pt-6 flex flex-col sm:flex-row gap-4 justify-center items-center">
                 <button
-                  onClick={() => onSelectRole('dono-registro')}
-                  className="w-full sm:w-auto bg-white text-zinc-950 hover:bg-zinc-200 px-8 py-4 rounded-2xl font-bold text-base transition-all flex items-center justify-center gap-3 shadow-xl"
+                  onClick={() => setActiveTab('barbearias')}
+                  className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-8 py-4 rounded-2xl font-black text-base transition-all flex items-center justify-center gap-3 shadow-xl shadow-emerald-500/15"
                 >
-                  <Briefcase size={20} className="text-emerald-600" />
-                  Sou Dono de Barbearia
+                  <Calendar size={20} />
+                  Quero Agendar como Cliente
                 </button>
                 <button
-                  onClick={() => setActiveTab('barbearias')}
+                  onClick={() => onSelectRole('cliente')}
                   className="w-full sm:w-auto bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-800 px-8 py-4 rounded-2xl font-bold text-base transition-all flex items-center justify-center gap-3"
                 >
-                  <Calendar size={20} className="text-emerald-400" />
-                  Quero Agendar como Cliente
+                  <User size={20} className="text-emerald-400" />
+                  Cadastrar-me como Cliente
                 </button>
               </div>
             </motion.div>

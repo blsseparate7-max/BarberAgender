@@ -87,7 +87,7 @@ const SPECIALTY_PRESETS = [
 
 export function Barbeiros() {
   const { isAdmin, isGerente } = useAuth();
-  const { tenantId } = useTenant();
+  const { tenant, tenantId } = useTenant();
   const [barbeiros, setBarbeiros] = useState<UserProfile[]>([]);
   const [commissions, setCommissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -190,6 +190,14 @@ export function Barbeiros() {
         });
         toast.success(`Perfil de ${data.nome} atualizado em tempo real!`);
       } else {
+        // Verification of professional limit per tenant
+        const activeCount = barbeiros.filter(b => b.ativo !== false).length;
+        const maxAllowed = tenant?.maxProfessionals ?? 5;
+        if (activeCount >= maxAllowed) {
+          toast.error(`Limite de profissionais atingido! Sua barbearia permite até ${maxAllowed} profissional(is) no plano atual (${activeCount}/${maxAllowed}). Entre em contato com o administrador SaaS para expandir seu limite.`);
+          return;
+        }
+
         await userService.createUser({
           ...data,
           ativo: true,
@@ -234,18 +242,32 @@ export function Barbeiros() {
             Gerencie os barbeiros parceiros, taxas de comissão, metas de faturamento e escalas de trabalho em tempo real.
           </p>
         </div>
-        {(isAdmin || isGerente) && (
-          <button 
-            onClick={() => {
-              setEditingBarber(null);
-              setIsModalOpen(true);
-            }}
-            className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3.5 rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-emerald-700 transition shadow-md shadow-emerald-600/10 active:scale-95 shrink-0 self-start sm:self-center"
-          >
-            <Plus size={16} />
-            <span>Adicionar Profissional</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-3 shrink-0 self-start sm:self-center">
+          <div className="bg-slate-100 border border-slate-200/80 rounded-2xl px-4 py-2.5 text-right">
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Capacidade do Plano</p>
+            <p className="text-xs font-black text-slate-800">
+              {barbeiros.filter(b => b.ativo !== false).length} / {tenant?.maxProfessionals ?? 5} Profissionais
+            </p>
+          </div>
+          {(isAdmin || isGerente) && (
+            <button 
+              onClick={() => {
+                const activeCount = barbeiros.filter(b => b.ativo !== false).length;
+                const maxAllowed = tenant?.maxProfessionals ?? 5;
+                if (activeCount >= maxAllowed) {
+                  toast.error(`Limite atingido (${activeCount}/${maxAllowed}). Altere o plano da barbearia no painel SaaS para adicionar mais profissionais.`);
+                  return;
+                }
+                setEditingBarber(null);
+                setIsModalOpen(true);
+              }}
+              className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3.5 rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-emerald-700 transition shadow-md shadow-emerald-600/10 active:scale-95 shrink-0"
+            >
+              <Plus size={16} />
+              <span>Adicionar Profissional</span>
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Control filters bar */}

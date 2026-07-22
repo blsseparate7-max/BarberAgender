@@ -32,6 +32,17 @@ export interface TenantProfile {
   whatsapp?: string;
   aboutText?: string;
   coverImage?: string;
+
+  // Configurações de SaaS e Cobrança por Profissional
+  maxProfessionals?: number; // Limite máximo de profissionais ativos permitidos
+  pricePerProfessional?: number; // Valor cobrado por profissional/mês (ex: 39.90)
+  monthlyFeeOverride?: number; // Valor mensal fixo customizado
+  planStatus?: 'active' | 'pending' | 'suspended' | 'canceled';
+  ownerName?: string;
+  ownerEmail?: string;
+  ownerPhone?: string;
+  dueDateDay?: number; // Dia de vencimento da fatura mensal (1 a 31)
+  notes?: string;
 }
 
 export function getActiveTenantId(): string {
@@ -109,6 +120,38 @@ export const tenantService = {
     }
   },
 
+  async createTenant(tenantData: Partial<TenantProfile> & { id: string; name: string }): Promise<TenantProfile> {
+    try {
+      const tenantId = tenantData.id.toLowerCase().trim().replace(/[^a-z0-9-]/g, '-');
+      const docRef = doc(db, 'tenants', tenantId);
+      const newTenant: TenantProfile = {
+        id: tenantId,
+        name: tenantData.name,
+        accentColor: tenantData.accentColor || '#6366F1',
+        isActive: tenantData.isActive !== false,
+        maxProfessionals: tenantData.maxProfessionals ?? 5,
+        pricePerProfessional: tenantData.pricePerProfessional ?? 39.90,
+        monthlyFeeOverride: tenantData.monthlyFeeOverride ?? undefined,
+        planStatus: tenantData.planStatus || 'active',
+        ownerName: tenantData.ownerName || '',
+        ownerEmail: tenantData.ownerEmail || '',
+        ownerPhone: tenantData.ownerPhone || '',
+        dueDateDay: tenantData.dueDateDay || 10,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      await setDoc(docRef, {
+        ...newTenant,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      return newTenant;
+    } catch (error) {
+      console.error('Error creating tenant:', error);
+      throw error;
+    }
+  },
+
   async listTenants(): Promise<TenantProfile[]> {
     try {
       const q = query(collection(db, 'tenants'), where('isActive', '==', true));
@@ -116,6 +159,16 @@ export const tenantService = {
       return snap.docs.map(d => d.data() as TenantProfile);
     } catch (error) {
       console.error('Error listing tenants:', error);
+      return [];
+    }
+  },
+
+  async listAllTenantsSystem(): Promise<TenantProfile[]> {
+    try {
+      const snap = await getDocs(collection(db, 'tenants'));
+      return snap.docs.map(d => d.data() as TenantProfile);
+    } catch (error) {
+      console.error('Error listing all tenants system:', error);
       return [];
     }
   }

@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, getDocs, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { TabId, UserProfile, UserRole } from '../types';
 
@@ -75,18 +75,128 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setUser(null);
               setProfile(null);
             } else {
-              setProfile(data);
+              // Auto-correct discrepancies in Firestore database records
+              const userEmail = (data.email || '').toLowerCase().trim();
+              let needsUpdate = false;
+              let updateFields: Partial<UserProfile> = {};
+
+              if (userEmail === 'barber@admin.ai') {
+                if (data.tenantId !== 'saas' || data.tipo !== 'saas_admin') {
+                  needsUpdate = true;
+                  updateFields = { tenantId: 'saas', tipo: 'saas_admin' };
+                }
+              } else if (userEmail === 'barbeariagbcortes7@gmail.com') {
+                if (data.tenantId !== 'gbcortes7' || data.tipo !== 'admin') {
+                  needsUpdate = true;
+                  updateFields = { tenantId: 'gbcortes7', tipo: 'admin' };
+                }
+              }
+
+              if (needsUpdate) {
+                console.log(`Auto-correcting DB user profile for ${userEmail}:`, updateFields);
+                try {
+                  const { updateDoc } = await import('firebase/firestore');
+                  await updateDoc(doc(db, 'usuarios', firebaseUser.uid), updateFields);
+                } catch (updateErr) {
+                  console.error(`Failed to auto-correct profile for ${userEmail} in DB:`, updateErr);
+                }
+              }
+
+              // Set the profile state with any corrected values immediately to prevent UI lag/mismatch
+              setProfile({
+                ...data,
+                ...updateFields
+              });
             }
           } else {
             console.log("No profile document found in Firestore for UID:", firebaseUser.uid);
-            const isMasterAdmin = firebaseUser.email === 'barber@admin.ai' || firebaseUser.email === 'blsseparate7@gmail.com' || firebaseUser.email === 'temp-diagnose-client@example.com';
-            if (!isMasterAdmin) {
-              console.warn("Account does not exist in Firestore 'usuarios'. Forcing sign-out.");
-              await auth.signOut();
-              setUser(null);
-              setProfile(null);
-            } else {
-              setProfile(null);
+            
+            let healedProfile: UserProfile | null = null;
+            try {
+              if (firebaseUser.email) {
+                const userEmail = firebaseUser.email.toLowerCase().trim();
+                console.log("Auto-heal starting. querying tenants by ownerEmail for:", userEmail);
+                const tenantsRef = collection(db, 'tenants');
+                const qOwner = query(tenantsRef, where('ownerEmail', '==', userEmail));
+                let qSnapOwner;
+                try {
+                  qSnapOwner = await getDocs(qOwner);
+                  console.log("Query by ownerEmail succeeded. Empty?", qSnapOwner.empty);
+                } catch (err) {
+                  console.error("Failed querying tenants by ownerEmail:", err);
+                  throw err;
+                }
+                
+                let foundTenantId = '';
+                let foundOwnerName = '';
+                
+                if (!qSnapOwner.empty) {
+                  const tenantDoc = qSnapOwner.docs[0];
+                  foundTenantId = tenantDoc.id;
+                  foundOwnerName = tenantDoc.data().ownerName || tenantDoc.data().name || 'Proprietário';
+                } else {
+                  console.log("No ownerEmail match, querying tenants by email for:", userEmail);
+                  const qEmail = query(tenantsRef, where('email', '==', userEmail));
+                  let qSnapEmail;
+                  try {
+                    qSnapEmail = await getDocs(qEmail);
+                    console.log("Query by tenant email succeeded. Empty?", qSnapEmail.empty);
+                  } catch (err) {
+                    console.error("Failed querying tenants by email:", err);
+                    throw err;
+                  }
+                  if (!qSnapEmail.empty) {
+                    const tenantDoc = qSnapEmail.docs[0];
+                    foundTenantId = tenantDoc.id;
+                    foundOwnerName = tenantDoc.data().ownerName || tenantDoc.data().name || 'Proprietário';
+                  }
+                }
+                
+                if (foundTenantId) {
+                  console.log("Found matching tenant owner email! Creating missing profile in Firestore...");
+                  const newProfile: UserProfile = {
+                    uid: firebaseUser.uid,
+                    nome: foundOwnerName,
+                    email: userEmail,
+                    tipo: 'admin',
+                    ativo: true,
+                    tenantId: foundTenantId,
+                    telefone: firebaseUser.phoneNumber || '',
+                    phone: firebaseUser.phoneNumber || '',
+                    saldo_atual: 0,
+                    total_gasto: 0,
+                    total_pago: 0,
+                    total_em_aberto: 0,
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                  };
+                  try {
+                    await setDoc(doc(db, 'usuarios', firebaseUser.uid), newProfile);
+                    console.log("Missing profile successfully created/auto-healed!");
+                  } catch (err) {
+                    console.error("Failed writing to 'usuarios' collection:", err);
+                    throw err;
+                  }
+                  setProfile(newProfile);
+                  healedProfile = newProfile;
+                } else {
+                  console.log("No tenant match found for email in auto-heal.");
+                }
+              }
+            } catch (healErr) {
+              console.error("Error attempting to auto-heal missing user profile:", healErr);
+            }
+
+            if (!healedProfile) {
+              const isMasterAdmin = firebaseUser.email === 'barber@admin.ai' || firebaseUser.email === 'blsseparate7@gmail.com' || firebaseUser.email === 'temp-diagnose-client@example.com';
+              if (!isMasterAdmin) {
+                console.warn("Account does not exist in Firestore 'usuarios'. Forcing sign-out.");
+                await auth.signOut();
+                setUser(null);
+                setProfile(null);
+              } else {
+                setProfile(null);
+              }
             }
           }
           setLoading(false);
@@ -108,15 +218,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const isSaaSAdminUser = profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' || profile?.email === 'blsseparate7@gmail.com' || user?.email === 'blsseparate7@gmail.com' || profile?.tipo === 'saas_admin';
+  const isSaaSAdminUser = (profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' || profile?.email === 'blsseparate7@gmail.com' || user?.email === 'blsseparate7@gmail.com' || (profile?.tipo === 'saas_admin' && profile?.email !== 'barbeariagbcortes7@gmail.com')) && user?.email !== 'barbeariagbcortes7@gmail.com';
   const activeRole = (isSaaSAdminUser && overrideRole) || 
     (isSaaSAdminUser
       ? 'saas_admin' 
-      : (profile?.tipo || 'cliente'));
+      : ((profile?.email === 'barbeariagbcortes7@gmail.com' ? 'admin' : profile?.tipo) || 'cliente'));
 
   const adjustedProfile = React.useMemo(() => {
     if (profile) {
-      return { ...profile, tipo: activeRole };
+      const finalProfile = { ...profile, tipo: activeRole };
+      if (finalProfile.email?.toLowerCase().trim() === 'barber@admin.ai') {
+        finalProfile.tenantId = 'saas';
+        finalProfile.tipo = 'saas_admin';
+      } else if (finalProfile.email?.toLowerCase().trim() === 'barbeariagbcortes7@gmail.com') {
+        finalProfile.tenantId = 'gbcortes7';
+        finalProfile.tipo = 'admin';
+      }
+      return finalProfile;
     }
     if (isSaaSAdminUser) {
       return {
@@ -124,6 +242,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: user?.email || 'barber@admin.ai',
         nome: 'Super Administrador SaaS',
         tipo: 'saas_admin',
+        tenantId: 'saas',
         ativo: true
       } as UserProfile;
     }

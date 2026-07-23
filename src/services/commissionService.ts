@@ -126,7 +126,7 @@ export const commissionService = {
   // Novo Drill Down completo com alinhamento de saldo real pendente (todas do período de comissões não pagas vs vales não pagos)
   async getProfessionalSummary(startDate: string, endDate: string) {
     const [barbers, commissions, advances, allPendingComms, allPendingAdvs] = await Promise.all([
-      getDocs(query(collection(db, 'usuarios'), where('tenantId', '==', getActiveTenantId()), where('tipo', 'in', ['barbeiro', 'gerente', 'admin']))),
+      getDocs(query(collection(db, 'usuarios'), where('tenantId', '==', getActiveTenantId()), where('tipo', 'in', ['barbeiro', 'gerente']))),
       this.getCommissions({ startDate, endDate }),
       this.getAdvances({ startDate, endDate }),
       this.getCommissions({ status: 'pendente' }),

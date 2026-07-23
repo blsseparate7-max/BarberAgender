@@ -23,6 +23,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { userService } from '../services/userService';
 import { serviceService } from '../services/serviceService';
 import { inventoryService } from '../services/inventoryService';
+import { getActiveTenantId } from '../services/tenantService';
 import { UserProfile } from '../types';
 import { toast } from 'sonner';
 
@@ -76,19 +77,19 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
     }
   };
 
-  const handleAddProfessional = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddProfessional = async (e?: React.FormEvent): Promise<boolean> => {
+    if (e) e.preventDefault();
     if (!profName.trim()) {
       toast.error('O nome do profissional é obrigatório.');
-      return;
+      return false;
     }
     if (!profEmail.trim()) {
       toast.error('O e-mail do profissional é obrigatório.');
-      return;
+      return false;
     }
     if (!profPassword.trim() || profPassword.length < 6) {
       toast.error('A senha é obrigatória e deve ter no mínimo 6 caracteres.');
-      return;
+      return false;
     }
 
     setIsSaving(true);
@@ -103,6 +104,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
         ativo: true,
         tipo: 'barbeiro',
         password: profPassword.trim(),
+        tenantId: profile.tenantId || getActiveTenantId(),
       };
       
       const newProf = await userService.createUser(payload);
@@ -116,23 +118,25 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
       setProfPassword('');
       
       toast.success(`Profissional ${payload.nome} cadastrado com sucesso!`);
+      return true;
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || 'Erro ao cadastrar profissional.');
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleAddService = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddService = async (e?: React.FormEvent): Promise<boolean> => {
+    if (e) e.preventDefault();
     if (!serviceName.trim()) {
       toast.error('O nome do serviço é obrigatório.');
-      return;
+      return false;
     }
     if (!servicePrice) {
       toast.error('O preço do serviço é obrigatório.');
-      return;
+      return false;
     }
 
     setIsSaving(true);
@@ -143,6 +147,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
         preco: Number(servicePrice) || 0,
         duracao_minutos: Number(serviceDuration) || 30,
         active: true,
+        tenantId: profile.tenantId || getActiveTenantId(),
       };
       
       const id = await serviceService.createService(payload);
@@ -155,23 +160,25 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
       setServiceDuration('30');
       
       toast.success(`Serviço ${payload.nome} adicionado com sucesso!`);
+      return true;
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || 'Erro ao cadastrar serviço.');
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddProduct = async (e?: React.FormEvent): Promise<boolean> => {
+    if (e) e.preventDefault();
     if (!productName.trim()) {
       toast.error('O nome do produto é obrigatório.');
-      return;
+      return false;
     }
     if (!productSalePrice) {
       toast.error('O preço de venda é obrigatório.');
-      return;
+      return false;
     }
 
     setIsSaving(true);
@@ -186,6 +193,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
         categoryName: 'Geral',
         type: 'venda',
         status: 'active',
+        tenantId: profile.tenantId || getActiveTenantId(),
       };
       
       const id = await inventoryService.createProduct(payload);
@@ -198,12 +206,38 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
       setProductStock('');
       
       toast.success(`Produto ${payload.name} adicionado com sucesso!`);
+      return true;
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || 'Erro ao cadastrar produto.');
+      return false;
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Helper function to handle step transition and auto-save filled data
+  const handleNextStep = async () => {
+    if (step === 2) {
+      // If user typed anything in professional name or email, try to auto-add
+      if (profName.trim() || profEmail.trim() || profPassword.trim()) {
+        const success = await handleAddProfessional();
+        if (!success) return; // Do not advance if creation failed
+      }
+    } else if (step === 3) {
+      // If user typed anything in service name or price, try to auto-add
+      if (serviceName.trim() || servicePrice) {
+        const success = await handleAddService();
+        if (!success) return; // Do not advance if creation failed
+      }
+    } else if (step === 4) {
+      // If user typed anything in product name or price, try to auto-add
+      if (productName.trim() || productSalePrice) {
+        const success = await handleAddProduct();
+        if (!success) return; // Do not advance if creation failed
+      }
+    }
+    setStep(step + 1);
   };
 
   // Skip step or onboarding entirely
@@ -716,7 +750,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
                 Pular Etapa
               </button>
               <button
-                onClick={() => setStep(step + 1)}
+                onClick={handleNextStep}
                 className="flex items-center gap-1.5 px-5 py-2.5 text-xs font-black bg-emerald-600 text-white hover:bg-emerald-700 transition-all rounded-xl shadow-lg shadow-emerald-600/10"
               >
                 Avançar

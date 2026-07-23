@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Scissors, Calendar, Shield, Sparkles, TrendingUp, Search, User, Briefcase, ArrowRight, Star, Clock, MapPin, ChevronRight, Phone, Mail, CheckCircle2, Sliders, Check } from 'lucide-react';
+import { Scissors, Calendar, Shield, Sparkles, TrendingUp, Search, User, Users, Briefcase, ArrowRight, Star, Clock, MapPin, ChevronRight, Phone, Mail, CheckCircle2, Sliders, Check } from 'lucide-react';
 import { tenantService, TenantProfile, SaaSPlan } from '../services/tenantService';
 
 interface LandingPageProps {
@@ -361,38 +361,73 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
           {/* Benefits Section */}
           <section className="relative z-10 max-w-7xl mx-auto px-6 py-20 border-t border-zinc-900" id="beneficios">
             <div className="text-center mb-16 space-y-4">
-              <h2 className="text-3xl font-extrabold tracking-tight">Feito para o Sucesso</h2>
-              <p className="text-zinc-400 max-w-xl mx-auto">Vantagens robustas para automatizar seu dia a dia e atrair mais clientes.</p>
+              <span className="text-emerald-500 text-xs font-black uppercase tracking-widest bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-500/20">
+                Ecossistema Completo
+              </span>
+              <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight">Vantagens Integradas em Todos os Painéis</h2>
+              <p className="text-zinc-400 max-w-2xl mx-auto">
+                Análise completa dos recursos oferecidos no Painel Administrativo, Painel do Barbeiro e Área do Cliente para impulsionar sua barbearia.
+              </p>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-              <div className="bg-zinc-900/30 border border-zinc-900/80 p-8 rounded-2xl space-y-4">
-                <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
-                  <TrendingUp size={20} />
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+              <div className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl space-y-4 hover:border-emerald-500/30 transition-all">
+                <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                  <Briefcase size={22} />
                 </div>
-                <h4 className="text-lg font-bold">Comissões Precisas</h4>
+                <h4 className="text-lg font-bold text-white">Painel Administrativo & Gestão</h4>
                 <p className="text-sm text-zinc-400 leading-relaxed">
-                  Cálculo automático das comissões dos barbeiros por serviços e vendas de produtos. Histórico detalhado de faturamento por profissional.
+                  Controle total da barbearia: agenda em tempo real, comandas e caixa integrados, gestão financeira (contas a pagar/receber), estoque de produtos e relatórios gerenciais exportáveis.
                 </p>
               </div>
 
-              <div className="bg-zinc-900/30 border border-zinc-900/80 p-8 rounded-2xl space-y-4">
-                <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
-                  <Shield size={20} />
+              <div className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl space-y-4 hover:border-emerald-500/30 transition-all">
+                <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                  <Users size={22} />
                 </div>
-                <h4 className="text-lg font-bold">Segurança e Sincronia</h4>
+                <h4 className="text-lg font-bold text-white">Painel do Barbeiro Dedicado</h4>
                 <p className="text-sm text-zinc-400 leading-relaxed">
-                  Fechamentos de comandas integrados ao caixa do dia. Logs de segurança contra alterações e inconsistências.
+                  Cada profissional possui sua própria área para acompanhar a agenda diária, conferir comissões por serviços e vendas de produtos em tempo real e organizar seus atendimentos.
                 </p>
               </div>
 
-              <div className="bg-zinc-900/30 border border-zinc-900/80 p-8 rounded-2xl space-y-4">
-                <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
-                  <Sparkles size={20} />
+              <div className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl space-y-4 hover:border-emerald-500/30 transition-all">
+                <div className="w-12 h-12 bg-indigo-500/10 rounded-2xl flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+                  <Calendar size={22} />
                 </div>
-                <h4 className="text-lg font-bold">Fidelização Turbinada</h4>
+                <h4 className="text-lg font-bold text-white">Área do Cliente (Agendamento Online)</h4>
                 <p className="text-sm text-zinc-400 leading-relaxed">
-                  Campanhas de cashback automático, cartões de fidelidade e assinaturas recorrentes de planos de corte e barba.
+                  Seus clientes agendam em segundos pelo celular, escolhem o barbeiro favorito, consultam o histórico de serviços, pontuação no programa de fidelidade e saldo de cashback.
+                </p>
+              </div>
+
+              <div className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl space-y-4 hover:border-emerald-500/30 transition-all">
+                <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                  <TrendingUp size={22} />
+                </div>
+                <h4 className="text-lg font-bold text-white">Comissões & Caixa Automatizados</h4>
+                <p className="text-sm text-zinc-400 leading-relaxed">
+                  Cálculo automático e transparente das comissões de equipe, fechamento de caixa diário sem erros e conciliação perfeita entre entradas e saídas.
+                </p>
+              </div>
+
+              <div className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl space-y-4 hover:border-emerald-500/30 transition-all">
+                <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                  <Shield size={22} />
+                </div>
+                <h4 className="text-lg font-bold text-white">Segurança & Multi-Tenant</h4>
+                <p className="text-sm text-zinc-400 leading-relaxed">
+                  Arquitetura segura com isolamento de dados por barbearia, logs de auditoria e sincronização instantânea em nuvem com alta disponibilidade.
+                </p>
+              </div>
+
+              <div className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl space-y-4 hover:border-emerald-500/30 transition-all">
+                <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                  <Sparkles size={22} />
+                </div>
+                <h4 className="text-lg font-bold text-white">Fidelização & Cashback</h4>
+                <p className="text-sm text-zinc-400 leading-relaxed">
+                  Programas de fidelidade automatizados, cartões de selos digitais, cashback em compras e campanhas para reter e trazer clientes de volta com frequência.
                 </p>
               </div>
             </div>

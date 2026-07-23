@@ -684,6 +684,9 @@ export interface MarketingHistory {
 
 export interface LoyaltyConfig {
   id: string;
+  cashbackEnabled?: boolean;
+  cashbackType?: 'percentual' | 'fixo';
+  cashbackFixedValue?: number;
   pointsPerReal: number;
   pointsPerAppointment: number;
   cashbackPercentage: number;

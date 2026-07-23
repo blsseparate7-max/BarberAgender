@@ -38,7 +38,9 @@ import {
   Phone,
   Mail,
   Share2,
-  Gift
+  Gift,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays, isSameDay, parseISO } from 'date-fns';
@@ -60,6 +62,9 @@ import { useTenant } from '../contexts/TenantContext';
 import { getActiveTenantId } from '../services/tenantService';
 import { dashboardService } from '../services/dashboardService';
 import { settingsService } from '../services/settingsService';
+import { teamGoalService, TeamGoal } from '../services/teamGoalService';
+import { commissionService } from '../services/commissionService';
+import { userService } from '../services/userService';
 import { toast } from 'sonner';
 import { Appointment, FinancialTransaction, Commission, UserProfile, TabId } from '../types';
 import { db } from '../firebase';
@@ -190,15 +195,15 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
         try {
           // 1. Get Comandas
           const comandasSnap = await getDocs(
-            query(collection(db, 'comandas'), where('tenantId', '==', tenantId), where('status', 'not-in', ['fechada', 'cancelada']))
+            query(collection(db, 'comandas'), where('tenantId', '==', tenantId))
           );
-          setComandasAbertas(comandasSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+          setComandasAbertas(comandasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((c: any) => !['fechada', 'cancelada'].includes(c.status)));
 
           // 2. Get Debts
           const debtsSnap = await getDocs(
-            query(collection(db, 'client_debts'), where('tenantId', '==', tenantId), where('status', 'not-in', ['paga', 'cancelada']))
+            query(collection(db, 'client_debts'), where('tenantId', '==', tenantId))
           );
-          setClientesDevedores(debtsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+          setClientesDevedores(debtsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((d: any) => !['paga', 'cancelada'].includes(d.status)));
 
           // 3. Get Low Stock
           const productsSnap = await getDocs(
@@ -221,6 +226,92 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
   const topBarbers = data?.topBarbers || [];
   const topServices = data?.topServices || [];
   const todayAppointments = (data?.recentAppointments || []).filter((a: any) => a.date === format(new Date(), 'yyyy-MM-dd'));
+
+  const [teamGoals, setTeamGoals] = useState<TeamGoal[]>([]);
+  const [isCreatingGoal, setIsCreatingGoal] = useState(false);
+  const [goalTitle, setGoalTitle] = useState('');
+  const [goalPeriodo, setGoalPeriodo] = useState<'dia' | 'semana' | 'mes'>('mes');
+  const [goalTipo, setGoalTipo] = useState<'faturamento' | 'atendimentos'>('faturamento');
+  const [goalValorMeta, setGoalValorMeta] = useState('');
+  const [goalValorBonus, setGoalValorBonus] = useState('');
+  const [goalProfissionalId, setGoalProfissionalId] = useState('');
+  const [barbersList, setBarbersList] = useState<UserProfile[]>([]);
+
+  useEffect(() => {
+    if (tenantId) {
+      teamGoalService.getGoals(tenantId).then(setTeamGoals).catch(console.error);
+      Promise.all([
+        userService.getUsersByRole('barbeiro', false, tenantId),
+        userService.getUsersByRole('gerente', false, tenantId),
+        userService.getUsersByRole('admin', false, tenantId)
+      ]).then(([barbeiros, gerentes, admins]) => {
+        setBarbersList([...barbeiros, ...gerentes, ...admins]);
+      }).catch(console.error);
+    }
+  }, [tenantId]);
+
+  const handleCreateGoal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseFloat(goalValorMeta);
+    const bonus = parseFloat(goalValorBonus);
+    if (!goalTitle.trim() || isNaN(val) || val <= 0) {
+      toast.error('Preencha o título e uma meta válida.');
+      return;
+    }
+    try {
+      await teamGoalService.createGoal({
+        titulo: goalTitle.trim(),
+        periodo: goalPeriodo,
+        tipo: goalTipo,
+        valorMeta: val,
+        valorBonus: isNaN(bonus) ? 0 : bonus,
+        profissional_id: goalProfissionalId || undefined
+      });
+      toast.success('Meta cadastrada com sucesso!');
+      setGoalTitle('');
+      setGoalValorMeta('');
+      setGoalValorBonus('');
+      setGoalProfissionalId('');
+      setIsCreatingGoal(false);
+      const updated = await teamGoalService.getGoals(tenantId);
+      setTeamGoals(updated);
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Erro ao cadastrar meta: ' + err.message);
+    }
+  };
+
+  const handleDeleteGoal = async (id: string) => {
+    try {
+      await teamGoalService.deleteGoal(id);
+      toast.success('Meta excluída.');
+      setTeamGoals(teamGoals.filter(g => g.id !== id));
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Erro ao excluir meta.');
+    }
+  };
+
+  const handleInsertBonus = async (goal: TeamGoal, barber: any) => {
+    try {
+      await commissionService.createCommission({
+        profissional_id: barber.uid || barber.id,
+        profissional_name: barber.name || barber.nome || 'Profissional',
+        comanda_id: `goal-${goal.id || 'bonus'}`,
+        servico_name: `Bônus de Meta: ${goal.titulo} (${goal.periodo})`,
+        base_value: goal.valorBonus,
+        commission_percentage: 100,
+        commission_value: goal.valorBonus,
+        status: 'pendente',
+        date: format(new Date(), 'yyyy-MM-dd'),
+        tenantId: tenantId
+      });
+      toast.success(`Bônus de R$ ${goal.valorBonus.toFixed(2)} inserido na comissão de ${barber.name || barber.nome} com sucesso!`);
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Erro ao inserir bônus: ' + err.message);
+    }
+  };
 
   // Define tab headers dynamically to feel integrated
   const tabTitles: Record<string, { title: string; subtitle: string }> = {
@@ -438,6 +529,200 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
           {/* INDICATORS TAB - RANKING DOS BARBEIROS */}
           {activeTab === 'indicators' && (
             <div className="space-y-8">
+              {/* TEAM GOALS & BONUSES MANAGEMENT SECTION */}
+              <div className="bg-surface border border-border rounded-[2.5rem] p-8 shadow-sm space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="font-bold text-xl text-primary flex items-center gap-3">
+                      <Target size={24} className="text-indigo-600" />
+                      Metas da Equipe e Bonificação por Desempenho
+                    </h2>
+                    <p className="text-muted text-xs mt-1">Cadastre metas diárias, semanais ou mensais e insira bônus diretamente na comissão dos profissionais que as atingirem.</p>
+                  </div>
+                  <button
+                    onClick={() => setIsCreatingGoal(!isCreatingGoal)}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-sm self-start"
+                  >
+                    <Plus size={16} />
+                    {isCreatingGoal ? 'Cancelar' : 'Nova Meta de Equipe'}
+                  </button>
+                </div>
+
+                {isCreatingGoal && (
+                  <form onSubmit={handleCreateGoal} className="bg-slate-50 border p-6 rounded-3xl space-y-4">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-primary">Cadastrar Nova Meta</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Título da Meta</label>
+                        <input
+                          type="text"
+                          required
+                          value={goalTitle}
+                          onChange={e => setGoalTitle(e.target.value)}
+                          placeholder="Ex: Meta Julho / Meta da Semana"
+                          className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Período</label>
+                        <select
+                          value={goalPeriodo}
+                          onChange={e => setGoalPeriodo(e.target.value as any)}
+                          className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
+                        >
+                          <option value="dia">Diária (Hoje)</option>
+                          <option value="semana">Semanal</option>
+                          <option value="mes">Mensal</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Métrica</label>
+                        <select
+                          value={goalTipo}
+                          onChange={e => setGoalTipo(e.target.value as any)}
+                          className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
+                        >
+                          <option value="faturamento">Faturamento (R$)</option>
+                          <option value="atendimentos">Atendimentos (Cortes)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Valor da Meta ({goalTipo === 'faturamento' ? 'R$' : 'Qtde'})</label>
+                        <input
+                          type="number"
+                          required
+                          step={goalTipo === 'faturamento' ? '0.01' : '1'}
+                          value={goalValorMeta}
+                          onChange={e => setGoalValorMeta(e.target.value)}
+                          placeholder={goalTipo === 'faturamento' ? 'Ex: 5000' : 'Ex: 40'}
+                          className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Bônus ao Atingir (R$)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          required
+                          value={goalValorBonus}
+                          onChange={e => setGoalValorBonus(e.target.value)}
+                          placeholder="Ex: 150.00"
+                          className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Profissional Alvo</label>
+                        <select
+                          value={goalProfissionalId}
+                          onChange={e => setGoalProfissionalId(e.target.value)}
+                          className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
+                        >
+                          <option value="">Equipe Inteira (Todos os Barbeiros)</option>
+                          {barbersList.map(b => (
+                            <option key={b.uid} value={b.uid}>{b.name || b.nome}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-2">
+                      <button
+                        type="submit"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-6 py-2 rounded-xl transition shadow-sm"
+                      >
+                        Salvar Nova Meta
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Goals List & Progress */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-primary">Metas Ativas e Progresso da Equipe</h3>
+                  {teamGoals.length === 0 ? (
+                    <p className="text-xs text-muted italic py-4 text-center">Nenhuma meta cadastrada até o momento. Clique em "Nova Meta de Equipe" acima.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {teamGoals.map((goal) => {
+                        const targetBarbers = goal.profissional_id 
+                          ? topBarbers.filter((b: any) => b.uid === goal.profissional_id || b.id === goal.profissional_id)
+                          : topBarbers;
+
+                        return (
+                          <div key={goal.id} className="bg-slate-50/70 border border-slate-200/80 rounded-3xl p-6 space-y-4 relative shadow-sm">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase rounded-lg">
+                                  {goal.periodo} • {goal.tipo}
+                                </span>
+                                <h4 className="font-bold text-base text-primary mt-2">{goal.titulo}</h4>
+                                <p className="text-xs text-muted mt-0.5">
+                                  Meta: {goal.tipo === 'faturamento' ? `R$ ${goal.valorMeta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : `${goal.valorMeta} atendimentos`} | Bônus: <strong className="text-emerald-600">R$ {goal.valorBonus.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => goal.id && handleDeleteGoal(goal.id)}
+                                className="text-slate-400 hover:text-rose-600 p-1.5 transition"
+                                title="Excluir meta"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+
+                            <div className="space-y-3 pt-2 border-t border-slate-200/60">
+                              <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Progresso dos Profissionais</p>
+                              {targetBarbers.length === 0 ? (
+                                <p className="text-xs text-muted italic">Nenhum profissional elegível encontrado.</p>
+                              ) : (
+                                targetBarbers.map((b: any) => {
+                                  const currentVal = goal.tipo === 'faturamento' ? (b.revenue || 0) : (b.count || 0);
+                                  const percent = Math.min(100, Math.round((currentVal / (goal.valorMeta || 1)) * 100));
+                                  const isAchieved = currentVal >= goal.valorMeta;
+
+                                  return (
+                                    <div key={`goal-prog-${goal.id}-${b.name}`} className="bg-white p-3.5 rounded-2xl border border-slate-100 space-y-2">
+                                      <div className="flex items-center justify-between text-xs font-bold">
+                                        <span className="text-primary">{b.name}</span>
+                                        <span className={isAchieved ? 'text-emerald-600 font-black' : 'text-slate-600'}>
+                                          {goal.tipo === 'faturamento' ? `R$ ${currentVal.toFixed(2)}` : `${currentVal}x`} / {goal.valorMeta} ({percent}%)
+                                        </span>
+                                      </div>
+                                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                                        <div
+                                          className={`h-full rounded-full transition-all duration-500 ${isAchieved ? 'bg-emerald-500' : 'bg-indigo-600'}`}
+                                          style={{ width: `${percent}%` }}
+                                        />
+                                      </div>
+                                      <div className="flex items-center justify-between pt-1">
+                                        <span className="text-[10px] text-muted italic">
+                                          {isAchieved ? '✨ Meta batida com sucesso!' : 'Em andamento...'}
+                                        </span>
+                                        {isAchieved && goal.valorBonus > 0 && (
+                                          <button
+                                            onClick={() => handleInsertBonus(goal, b)}
+                                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-xl transition shadow-sm flex items-center gap-1.5"
+                                          >
+                                            <DollarSign size={12} />
+                                            Inserir Bônus na Comissão
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="bg-surface border border-border rounded-[2.5rem] p-8 shadow-sm">
                 <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
                   <div>

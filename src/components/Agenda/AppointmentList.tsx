@@ -48,28 +48,26 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
     const tid = currentUser?.tenantId || getActiveTenantId() || '';
     const qPackages = query(
       collection(db, 'pacotes_vendas'),
-      where('tenantId', '==', tid),
-      where('remainingCuts', '>', 0)
+      where('tenantId', '==', tid)
     );
     const unsubPackages = onSnapshot(qPackages, (snap) => {
       const uids = new Set<string>();
       snap.forEach(doc => {
         const d = doc.data();
-        if (d.clientId) uids.add(d.clientId);
+        if (d.clientId && (d.remainingCuts || 0) > 0) uids.add(d.clientId);
       });
       setClientsWithPackages(uids);
     });
 
     const qSubscriptions = query(
       collection(db, 'subscriptions'),
-      where('tenantId', '==', tid),
-      where('status', '==', 'active')
+      where('tenantId', '==', tid)
     );
     const unsubSubscriptions = onSnapshot(qSubscriptions, (snap) => {
       const uids = new Set<string>();
       snap.forEach(doc => {
         const d = doc.data();
-        if (d.cliente_id) uids.add(d.cliente_id);
+        if (d.cliente_id && d.status === 'active') uids.add(d.cliente_id);
       });
       setClientsWithSubscriptions(uids);
     });

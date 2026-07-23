@@ -37,6 +37,7 @@ service cloud.firestore {
           isSaaSAdmin() ||
           request.auth.token.email == "blsseparate7@gmail.com" ||
           request.auth.token.email == "admin@admin.com" ||
+          request.auth.token.email == "barbeariagbcortes7@gmail.com" ||
           request.auth.token.email == "temp-diagnose-client@example.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin')
@@ -76,7 +77,7 @@ service cloud.firestore {
 
     // Rules for Tenants (Multi-tenant units)
     match /tenants/{tenantId} {
-      allow read: if true;
+      allow read, get, list: if true;
       allow create: if true; // Allows guest/unauthenticated visitors to auto-create missing tenants
       allow update: if isStaff();
       allow delete: if isAdmin();
@@ -84,20 +85,16 @@ service cloud.firestore {
 
     // Rules for Usuarios collection
     match /usuarios/{userId} {
-      // Qualquer um autenticado pode ler dados básicos de perfis (necessário para agendamento e comandas).
-      allow read: if isAuthenticated();
+      // Qualquer um pode ler dados básicos de um perfil específico (necessário para agendamento, comandas e inicialização estável).
+      allow get: if true;
+      // Somente usuários autenticados podem fazer pesquisas em lote ou listagem da coleção de usuários.
+      allow list: if isAuthenticated();
       
-      allow create: if isAuthenticated() && (
-        request.auth.uid == userId || 
-        isTestEmail(request.auth.token.email) ||
-        isStaff()
-      );
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated() && (isTestEmail(request.auth.token.email) || isStaff());
 
-      allow update: if isAuthenticated() && (
-        request.auth.uid == userId || 
-        isTestEmail(request.auth.token.email) ||
-        isStaff()
-      );
+      allow update: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && (isTestEmail(request.auth.token.email) || isStaff());
       
       allow delete: if isAdmin();
 
@@ -436,6 +433,11 @@ service cloud.firestore {
       allow create, update, delete: if isAuthenticated() && (isStaff() || isBarbeiro());
     }
 
+    match /team_goals/{goalId} {
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow write: if isAuthenticated() && isStaff();
+    }
+
     // --- Auxiliares / Tipos Customizados ---
     match /tipos_categorias/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
     match /tipos_pagamentos/{id} { allow read: if isAuthenticated(); allow write: if isAuthenticated() && isStaff(); }
@@ -491,6 +493,18 @@ service cloud.firestore {
         (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid)
       );
       allow delete: if isAdmin();
+    }
+
+    // --- SaaS Plans ---
+    match /saas_plans/{planId} {
+      allow read: if true;
+      allow write: if isSaaSAdmin();
+    }
+
+    // --- SaaS Settings ---
+    match /saas_settings/{settingId} {
+      allow read: if true;
+      allow write: if isSaaSAdmin();
     }
   }
 }

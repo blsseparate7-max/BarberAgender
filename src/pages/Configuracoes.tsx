@@ -40,6 +40,7 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { settingsService, BarbershopProfile } from '../services/settingsService';
 import { userService } from '../services/userService';
 import { resetService } from '../services/resetService';
+import { loyaltyService } from '../services/loyaltyService';
 import { toast } from 'sonner';
 
 export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
@@ -89,8 +90,15 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [ticketMsg, setTicketMsg] = useState('');
 
   // Business / rules states
-  const [pointsRate, setPointsRate] = useState('10');
+  const [loyaltyConfigId, setLoyaltyConfigId] = useState<string>('');
+  const [cashbackEnabled, setCashbackEnabled] = useState(false);
+  const [cashbackType, setCashbackType] = useState<'percentual' | 'fixo'>('percentual');
+  const [cashbackFixedValue, setCashbackFixedValue] = useState('5');
+  const [pointsRate, setPointsRate] = useState('1');
   const [cashbackPct, setCashbackPct] = useState('5');
+  const [minRedemptionPoints, setMinRedemptionPoints] = useState('100');
+  const [vipThreshold, setVipThreshold] = useState('1000');
+  const [pointsAppointment, setPointsAppointment] = useState('10');
   const [delayLimit, setDelayLimit] = useState('15');
   const [autoQueue, setAutoQueue] = useState(true);
 
@@ -206,6 +214,22 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
         setAccentColor(tenant.accentColor || '#6366F1');
         setLogoUrl(tenant.logoUrl || '');
       }
+      try {
+        const config = await loyaltyService.getConfig();
+        if (config) {
+          setLoyaltyConfigId(config.id);
+          setCashbackEnabled(config.cashbackEnabled ?? false);
+          setCashbackType(config.cashbackType || 'percentual');
+          setCashbackFixedValue(String(config.cashbackFixedValue ?? 5));
+          setPointsRate(String(config.pointsPerReal ?? 1));
+          setCashbackPct(String(config.cashbackPercentage ?? 5));
+          setMinRedemptionPoints(String(config.minRedemptionPoints ?? 100));
+          setVipThreshold(String(config.vipThreshold ?? 1000));
+          setPointsAppointment(String(config.pointsPerAppointment ?? 10));
+        }
+      } catch (err) {
+        console.warn("Could not load loyalty config:", err);
+      }
     } catch (error) {
       console.error("Error loading settings:", error);
     } finally {
@@ -248,9 +272,26 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     toast.success("Preferências de notificações aplicadas com sucesso!");
   };
 
-  const handleSaveBusinessSettings = (e: React.FormEvent) => {
+  const handleSaveBusinessSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success("Ajustes e parâmetros gerais de fidelidade aplicados!");
+    try {
+      if (loyaltyConfigId) {
+        await loyaltyService.updateConfig(loyaltyConfigId, {
+          cashbackEnabled,
+          cashbackType,
+          cashbackFixedValue: Number(cashbackFixedValue) || 0,
+          pointsPerReal: Number(pointsRate) || 0,
+          pointsPerAppointment: Number(pointsAppointment) || 0,
+          cashbackPercentage: Number(cashbackPct) || 0,
+          minRedemptionPoints: Number(minRedemptionPoints) || 0,
+          vipThreshold: Number(vipThreshold) || 0,
+        });
+        toast.success("Configurações de fidelidade e cashback salvas com sucesso!");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao salvar configurações de fidelidade.");
+    }
   };
 
   const handleSaveRules = (e: React.FormEvent) => {
@@ -330,7 +371,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
           />
           <ConfigSidebarItem 
             icon={<Database size={18} />} 
-            label="Fidelidade e Metas" 
+            label="Fidelidade" 
             active={activeSection === 'business'} 
             onClick={() => setActiveSection('business')}
           />
@@ -838,35 +879,84 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
               </form>
             )}
 
-            {/* Fidelidade e Metas (Business) */}
+            {/* Fidelidade (Business) */}
             {activeSection === 'business' && (
               <form onSubmit={handleSaveBusinessSettings} className="space-y-8">
                 <div>
-                  <h3 className="text-xl font-black text-primary tracking-tight">Parâmetros do Programa de Fidelidade</h3>
-                  <p className="text-xs text-muted font-semibold mt-1">Ajuste fatores automáticos de geração de pontos e cashback do sistema.</p>
+                  <h3 className="text-xl font-black text-primary tracking-tight">Programa de Fidelidade & Cashback</h3>
+                  <p className="text-xs text-muted font-semibold mt-1">Ative e configure o sistema de retorno de cashback e pontuação para os clientes no portal.</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Pontos para cada R$ 1,00 gasto</label>
-                    <input 
-                      type="number" 
-                      value={pointsRate} 
-                      onChange={(e) => setPointsRate(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Porcentagem Clássica de Cashback (%)</label>
-                    <input 
-                      type="number" 
-                      value={cashbackPct} 
-                      onChange={(e) => setCashbackPct(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                    />
+                <div className="bg-slate-50/80 p-6 rounded-3xl border border-slate-100 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-black text-primary">Ativar Cashback no Portal do Cliente</h4>
+                      <p className="text-xs text-muted">Quando ativado, exibe a aba de cashback e fidelidade no painel dos clientes.</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={cashbackEnabled} 
+                        onChange={(e) => setCashbackEnabled(e.target.checked)}
+                        className="sr-only peer" 
+                      />
+                      <div className="w-14 h-7 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[4px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-emerald-600"></div>
+                    </label>
                   </div>
                 </div>
+
+                {cashbackEnabled && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Tipo de Cashback</label>
+                      <select
+                        value={cashbackType}
+                        onChange={(e) => setCashbackType(e.target.value as any)}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                      >
+                        <option value="percentual">Percentual sobre o valor pago pelo serviço (%)</option>
+                        <option value="fixo">Valor Fixo em Reais (R$) por atendimento</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {cashbackType === 'percentual' ? (
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Porcentagem de Cashback (%)</label>
+                          <input 
+                            type="number" 
+                            step="0.1"
+                            value={cashbackPct} 
+                            onChange={(e) => setCashbackPct(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor Fixo por Atendimento (R$)</label>
+                          <input 
+                            type="number" 
+                            step="0.01"
+                            value={cashbackFixedValue} 
+                            onChange={(e) => setCashbackFixedValue(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                          />
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Pontos para cada R$ 1,00 gasto</label>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          value={pointsRate} 
+                          onChange={(e) => setPointsRate(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex justify-end pt-6">
                   <button 

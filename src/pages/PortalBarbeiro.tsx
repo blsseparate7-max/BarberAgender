@@ -43,6 +43,7 @@ import { appointmentService } from '../services/appointmentService';
 import { commissionService } from '../services/commissionService';
 import { inventoryService } from '../services/inventoryService';
 import { agendaBlockService } from '../services/agendaBlockService';
+import { teamGoalService, TeamGoal } from '../services/teamGoalService';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
@@ -236,6 +237,17 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     }, (err) => {
       console.error("Error loading reviews:", err);
       setLoadingReviews(false);
+    });
+    return () => unsubscribe();
+  }, [profile?.uid]);
+
+  const [assignedTeamGoals, setAssignedTeamGoals] = useState<TeamGoal[]>([]);
+
+  useEffect(() => {
+    if (!profile?.uid) return;
+    const unsubscribe = teamGoalService.subscribeToGoals((goals) => {
+      const mine = goals.filter(g => !g.profissional_id || g.profissional_id === profile.uid);
+      setAssignedTeamGoals(mine);
     });
     return () => unsubscribe();
   }, [profile?.uid]);
@@ -1037,6 +1049,43 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                           : `Falta R$ ${(personalMonthlyGoal - stats.receivedThisMonth).toFixed(2)} para alcançar a sua meta financeira pessoal.`}
                       </p>
                     </div>
+
+                    {/* Official Admin / Team Goals */}
+                    {assignedTeamGoals.length > 0 && (
+                      <div className="space-y-3 border-t border-slate-100 pt-3 mt-3">
+                        <p className="text-[10px] font-black uppercase text-indigo-600 tracking-wider">Metas e Bônus da Gestão</p>
+                        {assignedTeamGoals.map((tg) => {
+                          const currentVal = tg.tipo === 'faturamento' ? stats.receivedThisMonth : stats.servedTodayCount;
+                          const percent = Math.min(100, Math.round((currentVal / (tg.valorMeta || 1)) * 100));
+                          const isAchieved = currentVal >= tg.valorMeta;
+
+                          return (
+                            <div key={tg.id} className="bg-indigo-50/40 p-3 rounded-2xl border border-indigo-100/60 space-y-1.5">
+                              <div className="flex items-center justify-between text-xs font-bold">
+                                <span className="text-primary">{tg.titulo} ({tg.periodo})</span>
+                                <span className={isAchieved ? 'text-emerald-600 font-black' : 'text-slate-600'}>
+                                  {tg.tipo === 'faturamento' ? `R$ ${currentVal.toFixed(2)}` : `${currentVal}x`} / {tg.valorMeta} ({percent}%)
+                                </span>
+                              </div>
+                              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-500 ${isAchieved ? 'bg-emerald-500' : 'bg-indigo-600'}`}
+                                  style={{ width: `${percent}%` }}
+                                />
+                              </div>
+                              <div className="flex items-center justify-between text-[10px] pt-0.5">
+                                <span className="text-slate-500 italic">
+                                  Bônus: <strong className="text-emerald-600">R$ {tg.valorBonus.toFixed(2)}</strong>
+                                </span>
+                                <span className={isAchieved ? 'text-emerald-700 font-bold' : 'text-muted'}>
+                                  {isAchieved ? '🎉 Meta Batida!' : 'Em andamento'}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </AnimatePresence>

@@ -29,6 +29,9 @@ export const loyaltyService = {
       // Create default config if not exists
       const defaultConfig = {
         tenantId: getActiveTenantId(),
+        cashbackEnabled: false,
+        cashbackType: 'percentual',
+        cashbackFixedValue: 5,
         pointsPerReal: 1,
         pointsPerAppointment: 10,
         cashbackPercentage: 5,
@@ -93,7 +96,14 @@ export const loyaltyService = {
       }
 
       const pointsToAdd = (value * config.pointsPerReal) + (source === 'appointment' ? config.pointsPerAppointment : 0);
-      const cashbackToAdd = (value * config.cashbackPercentage) / 100;
+      let cashbackToAdd = 0;
+      if (config.cashbackEnabled) {
+        if (config.cashbackType === 'fixo') {
+          cashbackToAdd = Number(config.cashbackFixedValue) || 0;
+        } else {
+          cashbackToAdd = (value * (Number(config.cashbackPercentage) || 0)) / 100;
+        }
+      }
 
       const newPoints = currentPoints + pointsToAdd;
       const newCashback = currentCashback + cashbackToAdd;

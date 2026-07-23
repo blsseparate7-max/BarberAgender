@@ -95,6 +95,50 @@ async function startServer() {
     }
   });
 
+  // API Route to create another user's auth (email and password) using Firebase Admin
+  app.post("/api/admin/create-user-auth", async (req, res) => {
+    try {
+      const { email, password, displayName } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ error: "A senha deve ter pelo menos 6 caracteres." });
+      }
+
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(500).json({ 
+          error: "Não foi possível inicializar o Firebase Admin SDK no servidor." 
+        });
+      }
+
+      const userRecord = await getAuth(fbAdmin).createUser({
+        email: email.trim(),
+        password: password,
+        displayName: displayName || ""
+      });
+
+      res.json({ success: true, uid: userRecord.uid });
+    } catch (error: any) {
+      console.error("Erro ao criar usuário no servidor:", error);
+      let clientError = "Erro ao criar credenciais de acesso.";
+      if (error.code === 'auth/email-already-exists') {
+        clientError = 'Este e-mail já está sendo utilizado por outro usuário.';
+      } else if (error.code === 'auth/invalid-email') {
+        clientError = 'O e-mail fornecido é inválido.';
+      } else if (error.code === 'auth/weak-password') {
+        clientError = 'A senha é muito fraca. Deve ter no mínimo 6 caracteres.';
+      } else if (error.message) {
+        clientError = error.message;
+      }
+      res.status(500).json({ 
+        error: clientError,
+        code: error.code || "unknown"
+      });
+    }
+  });
+
   // API Route to update another user's auth (email and/or password) using Firebase Admin
   app.post("/api/admin/update-user-auth", async (req, res) => {
     try {

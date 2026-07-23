@@ -257,6 +257,12 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     }
   }, [selectedBarber, selectedService, selectedDate]);
 
+  useEffect(() => {
+    if (activeTab === 'fidelidade' && loyaltyConfig && !loyaltyConfig.cashbackEnabled) {
+      setActiveTab('home');
+    }
+  }, [activeTab, loyaltyConfig]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -2182,15 +2188,17 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           <span className="text-[8px] font-black uppercase tracking-wider">Histórico</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('fidelidade')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'fidelidade' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <Award size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Fidelidade</span>
-        </button>
+        {loyaltyConfig?.cashbackEnabled && (
+          <button
+            onClick={() => setActiveTab('fidelidade')}
+            className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+              activeTab === 'fidelidade' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <Award size={18} />
+            <span className="text-[8px] font-black uppercase tracking-wider">Fidelidade</span>
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('pacotes')}

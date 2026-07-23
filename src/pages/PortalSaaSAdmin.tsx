@@ -52,6 +52,20 @@ import { tenantService, TenantProfile, SaaSPlan } from '../services/tenantServic
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Subscription, UserRole } from '../types';
 
+const formatToBRDate = (isoString?: string) => {
+  if (!isoString) return '-';
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return isoString;
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  } catch {
+    return isoString;
+  }
+};
+
 export default function PortalSaaSAdmin() {
   const { signOut, profile } = useAuth();
   
@@ -108,6 +122,7 @@ export default function PortalSaaSAdmin() {
   const [newTenantState, setNewTenantState] = useState('');
   const [newTenantZipCode, setNewTenantZipCode] = useState('');
   const [newTenantAccentColor, setNewTenantAccentColor] = useState('#10B981');
+  const [newTenantSecondaryColor, setNewTenantSecondaryColor] = useState('#3B82F6');
   
   // Dono / Proprietário
   const [newOwnerName, setNewOwnerName] = useState('');
@@ -409,6 +424,7 @@ export default function PortalSaaSAdmin() {
         phone: newTenantPhone,
         email: newTenantEmail,
         accentColor: newTenantAccentColor,
+        secondaryColor: newTenantSecondaryColor,
         address: {
           street: newTenantStreet,
           number: newTenantNumber,
@@ -927,7 +943,7 @@ export default function PortalSaaSAdmin() {
                       <th className="py-4 px-6">Responsável / Contato</th>
                       <th className="py-4 px-6 text-center">Profissionais / Limite</th>
                       <th className="py-4 px-6">Valor Mensal (MRR)</th>
-                      <th className="py-4 px-6 text-center">Dia Venc.</th>
+                      <th className="py-4 px-6 text-center">Vencimento</th>
                       <th className="py-4 px-6 text-center">Status</th>
                       <th className="py-4 px-6 text-right">Ações SaaS</th>
                     </tr>
@@ -1000,8 +1016,19 @@ export default function PortalSaaSAdmin() {
                               </p>
                             </td>
 
-                            <td className="py-4 px-6 text-center font-black text-slate-700">
-                              Dia {tenant.dueDateDay || 10}
+                            <td className="py-4 px-6 text-center font-black">
+                              {tenant.planStatus === 'trial' ? (
+                                <div className="inline-block text-left">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
+                                    Teste / Trial
+                                  </span>
+                                  <p className="text-[10px] text-slate-500 font-bold mt-1">
+                                    Vence: {formatToBRDate(tenant.trialEndDate)}
+                                  </p>
+                                </div>
+                              ) : (
+                                <span className="text-slate-700 text-xs">Dia {tenant.dueDateDay || 10}</span>
+                              )}
                             </td>
 
                             <td className="py-4 px-6 text-center">
@@ -2499,25 +2526,61 @@ export default function PortalSaaSAdmin() {
                     </div>
 
                     {/* Color selection */}
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cor Principal da Barbearia</label>
-                      <div className="flex items-center gap-3">
-                        <input 
-                          type="color"
-                          value={newTenantAccentColor}
-                          onChange={(e) => setNewTenantAccentColor(e.target.value)}
-                          className="w-10 h-10 rounded-xl cursor-pointer border-0"
-                        />
-                        <div className="flex gap-2">
-                          {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map(color => (
-                            <button
-                              type="button"
-                              key={color}
-                              onClick={() => setNewTenantAccentColor(color)}
-                              className="w-7 h-7 rounded-lg border-2 border-white shadow-sm"
-                              style={{ backgroundColor: color }}
+                    <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-4">
+                      <div className="space-y-1">
+                        <p className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                          🎨 Identidade Visual (2 Cores)
+                        </p>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          <strong>Para que servem estas cores?</strong> Elas definem a identidade visual exclusiva da barbearia. A <strong>Cor Principal</strong> é usada para botões de destaque, títulos e logotipos; a <strong>Cor Secundária</strong> é usada em detalhes, ícones e gradientes no painel administrativo, painel do barbeiro e na página de agendamento online do cliente.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cor Principal</label>
+                          <div className="flex items-center gap-3">
+                            <input 
+                              type="color"
+                              value={newTenantAccentColor}
+                              onChange={(e) => setNewTenantAccentColor(e.target.value)}
+                              className="w-10 h-10 rounded-xl cursor-pointer border-0 shadow-sm"
                             />
-                          ))}
+                            <div className="flex gap-1.5 flex-wrap">
+                              {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map(color => (
+                                <button
+                                  type="button"
+                                  key={color}
+                                  onClick={() => setNewTenantAccentColor(color)}
+                                  className="w-6 h-6 rounded-lg border-2 border-white shadow-sm"
+                                  style={{ backgroundColor: color }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cor Secundária (Acento)</label>
+                          <div className="flex items-center gap-3">
+                            <input 
+                              type="color"
+                              value={newTenantSecondaryColor}
+                              onChange={(e) => setNewTenantSecondaryColor(e.target.value)}
+                              className="w-10 h-10 rounded-xl cursor-pointer border-0 shadow-sm"
+                            />
+                            <div className="flex gap-1.5 flex-wrap">
+                              {['#3B82F6', '#6366F1', '#8B5CF6', '#10B981', '#F59E0B', '#F43F5E'].map(color => (
+                                <button
+                                  type="button"
+                                  key={color}
+                                  onClick={() => setNewTenantSecondaryColor(color)}
+                                  className="w-6 h-6 rounded-lg border-2 border-white shadow-sm"
+                                  style={{ backgroundColor: color }}
+                                />
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>

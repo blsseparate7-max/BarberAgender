@@ -37,15 +37,18 @@ export const userService = {
     }
 
     const querySnapshot = await getDocs(q);
-    const users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+    const users = querySnapshot.docs
+      .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
+      .filter(u => !tid || u.tenantId === tid);
     return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
   subscribeToUsersByRole(role: UserRole, onlyActive = true, callback: (users: UserProfile[]) => void) {
+    const tid = getActiveTenantId();
     let q = query(
       collection(db, COLLECTION), 
       where('tipo', '==', role),
-      where('tenantId', '==', getActiveTenantId())
+      where('tenantId', '==', tid)
     );
     
     if (onlyActive) {
@@ -53,17 +56,20 @@ export const userService = {
     }
 
     return onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+      const users = snapshot.docs
+        .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
+        .filter(u => !tid || u.tenantId === tid);
       const sorted = users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       callback(sorted);
     });
   },
 
   subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void) {
+    const tid = getActiveTenantId();
     let q = query(
       collection(db, COLLECTION), 
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
-      where('tenantId', '==', getActiveTenantId())
+      where('tipo', 'in', ['barbeiro', 'gerente']),
+      where('tenantId', '==', tid)
     );
     
     if (onlyActive) {
@@ -71,7 +77,9 @@ export const userService = {
     }
 
     return onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+      const users = snapshot.docs
+        .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
+        .filter(u => !tid || u.tenantId === tid);
       const sorted = users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       callback(sorted);
     });
@@ -85,14 +93,16 @@ export const userService = {
     const tid = tenantId || getActiveTenantId();
     let q = query(
       collection(db, COLLECTION),
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
+      where('tipo', 'in', ['barbeiro', 'gerente']),
       where('tenantId', '==', tid)
     );
     if (onlyActive) {
       q = query(q, where('ativo', '==', true));
     }
     const querySnapshot = await getDocs(q);
-    const users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+    const users = querySnapshot.docs
+      .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
+      .filter(u => !tid || u.tenantId === tid);
     return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
@@ -218,25 +228,76 @@ export const userService = {
     let uid = data.uid || '';
     
     if (data.password && data.email) {
-      const tempAppName = `temp-auth-app-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-      const tempApp = initializeApp(firebaseConfig, tempAppName);
-      const tempAuth = getAuth(tempApp);
+      let createdOnServer = false;
+      
+      // 1. Try to create the user account on the server using Admin SDK
       try {
-        const userCredential = await createUserWithEmailAndPassword(tempAuth, data.email, data.password);
-        uid = userCredential.user.uid;
-        await signOut(tempAuth);
-      } catch (authError: any) {
-        console.error("Erro ao criar usuário de autenticação no Firebase:", authError);
-        if (authError.code === 'auth/email-already-in-use') {
-          throw new Error('Este e-mail já está sendo utilizado por outro usuário.');
-        } else if (authError.code === 'auth/invalid-email') {
-          throw new Error('O e-mail fornecido é inválido.');
-        } else if (authError.code === 'auth/weak-password') {
-          throw new Error('A senha é muito fraca. Deve ter no mínimo 6 caracteres.');
+        const response = await fetch('/api/admin/create-user-auth', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email: data.email.toLowerCase().trim(),
+            password: data.password,
+            displayName: data.nome || ''
+          })
+        });
+        
+        const resData = await response.json();
+        if (response.ok && resData.success && resData.uid) {
+          uid = resData.uid;
+          createdOnServer = true;
+          console.log(`Professional Auth created securely on server. UID: ${uid}`);
+        } else {
+          // If the server explicitly returned an error like "email already exists", throw it immediately to avoid duplicate attempts
+          if (resData.error && (resData.error.includes('utilizado') || resData.error.includes('existe') || resData.code === 'auth/email-already-exists')) {
+            throw new Error(resData.error || 'Este e-mail já está sendo utilizado por outro usuário.');
+          }
+          console.warn("Server-side auth creation failed or not available, falling back to client-side secondary app:", resData.error);
         }
-        throw authError;
-      } finally {
-        await deleteApp(tempApp);
+      } catch (serverErr: any) {
+        // If it's a critical validation or registration error, bubble it up
+        if (serverErr.message && (serverErr.message.includes('utilizado') || serverErr.message.includes('existe') || serverErr.message.includes('senha'))) {
+          throw serverErr;
+        }
+        console.warn("Could not create user auth on server, attempting client fallback...", serverErr);
+      }
+
+      // 2. Client-side secondary app fallback if server creation was unsuccessful
+      if (!createdOnServer) {
+        const tempAppName = `temp-auth-app-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+        const tempApp = initializeApp(firebaseConfig, tempAppName);
+        const tempAuth = getAuth(tempApp);
+        try {
+          const userCredential = await createUserWithEmailAndPassword(tempAuth, data.email, data.password);
+          uid = userCredential.user.uid;
+          await signOut(tempAuth);
+        } catch (authError: any) {
+          console.error("Erro ao criar usuário de autenticação no Firebase (client-side):", authError);
+          if (authError.code === 'auth/email-already-in-use') {
+            // Fallback: Check if there's an existing profile document in Firestore with this email to reuse its UID
+            try {
+              const usersRef = collection(db, COLLECTION);
+              const q = query(usersRef, where('email', '==', data.email.toLowerCase().trim()));
+              const qSnap = await getDocs(q);
+              if (!qSnap.empty) {
+                uid = qSnap.docs[0].id;
+              } else {
+                throw new Error('Este e-mail já está sendo utilizado por outro usuário.');
+              }
+            } catch (fallbackErr: any) {
+              throw new Error(fallbackErr.message || 'Este e-mail já está sendo utilizado por outro usuário.');
+            }
+          } else if (authError.code === 'auth/invalid-email') {
+            throw new Error('O e-mail fornecido é inválido.');
+          } else if (authError.code === 'auth/weak-password') {
+            throw new Error('A senha é muito fraca. Deve ter no mínimo 6 caracteres.');
+          }
+          throw authError;
+        } finally {
+          await deleteApp(tempApp);
+        }
       }
     }
 

@@ -29,6 +29,7 @@ export interface TenantProfile {
   name: string;
   logoUrl?: string;
   accentColor: string; // e.g. Hex code #6366F1 or #F59E0B
+  secondaryColor?: string; // e.g. Second brand color
   phone?: string;
   email?: string;
   cnpjCpf?: string;
@@ -149,6 +150,7 @@ export const tenantService = {
         id: tenantId,
         name: tenantData.name,
         accentColor: tenantData.accentColor || '#10B981',
+        secondaryColor: tenantData.secondaryColor || '#3B82F6',
         isActive: tenantData.isActive !== false,
         maxProfessionals: tenantData.maxProfessionals ?? 5,
         pricePerProfessional: tenantData.pricePerProfessional ?? 39.90,

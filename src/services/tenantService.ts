@@ -261,5 +261,26 @@ export const tenantService = {
       console.error(`Error deleting saas plan ${planId}:`, error);
       throw error;
     }
+  },
+
+  async getPlatformSettings(): Promise<any> {
+    try {
+      const docRef = doc(db, 'saas_settings', 'platform');
+      const snap = await getDoc(docRef);
+      return snap.exists() ? snap.data() : { pixKey: '43999227226', pixName: 'BarberElite Pay', pixCity: 'LONDRINA', qrCodeUrl: '' };
+    } catch (error) {
+      console.error('Error fetching platform settings:', error);
+      return { pixKey: '43999227226', pixName: 'BarberElite Pay', pixCity: 'LONDRINA', qrCodeUrl: '' };
+    }
+  },
+
+  async savePlatformSettings(data: any): Promise<void> {
+    try {
+      const docRef = doc(db, 'saas_settings', 'platform');
+      await setDoc(docRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (error) {
+      console.error('Error saving platform settings:', error);
+      throw error;
+    }
   }
 };

@@ -177,6 +177,13 @@ export default function PortalSaaSAdmin() {
   const [isTrial, setIsTrial] = useState(true);
   const [trialDaysInput, setTrialDaysInput] = useState('30');
 
+  // Platform Pix Settings States
+  const [pixKey, setPixKey] = useState('43999227226');
+  const [pixName, setPixName] = useState('BarberElite Pay');
+  const [pixCity, setPixCity] = useState('LONDRINA');
+  const [pixQrCodeUrl, setPixQrCodeUrl] = useState('');
+  const [savingPix, setSavingPix] = useState(false);
+
   // Edit Tenant Additional States
   const [editTenantPlanId, setEditTenantPlanId] = useState('');
   const [editTenantPlanName, setEditTenantPlanName] = useState('');
@@ -191,22 +198,50 @@ export default function PortalSaaSAdmin() {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Load all system users, subscriptions, tenants, and SaaS plans across all businesses
-      const [allUsers, allSubs, allTenants, allPlans] = await Promise.all([
+      // Load all system users, subscriptions, tenants, SaaS plans, and platform pix settings across all businesses
+      const [allUsers, allSubs, allTenants, allPlans, platformSettings] = await Promise.all([
         userService.getAllUsersSystem(),
         subscriptionService.getAllSubscriptionsSystem(),
         tenantService.listAllTenantsSystem(),
-        tenantService.listPlans()
+        tenantService.listPlans(),
+        tenantService.getPlatformSettings()
       ]);
       setUsers(allUsers || []);
       setSubscriptions(allSubs || []);
       setTenants(allTenants || []);
       setPlans(allPlans || []);
+      if (platformSettings) {
+        setPixKey(platformSettings.pixKey || '43999227226');
+        setPixName(platformSettings.pixName || 'BarberElite Pay');
+        setPixCity(platformSettings.pixCity || 'LONDRINA');
+        setPixQrCodeUrl(platformSettings.qrCodeUrl || '');
+      }
     } catch (err: any) {
       console.error(err);
       toast.error('Erro ao carregar os dados administrativos.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSavePixSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingPix(true);
+    const toastId = toast.loading('Salvando configurações Pix...');
+    try {
+      await tenantService.savePlatformSettings({
+        pixKey,
+        pixName,
+        pixCity,
+        qrCodeUrl: pixQrCodeUrl
+      });
+      toast.dismiss(toastId);
+      toast.success('Configurações Pix salvas com sucesso!');
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Erro ao salvar Pix: ${err.message || err}`);
+    } finally {
+      setSavingPix(false);
     }
   };
 
@@ -1368,6 +1403,69 @@ export default function PortalSaaSAdmin() {
                   <PlusCircle size={14} />
                   Criar Novo Plano
                 </button>
+              </div>
+
+              {/* Pix Payment Gateway Configuration Card */}
+              <div className="bg-emerald-50/40 border border-emerald-200/60 rounded-[1.5rem] p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="text-emerald-600" size={20} />
+                  <div>
+                    <h5 className="font-black text-slate-900 text-sm">Configuração de Pagamento via Pix (QR Code Automático)</h5>
+                    <p className="text-xs text-slate-500 font-medium">Defina a chave Pix para que as barbearias façam o pagamento e ativem o sistema instantaneamente.</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSavePixSettings} className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Chave Pix</label>
+                    <input 
+                      type="text" 
+                      value={pixKey}
+                      onChange={(e) => setPixKey(e.target.value)}
+                      placeholder="CNPJ, Celular ou E-mail"
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome do Beneficiário</label>
+                    <input 
+                      type="text" 
+                      value={pixName}
+                      onChange={(e) => setPixName(e.target.value)}
+                      placeholder="Ex: BarberElite Pagamentos"
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Cidade do Pix</label>
+                    <input 
+                      type="text" 
+                      value={pixCity}
+                      onChange={(e) => setPixCity(e.target.value)}
+                      placeholder="Ex: SAO PAULO"
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 uppercase"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">URL da Imagem do QR Code Pix (Opcional)</label>
+                    <input 
+                      type="url" 
+                      value={pixQrCodeUrl}
+                      onChange={(e) => setPixQrCodeUrl(e.target.value)}
+                      placeholder="https://exemplo.com/qrcode.png"
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      disabled={savingPix}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-sm uppercase tracking-wider transition-all"
+                    >
+                      {savingPix ? 'Salvando...' : 'Salvar Dados Pix'}
+                    </button>
+                  </div>
+                </form>
               </div>
 
               {/* Plans List Table/Cards */}

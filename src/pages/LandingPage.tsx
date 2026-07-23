@@ -8,6 +8,8 @@ interface LandingPageProps {
   activeTenant: TenantProfile | null;
 }
 
+const WHATSAPP_SYSTEM_URL = 'https://wa.me/5543999227226?text=Ol%C3%A1!%20Gostaria%20de%20saber%20mais%20sobre%20o%20sistema%20BarberElite%20para%20minha%20barbearia.';
+
 export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   const [tenants, setTenants] = useState<TenantProfile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -108,19 +110,29 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button 
               onClick={() => onSelectRole('profissional')}
-              className="px-4 py-2 text-sm font-semibold text-zinc-300 hover:text-white transition-colors"
+              className="px-3 py-2 text-xs sm:text-sm font-semibold text-zinc-300 hover:text-white transition-colors"
             >
               Entrar no Sistema
             </button>
             <button 
               onClick={() => onSelectRole('cliente')}
-              className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-2 rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-500/10 flex items-center gap-2 hover:scale-[1.02]"
+              className="bg-zinc-800 hover:bg-zinc-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all border border-zinc-700 flex items-center gap-1.5"
             >
-              Área do Cliente <ArrowRight size={16} />
+              <Calendar size={15} className="text-emerald-400" />
+              <span>Agendar</span>
             </button>
+            <a 
+              href={WHATSAPP_SYSTEM_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black transition-all shadow-lg shadow-emerald-500/10 flex items-center gap-1.5 hover:scale-[1.02]"
+            >
+              <Phone size={15} />
+              <span>Contratar Sistema</span>
+            </a>
           </div>
         </div>
       </header>
@@ -150,19 +162,21 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
 
               <div className="pt-6 flex flex-col sm:flex-row gap-4 justify-center items-center">
                 <button
-                  onClick={() => setActiveTab('barbearias')}
-                  className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-8 py-4 rounded-2xl font-black text-base transition-all flex items-center justify-center gap-3 shadow-xl shadow-emerald-500/15"
+                  onClick={() => onSelectRole('cliente')}
+                  className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-8 py-4 rounded-2xl font-black text-base transition-all flex items-center justify-center gap-3 shadow-xl shadow-emerald-500/20 hover:scale-[1.02]"
                 >
                   <Calendar size={20} />
-                  Quero Agendar como Cliente
+                  Agendar
                 </button>
-                <button
-                  onClick={() => onSelectRole('cliente')}
-                  className="w-full sm:w-auto bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-800 px-8 py-4 rounded-2xl font-bold text-base transition-all flex items-center justify-center gap-3"
+                <a
+                  href={WHATSAPP_SYSTEM_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full sm:w-auto bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-800 px-8 py-4 rounded-2xl font-bold text-base transition-all flex items-center justify-center gap-3 hover:border-zinc-700"
                 >
-                  <User size={20} className="text-emerald-400" />
-                  Cadastrar-me como Cliente
-                </button>
+                  <Phone size={20} className="text-emerald-400" />
+                  Contratar Sistema (WhatsApp)
+                </a>
               </div>
             </motion.div>
 
@@ -291,12 +305,14 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
                     >
                       Entrar no Painel
                     </button>
-                    <button
-                      onClick={() => onSelectRole('dono-registro')}
-                      className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 py-3 px-4 rounded-xl font-bold text-sm transition-all shadow-lg shadow-emerald-500/5"
+                    <a
+                      href={WHATSAPP_SYSTEM_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 py-3 px-4 rounded-xl font-extrabold text-sm transition-all shadow-lg shadow-emerald-500/5 text-center flex items-center justify-center gap-1.5"
                     >
-                      Cadastrar Barbearia
-                    </button>
+                      <Phone size={15} /> Contratar Sistema
+                    </a>
                   </div>
                 </div>
 

@@ -25,7 +25,23 @@ import {
   DollarSign,
   Sliders,
   ShieldCheck,
-  PlusCircle
+  PlusCircle,
+  Share2,
+  Copy,
+  MessageSquare,
+  Building,
+  Phone,
+  Mail,
+  MapPin,
+  Lock,
+  Shield,
+  CheckCircle2,
+  Clock,
+  ArrowUpRight,
+  BarChart3,
+  Key,
+  Palette,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -54,6 +70,18 @@ export default function PortalSaaSAdmin() {
 
   // Edit Tenant Modal States
   const [editingTenant, setEditingTenant] = useState<TenantProfile | null>(null);
+  const [editTenantTab, setEditTenantTab] = useState<'brand' | 'owner' | 'billing'>('brand');
+  const [editTenantName, setEditTenantName] = useState<string>('');
+  const [editTenantCnpjCpf, setEditTenantCnpjCpf] = useState<string>('');
+  const [editTenantPhone, setEditTenantPhone] = useState<string>('');
+  const [editTenantEmail, setEditTenantEmail] = useState<string>('');
+  const [editTenantStreet, setEditTenantStreet] = useState<string>('');
+  const [editTenantNumber, setEditTenantNumber] = useState<string>('');
+  const [editTenantNeighborhood, setEditTenantNeighborhood] = useState<string>('');
+  const [editTenantCity, setEditTenantCity] = useState<string>('');
+  const [editTenantState, setEditTenantState] = useState<string>('');
+  const [editTenantZipCode, setEditTenantZipCode] = useState<string>('');
+  const [editTenantAccentColor, setEditTenantAccentColor] = useState<string>('#10B981');
   const [editTenantMaxProfs, setEditTenantMaxProfs] = useState<number>(5);
   const [editTenantPricePerProf, setEditTenantPricePerProf] = useState<number>(39.90);
   const [editTenantFeeOverride, setEditTenantFeeOverride] = useState<string>('');
@@ -62,19 +90,44 @@ export default function PortalSaaSAdmin() {
   const [editTenantOwnerEmail, setEditTenantOwnerEmail] = useState<string>('');
   const [editTenantOwnerPhone, setEditTenantOwnerPhone] = useState<string>('');
   const [editTenantDueDateDay, setEditTenantDueDateDay] = useState<number>(10);
+  const [editTenantNotes, setEditTenantNotes] = useState<string>('');
   const [savingTenant, setSavingTenant] = useState(false);
 
   // Create Tenant Modal States
   const [isCreateTenantOpen, setIsCreateTenantOpen] = useState(false);
+  const [createTenantTab, setCreateTenantTab] = useState<'brand' | 'owner' | 'billing'>('brand');
   const [newTenantId, setNewTenantId] = useState('');
   const [newTenantName, setNewTenantName] = useState('');
+  const [newTenantCnpjCpf, setNewTenantCnpjCpf] = useState('');
+  const [newTenantPhone, setNewTenantPhone] = useState('');
+  const [newTenantEmail, setNewTenantEmail] = useState('');
+  const [newTenantStreet, setNewTenantStreet] = useState('');
+  const [newTenantNumber, setNewTenantNumber] = useState('');
+  const [newTenantNeighborhood, setNewTenantNeighborhood] = useState('');
+  const [newTenantCity, setNewTenantCity] = useState('');
+  const [newTenantState, setNewTenantState] = useState('');
+  const [newTenantZipCode, setNewTenantZipCode] = useState('');
+  const [newTenantAccentColor, setNewTenantAccentColor] = useState('#10B981');
+  
+  // Dono / Proprietário
   const [newOwnerName, setNewOwnerName] = useState('');
   const [newOwnerEmail, setNewOwnerEmail] = useState('');
   const [newOwnerPhone, setNewOwnerPhone] = useState('');
+  const [newOwnerPassword, setNewOwnerPassword] = useState('Barber123@');
+  const [createOwnerAccount, setCreateOwnerAccount] = useState(true);
+
+  // Plano & Faturamento
   const [newMaxProfs, setNewMaxProfs] = useState(5);
   const [newPricePerProf, setNewPricePerProf] = useState(39.90);
+  const [newMonthlyFeeOverride, setNewMonthlyFeeOverride] = useState('');
   const [newDueDateDay, setNewDueDateDay] = useState(10);
+  const [newPlanStatus, setNewPlanStatus] = useState<'active' | 'pending' | 'suspended'>('active');
+  const [newTenantNotes, setNewTenantNotes] = useState('');
   const [creatingTenant, setCreatingTenant] = useState(false);
+
+  // WhatsApp / Share Credentials Modal State
+  const [shareModalTenant, setShareModalTenant] = useState<TenantProfile | null>(null);
+  const [sharePasswordInput, setSharePasswordInput] = useState('Barber123@');
 
   // Search and Filters
   const [userSearch, setUserSearch] = useState('');
@@ -166,6 +219,19 @@ export default function PortalSaaSAdmin() {
   // Open Edit Tenant Modal
   const handleOpenEditTenant = (tenant: TenantProfile) => {
     setEditingTenant(tenant);
+    setEditTenantTab('brand');
+    setEditTenantName(tenant.name || '');
+    setEditTenantCnpjCpf(tenant.cnpjCpf || '');
+    setEditTenantPhone(tenant.phone || '');
+    setEditTenantEmail(tenant.email || '');
+    setEditTenantStreet(tenant.address?.street || '');
+    setEditTenantNumber(tenant.address?.number || '');
+    setEditTenantNeighborhood(tenant.address?.neighborhood || '');
+    setEditTenantCity(tenant.address?.city || '');
+    setEditTenantState(tenant.address?.state || '');
+    setEditTenantZipCode(tenant.address?.zipCode || '');
+    setEditTenantAccentColor(tenant.accentColor || '#10B981');
+    
     setEditTenantMaxProfs(tenant.maxProfessionals ?? 5);
     setEditTenantPricePerProf(tenant.pricePerProfessional ?? 39.90);
     setEditTenantFeeOverride(tenant.monthlyFeeOverride ? String(tenant.monthlyFeeOverride) : '');
@@ -174,6 +240,7 @@ export default function PortalSaaSAdmin() {
     setEditTenantOwnerEmail(tenant.ownerEmail || '');
     setEditTenantOwnerPhone(tenant.ownerPhone || '');
     setEditTenantDueDateDay(tenant.dueDateDay || 10);
+    setEditTenantNotes(tenant.notes || '');
   };
 
   // Save Tenant Configuration
@@ -185,6 +252,19 @@ export default function PortalSaaSAdmin() {
     try {
       const feeVal = editTenantFeeOverride.trim() ? parseFloat(editTenantFeeOverride) : undefined;
       await tenantService.updateTenant(editingTenant.id, {
+        name: editTenantName,
+        cnpjCpf: editTenantCnpjCpf,
+        phone: editTenantPhone,
+        email: editTenantEmail,
+        accentColor: editTenantAccentColor,
+        address: {
+          street: editTenantStreet,
+          number: editTenantNumber,
+          neighborhood: editTenantNeighborhood,
+          city: editTenantCity,
+          state: editTenantState,
+          zipCode: editTenantZipCode
+        },
         maxProfessionals: Number(editTenantMaxProfs),
         pricePerProfessional: Number(editTenantPricePerProf),
         monthlyFeeOverride: feeVal && !isNaN(feeVal) ? feeVal : undefined,
@@ -193,10 +273,11 @@ export default function PortalSaaSAdmin() {
         ownerName: editTenantOwnerName,
         ownerEmail: editTenantOwnerEmail,
         ownerPhone: editTenantOwnerPhone,
-        dueDateDay: Number(editTenantDueDateDay)
+        dueDateDay: Number(editTenantDueDateDay),
+        notes: editTenantNotes
       });
       toast.dismiss(toastId);
-      toast.success(`Barbearia ${editingTenant.name} atualizada com sucesso!`);
+      toast.success(`Barbearia ${editTenantName} atualizada com sucesso!`);
       setEditingTenant(null);
       loadData();
     } catch (err: any) {
@@ -230,33 +311,91 @@ export default function PortalSaaSAdmin() {
   // Create New Tenant
   const handleCreateTenantSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTenantId.trim() || !newTenantName.trim()) {
+    const cleanSlug = newTenantId.toLowerCase().trim().replace(/[^a-z0-9-]/g, '-');
+    if (!cleanSlug || !newTenantName.trim()) {
       toast.error('Informe o identificador (slug) e o nome da barbearia.');
       return;
     }
     setCreatingTenant(true);
-    const toastId = toast.loading('Cadastrando nova barbearia no sistema...');
+    const toastId = toast.loading('Cadastrando nova barbearia no ecossistema SaaS...');
     try {
-      await tenantService.createTenant({
-        id: newTenantId,
+      const feeVal = newMonthlyFeeOverride.trim() ? parseFloat(newMonthlyFeeOverride) : undefined;
+      const createdTenant = await tenantService.createTenant({
+        id: cleanSlug,
         name: newTenantName,
+        cnpjCpf: newTenantCnpjCpf,
+        phone: newTenantPhone,
+        email: newTenantEmail,
+        accentColor: newTenantAccentColor,
+        address: {
+          street: newTenantStreet,
+          number: newTenantNumber,
+          neighborhood: newTenantNeighborhood,
+          city: newTenantCity,
+          state: newTenantState,
+          zipCode: newTenantZipCode
+        },
         ownerName: newOwnerName,
         ownerEmail: newOwnerEmail,
         ownerPhone: newOwnerPhone,
         maxProfessionals: Number(newMaxProfs),
         pricePerProfessional: Number(newPricePerProf),
+        monthlyFeeOverride: feeVal && !isNaN(feeVal) ? feeVal : undefined,
         dueDateDay: Number(newDueDateDay),
-        planStatus: 'active',
-        isActive: true
+        planStatus: newPlanStatus,
+        isActive: newPlanStatus === 'active',
+        notes: newTenantNotes
       });
+
+      // Se solicitado, criar automaticamente a conta de usuário do Dono no sistema de autenticação!
+      if (createOwnerAccount && newOwnerEmail.trim() && newOwnerPassword.trim()) {
+        try {
+          await userService.createUser({
+            nome: newOwnerName.trim() || newTenantName.trim(),
+            email: newOwnerEmail.trim(),
+            password: newOwnerPassword.trim(),
+            tipo: 'admin',
+            tenantId: cleanSlug,
+            telefone: newOwnerPhone || newTenantPhone,
+            ativo: true
+          });
+          toast.success(`Conta do proprietário (${newOwnerEmail}) criada e vinculada com sucesso!`);
+        } catch (ownerErr: any) {
+          console.error("Erro ao criar conta de usuário do dono:", ownerErr);
+          toast.error(`Barbearia criada, mas falhou ao criar usuário: ${ownerErr.message || ownerErr}`);
+        }
+      }
+
       toast.dismiss(toastId);
       toast.success(`Barbearia ${newTenantName} cadastrada com sucesso!`);
+      
+      // Abrir modal de compartilhamento com o WhatsApp para o superadmin enviar os dados
+      setSharePasswordInput(newOwnerPassword || 'Barber123@');
+      setShareModalTenant(createdTenant);
+
       setIsCreateTenantOpen(false);
+      
+      // Reset campos
       setNewTenantId('');
       setNewTenantName('');
+      setNewTenantCnpjCpf('');
+      setNewTenantPhone('');
+      setNewTenantEmail('');
+      setNewTenantStreet('');
+      setNewTenantNumber('');
+      setNewTenantNeighborhood('');
+      setNewTenantCity('');
+      setNewTenantState('');
+      setNewTenantZipCode('');
+      setNewTenantAccentColor('#10B981');
       setNewOwnerName('');
       setNewOwnerEmail('');
       setNewOwnerPhone('');
+      setNewOwnerPassword('Barber123@');
+      setNewMonthlyFeeOverride('');
+      setNewTenantNotes('');
+      setCreateTenantTab('brand');
+
       loadData();
     } catch (err: any) {
       toast.dismiss(toastId);
@@ -701,8 +840,19 @@ export default function PortalSaaSAdmin() {
                             <td className="py-4 px-6 text-right">
                               <div className="flex items-center justify-end gap-2">
                                 <button
+                                  onClick={() => {
+                                    setSharePasswordInput('Barber123@');
+                                    setShareModalTenant(tenant);
+                                  }}
+                                  title="Gerar Credenciais & Enviar via WhatsApp"
+                                  className="p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition border border-emerald-200/50 flex items-center gap-1 font-bold text-xs"
+                                >
+                                  <MessageSquare size={15} />
+                                  <span className="hidden sm:inline">WhatsApp</span>
+                                </button>
+                                <button
                                   onClick={() => handleOpenEditTenant(tenant)}
-                                  title="Ajustar limites e plano"
+                                  title="Editar dados e plano da barbearia"
                                   className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition"
                                 >
                                   <Sliders size={15} />
@@ -1430,7 +1580,7 @@ export default function PortalSaaSAdmin() {
         )}
       </AnimatePresence>
 
-      {/* MODAL 3: EDIT TENANT LIMITS & BILLING */}
+      {/* MODAL 3: EDIT TENANT LIMITS, DATA & BILLING */}
       <AnimatePresence>
         {editingTenant && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1446,142 +1596,331 @@ export default function PortalSaaSAdmin() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="relative w-full max-w-lg bg-white rounded-[2rem] p-8 shadow-2xl border border-slate-100 z-10 space-y-6 max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-2xl bg-white rounded-[2rem] p-6 md:p-8 shadow-2xl border border-slate-100 z-10 space-y-6 max-h-[92vh] overflow-y-auto"
             >
               <div className="flex justify-between items-start">
                 <div>
-                  <h4 className="text-lg font-black text-slate-900">Configurar Barbearia & Plano</h4>
-                  <p className="text-xs text-slate-500 font-semibold mt-0.5">{editingTenant.name} ({editingTenant.id})</p>
+                  <h4 className="text-lg font-black text-slate-900">Editar Barbearia</h4>
+                  <p className="text-xs text-slate-500 font-semibold mt-0.5">{editingTenant.name} (ID: {editingTenant.id})</p>
                 </div>
                 <button 
                   onClick={() => setEditingTenant(null)}
-                  className="p-1 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
+                  className="p-1.5 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
                 >
                   <X size={16} />
                 </button>
               </div>
 
+              {/* Edit Modal Navigation Tabs */}
+              <div className="flex border-b border-slate-100 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditTenantTab('brand')}
+                  className={`pb-3 px-4 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    editTenantTab === 'brand'
+                      ? 'border-emerald-600 text-emerald-700'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Building size={14} />
+                  Empresa & Endereço
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditTenantTab('owner')}
+                  className={`pb-3 px-4 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    editTenantTab === 'owner'
+                      ? 'border-emerald-600 text-emerald-700'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Users size={14} />
+                  Proprietário
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditTenantTab('billing')}
+                  className={`pb-3 px-4 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    editTenantTab === 'billing'
+                      ? 'border-emerald-600 text-emerald-700'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <CreditCard size={14} />
+                  Plano & Cobrança
+                </button>
+              </div>
+
               <form onSubmit={handleSaveTenant} className="space-y-5">
-                {/* Max Professionals */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Limite de Profissionais
-                    </label>
-                    <input 
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={editTenantMaxProfs}
-                      onChange={(e) => setEditTenantMaxProfs(parseInt(e.target.value) || 1)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      required
-                    />
-                    <p className="text-[10px] text-slate-400 ml-1">Máximo de barbeiros permitidos</p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Valor por Profissional (R$)
-                    </label>
-                    <input 
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editTenantPricePerProf}
-                      onChange={(e) => setEditTenantPricePerProf(parseFloat(e.target.value) || 0)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      required
-                    />
-                    <p className="text-[10px] text-slate-400 ml-1">Cobrado por cada profissional</p>
-                  </div>
-                </div>
-
-                {/* Fixed Fee Override & Due Date */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Mensalidade Fixa Personalizada (Opcional)
-                    </label>
-                    <input 
-                      type="number"
-                      step="0.01"
-                      placeholder="Ex: 199.00 (sobrepõe cálculo por pro)"
-                      value={editTenantFeeOverride}
-                      onChange={(e) => setEditTenantFeeOverride(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:outline-none focus:border-emerald-500 text-slate-800 placeholder-slate-400"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Dia de Vencimento
-                    </label>
-                    <input 
-                      type="number"
-                      min="1"
-                      max="31"
-                      value={editTenantDueDateDay}
-                      onChange={(e) => setEditTenantDueDateDay(parseInt(e.target.value) || 10)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      required
-                    />
-                  </div>
-                </div>
-
-                {/* Status of Plan */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Status da Barbearia</label>
-                  <select 
-                    value={editTenantPlanStatus}
-                    onChange={(e) => setEditTenantPlanStatus(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:outline-none focus:border-emerald-500 cursor-pointer text-slate-800"
-                  >
-                    <option value="active">Ativa / Acesso Liberado</option>
-                    <option value="pending">Pendente de Pagamento</option>
-                    <option value="suspended">Suspenso / Acesso Bloqueado</option>
-                    <option value="canceled">Cancelado</option>
-                  </select>
-                </div>
-
-                {/* Owner Information */}
-                <div className="border-t border-slate-100 pt-4 space-y-3">
-                  <p className="text-xs font-black text-slate-700 uppercase tracking-wider">Dados do Responsável pela Barbearia</p>
-                  
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Proprietário</label>
-                    <input 
-                      type="text"
-                      value={editTenantOwnerName}
-                      onChange={(e) => setEditTenantOwnerName(e.target.value)}
-                      placeholder="Nome completo do dono"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail de Contato</label>
-                      <input 
-                        type="email"
-                        value={editTenantOwnerEmail}
-                        onChange={(e) => setEditTenantOwnerEmail(e.target.value)}
-                        placeholder="dono@barbearia.com"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      />
+                
+                {/* TAB 1: Marca & Endereço */}
+                {editTenantTab === 'brand' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome da Barbearia</label>
+                        <input 
+                          type="text"
+                          value={editTenantName}
+                          onChange={(e) => setEditTenantName(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CNPJ / CPF</label>
+                        <input 
+                          type="text"
+                          value={editTenantCnpjCpf}
+                          onChange={(e) => setEditTenantCnpjCpf(e.target.value)}
+                          placeholder="00.000.000/0001-00"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp / Telefone</label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Telefone / WhatsApp</label>
+                        <input 
+                          type="text"
+                          value={editTenantPhone}
+                          onChange={(e) => setEditTenantPhone(e.target.value)}
+                          placeholder="(11) 99999-9999"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail Comercial</label>
+                        <input 
+                          type="email"
+                          value={editTenantEmail}
+                          onChange={(e) => setEditTenantEmail(e.target.value)}
+                          placeholder="contato@barbearia.com"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cor da Marca (Accent)</label>
+                      <div className="flex items-center gap-3">
+                        <input 
+                          type="color"
+                          value={editTenantAccentColor}
+                          onChange={(e) => setEditTenantAccentColor(e.target.value)}
+                          className="w-10 h-10 rounded-xl cursor-pointer border-0"
+                        />
+                        <div className="flex gap-2">
+                          {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map(color => (
+                            <button
+                              type="button"
+                              key={color}
+                              onClick={() => setEditTenantAccentColor(color)}
+                              className="w-7 h-7 rounded-lg border-2 border-white shadow-sm"
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-slate-100 pt-3 space-y-3">
+                      <p className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                        <MapPin size={14} className="text-emerald-600" />
+                        Endereço
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">CEP</label>
+                          <input 
+                            type="text" 
+                            value={editTenantZipCode} 
+                            onChange={(e) => setEditTenantZipCode(e.target.value)}
+                            placeholder="86000-000"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Rua / Logradouro</label>
+                          <input 
+                            type="text" 
+                            value={editTenantStreet} 
+                            onChange={(e) => setEditTenantStreet(e.target.value)}
+                            placeholder="Rua das Flores"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Número</label>
+                          <input 
+                            type="text" 
+                            value={editTenantNumber} 
+                            onChange={(e) => setEditTenantNumber(e.target.value)}
+                            placeholder="123"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Bairro</label>
+                          <input 
+                            type="text" 
+                            value={editTenantNeighborhood} 
+                            onChange={(e) => setEditTenantNeighborhood(e.target.value)}
+                            placeholder="Centro"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Cidade</label>
+                          <input 
+                            type="text" 
+                            value={editTenantCity} 
+                            onChange={(e) => setEditTenantCity(e.target.value)}
+                            placeholder="Londrina"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">UF</label>
+                          <input 
+                            type="text" 
+                            value={editTenantState} 
+                            onChange={(e) => setEditTenantState(e.target.value)}
+                            placeholder="PR"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 uppercase"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: Responsável / Proprietário */}
+                {editTenantTab === 'owner' && (
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Proprietário</label>
                       <input 
                         type="text"
-                        value={editTenantOwnerPhone}
-                        onChange={(e) => setEditTenantOwnerPhone(e.target.value)}
-                        placeholder="(11) 99999-9999"
+                        value={editTenantOwnerName}
+                        onChange={(e) => setEditTenantOwnerName(e.target.value)}
+                        placeholder="Nome completo do dono"
                         className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
                       />
                     </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail do Proprietário</label>
+                        <input 
+                          type="email"
+                          value={editTenantOwnerEmail}
+                          onChange={(e) => setEditTenantOwnerEmail(e.target.value)}
+                          placeholder="dono@barbearia.com"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp do Proprietário</label>
+                        <input 
+                          type="text"
+                          value={editTenantOwnerPhone}
+                          onChange={(e) => setEditTenantOwnerPhone(e.target.value)}
+                          placeholder="(11) 99999-9999"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* TAB 3: Plano & Cobrança */}
+                {editTenantTab === 'billing' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Limite de Profissionais</label>
+                        <input 
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={editTenantMaxProfs}
+                          onChange={(e) => setEditTenantMaxProfs(parseInt(e.target.value) || 1)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Valor por Profissional (R$)</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editTenantPricePerProf}
+                          onChange={(e) => setEditTenantPricePerProf(parseFloat(e.target.value) || 0)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mensalidade Fixa (Opcional)</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          placeholder="Ex: 199.00"
+                          value={editTenantFeeOverride}
+                          onChange={(e) => setEditTenantFeeOverride(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Dia de Vencimento</label>
+                        <input 
+                          type="number"
+                          min="1"
+                          max="31"
+                          value={editTenantDueDateDay}
+                          onChange={(e) => setEditTenantDueDateDay(parseInt(e.target.value) || 10)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Status da Barbearia</label>
+                      <select 
+                        value={editTenantPlanStatus}
+                        onChange={(e) => setEditTenantPlanStatus(e.target.value as any)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 cursor-pointer text-slate-800"
+                      >
+                        <option value="active">Ativa / Liberada</option>
+                        <option value="pending">Pendente de Pagamento</option>
+                        <option value="suspended">Suspenso / Bloqueada</option>
+                        <option value="canceled">Cancelado</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Notas Internas</label>
+                      <textarea
+                        rows={2}
+                        value={editTenantNotes}
+                        onChange={(e) => setEditTenantNotes(e.target.value)}
+                        placeholder="Observações administrativas..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 px-4 text-xs font-medium text-slate-800"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-3 justify-end pt-4 border-t border-slate-100">
                   <button 
@@ -1596,7 +1935,7 @@ export default function PortalSaaSAdmin() {
                     disabled={savingTenant}
                     className="px-6 py-3 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-widest hover:bg-emerald-700 shadow-md shadow-emerald-600/10 active:scale-95 transition-all disabled:opacity-50"
                   >
-                    {savingTenant ? 'Salvando...' : 'Salvar Alterações'}
+                    {savingTenant ? 'Salvando...' : 'Salvar Barbearia'}
                   </button>
                 </div>
               </form>
@@ -1605,7 +1944,7 @@ export default function PortalSaaSAdmin() {
         )}
       </AnimatePresence>
 
-      {/* MODAL 4: CREATE NEW TENANT */}
+      {/* MODAL 4: CREATE NEW TENANT (PRO TABBED ONBOARDING) */}
       <AnimatePresence>
         {isCreateTenantOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1621,129 +1960,544 @@ export default function PortalSaaSAdmin() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="relative w-full max-w-lg bg-white rounded-[2rem] p-8 shadow-2xl border border-slate-100 z-10 space-y-6 max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-2xl bg-white rounded-[2rem] p-6 md:p-8 shadow-2xl border border-slate-100 z-10 space-y-6 max-h-[92vh] overflow-y-auto"
             >
               <div className="flex justify-between items-start">
                 <div>
-                  <h4 className="text-lg font-black text-slate-900">Cadastrar Nova Barbearia</h4>
-                  <p className="text-xs text-slate-500 font-semibold mt-0.5">Adicione uma nova barbearia parceira ao ecossistema SaaS.</p>
+                  <h4 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                    <Building2 className="text-emerald-600" size={20} />
+                    Cadastrar Nova Barbearia SaaS
+                  </h4>
+                  <p className="text-xs text-slate-500 font-semibold mt-0.5">Captura completa e onboarding profissional de parceiro.</p>
                 </div>
                 <button 
                   onClick={() => setIsCreateTenantOpen(false)}
-                  className="p-1 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
+                  className="p-1.5 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
                 >
                   <X size={16} />
                 </button>
               </div>
 
-              <form onSubmit={handleCreateTenantSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Identificador (Slug ID)</label>
-                    <input 
-                      type="text"
-                      value={newTenantId}
-                      onChange={(e) => setNewTenantId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
-                      placeholder="ex: barbearia-gb"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      required
-                    />
-                    <p className="text-[9px] text-slate-400 ml-1">Usado no link e isolamento do banco</p>
-                  </div>
+              {/* Navigation Tabs for Create */}
+              <div className="flex border-b border-slate-100 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCreateTenantTab('brand')}
+                  className={`pb-3 px-4 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    createTenantTab === 'brand'
+                      ? 'border-emerald-600 text-emerald-700'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Building size={14} />
+                  1. Empresa & Endereço
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateTenantTab('owner')}
+                  className={`pb-3 px-4 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    createTenantTab === 'owner'
+                      ? 'border-emerald-600 text-emerald-700'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Users size={14} />
+                  2. Proprietário & Acesso
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateTenantTab('billing')}
+                  className={`pb-3 px-4 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    createTenantTab === 'billing'
+                      ? 'border-emerald-600 text-emerald-700'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <CreditCard size={14} />
+                  3. Plano & Mensalidade
+                </button>
+              </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome da Barbearia</label>
-                    <input 
-                      type="text"
-                      value={newTenantName}
-                      onChange={(e) => setNewTenantName(e.target.value)}
-                      placeholder="ex: GB Cortes Barbearia"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      required
-                    />
+              <form onSubmit={handleCreateTenantSubmit} className="space-y-5">
+                
+                {/* TAB 1: Marca e Endereço */}
+                {createTenantTab === 'brand' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Identificador Slug (Link)</label>
+                        <input 
+                          type="text"
+                          value={newTenantId}
+                          onChange={(e) => setNewTenantId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
+                          placeholder="ex: barbearia-elite"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                          required
+                        />
+                        <p className="text-[9px] text-slate-400 ml-1">Define a URL isolada da barbearia</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome da Barbearia</label>
+                        <input 
+                          type="text"
+                          value={newTenantName}
+                          onChange={(e) => setNewTenantName(e.target.value)}
+                          placeholder="ex: Barbearia Elite Premium"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CNPJ / CPF</label>
+                        <input 
+                          type="text"
+                          value={newTenantCnpjCpf}
+                          onChange={(e) => setNewTenantCnpjCpf(e.target.value)}
+                          placeholder="00.000.000/0001-00"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Telefone Comercial</label>
+                        <input 
+                          type="text"
+                          value={newTenantPhone}
+                          onChange={(e) => setNewTenantPhone(e.target.value)}
+                          placeholder="(11) 99999-9999"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail Comercial</label>
+                        <input 
+                          type="email"
+                          value={newTenantEmail}
+                          onChange={(e) => setNewTenantEmail(e.target.value)}
+                          placeholder="contato@barbearia.com"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Color selection */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cor Principal da Barbearia</label>
+                      <div className="flex items-center gap-3">
+                        <input 
+                          type="color"
+                          value={newTenantAccentColor}
+                          onChange={(e) => setNewTenantAccentColor(e.target.value)}
+                          className="w-10 h-10 rounded-xl cursor-pointer border-0"
+                        />
+                        <div className="flex gap-2">
+                          {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map(color => (
+                            <button
+                              type="button"
+                              key={color}
+                              onClick={() => setNewTenantAccentColor(color)}
+                              className="w-7 h-7 rounded-lg border-2 border-white shadow-sm"
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Address Fields */}
+                    <div className="border-t border-slate-100 pt-3 space-y-3">
+                      <p className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                        <MapPin size={14} className="text-emerald-600" />
+                        Endereço Completo
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">CEP</label>
+                          <input 
+                            type="text" 
+                            value={newTenantZipCode} 
+                            onChange={(e) => setNewTenantZipCode(e.target.value)}
+                            placeholder="86000-000"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Rua / Logradouro</label>
+                          <input 
+                            type="text" 
+                            value={newTenantStreet} 
+                            onChange={(e) => setNewTenantStreet(e.target.value)}
+                            placeholder="Av. Principal"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Número</label>
+                          <input 
+                            type="text" 
+                            value={newTenantNumber} 
+                            onChange={(e) => setNewTenantNumber(e.target.value)}
+                            placeholder="100"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Bairro</label>
+                          <input 
+                            type="text" 
+                            value={newTenantNeighborhood} 
+                            onChange={(e) => setNewTenantNeighborhood(e.target.value)}
+                            placeholder="Centro"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Cidade</label>
+                          <input 
+                            type="text" 
+                            value={newTenantCity} 
+                            onChange={(e) => setNewTenantCity(e.target.value)}
+                            placeholder="Londrina"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-400 uppercase">UF</label>
+                          <input 
+                            type="text" 
+                            value={newTenantState} 
+                            onChange={(e) => setNewTenantState(e.target.value)}
+                            placeholder="PR"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 uppercase"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-3">
+                      <button 
+                        type="button" 
+                        onClick={() => setCreateTenantTab('owner')}
+                        className="bg-emerald-600 text-white font-black text-xs px-5 py-2.5 rounded-xl uppercase tracking-wider hover:bg-emerald-700"
+                      >
+                        Próximo: Proprietário &rarr;
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: Responsável & Usuário Acesso */}
+                {createTenantTab === 'owner' && (
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Proprietário</label>
+                      <input 
+                        type="text"
+                        value={newOwnerName}
+                        onChange={(e) => setNewOwnerName(e.target.value)}
+                        placeholder="ex: João Silva"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail do Proprietário (Login)</label>
+                        <input 
+                          type="email"
+                          value={newOwnerEmail}
+                          onChange={(e) => setNewOwnerEmail(e.target.value)}
+                          placeholder="dono@barbearia.com"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp / Celular</label>
+                        <input 
+                          type="text"
+                          value={newOwnerPhone}
+                          onChange={(e) => setNewOwnerPhone(e.target.value)}
+                          placeholder="(11) 99999-9999"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Auto Create User Account Toggle */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                      <label className="flex items-center justify-between cursor-pointer">
+                        <div className="flex items-center gap-2">
+                          <Key className="text-emerald-600" size={18} />
+                          <div>
+                            <p className="text-xs font-black text-slate-900">Criar Usuário Administrador no Sistema</p>
+                            <p className="text-[10px] text-slate-500">Cria a conta automaticamente para o proprietário entrar imediatamente.</p>
+                          </div>
+                        </div>
+                        <input 
+                          type="checkbox"
+                          checked={createOwnerAccount}
+                          onChange={(e) => setCreateOwnerAccount(e.target.checked)}
+                          className="w-5 h-5 accent-emerald-600 rounded cursor-pointer"
+                        />
+                      </label>
+
+                      {createOwnerAccount && (
+                        <div className="space-y-1.5 pt-2 border-t border-slate-200">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Senha Inicial do Dono</label>
+                          <div className="flex gap-2">
+                            <input 
+                              type="text"
+                              value={newOwnerPassword}
+                              onChange={(e) => setNewOwnerPassword(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-mono font-bold text-slate-800"
+                              required
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setNewOwnerPassword(`Barber${Math.floor(100 + Math.random() * 900)}@`)}
+                              className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] px-3 py-2 rounded-xl whitespace-nowrap"
+                            >
+                              Gerar Nova
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between pt-3">
+                      <button 
+                        type="button" 
+                        onClick={() => setCreateTenantTab('brand')}
+                        className="bg-slate-100 text-slate-600 font-black text-xs px-4 py-2.5 rounded-xl uppercase tracking-wider hover:bg-slate-200"
+                      >
+                        &larr; Voltar
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => setCreateTenantTab('billing')}
+                        className="bg-emerald-600 text-white font-black text-xs px-5 py-2.5 rounded-xl uppercase tracking-wider hover:bg-emerald-700"
+                      >
+                        Próximo: Plano &rarr;
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: Plano & Mensalidade */}
+                {createTenantTab === 'billing' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Limite Max. de Profissionais</label>
+                        <input 
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={newMaxProfs}
+                          onChange={(e) => setNewMaxProfs(parseInt(e.target.value) || 1)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Preço por Profissional (R$)</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={newPricePerProf}
+                          onChange={(e) => setNewPricePerProf(parseFloat(e.target.value) || 0)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mensalidade Fixa (Opcional)</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          placeholder="Ex: 199.00"
+                          value={newMonthlyFeeOverride}
+                          onChange={(e) => setNewMonthlyFeeOverride(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Dia de Vencimento</label>
+                        <input 
+                          type="number"
+                          min="1"
+                          max="31"
+                          value={newDueDateDay}
+                          onChange={(e) => setNewDueDateDay(parseInt(e.target.value) || 10)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Status do Acesso</label>
+                      <select 
+                        value={newPlanStatus}
+                        onChange={(e) => setNewPlanStatus(e.target.value as any)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 cursor-pointer text-slate-800"
+                      >
+                        <option value="active">Ativo / Acesso Liberado</option>
+                        <option value="pending">Pendente de Pagamento Inicial</option>
+                        <option value="suspended">Suspenso / Bloqueado</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Observações Internas</label>
+                      <textarea
+                        rows={2}
+                        value={newTenantNotes}
+                        onChange={(e) => setNewTenantNotes(e.target.value)}
+                        placeholder="Ex: Cliente fechou contrato anual por indicação..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 px-4 text-xs font-medium text-slate-800"
+                      />
+                    </div>
+
+                    <div className="flex gap-3 justify-between pt-4 border-t border-slate-100">
+                      <button 
+                        type="button" 
+                        onClick={() => setCreateTenantTab('owner')}
+                        className="bg-slate-100 text-slate-600 font-black text-xs px-4 py-2.5 rounded-xl uppercase tracking-wider hover:bg-slate-200"
+                      >
+                        &larr; Voltar
+                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => setIsCreateTenantOpen(false)}
+                          className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all"
+                        >
+                          Cancelar
+                        </button>
+                        <button 
+                          type="submit"
+                          disabled={creatingTenant}
+                          className="px-6 py-3 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-widest hover:bg-emerald-700 shadow-md shadow-emerald-600/10 active:scale-95 transition-all disabled:opacity-50"
+                        >
+                          {creatingTenant ? 'Cadastrando...' : 'Concluir & Criar Barbearia'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 5: SHARE CREDENTIALS / WHATSAPP TEMPLATE */}
+      <AnimatePresence>
+        {shareModalTenant && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShareModalTenant(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-lg bg-white rounded-[2rem] p-6 md:p-8 shadow-2xl border border-slate-100 z-10 space-y-6"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center font-black">
+                    <MessageSquare size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-black text-slate-900">Enviar Acesso no WhatsApp</h4>
+                    <p className="text-xs text-slate-500 font-semibold">{shareModalTenant.name}</p>
                   </div>
                 </div>
+                <button 
+                  onClick={() => setShareModalTenant(null)}
+                  className="p-1.5 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Limite de Profissionais</label>
-                    <input 
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={newMaxProfs}
-                      onChange={(e) => setNewMaxProfs(parseInt(e.target.value) || 1)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Preço por Profissional (R$)</label>
-                    <input 
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={newPricePerProf}
-                      onChange={(e) => setNewPricePerProf(parseFloat(e.target.value) || 0)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                      required
-                    />
-                  </div>
-                </div>
-
+              <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Proprietário</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Senha de Acesso para a Mensagem</label>
                   <input 
-                    type="text"
-                    value={newOwnerName}
-                    onChange={(e) => setNewOwnerName(e.target.value)}
-                    placeholder="Nome do responsável"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
+                    type="text" 
+                    value={sharePasswordInput}
+                    onChange={(e) => setSharePasswordInput(e.target.value)}
+                    placeholder="Barber123@"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-mono font-bold text-slate-800"
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">E-mail do Proprietário</label>
-                    <input 
-                      type="email"
-                      value={newOwnerEmail}
-                      onChange={(e) => setNewOwnerEmail(e.target.value)}
-                      placeholder="dono@barbearia.com"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Dia de Vencimento</label>
-                    <input 
-                      type="number"
-                      min="1"
-                      max="31"
-                      value={newDueDateDay}
-                      onChange={(e) => setNewDueDateDay(parseInt(e.target.value) || 10)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800"
-                    />
-                  </div>
-                </div>
+                {/* Formatted Message Box */}
+                {(() => {
+                  const systemUrl = `${window.location.origin}/?tenant=${shareModalTenant.id}`;
+                  const ownerName = shareModalTenant.ownerName || 'Parceiro';
+                  const email = shareModalTenant.ownerEmail || shareModalTenant.email || 'seu-email';
+                  const waText = `*Olá, ${ownerName}!* 👋🏼\n\nSeu sistema de gestão e agendamentos *${shareModalTenant.name}* está pronto e liberado!\n\n🔗 *Link do Painel:* ${systemUrl}\n👤 *Login/E-mail:* ${email}\n🔑 *Senha Inicial:* ${sharePasswordInput}\n\nQualquer dúvida, estamos à disposição!🚀`;
+                  
+                  return (
+                    <div className="space-y-3">
+                      <div className="p-4 bg-emerald-50/70 border border-emerald-200/60 rounded-2xl font-sans text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
+                        {waText}
+                      </div>
 
-                <div className="flex gap-3 justify-end pt-4 border-t border-slate-100">
-                  <button 
-                    type="button"
-                    onClick={() => setIsCreateTenantOpen(false)}
-                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest hover:bg-slate-50 active:scale-95 transition-all"
-                  >
-                    Cancelar
-                  </button>
-                  <button 
-                    type="submit"
-                    disabled={creatingTenant}
-                    className="px-6 py-3 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-widest hover:bg-emerald-700 shadow-md shadow-emerald-600/10 active:scale-95 transition-all disabled:opacity-50"
-                  >
-                    {creatingTenant ? 'Cadastrando...' : 'Criar Barbearia'}
-                  </button>
-                </div>
-              </form>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(waText);
+                            toast.success('Mensagem copiada para a área de transferência!');
+                          }}
+                          className="flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs py-3 px-4 rounded-xl transition"
+                        >
+                          <Copy size={16} />
+                          Copiar Texto
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            const cleanPhone = (shareModalTenant.ownerPhone || shareModalTenant.phone || '').replace(/\D/g, '');
+                            const encodedMsg = encodeURIComponent(waText);
+                            const waUrl = cleanPhone 
+                              ? `https://wa.me/55${cleanPhone}?text=${encodedMsg}`
+                              : `https://wa.me/?text=${encodedMsg}`;
+                            window.open(waUrl, '_blank');
+                          }}
+                          className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 px-4 rounded-xl shadow-md shadow-emerald-600/20 transition"
+                        >
+                          <MessageSquare size={16} />
+                          Abrir no WhatsApp
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </motion.div>
           </div>
         )}

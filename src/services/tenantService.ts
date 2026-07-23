@@ -3,6 +3,7 @@ import {
   getDoc, 
   setDoc, 
   updateDoc, 
+  deleteDoc,
   collection, 
   getDocs, 
   query, 
@@ -11,6 +12,18 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
+export interface SaaSPlan {
+  id: string;
+  name: string;
+  maxBarbers: number;
+  priceMonthly: number;
+  description: string;
+  features: string[];
+  popular?: boolean;
+  active: boolean;
+  createdAt?: any;
+}
+
 export interface TenantProfile {
   id: string;
   name: string;
@@ -18,11 +31,14 @@ export interface TenantProfile {
   accentColor: string; // e.g. Hex code #6366F1 or #F59E0B
   phone?: string;
   email?: string;
+  cnpjCpf?: string;
   address?: {
-    street: string;
-    city: string;
-    state: string;
-    zipCode: string;
+    street?: string;
+    number?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
   };
   isActive: boolean;
   createdAt?: any;
@@ -33,11 +49,16 @@ export interface TenantProfile {
   aboutText?: string;
   coverImage?: string;
 
-  // Configurações de SaaS e Cobrança por Profissional
+  // Configurações de SaaS, Planos e Período de Teste (Trial)
+  planId?: string;
+  planName?: string;
   maxProfessionals?: number; // Limite máximo de profissionais ativos permitidos
   pricePerProfessional?: number; // Valor cobrado por profissional/mês (ex: 39.90)
   monthlyFeeOverride?: number; // Valor mensal fixo customizado
-  planStatus?: 'active' | 'pending' | 'suspended' | 'canceled';
+  planStatus?: 'trial' | 'active' | 'pending' | 'suspended' | 'canceled';
+  trialDays?: number; // ex: 30
+  trialStartDate?: string; // ISO date string
+  trialEndDate?: string; // ISO date string
   ownerName?: string;
   ownerEmail?: string;
   ownerPhone?: string;
@@ -127,7 +148,7 @@ export const tenantService = {
       const newTenant: TenantProfile = {
         id: tenantId,
         name: tenantData.name,
-        accentColor: tenantData.accentColor || '#6366F1',
+        accentColor: tenantData.accentColor || '#10B981',
         isActive: tenantData.isActive !== false,
         maxProfessionals: tenantData.maxProfessionals ?? 5,
         pricePerProfessional: tenantData.pricePerProfessional ?? 39.90,
@@ -137,6 +158,11 @@ export const tenantService = {
         ownerEmail: tenantData.ownerEmail || '',
         ownerPhone: tenantData.ownerPhone || '',
         dueDateDay: tenantData.dueDateDay || 10,
+        phone: tenantData.phone || '',
+        email: tenantData.email || '',
+        cnpjCpf: tenantData.cnpjCpf || '',
+        address: tenantData.address || undefined,
+        notes: tenantData.notes || '',
         createdAt: new Date(),
         updatedAt: new Date()
       };

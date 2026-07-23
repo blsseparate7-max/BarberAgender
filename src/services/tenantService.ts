@@ -153,7 +153,12 @@ export const tenantService = {
         maxProfessionals: tenantData.maxProfessionals ?? 5,
         pricePerProfessional: tenantData.pricePerProfessional ?? 39.90,
         monthlyFeeOverride: tenantData.monthlyFeeOverride ?? undefined,
+        planId: tenantData.planId || undefined,
+        planName: tenantData.planName || undefined,
         planStatus: tenantData.planStatus || 'active',
+        trialDays: tenantData.trialDays || undefined,
+        trialStartDate: tenantData.trialStartDate || undefined,
+        trialEndDate: tenantData.trialEndDate || undefined,
         ownerName: tenantData.ownerName || '',
         ownerEmail: tenantData.ownerEmail || '',
         ownerPhone: tenantData.ownerPhone || '',
@@ -196,6 +201,65 @@ export const tenantService = {
     } catch (error) {
       console.error('Error listing all tenants system:', error);
       return [];
+    }
+  },
+
+  async listPlans(): Promise<SaaSPlan[]> {
+    try {
+      const snap = await getDocs(collection(db, 'saas_plans'));
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as SaaSPlan));
+    } catch (error) {
+      console.error('Error listing saas plans:', error);
+      return [];
+    }
+  },
+
+  async createPlan(plan: Omit<SaaSPlan, 'id'> & { id?: string }): Promise<SaaSPlan> {
+    try {
+      const id = plan.id || Math.random().toString(36).substring(2, 9);
+      const docRef = doc(db, 'saas_plans', id);
+      const newPlan: SaaSPlan = {
+        id,
+        name: plan.name,
+        maxBarbers: plan.maxBarbers,
+        priceMonthly: plan.priceMonthly,
+        description: plan.description || '',
+        features: plan.features || [],
+        popular: !!plan.popular,
+        active: plan.active !== false,
+        createdAt: new Date()
+      };
+      await setDoc(docRef, {
+        ...newPlan,
+        createdAt: serverTimestamp()
+      });
+      return newPlan;
+    } catch (error) {
+      console.error('Error creating saas plan:', error);
+      throw error;
+    }
+  },
+
+  async updatePlan(planId: string, data: Partial<SaaSPlan>): Promise<void> {
+    try {
+      const docRef = doc(db, 'saas_plans', planId);
+      await updateDoc(docRef, {
+        ...data,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error(`Error updating saas plan ${planId}:`, error);
+      throw error;
+    }
+  },
+
+  async deletePlan(planId: string): Promise<void> {
+    try {
+      const docRef = doc(db, 'saas_plans', planId);
+      await deleteDoc(docRef);
+    } catch (error) {
+      console.error(`Error deleting saas plan ${planId}:`, error);
+      throw error;
     }
   }
 };

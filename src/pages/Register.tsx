@@ -13,7 +13,7 @@ interface RegisterPageProps {
 }
 
 export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLanding }: RegisterPageProps) {
-  const role = 'cliente';
+  const [role, setRole] = useState<'cliente' | 'admin'>(initialRole);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

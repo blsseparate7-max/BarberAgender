@@ -48,7 +48,7 @@ import { toast } from 'sonner';
 import { userService } from '../services/userService';
 import { subscriptionService } from '../services/subscriptionService';
 import { resetService } from '../services/resetService';
-import { tenantService, TenantProfile } from '../services/tenantService';
+import { tenantService, TenantProfile, SaaSPlan } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Subscription, UserRole } from '../types';
 
@@ -158,6 +158,32 @@ export default function PortalSaaSAdmin() {
   const [editUserRole, setEditUserRole] = useState<UserRole>('cliente');
   const [savingUserRole, setSavingUserRole] = useState(false);
 
+  // Plans Management States
+  const [plans, setPlans] = useState<SaaSPlan[]>([]);
+  const [isCreatePlanOpen, setIsCreatePlanOpen] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<SaaSPlan | null>(null);
+  
+  // Plan Form States
+  const [planName, setPlanName] = useState('');
+  const [planMaxBarbers, setPlanMaxBarbers] = useState(5);
+  const [planPriceMonthly, setPlanPriceMonthly] = useState(199);
+  const [planDescription, setPlanDescription] = useState('');
+  const [planFeatures, setPlanFeatures] = useState('');
+  const [planPopular, setPlanPopular] = useState(false);
+  const [planActive, setPlanActive] = useState(true);
+
+  // Tenant Association Plan & Trial States
+  const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [isTrial, setIsTrial] = useState(true);
+  const [trialDaysInput, setTrialDaysInput] = useState('30');
+
+  // Edit Tenant Additional States
+  const [editTenantPlanId, setEditTenantPlanId] = useState('');
+  const [editTenantPlanName, setEditTenantPlanName] = useState('');
+  const [editTenantTrialDays, setEditTenantTrialDays] = useState('');
+  const [editTenantTrialStartDate, setEditTenantTrialStartDate] = useState('');
+  const [editTenantTrialEndDate, setEditTenantTrialEndDate] = useState('');
+
   useEffect(() => {
     loadData();
   }, []);
@@ -165,15 +191,17 @@ export default function PortalSaaSAdmin() {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Load all system users, subscriptions and tenants across all businesses
-      const [allUsers, allSubs, allTenants] = await Promise.all([
+      // Load all system users, subscriptions, tenants, and SaaS plans across all businesses
+      const [allUsers, allSubs, allTenants, allPlans] = await Promise.all([
         userService.getAllUsersSystem(),
         subscriptionService.getAllSubscriptionsSystem(),
-        tenantService.listAllTenantsSystem()
+        tenantService.listAllTenantsSystem(),
+        tenantService.listPlans()
       ]);
       setUsers(allUsers || []);
       setSubscriptions(allSubs || []);
       setTenants(allTenants || []);
+      setPlans(allPlans || []);
     } catch (err: any) {
       console.error(err);
       toast.error('Erro ao carregar os dados administrativos.');
@@ -241,6 +269,12 @@ export default function PortalSaaSAdmin() {
     setEditTenantOwnerPhone(tenant.ownerPhone || '');
     setEditTenantDueDateDay(tenant.dueDateDay || 10);
     setEditTenantNotes(tenant.notes || '');
+
+    setEditTenantPlanId(tenant.planId || '');
+    setEditTenantPlanName(tenant.planName || '');
+    setEditTenantTrialDays(tenant.trialDays ? String(tenant.trialDays) : '');
+    setEditTenantTrialStartDate(tenant.trialStartDate ? tenant.trialStartDate.substring(0, 10) : '');
+    setEditTenantTrialEndDate(tenant.trialEndDate ? tenant.trialEndDate.substring(0, 10) : '');
   };
 
   // Save Tenant Configuration
@@ -251,6 +285,9 @@ export default function PortalSaaSAdmin() {
     const toastId = toast.loading('Salvando alterações da barbearia...');
     try {
       const feeVal = editTenantFeeOverride.trim() ? parseFloat(editTenantFeeOverride) : undefined;
+      const foundPlan = plans.find(p => p.id === editTenantPlanId);
+      const isCurrentlyTrial = editTenantPlanStatus === 'trial';
+
       await tenantService.updateTenant(editingTenant.id, {
         name: editTenantName,
         cnpjCpf: editTenantCnpjCpf,
@@ -265,11 +302,16 @@ export default function PortalSaaSAdmin() {
           state: editTenantState,
           zipCode: editTenantZipCode
         },
-        maxProfessionals: Number(editTenantMaxProfs),
+        maxProfessionals: foundPlan ? foundPlan.maxBarbers : Number(editTenantMaxProfs),
         pricePerProfessional: Number(editTenantPricePerProf),
-        monthlyFeeOverride: feeVal && !isNaN(feeVal) ? feeVal : undefined,
+        monthlyFeeOverride: foundPlan ? foundPlan.priceMonthly : (feeVal && !isNaN(feeVal) ? feeVal : undefined),
+        planId: editTenantPlanId || undefined,
+        planName: foundPlan ? foundPlan.name : (editTenantPlanId === '' ? undefined : editTenantPlanName),
         planStatus: editTenantPlanStatus,
-        isActive: editTenantPlanStatus === 'active',
+        trialDays: isCurrentlyTrial ? (Number(editTenantTrialDays) || 30) : undefined,
+        trialStartDate: isCurrentlyTrial && editTenantTrialStartDate ? new Date(editTenantTrialStartDate).toISOString() : (isCurrentlyTrial ? new Date().toISOString() : undefined),
+        trialEndDate: isCurrentlyTrial && editTenantTrialEndDate ? new Date(editTenantTrialEndDate).toISOString() : (isCurrentlyTrial ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() : undefined),
+        isActive: editTenantPlanStatus === 'active' || editTenantPlanStatus === 'trial',
         ownerName: editTenantOwnerName,
         ownerEmail: editTenantOwnerEmail,
         ownerPhone: editTenantOwnerPhone,
@@ -320,6 +362,11 @@ export default function PortalSaaSAdmin() {
     const toastId = toast.loading('Cadastrando nova barbearia no ecossistema SaaS...');
     try {
       const feeVal = newMonthlyFeeOverride.trim() ? parseFloat(newMonthlyFeeOverride) : undefined;
+      const foundPlan = plans.find(p => p.id === selectedPlanId);
+      
+      const trialStartDateISO = isTrial ? new Date().toISOString() : undefined;
+      const trialEndDateISO = isTrial ? new Date(Date.now() + (Number(trialDaysInput) || 30) * 24 * 60 * 60 * 1000).toISOString() : undefined;
+
       const createdTenant = await tenantService.createTenant({
         id: cleanSlug,
         name: newTenantName,
@@ -338,12 +385,17 @@ export default function PortalSaaSAdmin() {
         ownerName: newOwnerName,
         ownerEmail: newOwnerEmail,
         ownerPhone: newOwnerPhone,
-        maxProfessionals: Number(newMaxProfs),
+        maxProfessionals: foundPlan ? foundPlan.maxBarbers : Number(newMaxProfs),
         pricePerProfessional: Number(newPricePerProf),
-        monthlyFeeOverride: feeVal && !isNaN(feeVal) ? feeVal : undefined,
+        monthlyFeeOverride: foundPlan ? foundPlan.priceMonthly : (feeVal && !isNaN(feeVal) ? feeVal : undefined),
+        planId: selectedPlanId || undefined,
+        planName: foundPlan ? foundPlan.name : undefined,
+        planStatus: isTrial ? 'trial' : newPlanStatus,
+        trialDays: isTrial ? (Number(trialDaysInput) || 30) : undefined,
+        trialStartDate: trialStartDateISO,
+        trialEndDate: trialEndDateISO,
         dueDateDay: Number(newDueDateDay),
-        planStatus: newPlanStatus,
-        isActive: newPlanStatus === 'active',
+        isActive: isTrial || newPlanStatus === 'active',
         notes: newTenantNotes
       });
 
@@ -395,6 +447,9 @@ export default function PortalSaaSAdmin() {
       setNewMonthlyFeeOverride('');
       setNewTenantNotes('');
       setCreateTenantTab('brand');
+      setSelectedPlanId('');
+      setIsTrial(true);
+      setTrialDaysInput('30');
 
       loadData();
     } catch (err: any) {
@@ -402,6 +457,83 @@ export default function PortalSaaSAdmin() {
       toast.error(`Erro ao criar barbearia: ${err.message || err}`);
     } finally {
       setCreatingTenant(false);
+    }
+  };
+
+  // Plan actions
+  const handleCreateOrUpdatePlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!planName.trim()) {
+      toast.error('Informe o nome do plano.');
+      return;
+    }
+    const toastId = toast.loading('Salvando plano...');
+    try {
+      const featuresArr = planFeatures.split('\n').map(f => f.trim()).filter(f => f.length > 0);
+      if (editingPlan) {
+        await tenantService.updatePlan(editingPlan.id, {
+          name: planName,
+          maxBarbers: Number(planMaxBarbers),
+          priceMonthly: Number(planPriceMonthly),
+          description: planDescription,
+          features: featuresArr,
+          popular: planPopular,
+          active: planActive
+        });
+        toast.success('Plano atualizado com sucesso!');
+      } else {
+        await tenantService.createPlan({
+          name: planName,
+          maxBarbers: Number(planMaxBarbers),
+          priceMonthly: Number(planPriceMonthly),
+          description: planDescription,
+          features: featuresArr,
+          popular: planPopular,
+          active: planActive
+        });
+        toast.success('Plano criado com sucesso!');
+      }
+      setIsCreatePlanOpen(false);
+      setEditingPlan(null);
+      // Clear form
+      setPlanName('');
+      setPlanMaxBarbers(5);
+      setPlanPriceMonthly(199);
+      setPlanDescription('');
+      setPlanFeatures('');
+      setPlanPopular(false);
+      setPlanActive(true);
+      loadData();
+    } catch (err: any) {
+      toast.error(`Erro ao salvar plano: ${err.message || err}`);
+    } finally {
+      toast.dismiss(toastId);
+    }
+  };
+
+  const handleOpenEditPlan = (plan: SaaSPlan) => {
+    setEditingPlan(plan);
+    setPlanName(plan.name || '');
+    setPlanMaxBarbers(plan.maxBarbers ?? 5);
+    setPlanPriceMonthly(plan.priceMonthly ?? 199);
+    setPlanDescription(plan.description || '');
+    setPlanFeatures((plan.features || []).join('\n'));
+    setPlanPopular(!!plan.popular);
+    setPlanActive(plan.active !== false);
+    setIsCreatePlanOpen(true);
+  };
+
+  const handleDeletePlan = async (planId: string) => {
+    if (!confirm('Tem certeza que deseja excluir este plano? Barbearias vinculadas a ele continuarão funcionando, mas o plano não estará mais disponível para novas seleções.')) return;
+    const toastId = toast.loading('Excluindo plano...');
+    try {
+      await tenantService.deletePlan(planId);
+      toast.success('Plano excluído com sucesso!');
+      loadData();
+    } catch (err: any) {
+      toast.error(`Erro ao excluir plano: ${err.message || err}`);
+    } finally {
+      toast.dismiss(toastId);
     }
   };
 
@@ -482,7 +614,7 @@ export default function PortalSaaSAdmin() {
         activeUsers: activeUsersCount,
         suspendedUsers: suspendedUsersCount,
         activeSubscriptions: totalActiveSubsCount,
-        mrr: estimatedMRR.toFixed(2),
+        mrr: calculatedMRR.toFixed(2),
         nearExpiryCount: subscriptionsNearExpiry.length,
         usersList: users.map(u => ({ nome: u.nome, email: u.email, tipo: u.tipo, ativo: u.ativo !== false })),
         subscriptionsList: subscriptions.map(s => ({ client: s.cliente_name, plan: s.planName, end: s.endDate, status: s.status }))
@@ -667,6 +799,17 @@ export default function PortalSaaSAdmin() {
           >
             <CreditCard size={16} />
             Assinaturas & Vencimentos
+          </button>
+          <button
+            onClick={() => setActiveTab('plans')}
+            className={`py-4 px-6 font-black uppercase tracking-widest text-xs border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'plans' 
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-2xl' 
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <Sliders size={16} />
+            Planos por Barbeiros
           </button>
           <button
             onClick={() => setActiveTab('copilot')}
@@ -1191,6 +1334,113 @@ export default function PortalSaaSAdmin() {
                 </div>
               )}
 
+            </div>
+          )}
+
+          {/* TAB: PLANS MANAGEMENT (PLANOS CUSTOMIZADOS) */}
+          {activeTab === 'plans' && (
+            <div className="bg-white border border-slate-200 rounded-[2rem] p-6 md:p-8 shadow-sm space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                <div>
+                  <h4 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                    <Sliders className="text-emerald-600" size={20} />
+                    Configuração de Planos por Barbeiros
+                  </h4>
+                  <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                    Defina pacotes com base na quantidade de profissionais. Estes planos serão promovidos na página pública de divulgação (Landing Page).
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setEditingPlan(null);
+                    setPlanName('');
+                    setPlanMaxBarbers(5);
+                    setPlanPriceMonthly(199);
+                    setPlanDescription('');
+                    setPlanFeatures('Profissionais Ilimitados\nAgendamentos Rápidos\nNotificações via WhatsApp\nRelatórios Financeiros');
+                    setPlanPopular(false);
+                    setPlanActive(true);
+                    setIsCreatePlanOpen(true);
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 px-6 rounded-xl transition-all shadow-md shadow-emerald-600/10 active:scale-95 flex items-center gap-2 uppercase tracking-widest self-start"
+                >
+                  <PlusCircle size={14} />
+                  Criar Novo Plano
+                </button>
+              </div>
+
+              {/* Plans List Table/Cards */}
+              {plans.length === 0 ? (
+                <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-3xl">
+                  <Sliders className="mx-auto text-slate-300 mb-3" size={40} />
+                  <p className="text-sm font-bold text-slate-500">Nenhum plano configurado no painel.</p>
+                  <p className="text-xs text-slate-400 mt-1">Crie o seu primeiro plano acima para disponibilizá-lo para seleção.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {plans.map((p) => (
+                    <div 
+                      key={p.id} 
+                      className={`border p-6 rounded-[2rem] flex flex-col justify-between transition-all relative ${
+                        p.popular 
+                          ? 'border-emerald-500 bg-emerald-50/10 shadow-lg shadow-emerald-500/5' 
+                          : 'border-slate-200 bg-white shadow-sm'
+                      }`}
+                    >
+                      {p.popular && (
+                        <span className="absolute top-4 right-4 bg-emerald-600 text-white text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full shadow-sm">
+                          Popular / Destaque
+                        </span>
+                      )}
+
+                      <div className="space-y-4">
+                        <div>
+                          <h5 className="font-black text-slate-900 text-base">{p.name}</h5>
+                          <p className="text-xs text-slate-400 mt-1 font-semibold">{p.description || 'Sem descrição cadastrada'}</p>
+                        </div>
+
+                        <div className="py-2">
+                          <span className="text-3xl font-black text-slate-900">R$ {p.priceMonthly}</span>
+                          <span className="text-xs text-slate-400 font-bold"> /mês</span>
+                          <div className="mt-1 text-[11px] text-emerald-700 bg-emerald-100/50 py-1 px-2.5 rounded-lg font-black inline-block">
+                            Até {p.maxBarbers} barbeiros cadastrados
+                          </div>
+                        </div>
+
+                        <div className="border-t border-slate-100 pt-3 space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recursos Inclusos</p>
+                          <ul className="space-y-1.5">
+                            {(p.features || []).map((feat, idx) => (
+                              <li key={idx} className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={14} />
+                                <span>{feat}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 justify-end border-t border-slate-100 pt-4 mt-6">
+                        <button
+                          onClick={() => handleOpenEditPlan(p)}
+                          className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition"
+                          title="Editar Plano"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDeletePlan(p.id)}
+                          className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition"
+                          title="Excluir Plano"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1840,6 +2090,37 @@ export default function PortalSaaSAdmin() {
                 {/* TAB 3: Plano & Cobrança */}
                 {editTenantTab === 'billing' && (
                   <div className="space-y-4">
+                    {/* Plan selection */}
+                    <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl space-y-3">
+                      <p className="text-xs font-black text-emerald-800 uppercase tracking-widest flex items-center gap-1.5">
+                        <Sliders size={14} />
+                        Plano SaaS Vinculado
+                      </p>
+                      <select
+                        value={editTenantPlanId}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditTenantPlanId(val);
+                          const plan = plans.find(p => p.id === val);
+                          if (plan) {
+                            setEditTenantMaxProfs(plan.maxBarbers);
+                            setEditTenantFeeOverride(String(plan.priceMonthly));
+                            setEditTenantPlanName(plan.name);
+                          } else {
+                            setEditTenantPlanName('');
+                          }
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        <option value="">Personalizado (Sem Plano Pré-definido)</option>
+                        {plans.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.maxBarbers} barbeiros - R$ {p.priceMonthly}/mês)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Limite de Profissionais</label>
@@ -1902,12 +2183,48 @@ export default function PortalSaaSAdmin() {
                         onChange={(e) => setEditTenantPlanStatus(e.target.value as any)}
                         className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-emerald-500 cursor-pointer text-slate-800"
                       >
+                        <option value="trial">Período de Testes (Trial)</option>
                         <option value="active">Ativa / Liberada</option>
                         <option value="pending">Pendente de Pagamento</option>
                         <option value="suspended">Suspenso / Bloqueada</option>
                         <option value="canceled">Cancelado</option>
                       </select>
                     </div>
+
+                    {editTenantPlanStatus === 'trial' && (
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Configurações do Período de Teste</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400">Dias de Teste</label>
+                            <input
+                              type="number"
+                              value={editTenantTrialDays}
+                              onChange={(e) => setEditTenantTrialDays(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400">Data Início</label>
+                            <input
+                              type="date"
+                              value={editTenantTrialStartDate}
+                              onChange={(e) => setEditTenantTrialStartDate(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400">Data Fim</label>
+                            <input
+                              type="date"
+                              value={editTenantTrialEndDate}
+                              onChange={(e) => setEditTenantTrialEndDate(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Notas Internas</label>
@@ -2293,6 +2610,59 @@ export default function PortalSaaSAdmin() {
                 {/* TAB 3: Plano & Mensalidade */}
                 {createTenantTab === 'billing' && (
                   <div className="space-y-4">
+                    {/* Plan selection */}
+                    <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl space-y-3">
+                      <p className="text-xs font-black text-emerald-800 uppercase tracking-widest flex items-center gap-1.5">
+                        <Sliders size={14} />
+                        Associar a um Plano Configurado
+                      </p>
+                      <select
+                        value={selectedPlanId}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSelectedPlanId(val);
+                          const plan = plans.find(p => p.id === val);
+                          if (plan) {
+                            setNewMaxProfs(plan.maxBarbers);
+                            setNewMonthlyFeeOverride(String(plan.priceMonthly));
+                          }
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        <option value="">Personalizado (Sem Plano Pré-definido)</option>
+                        {plans.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.maxBarbers} barbeiros - R$ {p.priceMonthly}/mês)
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="flex items-center gap-2 mt-2">
+                        <input
+                          type="checkbox"
+                          id="isTrialCheckbox"
+                          checked={isTrial}
+                          onChange={(e) => setIsTrial(e.target.checked)}
+                          className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                        />
+                        <label htmlFor="isTrialCheckbox" className="text-[11px] font-extrabold text-slate-700 cursor-pointer">
+                          Iniciar com Período de Testes (Trial de 30 Dias Grátis)
+                        </label>
+                      </div>
+
+                      {isTrial && (
+                        <div className="flex items-center gap-2 mt-1 pl-6">
+                          <span className="text-[10px] text-slate-500 font-bold">Duração (Dias):</span>
+                          <input
+                            type="number"
+                            value={trialDaysInput}
+                            onChange={(e) => setTrialDaysInput(e.target.value)}
+                            className="w-16 bg-white border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                      )}
+                    </div>
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Limite Max. de Profissionais</label>
@@ -2498,6 +2868,148 @@ export default function PortalSaaSAdmin() {
                   );
                 })()}
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 6: CREATE / EDIT SAAS PLAN */}
+      <AnimatePresence>
+        {isCreatePlanOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsCreatePlanOpen(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-lg bg-white rounded-[2rem] p-6 md:p-8 shadow-2xl border border-slate-100 z-10 space-y-6 max-h-[92vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center font-black">
+                    <Sliders size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-black text-slate-900">
+                      {editingPlan ? 'Editar Plano de Barbeiros' : 'Criar Novo Plano de Barbeiros'}
+                    </h4>
+                    <p className="text-xs text-slate-500 font-semibold">Defina o limite de barbeiros e preço de divulgação do plano.</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsCreatePlanOpen(false)}
+                  className="p-1.5 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateOrUpdatePlan} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Plano</label>
+                  <input 
+                    type="text"
+                    value={planName}
+                    onChange={(e) => setPlanName(e.target.value)}
+                    placeholder="Ex: Bronze, Silver, Ouro, Ilimitado..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Qtd. Máxima de Barbeiros</label>
+                    <input 
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={planMaxBarbers}
+                      onChange={(e) => setPlanMaxBarbers(parseInt(e.target.value) || 1)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Preço Mensal Fixo (R$)</label>
+                    <input 
+                      type="number"
+                      min="0"
+                      value={planPriceMonthly}
+                      onChange={(e) => setPlanPriceMonthly(parseInt(e.target.value) || 0)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Descrição Curta</label>
+                  <input 
+                    type="text"
+                    value={planDescription}
+                    onChange={(e) => setPlanDescription(e.target.value)}
+                    placeholder="Ideal para pequenas barbearias começando..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Características / Recursos (Um por linha)</label>
+                  <textarea 
+                    rows={4}
+                    value={planFeatures}
+                    onChange={(e) => setPlanFeatures(e.target.value)}
+                    placeholder="Profissionais Ilimitados&#10;Agendamentos Rápidos&#10;Notificações via WhatsApp"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs font-bold focus:outline-none focus:border-emerald-500 text-slate-800 resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-4 items-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      checked={planPopular}
+                      onChange={(e) => setPlanPopular(e.target.checked)}
+                      className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-slate-700">Destaque na Landing Page (Popular)</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      checked={planActive}
+                      onChange={(e) => setPlanActive(e.target.checked)}
+                      className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-slate-700">Plano Ativo para Adesão</span>
+                  </label>
+                </div>
+
+                <div className="flex gap-3 justify-end pt-4 border-t border-slate-100">
+                  <button 
+                    type="button"
+                    onClick={() => setIsCreatePlanOpen(false)}
+                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest hover:bg-slate-50 active:scale-95 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit"
+                    className="px-6 py-3 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-widest hover:bg-emerald-700 shadow-md shadow-emerald-600/10 active:scale-95 transition-all"
+                  >
+                    {editingPlan ? 'Atualizar Plano' : 'Criar Plano'}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

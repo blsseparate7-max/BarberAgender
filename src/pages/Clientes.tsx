@@ -574,9 +574,10 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Telefone / WhatsApp</label>
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Telefone / WhatsApp *</label>
               <input 
                 type="tel"
+                required
                 value={formData.telefone}
                 onChange={(e) => setFormData({...formData, telefone: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"

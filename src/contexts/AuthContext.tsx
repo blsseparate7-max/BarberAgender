@@ -17,6 +17,7 @@ interface AuthContextType {
   isSaaSAdminUser: boolean;
   overrideRole: UserRole | null;
   setOverrideRole: (role: UserRole | null) => void;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -31,6 +32,7 @@ const AuthContext = createContext<AuthContextType>({
   isSaaSAdminUser: false,
   overrideRole: null,
   setOverrideRole: () => {},
+  signOut: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -128,6 +130,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   }, [profile, user?.uid, user?.email, activeRole, isSaaSAdminUser]);
 
+  const signOut = async () => {
+    localStorage.removeItem('barberelite_override_role');
+    setOverrideRoleState(null);
+    await auth.signOut();
+    setUser(null);
+    setProfile(null);
+  };
+
   const value = React.useMemo(() => {
     return {
       user,
@@ -141,6 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isSaaSAdminUser,
       overrideRole,
       setOverrideRole,
+      signOut,
     };
   }, [user, adjustedProfile, loading, overrideRole, activeRole, isSaaSAdminUser]);
 

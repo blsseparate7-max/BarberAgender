@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Scissors, Calendar, Shield, Sparkles, TrendingUp, Search, User, Briefcase, ArrowRight, Star, Clock, MapPin, ChevronRight, Phone, Mail } from 'lucide-react';
-import { tenantService, TenantProfile } from '../services/tenantService';
+import { Scissors, Calendar, Shield, Sparkles, TrendingUp, Search, User, Briefcase, ArrowRight, Star, Clock, MapPin, ChevronRight, Phone, Mail, CheckCircle2, Sliders, Check } from 'lucide-react';
+import { tenantService, TenantProfile, SaaSPlan } from '../services/tenantService';
 
 interface LandingPageProps {
   onSelectRole: (role: 'cliente' | 'profissional' | 'dono-registro') => void;
@@ -12,6 +12,7 @@ const WHATSAPP_SYSTEM_URL = 'https://wa.me/5543999227226?text=Ol%C3%A1!%20Gostar
 
 export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   const [tenants, setTenants] = useState<TenantProfile[]>([]);
+  const [plans, setPlans] = useState<SaaSPlan[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingTenants, setLoadingTenants] = useState(true);
   const [activeTab, setActiveTab] = useState<'inicio' | 'barbearias'>('inicio');
@@ -28,12 +29,21 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   };
 
   useEffect(() => {
+    // Fetch tenants
     tenantService.listTenants()
       .then((list) => {
         setTenants(list.filter(t => t.isActive));
       })
       .catch((err) => console.error('Error fetching tenants list:', err))
       .finally(() => setLoadingTenants(false));
+
+    // Fetch plans
+    tenantService.listPlans()
+      .then((list) => {
+        // Filter only active plans
+        setPlans(list.filter(p => p.active !== false));
+      })
+      .catch((err) => console.error('Error fetching saas plans list:', err));
   }, []);
 
   const filteredTenants = tenants.filter(t => 
@@ -385,6 +395,238 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
                   Campanhas de cashback automático, cartões de fidelidade e assinaturas recorrentes de planos de corte e barba.
                 </p>
               </div>
+            </div>
+          </section>
+
+          {/* Pricing Plans Section */}
+          <section className="relative z-10 max-w-7xl mx-auto px-6 py-20 border-t border-zinc-900" id="planos">
+            <div className="text-center mb-16 space-y-4">
+              <span className="text-emerald-500 text-xs font-black uppercase tracking-widest bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-500/20">
+                Planos & Preços
+              </span>
+              <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight">Planos Sob Medida para sua Barbearia</h2>
+              <p className="text-zinc-400 max-w-xl mx-auto">
+                Escolha o plano ideal com base na quantidade de profissionais. Todos os planos incluem período de teste grátis de 30 dias!
+              </p>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+              {plans.length > 0 ? (
+                plans.map((p) => (
+                  <div 
+                    key={p.id} 
+                    className={`bg-zinc-900/30 border p-8 rounded-3xl flex flex-col justify-between transition-all relative group hover:scale-[1.01] ${
+                      p.popular 
+                        ? 'border-emerald-500 bg-zinc-900/60 shadow-xl shadow-emerald-500/5' 
+                        : 'border-zinc-850 hover:border-zinc-700'
+                    }`}
+                  >
+                    {p.popular && (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-zinc-950 text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-md">
+                        Mais Popular
+                      </span>
+                    )}
+
+                    <div className="space-y-6">
+                      <div>
+                        <h4 className="text-xl font-bold text-white">{p.name}</h4>
+                        <p className="text-xs text-zinc-400 mt-2 leading-relaxed">{p.description}</p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-baseline">
+                          <span className="text-3xl font-black text-white">R$ {p.priceMonthly}</span>
+                          <span className="text-zinc-500 text-xs font-bold ml-1">/mês</span>
+                        </div>
+                        <p className="text-[11px] text-emerald-400 font-semibold mt-1 bg-emerald-500/10 border border-emerald-500/10 rounded-md py-1 px-2.5 inline-block">
+                          Até {p.maxBarbers} profissionais/barbeiros
+                        </p>
+                      </div>
+
+                      <div className="border-t border-zinc-800/80 pt-5 space-y-3">
+                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Incluso no plano:</p>
+                        <ul className="space-y-2 text-xs text-zinc-300">
+                          {(p.features || []).map((feat, idx) => (
+                            <li key={idx} className="flex items-center gap-2">
+                              <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                              <span>{feat}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="pt-8">
+                      <a 
+                        href={`https://wa.me/5543999227226?text=${encodeURIComponent(`Olá! Quero contratar o plano "${p.name}" (até ${p.maxBarbers} barbeiros) por R$ ${p.priceMonthly}/mês do BarberElite!`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`w-full block py-3.5 px-4 rounded-xl font-black text-xs text-center uppercase tracking-widest transition-all ${
+                          p.popular
+                            ? 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-lg shadow-emerald-500/10 hover:scale-[1.02]'
+                            : 'bg-zinc-800 hover:bg-zinc-700 text-white'
+                        }`}
+                      >
+                        Contratar Plano
+                      </a>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                /* Fallback default plans if none are registered in Firestore yet */
+                <>
+                  {/* Bronze Plan */}
+                  <div className="bg-zinc-900/30 border border-zinc-850 p-8 rounded-3xl flex flex-col justify-between transition-all hover:border-zinc-700">
+                    <div className="space-y-6">
+                      <div>
+                        <h4 className="text-xl font-bold text-white">Plano Bronze</h4>
+                        <p className="text-xs text-zinc-400 mt-2 leading-relaxed">Ideal para barbeiros autônomos e pequenos espaços em crescimento.</p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-baseline">
+                          <span className="text-3xl font-black text-white">R$ 99</span>
+                          <span className="text-zinc-500 text-xs font-bold ml-1">/mês</span>
+                        </div>
+                        <p className="text-[11px] text-emerald-400 font-semibold mt-1 bg-emerald-500/10 border border-emerald-500/10 rounded-md py-1 px-2.5 inline-block">
+                          Até 3 profissionais/barbeiros
+                        </p>
+                      </div>
+
+                      <div className="border-t border-zinc-800/80 pt-5 space-y-3">
+                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Incluso no plano:</p>
+                        <ul className="space-y-2 text-xs text-zinc-300">
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Agendamento Online</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Controle de Caixa & Fluxo</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Notificações via WhatsApp</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="pt-8">
+                      <a 
+                        href={`https://wa.me/5543999227226?text=${encodeURIComponent('Olá! Quero contratar o plano "Bronze" (até 3 barbeiros) por R$ 99/mês do BarberElite!')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full block py-3.5 px-4 rounded-xl font-black text-xs text-center uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-white"
+                      >
+                        Contratar Plano
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Silver Plan */}
+                  <div className="bg-zinc-900/60 border border-emerald-500 p-8 rounded-3xl flex flex-col justify-between transition-all relative shadow-xl shadow-emerald-500/5 group hover:scale-[1.01]">
+                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-zinc-950 text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-md">
+                      Mais Popular
+                    </span>
+
+                    <div className="space-y-6">
+                      <div>
+                        <h4 className="text-xl font-bold text-white">Plano Silver</h4>
+                        <p className="text-xs text-zinc-400 mt-2 leading-relaxed">Perfeito para barbearias tradicionais com equipes consolidadas.</p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-baseline">
+                          <span className="text-3xl font-black text-white">R$ 199</span>
+                          <span className="text-zinc-500 text-xs font-bold ml-1">/mês</span>
+                        </div>
+                        <p className="text-[11px] text-emerald-400 font-semibold mt-1 bg-emerald-500/10 border border-emerald-500/10 rounded-md py-1 px-2.5 inline-block">
+                          Até 8 profissionais/barbeiros
+                        </p>
+                      </div>
+
+                      <div className="border-t border-zinc-800/80 pt-5 space-y-3">
+                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Incluso no plano:</p>
+                        <ul className="space-y-2 text-xs text-zinc-300">
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Tudo do Plano Bronze</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Comissão de Barbeiros Automatizada</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Relatórios Financeiros Avançados</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="pt-8">
+                      <a 
+                        href={`https://wa.me/5543999227226?text=${encodeURIComponent('Olá! Quero contratar o plano "Silver" (até 8 barbeiros) por R$ 199/mês do BarberElite!')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full block py-3.5 px-4 rounded-xl font-black text-xs text-center uppercase tracking-widest transition-all bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-lg shadow-emerald-500/10 hover:scale-[1.02]"
+                      >
+                        Contratar Plano
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Gold Plan */}
+                  <div className="bg-zinc-900/30 border border-zinc-850 p-8 rounded-3xl flex flex-col justify-between transition-all hover:border-zinc-700">
+                    <div className="space-y-6">
+                      <div>
+                        <h4 className="text-xl font-bold text-white">Plano Gold / Elite</h4>
+                        <p className="text-xs text-zinc-400 mt-2 leading-relaxed">A solução completa e irrestrita para grandes redes de barbearias.</p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-baseline">
+                          <span className="text-3xl font-black text-white">R$ 299</span>
+                          <span className="text-zinc-500 text-xs font-bold ml-1">/mês</span>
+                        </div>
+                        <p className="text-[11px] text-emerald-400 font-semibold mt-1 bg-emerald-500/10 border border-emerald-500/10 rounded-md py-1 px-2.5 inline-block">
+                          Profissionais Ilimitados
+                        </p>
+                      </div>
+
+                      <div className="border-t border-zinc-800/80 pt-5 space-y-3">
+                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Incluso no plano:</p>
+                        <ul className="space-y-2 text-xs text-zinc-300">
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Tudo do Plano Silver</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Suporte Prioritário 24/7</span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <CheckCircle2 className="text-emerald-500 w-4 h-4 shrink-0" />
+                            <span>Plano de Fidelidade & Cashback</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="pt-8">
+                      <a 
+                        href={`https://wa.me/5543999227226?text=${encodeURIComponent('Olá! Quero contratar o plano "Gold / Elite" (Profissionais Ilimitados) por R$ 299/mês do BarberElite!')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full block py-3.5 px-4 rounded-xl font-black text-xs text-center uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-white"
+                      >
+                        Contratar Plano
+                      </a>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </section>
         </>

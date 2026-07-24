@@ -94,7 +94,7 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (isTestEmail(request.auth.token.email) || isStaff());
 
       allow update: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAuthenticated() && (isTestEmail(request.auth.token.email) || isStaff());
+      allow update: if isAuthenticated() && (isTestEmail(request.auth.token.email) || isStaff() || isBarbeiro());
       
       allow delete: if isAdmin();
 
@@ -173,25 +173,27 @@ service cloud.firestore {
     
     match /cash_sessions/{sessionId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow create, update: if isStaff();
+      allow create, update: if isStaff() || isBarbeiro();
       allow delete: if isAdmin();
     }
 
     match /professional_advances/{advanceId} {
       allow read: if isAuthenticated() && (
         isStaff() || 
+        isBarbeiro() ||
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
-      allow create, update: if isStaff();
+      allow create, update: if isStaff() || isBarbeiro();
       allow delete: if isAdmin();
     }
 
     match /professional_payments/{paymentId} {
       allow read: if isAuthenticated() && (
         isStaff() || 
+        isBarbeiro() ||
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
-      allow create, update: if isStaff();
+      allow create, update: if isStaff() || isBarbeiro();
       allow delete: if isAdmin();
     }
 
@@ -220,6 +222,7 @@ service cloud.firestore {
     match /commissions/{commissionId} {
       allow read: if isAuthenticated() && (
         isStaff() || 
+        isBarbeiro() ||
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
@@ -238,7 +241,7 @@ service cloud.firestore {
     // --- Estoque ---
     match /products/{productId} {
       allow read: if isAuthenticated();
-      allow write: if isStaff();
+      allow write: if isStaff() || isBarbeiro();
     }
     
     match /product_categories/{categoryId} {
@@ -261,6 +264,7 @@ service cloud.firestore {
     match /subscriptions/{subscriptionId} {
       allow read: if isAuthenticated() && (
         isStaff() || 
+        isBarbeiro() ||
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create: if isStaff();
@@ -350,12 +354,12 @@ service cloud.firestore {
 
     match /payment_methods/{methodId} {
       allow read: if isAuthenticated();
-      allow write: if isStaff();
+      allow write: if isStaff() || isBarbeiro();
     }
 
     match /settings/{docId} {
       allow read: if isAuthenticated();
-      allow write: if isStaff();
+      allow write: if isStaff() || isBarbeiro();
     }
 
     // --- Dívidas ---
@@ -435,7 +439,7 @@ service cloud.firestore {
 
     match /team_goals/{goalId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow write: if isAuthenticated() && isStaff();
+      allow write: if isAuthenticated() && (isStaff() || isBarbeiro());
     }
 
     // --- Auxiliares / Tipos Customizados ---
@@ -483,6 +487,7 @@ service cloud.firestore {
     match /assinaturas/{subscriptionId} {
       allow read: if isAuthenticated() && (
         isStaff() || 
+        isBarbeiro() ||
         (resource != null && resource.data.cliente_id == request.auth.uid) ||
         (resource != null && resource.data.clientId == request.auth.uid)
       );

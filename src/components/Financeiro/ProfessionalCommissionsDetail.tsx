@@ -9,6 +9,7 @@ import { format, parseISO } from 'date-fns';
 import { toast } from 'sonner';
 import { auth, db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTenant } from '../../contexts/TenantContext';
 import { doc, getDoc, collection, addDoc, serverTimestamp, query, where, onSnapshot } from 'firebase/firestore';
 import { commissionService } from '../../services/commissionService';
 import { cashService } from '../../services/cashService';
@@ -157,6 +158,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     return { servicos, vendas, gorjetas, assinaturas };
   }, [commissions]);
   
+  const { tenantId } = useTenant();
   const [activeSubTab, setActiveSubTab] = useState<'analytical' | 'vales' | 'repasse'>('analytical');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isValeModalOpen, setIsValeModalOpen] = useState(false);
@@ -183,9 +185,10 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
   // Reactive listeners to avoid any manual reload and give live synchronization
   useEffect(() => {
+    if (!tenantId) return;
     setLoading(true);
 
-    const commsQuery = query(collection(db, 'commissions'), where('profissional_id', '==', professionalId));
+    const commsQuery = query(collection(db, 'commissions'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
     const unsubComms = onSnapshot(commsQuery, (snapshot) => {
       const commsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
       setAllCommissions(commsList);
@@ -195,7 +198,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       setLoading(false);
     });
 
-    const advsQuery = query(collection(db, 'professional_advances'), where('profissional_id', '==', professionalId));
+    const advsQuery = query(collection(db, 'professional_advances'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
       const advsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
       setAllAdvances(advsList);
@@ -203,7 +206,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       console.error("Erro ao escutar vales detalhados:", error);
     });
 
-    const payoutsQuery = query(collection(db, 'professional_payments'), where('profissional_id', '==', professionalId));
+    const payoutsQuery = query(collection(db, 'professional_payments'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
     const unsubPayouts = onSnapshot(payoutsQuery, (snapshot) => {
       const payoutsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
       setPayouts(payoutsList);
@@ -211,7 +214,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       console.error("Erro ao escutar pagamentos detalhados:", error);
     });
 
-    const unsubCash = onSnapshot(collection(db, 'cash_sessions'), (snapshot) => {
+    const unsubCash = onSnapshot(query(collection(db, 'cash_sessions'), where('tenantId', '==', tenantId)), (snapshot) => {
       const openCash = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .find((c: any) => c.status === 'open' || c.status === 'reopened');
@@ -226,7 +229,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       unsubPayouts();
       unsubCash();
     };
-  }, [professionalId]);
+  }, [professionalId, tenantId]);
 
   const [professionalProfile, setProfessionalProfile] = useState<UserProfile | null>(null);
   const [payoutType, setPayoutType] = useState<'comissoes' | 'remuneracao'>('comissoes');

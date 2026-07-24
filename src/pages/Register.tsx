@@ -103,7 +103,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       email: resolvedEmail.toLowerCase().trim(),
       tipo: 'cliente',
       ativo: true,
-      tenantId: activeTenantId,
+      tenantId: activeTenantId || null,
       updatedAt: serverTimestamp(),
     });
 
@@ -241,6 +241,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('handleRegister triggered');
     setLoading(true);
     setError('');
 
@@ -264,6 +265,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
     }
 
     try {
+      console.log('Creating auth user', { email });
       // 1. If register as admin, check if the tenant slug is already taken
       if (role === 'admin') {
         const tenantSnap = await getDoc(doc(db, 'tenants', tenantSlug));
@@ -276,12 +278,14 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
 
       // 2. Create the auth user
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      console.log('Auth user created', userCredential.user.uid);
       const user = userCredential.user;
 
       await updateProfile(user, { displayName: name });
 
       // 3. If admin, create tenant document
       const activeTenantId = role === 'admin' ? tenantSlug : getActiveTenantId();
+      const tenantIdValue = activeTenantId || null;
       
       if (role === 'admin') {
         await setDoc(doc(db, 'tenants', tenantSlug), {
@@ -358,7 +362,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             nome: name,
             tipo: role, // 'admin' or 'cliente'
             ativo: true,
-            tenantId: activeTenantId,
+            tenantId: tenantIdValue,
             indicadoPor: refCode || null,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),

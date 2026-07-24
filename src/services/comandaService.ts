@@ -744,11 +744,22 @@ export const comandaService = {
             commission_value,
             status: 'pendente',
             commission_type: item.type === 'produto' ? 'venda' : (item.name?.toLowerCase().includes('assinatura') || item.name?.toLowerCase().includes('plano') || item.name?.toLowerCase().includes('pacote') ? 'assinatura' : 'servico'),
+            tenantId: comanda.tenantId || '',
             date: new Date().toISOString().split('T')[0],
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
         }
+      } else if (item.generateCommission && !targetBarberId) {
+        // Log inconsistency if commission should be generated but no barber is linked
+        const logRef = doc(collection(db, 'inconsistency_logs'));
+        transaction.set(logRef, {
+          id: logRef.id,
+          type: 'MISSING_BARBER_FOR_COMMISSION',
+          description: `Comissão deveria ser gerada para item ${item.name} na comanda #${comanda.number}, mas não foi encontrado barbeiro vinculado.`,
+          data: { comandaId: comanda.id, itemId: item.id, itemType: item.type },
+          createdAt: serverTimestamp()
+        });
       }
 
       // 3.2 Inventory
@@ -796,6 +807,7 @@ export const comandaService = {
         commission_value: comanda.tip,
         status: 'pendente',
         commission_type: 'gorjeta',
+        tenantId: comanda.tenantId || '',
         date: new Date().toISOString().split('T')[0],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -848,7 +860,7 @@ export const comandaService = {
       const barberDataMap: Record<string, any> = {};
       const servicesMap: Record<string, any> = {};
       if (isClosing) {
-        const barberIds = Array.from(new Set(comanda.items.filter(i => i.type === 'servico' && i.profissional_id).map(i => i.profissional_id)));
+        const barberIds = Array.from(new Set(comanda.items.filter(i => i.generateCommission && i.profissional_id).map(i => i.profissional_id)));
         for (const bId of barberIds) {
           if (bId) {
             const bSnap = await transaction.get(doc(db, 'usuarios', bId));
@@ -857,7 +869,7 @@ export const comandaService = {
             }
           }
         }
-        const serviceIds = Array.from(new Set(comanda.items.filter(i => i.type === 'servico' && i.referencia_id).map(i => i.referencia_id)));
+        const serviceIds = Array.from(new Set(comanda.items.filter(i => i.generateCommission && i.type === 'servico' && i.referencia_id).map(i => i.referencia_id)));
         for (const sId of serviceIds) {
           if (sId) {
             const sSnap = await transaction.get(doc(db, 'services', sId));

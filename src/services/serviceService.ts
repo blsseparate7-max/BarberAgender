@@ -44,7 +44,7 @@ export const serviceService = {
   async getServiceById(id: string) {
     const docRef = doc(db, SERVICES_COLLECTION, id);
     const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    if (docSnap.exists() && docSnap.data().tenantId === getActiveTenantId()) {
       return { id: docSnap.id, ...docSnap.data() } as Service;
     }
     return null;
@@ -74,6 +74,10 @@ export const serviceService = {
 
   async updateService(id: string, data: Partial<Service>) {
     const docRef = doc(db, SERVICES_COLLECTION, id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists() || snap.data().tenantId !== getActiveTenantId()) {
+      throw new Error('Serviço não encontrado ou acesso negado.');
+    }
     const updateData: any = { ...data, updatedAt: serverTimestamp() };
     
     // Maintain dual fields for compatibility
@@ -86,6 +90,10 @@ export const serviceService = {
 
   async deleteService(id: string) {
     const docRef = doc(db, SERVICES_COLLECTION, id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists() || snap.data().tenantId !== getActiveTenantId()) {
+      throw new Error('Serviço não encontrado ou acesso negado.');
+    }
     await deleteDoc(docRef);
   },
 
@@ -116,11 +124,19 @@ export const serviceService = {
 
   async updateCategory(id: string, data: Partial<ServiceCategory>) {
     const docRef = doc(db, CATEGORIES_COLLECTION, id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists() || snap.data().tenantId !== getActiveTenantId()) {
+      throw new Error('Categoria não encontrada ou acesso negado.');
+    }
     await updateDoc(docRef, { ...data });
   },
 
   async deleteCategory(id: string) {
     const docRef = doc(db, CATEGORIES_COLLECTION, id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists() || snap.data().tenantId !== getActiveTenantId()) {
+      throw new Error('Categoria não encontrada ou acesso negado.');
+    }
     await deleteDoc(docRef);
   }
 };

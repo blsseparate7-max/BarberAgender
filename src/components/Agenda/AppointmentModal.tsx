@@ -134,7 +134,7 @@ export function AppointmentModal({
       setServices(servicesData);
       setBarbers(barbersData);
 
-      if (currentUser.tipo === 'admin' || currentUser.tipo === 'gerente') {
+      if (currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') {
         const clientsData = await userService.getAllClients();
         setClients(clientsData);
       }
@@ -172,8 +172,19 @@ export function AppointmentModal({
             ? { uid: 'sem_cadastro', nome: formData.cliente_name || 'Sem Cadastro' } 
             : clients.find(c => c.uid === formData.cliente_id));
 
-      if (!service || !barber || !client) {
-        throw new Error('Por favor, selecione todos os campos obrigatórios.');
+      if (!service) {
+        throw new Error('Por favor, selecione um serviço.');
+      }
+      if (!barber) {
+        throw new Error('Por favor, selecione um profissional.');
+      }
+      if (!client) {
+        console.error('Validation failed: Client not found.', { 
+            cliente_id: formData.cliente_id, 
+            clients_length: clients.length,
+            clients_uids: clients.map(c => c.uid)
+        });
+        throw new Error('Cliente não encontrado. Por favor, selecione novamente.');
       }
 
       const start = parse(formData.startTime, 'HH:mm', new Date());
@@ -268,7 +279,7 @@ export function AppointmentModal({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
             {/* Seleção de Cliente (Admin/Gerente) */}
-            {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente') && (
+            {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') && (
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Cliente</label>

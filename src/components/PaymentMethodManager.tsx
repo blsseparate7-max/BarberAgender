@@ -52,6 +52,9 @@ export function PaymentMethodManager() {
     internalNotes: ''
   });
 
+  const predefinedMachines = ["Stone", "PagSeguro", "Mercado Pago", "Cielo", "Rede", "InfinitePay", "Ton", "SafraPay", "SumUp"];
+  const [showCustomMachine, setShowCustomMachine] = useState(false);
+
   useEffect(() => {
     loadMethods();
   }, []);
@@ -86,6 +89,7 @@ export function PaymentMethodManager() {
     setEditingId(null);
     setIsFormOpen(false);
     setFeeInputStr('0');
+    setShowCustomMachine(false);
     setFormData({
       name: '',
       type: 'pix',
@@ -108,6 +112,7 @@ export function PaymentMethodManager() {
     setEditingId(method.id);
     setFormData(method);
     setFeeInputStr((method.feePercentage !== undefined ? method.feePercentage : 0).toString());
+    setShowCustomMachine(!!method.cardMachine && !predefinedMachines.includes(method.cardMachine));
     setIsFormOpen(true);
   };
 
@@ -348,23 +353,37 @@ export function PaymentMethodManager() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Máquina de Cartão (Se houver)</label>
-                    <select
-                      value={formData.cardMachine || ''}
-                      onChange={e => setFormData({ ...formData, cardMachine: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none cursor-pointer"
-                    >
-                      <option value="">Nenhuma / Não se aplica</option>
-                      <option value="Stone">Stone</option>
-                      <option value="PagSeguro">PagSeguro (PagBank)</option>
-                      <option value="Mercado Pago">Mercado Pago</option>
-                      <option value="Cielo">Cielo</option>
-                      <option value="Rede">Rede</option>
-                      <option value="InfinitePay">InfinitePay</option>
-                      <option value="Ton">Ton</option>
-                      <option value="SafraPay">SafraPay</option>
-                      <option value="SumUp">SumUp</option>
-                      <option value="Outra">Outra máquina</option>
-                    </select>
+                    <div className="flex gap-2">
+                      <select
+                        value={showCustomMachine ? "Outra" : (formData.cardMachine || '')}
+                        onChange={e => {
+                          if (e.target.value === "Outra") {
+                            setShowCustomMachine(true);
+                            setFormData({ ...formData, cardMachine: '' });
+                          } else {
+                            setShowCustomMachine(false);
+                            setFormData({ ...formData, cardMachine: e.target.value });
+                          }
+                        }}
+                        className={`w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none cursor-pointer ${showCustomMachine ? 'w-1/2' : ''}`}
+                      >
+                        <option value="">Nenhuma / Não se aplica</option>
+                        {predefinedMachines.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                        <option value="Outra">Outra máquina</option>
+                      </select>
+                      {showCustomMachine && (
+                        <input
+                          type="text"
+                          value={formData.cardMachine || ''}
+                          onChange={e => setFormData({ ...formData, cardMachine: e.target.value })}
+                          placeholder="Nome da maquininha"
+                          className="w-1/2 bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none"
+                          required={showCustomMachine}
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
 

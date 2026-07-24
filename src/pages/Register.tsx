@@ -336,7 +336,11 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
 
           // Delete old document if different
           if (preRegisteredId !== user.uid) {
-            await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+            try {
+              await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+            } catch (delErr) {
+              console.warn("Could not delete old pre-registered user document, ignoring:", delErr);
+            }
           }
 
           // Migrate appointments (appointments)

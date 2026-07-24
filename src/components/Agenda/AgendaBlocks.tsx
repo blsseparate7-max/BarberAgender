@@ -79,6 +79,7 @@ export function AgendaBlocks({ selectedDate }: AgendaBlocksProps = {}) {
       const barber = barbers.find(b => b.uid === formData.profissional_id);
       await agendaBlockService.createBlock({
         ...formData,
+        profissional_id: formData.isGeneral ? 'general' : formData.profissional_id,
         profissional_name: formData.isGeneral ? 'Geral' : (barber?.nome || 'Desconhecido')
       });
       setShowModal(false);

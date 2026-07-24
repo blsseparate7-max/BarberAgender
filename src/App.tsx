@@ -140,6 +140,10 @@ function MainApp() {
               setInitialRegisterRole('cliente');
               setAuthView('login');
               setShowLanding(false);
+            } else if (roleType === 'cliente-registro') {
+              setInitialRegisterRole('cliente');
+              setAuthView('register');
+              setShowLanding(false);
             } else { // 'profissional'
               setInitialRegisterRole('cliente');
               setAuthView('login');
@@ -171,6 +175,19 @@ function MainApp() {
         onForgotClick={() => setAuthView('forgot')}
         onBackToLanding={() => setShowLanding(true)}
       />
+    );
+  }
+
+  if (user && !profile) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="animate-spin text-accent w-12 h-12" />
+          <p className="text-muted font-medium tracking-widest uppercase text-[10px]">
+            Finalizando configuração da conta...
+          </p>
+        </div>
+      </div>
     );
   }
 

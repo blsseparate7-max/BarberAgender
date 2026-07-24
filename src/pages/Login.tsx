@@ -25,16 +25,9 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding }: L
     try {
       const userCred = await signInWithEmailAndPassword(auth, email, password);
       
-      // Verify Firestore profile doc exists
+      // Verify Firestore profile doc status
       const { doc, getDoc } = await import('firebase/firestore');
       const docSnap = await getDoc(doc(db, 'usuarios', userCred.user.uid));
-      const isMasterAdmin = userCred.user.email === 'barber@admin.ai' || userCred.user.email === 'blsseparate7@gmail.com' || userCred.user.email === 'temp-diagnose-client@example.com';
-      
-      if (!docSnap.exists() && !isMasterAdmin) {
-        await auth.signOut();
-        setError('Sua conta não consta no banco de dados do sistema. Por favor, faça um novo cadastro.');
-        return;
-      }
 
       if (docSnap.exists() && docSnap.data().ativo === false) {
         await auth.signOut();
@@ -91,7 +84,11 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding }: L
           });
 
           if (preRegisteredId !== user.uid) {
-            await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+            try {
+              await deleteDoc(doc(db, 'usuarios', preRegisteredId));
+            } catch (delErr) {
+              console.warn("Could not delete old pre-registered user doc during Google login, ignoring:", delErr);
+            }
           }
 
           // Migrate appointments

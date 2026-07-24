@@ -172,7 +172,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   };
                   try {
                     await setDoc(doc(db, 'usuarios', firebaseUser.uid), newProfile);
-                    console.log("Missing profile successfully created/auto-healed!");
+                    console.log("Missing admin profile successfully created/auto-healed!");
                   } catch (err) {
                     console.error("Failed writing to 'usuarios' collection:", err);
                     throw err;
@@ -180,7 +180,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   setProfile(newProfile);
                   healedProfile = newProfile;
                 } else {
-                  console.log("No tenant match found for email in auto-heal.");
+                  console.log("No tenant match found. Checking 'usuarios' by email for:", userEmail);
+                  const usersRef = collection(db, 'usuarios');
+                  const qUser = query(usersRef, where('email', '==', userEmail));
+                  let qSnapUser;
+                  try {
+                    qSnapUser = await getDocs(qUser);
+                  } catch (err) {
+                    console.error("Failed querying usuarios by email:", err);
+                    qSnapUser = { empty: true, docs: [] } as any;
+                  }
+
+                  if (!qSnapUser.empty) {
+                    const existingData = qSnapUser.docs[0].data();
+                    console.log("Found pre-registered user profile by email! Auto-healing under UID...");
+                    const newProfile: UserProfile = {
+                      ...existingData,
+                      uid: firebaseUser.uid,
+                      nome: firebaseUser.displayName || existingData.nome || 'Cliente',
+                      email: userEmail,
+                      tipo: existingData.tipo || 'cliente',
+                      ativo: true,
+                      updatedAt: new Date()
+                    } as UserProfile;
+
+                    try {
+                      await setDoc(doc(db, 'usuarios', firebaseUser.uid), newProfile);
+                      console.log("Missing user profile successfully linked/auto-healed!");
+                    } catch (err) {
+                      console.error("Failed writing auto-healed profile to 'usuarios':", err);
+                    }
+                    setProfile(newProfile);
+                    healedProfile = newProfile;
+                  } else {
+                    // Auto-create default client profile for valid authenticated user
+                    console.log("No user profile found. Auto-creating default client profile for:", userEmail);
+                    const { getActiveTenantId } = await import('../services/tenantService');
+                    const defaultTenantId = getActiveTenantId() || 'gbcortes7';
+                    const newProfile: UserProfile = {
+                      uid: firebaseUser.uid,
+                      nome: firebaseUser.displayName || userEmail.split('@')[0] || 'Cliente',
+                      email: userEmail,
+                      tipo: 'cliente',
+                      ativo: true,
+                      tenantId: defaultTenantId,
+                      telefone: firebaseUser.phoneNumber || '',
+                      phone: firebaseUser.phoneNumber || '',
+                      saldo_atual: 0,
+                      total_gasto: 0,
+                      total_pago: 0,
+                      total_em_aberto: 0,
+                      createdAt: new Date(),
+                      updatedAt: new Date()
+                    };
+
+                    try {
+                      await setDoc(doc(db, 'usuarios', firebaseUser.uid), newProfile);
+                      console.log("Default client profile created successfully!");
+                    } catch (err) {
+                      console.error("Failed writing default client profile to 'usuarios':", err);
+                    }
+                    setProfile(newProfile);
+                    healedProfile = newProfile;
+                  }
                 }
               }
             } catch (healErr) {
@@ -190,10 +252,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!healedProfile) {
               const isMasterAdmin = firebaseUser.email === 'barber@admin.ai' || firebaseUser.email === 'blsseparate7@gmail.com' || firebaseUser.email === 'temp-diagnose-client@example.com';
               if (!isMasterAdmin) {
-                console.warn("Account does not exist in Firestore 'usuarios'. Forcing sign-out.");
-                await auth.signOut();
-                setUser(null);
-                setProfile(null);
+                const creationTimeStr = firebaseUser.metadata.creationTime;
+                const creationTime = creationTimeStr ? new Date(creationTimeStr).getTime() : 0;
+                const now = Date.now();
+                
+                if (now - creationTime > 15000) {
+                  console.warn("Account does not exist in Firestore 'usuarios'. Forcing sign-out.");
+                  await auth.signOut();
+                  setUser(null);
+                  setProfile(null);
+                } else {
+                  console.log("Newly created account detected, waiting for Firestore profile to be created...");
+                }
               } else {
                 setProfile(null);
               }

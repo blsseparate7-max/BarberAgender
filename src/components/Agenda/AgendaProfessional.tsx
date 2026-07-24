@@ -182,8 +182,9 @@ export function AgendaProfessional({
 
   const getDayAppointments = (date: string, time: string) => {
     try {
-      const slotTime = parse(time, 'HH:mm', new Date());
-      if (isNaN(slotTime.getTime())) return [];
+      const slotStart = parse(time, 'HH:mm', new Date());
+      const slotEnd = addMinutes(slotStart, 30);
+      if (isNaN(slotStart.getTime())) return [];
 
       return appointments.filter(app => {
         if (app.profissional_id !== selectedProfissionalId || app.date !== date) return false;
@@ -194,7 +195,7 @@ export function AgendaProfessional({
         
         if (isNaN(appStart.getTime()) || isNaN(appEnd.getTime())) return false;
         
-        return (isEqual(slotTime, appStart) || isAfter(slotTime, appStart)) && isBefore(slotTime, appEnd);
+        return isBefore(slotStart, appEnd) && isAfter(slotEnd, appStart);
       });
     } catch (err) {
       console.error("Error filtering appointments:", err);
@@ -204,11 +205,17 @@ export function AgendaProfessional({
 
   const getDayBlock = (date: string, time: string) => {
     try {
+      const slotStart = parse(time, 'HH:mm', new Date());
+      const slotEnd = addMinutes(slotStart, 30);
       return (blocks || []).find(block => {
         if (block.date !== date) return false;
         if (!block.isGeneral && block.profissional_id !== selectedProfissionalId) return false;
         
-        return time >= block.startTime && time < block.endTime;
+        const bStart = parse(block.startTime, 'HH:mm', new Date());
+        const bEnd = parse(block.endTime, 'HH:mm', new Date());
+        if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return false;
+
+        return isBefore(slotStart, bEnd) && isAfter(slotEnd, bStart);
       });
     } catch (err) {
       console.error("Error filtering blocks in week view:", err);
@@ -283,17 +290,22 @@ export function AgendaProfessional({
               <Loader2 className="animate-spin text-accent" size={32} />
             </div>
           ) : (
-            timeSlots.map(time => (
-              <div key={time} className="flex border-b border-border/50 group">
+            timeSlots.map((time, index) => (
+              <div key={time} className="flex border-b border-border/50 group relative" style={{ zIndex: 100 - index }}>
                 <div className="w-20 flex-shrink-0 border-r border-border p-4 flex items-center justify-center bg-slate-50/30">
                   <span className="text-xs font-bold text-muted">{time}</span>
                 </div>
-                <div className="flex-1 grid grid-cols-7">
+                <div className="flex-1 grid grid-cols-7 relative">
                   {weekDays.map(day => {
                     const dateStr = format(day, 'yyyy-MM-dd');
                     const apps = getDayAppointments(dateStr, time);
                     const block = getDayBlock(dateStr, time);
-                    const isBlockStart = block && block.startTime === time;
+                    const isBlockStart = block && (() => {
+                      const bStart = parse(block.startTime, 'HH:mm', new Date());
+                      const slotStart = parse(time, 'HH:mm', new Date());
+                      const slotEnd = addMinutes(slotStart, 30);
+                      return (isEqual(bStart, slotStart) || isAfter(bStart, slotStart)) && isBefore(bStart, slotEnd);
+                    })();
                     return (
                       <div 
                         key={day.toISOString()} 
@@ -302,8 +314,8 @@ export function AgendaProfessional({
                             onNewAppointment(time, selectedProfissionalId);
                           }
                         }}
-                        className={`p-1 min-h-[60px] border-r border-border/30 last:border-r-0 transition-colors cursor-pointer relative ${
-                          apps.length > 0 || block ? 'bg-slate-50/20' : 'hover:bg-accent/5'
+                        className={`p-1 h-[60px] border-r border-border/30 last:border-r-0 transition-colors relative ${
+                          block ? 'bg-rose-50/50 cursor-not-allowed' : apps.length > 0 ? 'bg-slate-50/20 cursor-pointer' : 'hover:bg-accent/5 cursor-pointer'
                         } ${isSameDay(day, new Date()) ? 'bg-accent/5' : ''}`}
                       >
                         {isBlockStart && (
@@ -327,14 +339,17 @@ export function AgendaProfessional({
                               height: (() => {
                                 const bStart = parse(block.startTime, 'HH:mm', new Date());
                                 const bEnd = parse(block.endTime, 'HH:mm', new Date());
-                                if (!isNaN(bStart.getTime()) && !isNaN(bEnd.getTime())) {
-                                  const bDur = Math.max(30, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
-                                  const bSlots = Math.ceil(bDur / 30);
-                                  return `calc(${bSlots * 100}% + ${(bSlots - 1) * 8}px)`;
-                                }
-                                return '100%';
+                                if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return '53px';
+                                const bDur = Math.max(15, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
+                                return `${(bDur / 30) * 61 - 8}px`;
                               })(),
-                              top: '4px',
+                              top: (() => {
+                                const bStart = parse(block.startTime, 'HH:mm', new Date());
+                                const slotStart = parse(time, 'HH:mm', new Date());
+                                if (isNaN(bStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
+                                const diffMin = (bStart.getTime() - slotStart.getTime()) / (1000 * 60);
+                                return `${4 + (diffMin / 30) * 61}px`;
+                              })(),
                               left: '4px',
                               right: '4px'
                             }}
@@ -359,7 +374,12 @@ export function AgendaProfessional({
                         )}
 
                         {apps.map(app => {
-                          const isStart = app.startTime === time;
+                          const isStart = (() => {
+                            const appStart = parse(app.startTime, 'HH:mm', new Date());
+                            const slotStart = parse(time, 'HH:mm', new Date());
+                            const slotEnd = addMinutes(slotStart, 30);
+                            return (isEqual(appStart, slotStart) || isAfter(appStart, slotStart)) && isBefore(appStart, slotEnd);
+                          })();
                           if (!isStart) return null;
 
                           const start = parse(app.startTime, 'HH:mm', new Date());
@@ -379,8 +399,20 @@ export function AgendaProfessional({
                                 onOpenAppointment(app);
                               }}
                               style={{ 
-                                height: `calc(${slotsCount * 100}% + ${(slotsCount - 1) * 1}px)`,
-                                top: '4px',
+                                height: (() => {
+                                  const appStart = parse(app.startTime, 'HH:mm', new Date());
+                                  const appEnd = parse(app.endTime, 'HH:mm', new Date());
+                                  if (isNaN(appStart.getTime()) || isNaN(appEnd.getTime())) return '53px';
+                                  const durationMin = Math.max(15, (appEnd.getTime() - appStart.getTime()) / (1000 * 60));
+                                  return `${(durationMin / 30) * 61 - 8}px`;
+                                })(),
+                                top: (() => {
+                                  const appStart = parse(app.startTime, 'HH:mm', new Date());
+                                  const slotStart = parse(time, 'HH:mm', new Date());
+                                  if (isNaN(appStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
+                                  const diffMin = (appStart.getTime() - slotStart.getTime()) / (1000 * 60);
+                                  return `${4 + (diffMin / 30) * 61}px`;
+                                })(),
                                 left: '4px',
                                 right: '4px'
                               }}

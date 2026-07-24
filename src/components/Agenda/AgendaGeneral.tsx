@@ -130,8 +130,9 @@ export function AgendaGeneral({
 
   const getBarberAppointments = (profissional_id: string, time: string) => {
     try {
-      const slotTime = parse(time, 'HH:mm', new Date());
-      if (isNaN(slotTime.getTime())) return [];
+      const slotStart = parse(time, 'HH:mm', new Date());
+      const slotEnd = addMinutes(slotStart, 30);
+      if (isNaN(slotStart.getTime())) return [];
       
       return appointments.filter(app => {
         if (app.profissional_id !== profissional_id || app.date !== format(selectedDate, 'yyyy-MM-dd')) return false;
@@ -142,7 +143,7 @@ export function AgendaGeneral({
         
         if (isNaN(appStart.getTime()) || isNaN(appEnd.getTime())) return false;
         
-        return (isEqual(slotTime, appStart) || isAfter(slotTime, appStart)) && isBefore(slotTime, appEnd);
+        return isBefore(slotStart, appEnd) && isAfter(slotEnd, appStart);
       });
     } catch (err) {
       console.error("Error filtering appointments:", err);
@@ -153,11 +154,17 @@ export function AgendaGeneral({
   const getBarberBlock = (profissional_id: string, time: string) => {
     try {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      const slotStart = parse(time, 'HH:mm', new Date());
+      const slotEnd = addMinutes(slotStart, 30);
       return (blocks || []).find(block => {
         if (block.date !== dateStr) return false;
         if (!block.isGeneral && block.profissional_id !== profissional_id) return false;
         
-        return time >= block.startTime && time < block.endTime;
+        const bStart = parse(block.startTime, 'HH:mm', new Date());
+        const bEnd = parse(block.endTime, 'HH:mm', new Date());
+        if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return false;
+
+        return isBefore(slotStart, bEnd) && isAfter(slotEnd, bStart);
       });
     } catch (err) {
       console.error("Error filtering blocks:", err);
@@ -179,38 +186,45 @@ export function AgendaGeneral({
 
   return (
     <div className="bg-surface border border-border rounded-2xl overflow-hidden flex flex-col flex-1 shadow-sm">
-      {/* Header with Barbers */}
-      <div className="flex border-b border-border bg-slate-50/50 sticky top-0 z-20 backdrop-blur-sm">
-        <div className="w-20 flex-shrink-0 border-r border-border p-4 flex items-center justify-center">
-          <Clock size={16} className="text-muted" />
-        </div>
-        <div className="flex-1 overflow-x-auto flex custom-scrollbar">
-          {barbers.map(barber => (
-            <div key={barber.uid} className="min-w-[200px] flex-1 border-r border-border p-4 text-center">
-              <p className="text-sm font-bold text-primary">{barber.nome}</p>
-              <p className="text-[10px] text-muted uppercase tracking-wider font-semibold">{barber.specialty || 'Barbeiro'}</p>
+      <div className="flex-1 overflow-auto custom-scrollbar">
+        <div className="min-w-max flex flex-col min-h-full">
+          {/* Header with Barbers */}
+          <div className="flex border-b border-border bg-slate-50/95 sticky top-0 z-30 backdrop-blur-sm shadow-sm">
+            <div className="w-20 flex-shrink-0 border-r border-border p-4 flex items-center justify-center sticky left-0 z-40 bg-slate-50/95 backdrop-blur-sm">
+              <Clock size={16} className="text-muted" />
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Grid */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="animate-spin text-accent" size={32} />
+            <div className="flex-1 flex">
+              {barbers.map(barber => (
+                <div key={barber.uid} className="min-w-[200px] flex-1 border-r border-border p-4 text-center bg-slate-50/95">
+                  <p className="text-sm font-bold text-primary">{barber.nome}</p>
+                  <p className="text-[10px] text-muted uppercase tracking-wider font-semibold">{barber.specialty || 'Barbeiro'}</p>
+                </div>
+              ))}
+            </div>
           </div>
-        ) : (
-          timeSlots.map(time => (
-            <div key={time} className="flex border-b border-border/50 group">
-              <div className="w-20 flex-shrink-0 border-r border-border p-4 flex items-center justify-center bg-slate-50/30">
-                <span className="text-xs font-bold text-muted">{time}</span>
+
+          {/* Grid */}
+          <div className="flex-1 flex flex-col relative bg-white">
+            {loading ? (
+              <div className="flex items-center justify-center h-64">
+                <Loader2 className="animate-spin text-accent" size={32} />
               </div>
-              <div className="flex-1 flex overflow-x-auto custom-scrollbar">
-                {barbers.map(barber => {
+            ) : (
+              timeSlots.map((time, index) => (
+                <div key={time} className="flex border-b border-border/50 group relative" style={{ zIndex: 100 - index }}>
+                  <div className="w-20 flex-shrink-0 border-r border-border p-4 flex items-center justify-center bg-slate-50/90 sticky left-0 z-20 backdrop-blur-sm">
+                    <span className="text-xs font-bold text-muted">{time}</span>
+                  </div>
+                  <div className="flex-1 flex">
+                    {barbers.map(barber => {
                   const apps = getBarberAppointments(barber.uid, time);
                   const block = getBarberBlock(barber.uid, time);
-                  const isBlockStart = block && block.startTime === time;
+                  const isBlockStart = block && (() => {
+                    const bStart = parse(block.startTime, 'HH:mm', new Date());
+                    const slotStart = parse(time, 'HH:mm', new Date());
+                    const slotEnd = addMinutes(slotStart, 30);
+                    return (isEqual(bStart, slotStart) || isAfter(bStart, slotStart)) && isBefore(bStart, slotEnd);
+                  })();
 
                   return (
                     <div 
@@ -220,8 +234,8 @@ export function AgendaGeneral({
                           onNewAppointment(time, barber.uid);
                         }
                       }}
-                      className={`min-w-[200px] flex-1 p-1 min-h-[60px] border-r border-border/30 transition-colors cursor-pointer relative ${
-                        apps.length > 0 || block ? 'bg-slate-50/20' : 'hover:bg-accent/5'
+                      className={`min-w-[200px] flex-1 p-1 h-[60px] border-r border-border/30 transition-colors relative ${
+                        block ? 'bg-rose-50/50 cursor-not-allowed' : apps.length > 0 ? 'bg-slate-50/20 cursor-pointer' : 'hover:bg-accent/5 cursor-pointer'
                       }`}
                     >
                       {isBlockStart && (
@@ -245,18 +259,21 @@ export function AgendaGeneral({
                             height: (() => {
                               const bStart = parse(block.startTime, 'HH:mm', new Date());
                               const bEnd = parse(block.endTime, 'HH:mm', new Date());
-                              if (!isNaN(bStart.getTime()) && !isNaN(bEnd.getTime())) {
-                                const bDur = Math.max(30, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
-                                const bSlots = Math.ceil(bDur / 30);
-                                return `calc(${bSlots * 100}% + ${(bSlots - 1) * 8}px)`;
-                              }
-                              return '100%';
+                              if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return '53px';
+                              const bDur = Math.max(15, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
+                              return `${(bDur / 30) * 61 - 8}px`;
                             })(),
-                            top: '4px',
+                            top: (() => {
+                              const bStart = parse(block.startTime, 'HH:mm', new Date());
+                              const slotStart = parse(time, 'HH:mm', new Date());
+                              if (isNaN(bStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
+                              const diffMin = (bStart.getTime() - slotStart.getTime()) / (1000 * 60);
+                              return `${4 + (diffMin / 30) * 61}px`;
+                            })(),
                             left: '4px',
                             right: '4px'
                           }}
-                          className="absolute rounded-xl border border-rose-200 bg-rose-50/95 text-rose-700 p-3 flex flex-col justify-between shadow-sm z-10 transition-transform active:scale-[0.98] cursor-pointer hover:border-rose-400 group/block"
+                          className="absolute rounded-xl border border-rose-200 bg-rose-50/95 text-rose-700 p-2 flex flex-col justify-between shadow-sm z-10 transition-transform active:scale-[0.98] cursor-pointer hover:border-rose-400 group/block"
                         >
                           <div>
                             <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider mb-1 text-rose-600">
@@ -280,7 +297,12 @@ export function AgendaGeneral({
                       )}
 
                       {apps.map(app => {
-                        const isStart = app.startTime === time;
+                        const isStart = (() => {
+                          const appStart = parse(app.startTime, 'HH:mm', new Date());
+                          const slotStart = parse(time, 'HH:mm', new Date());
+                          const slotEnd = addMinutes(slotStart, 30);
+                          return (isEqual(appStart, slotStart) || isAfter(appStart, slotStart)) && isBefore(appStart, slotEnd);
+                        })();
                         if (!isStart) return null;
 
                         const start = parse(app.startTime, 'HH:mm', new Date());
@@ -300,12 +322,24 @@ export function AgendaGeneral({
                               onOpenAppointment(app);
                             }}
                             style={{ 
-                              height: `calc(${slotsCount * 100}% + ${(slotsCount - 1) * 1}px)`,
-                              top: '4px',
+                              height: (() => {
+                                const appStart = parse(app.startTime, 'HH:mm', new Date());
+                                const appEnd = parse(app.endTime, 'HH:mm', new Date());
+                                if (isNaN(appStart.getTime()) || isNaN(appEnd.getTime())) return '53px';
+                                const durationMin = Math.max(15, (appEnd.getTime() - appStart.getTime()) / (1000 * 60));
+                                return `${(durationMin / 30) * 61 - 8}px`;
+                              })(),
+                              top: (() => {
+                                const appStart = parse(app.startTime, 'HH:mm', new Date());
+                                const slotStart = parse(time, 'HH:mm', new Date());
+                                if (isNaN(appStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
+                                const diffMin = (appStart.getTime() - slotStart.getTime()) / (1000 * 60);
+                                return `${4 + (diffMin / 30) * 61}px`;
+                              })(),
                               left: '4px',
                               right: '4px'
                             }}
-                            className={`absolute rounded-xl border p-3 flex flex-col justify-between shadow-sm z-10 ${getStatusColor(app.status)}`}
+                            className={`absolute rounded-xl border p-2 flex flex-col justify-between shadow-sm z-10 ${getStatusColor(app.status)}`}
                           >
                             <div>
                               <p className="text-[11px] font-bold uppercase leading-none mb-1 truncate">{app.cliente_name}</p>
@@ -377,6 +411,8 @@ export function AgendaGeneral({
             </div>
           ))
         )}
+      </div>
+        </div>
       </div>
     </div>
   );

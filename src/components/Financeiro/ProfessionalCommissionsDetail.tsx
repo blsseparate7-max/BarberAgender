@@ -243,9 +243,11 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
               date: pDate || new Date().toISOString().split('T')[0],
               description: p.description || 'Adiantamento / Vale',
               status: p.status === 'paid' ? 'pago' : 'pendente',
+              responsible_id: p.responsible_id || '',
+              responsible_name: p.responsible_name || '',
               createdAt: p.createdAt,
               updatedAt: p.updatedAt
-            } as ProfessionalAdvance);
+            } as unknown as ProfessionalAdvance);
           }
         }
       });
@@ -275,9 +277,11 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
               date: cDate || new Date().toISOString().split('T')[0],
               description: c.description || 'Vale / Sangria de Caixa',
               status: 'pendente',
+              responsible_id: c.usuario_id || '',
+              responsible_name: c.usuario_name || '',
               createdAt: c.createdAt,
               updatedAt: c.updatedAt
-            } as ProfessionalAdvance);
+            } as unknown as ProfessionalAdvance);
           }
         }
       });

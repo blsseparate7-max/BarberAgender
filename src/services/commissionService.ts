@@ -134,7 +134,7 @@ export const commissionService = {
       }
 
       payablesSnap.docs.forEach(docSnap => {
-        const p = docSnap.data();
+        const p = docSnap.data() as any;
         const category = (p.category || '').toLowerCase();
         const desc = (p.description || '').toLowerCase();
         const supplier = (p.supplier || '').toLowerCase();
@@ -197,7 +197,7 @@ export const commissionService = {
       }
 
       cashSnap.docs.forEach(docSnap => {
-        const c = docSnap.data();
+        const c = docSnap.data() as any;
         const category = (c.category || '').toLowerCase();
         const desc = (c.description || '').toLowerCase();
         const cProName = (c.profissional_name || '').toLowerCase();

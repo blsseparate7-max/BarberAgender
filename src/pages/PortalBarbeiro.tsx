@@ -39,6 +39,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
+import { getActiveTenantId } from '../services/tenantService';
 import { appointmentService } from '../services/appointmentService';
 import { commissionService } from '../services/commissionService';
 import { inventoryService } from '../services/inventoryService';
@@ -1689,7 +1690,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         appointment={selectedAppointment}
         currentUser={profile}
         initialTime={selectedTimeSlot?.time}
-        initialProfissionalId={selectedTimeSlot?.profissional_id}
+        initialProfissionalId={selectedTimeSlot?.profissional_id || profile.uid || profile.id}
         onOpenComanda={handleOpenComanda}
       />
 

@@ -101,11 +101,14 @@ export function AppointmentModal({
         origin: appointment.origin || 'agenda'
       });
     } else {
-      const barber = barbers.find(b => b.uid === initialProfissionalId);
+      const targetProfId = initialProfissionalId || (currentUser.tipo === 'barbeiro' ? (currentUser.uid || currentUser.id) : '');
+      const barber = barbers.find(b => b.uid === targetProfId || b.id === targetProfId) || 
+                     (currentUser.tipo === 'barbeiro' || targetProfId === currentUser.uid || targetProfId === currentUser.id ? currentUser : undefined);
+      
       setFormData({
         cliente_id: currentUser.tipo === 'cliente' ? currentUser.uid : '',
         cliente_name: currentUser.tipo === 'cliente' ? currentUser.nome : '',
-        profissional_id: initialProfissionalId || (currentUser.tipo === 'barbeiro' ? currentUser.uid : ''),
+        profissional_id: targetProfId || '',
         profissional_name: barber?.nome || (currentUser.tipo === 'barbeiro' ? currentUser.nome : ''),
         servico_id: '',
         servico_name: '',
@@ -113,7 +116,7 @@ export function AppointmentModal({
         startTime: initialTime || '',
         notes: '',
         status: 'agendado',
-        origin: initialTime && initialProfissionalId ? 'encaixe' : 'agenda'
+        origin: initialTime && targetProfId ? 'encaixe' : 'agenda'
       });
     }
   }, [appointment, currentUser, initialTime, initialProfissionalId, barbers]);
@@ -165,7 +168,13 @@ export function AppointmentModal({
 
     try {
       const service = services.find(s => s.id === formData.servico_id);
-      const barber = barbers.find(b => b.uid === formData.profissional_id);
+      
+      const targetProfId = formData.profissional_id || initialProfissionalId || (currentUser.tipo === 'barbeiro' ? (currentUser.uid || currentUser.id) : '');
+      let barber = barbers.find(b => b.uid === targetProfId || b.id === targetProfId);
+      if (!barber && (currentUser.tipo === 'barbeiro' || targetProfId === currentUser.uid || targetProfId === currentUser.id)) {
+        barber = currentUser;
+      }
+
       const client = currentUser.tipo === 'cliente' 
         ? currentUser 
         : (formData.cliente_id === 'sem_cadastro' 
@@ -193,8 +202,8 @@ export function AppointmentModal({
       const appointmentData = {
         cliente_id: client.uid,
         cliente_name: client.nome,
-        profissional_id: barber.uid,
-        profissional_name: barber.nome,
+        profissional_id: barber.uid || barber.id || targetProfId,
+        profissional_name: barber.nome || formData.profissional_name || 'Profissional',
         servico_id: service.id,
         servico_name: service.name,
         date: formData.date,
@@ -228,12 +237,20 @@ export function AppointmentModal({
     if (formData.servico_id) {
       const selectedService = services.find(s => s.id === formData.servico_id);
       if (selectedService && selectedService.barbeiros_ids && selectedService.barbeiros_ids.length > 0) {
-        if (formData.profissional_id && !selectedService.barbeiros_ids.includes(formData.profissional_id)) {
-          setFormData(prev => ({ ...prev, profissional_id: '', profissional_name: '' }));
+        if (formData.profissional_id) {
+          const matchProf = selectedService.barbeiros_ids.some(id => {
+            if (id === formData.profissional_id) return true;
+            const b = barbers.find(b => b.uid === formData.profissional_id || b.id === formData.profissional_id);
+            return b && (id === b.uid || id === b.id);
+          });
+          
+          if (!matchProf && currentUser.tipo !== 'barbeiro' && initialProfissionalId !== formData.profissional_id) {
+            setFormData(prev => ({ ...prev, profissional_id: '', profissional_name: '' }));
+          }
         }
       }
     }
-  }, [formData.servico_id, services]);
+  }, [formData.servico_id, services, barbers]);
 
   if (!isOpen) return null;
 
@@ -245,7 +262,11 @@ export function AppointmentModal({
     // If a service is selected and has a list of allowed professional IDs, check if this barber is in the list
     if (selectedService) {
       if (selectedService.barbeiros_ids && selectedService.barbeiros_ids.length > 0) {
-        return selectedService.barbeiros_ids.includes(b.uid);
+        const isMatch = selectedService.barbeiros_ids.some(id => id === b.uid || id === b.id);
+        if (!isMatch && (b.uid === currentUser.uid || b.id === currentUser.id)) {
+          return true; // Always allow current logged-in barber
+        }
+        return isMatch;
       }
     }
     return true;

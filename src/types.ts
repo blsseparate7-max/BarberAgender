@@ -16,6 +16,7 @@ export type UserRole = 'admin' | 'gerente' | 'barbeiro' | 'cliente' | 'saas_admi
 
 export interface UserProfile {
   uid: string;
+  id?: string;
   email: string;
   nome: string;
   telefone?: string;

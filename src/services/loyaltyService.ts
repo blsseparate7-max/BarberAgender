@@ -95,19 +95,20 @@ export const loyaltyService = {
         currentCashback = data.cashback;
       }
 
-      const pointsToAdd = (value * config.pointsPerReal) + (source === 'appointment' ? config.pointsPerAppointment : 0);
+      const pointsToAdd = 0;
       let cashbackToAdd = 0;
-      if (config.cashbackEnabled) {
+      if (config.cashbackEnabled !== false) {
         if (config.cashbackType === 'fixo') {
           cashbackToAdd = Number(config.cashbackFixedValue) || 0;
         } else {
-          cashbackToAdd = (value * (Number(config.cashbackPercentage) || 0)) / 100;
+          const pct = Number(config.cashbackPercentage) > 0 ? Number(config.cashbackPercentage) : 5;
+          cashbackToAdd = (value * pct) / 100;
         }
       }
 
-      const newPoints = currentPoints + pointsToAdd;
+      const newPoints = currentPoints;
       const newCashback = currentCashback + cashbackToAdd;
-      const isVip = newPoints >= config.vipThreshold;
+      const isVip = false;
 
       transaction.set(pointsRef, {
         cliente_id,

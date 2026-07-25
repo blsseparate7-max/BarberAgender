@@ -24,7 +24,10 @@ import {
   Facebook,
   X,
   Globe,
-  UserX
+  UserX,
+  Coins,
+  TrendingUp,
+  Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
@@ -37,7 +40,7 @@ import { loyaltyService } from '../services/loyaltyService';
 import { subscriptionService } from '../services/subscriptionService';
 import { getActiveTenantId, tenantService, TenantProfile } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
-import { UserProfile, Appointment, Service, LoyaltyPoints, Subscription } from '../types';
+import { UserProfile, Appointment, Service, LoyaltyPoints, LoyaltyHistory, Subscription } from '../types';
 import { format, parse, addMinutes, isAfter, isBefore, isEqual } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -134,6 +137,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [services, setServices] = useState<Service[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loyalty, setLoyalty] = useState<LoyaltyPoints | null>(null);
+  const [loyaltyHistory, setLoyaltyHistory] = useState<LoyaltyHistory[]>([]);
+  const [totalSpent, setTotalSpent] = useState<number>(0);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [packages, setPackages] = useState<any[]>([]);
   const [tenantInfo, setTenantInfo] = useState<any>(null);
@@ -234,6 +239,67 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadingSlots, setLoadingSlots] = useState(false);
 
+  // Auto-heal/sync appointments with closed comandas
+  const syncClientAppointmentsWithComandas = async (clientUid: string, apps: Appointment[]) => {
+    if (!clientUid || !apps || apps.length === 0) return;
+
+    try {
+      const qComandas = query(
+        collection(db, 'comandas'),
+        where('cliente_id', '==', clientUid),
+        where('status', '==', 'fechada')
+      );
+      const snap = await getDocs(qComandas);
+      if (snap.empty) return;
+
+      const closedComandas = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+      const closedAppIds = new Set<string>();
+      const closedComandaIds = new Set<string>();
+
+      closedComandas.forEach(c => {
+        closedComandaIds.add(c.id);
+        const apptId = c.agendamento_id || c.agendamentoId || c.appointment_id || c.appointmentId;
+        if (apptId) closedAppIds.add(apptId);
+      });
+
+      const pendingToClose = apps.filter(app => {
+        if (app.status === 'concluído' || app.status === 'cancelado' || app.status === 'faltou') {
+          return false;
+        }
+        if (closedAppIds.has(app.id)) return true;
+        if (app.comanda_id && closedComandaIds.has(app.comanda_id)) return true;
+
+        const matchByDetails = closedComandas.some(c => {
+          const comandaDate = c.createdAt?.toDate ? format(c.createdAt.toDate(), 'yyyy-MM-dd') : c.date;
+          return (
+            (c.cliente_id === app.cliente_id) &&
+            (c.profissional_id === app.profissional_id) &&
+            (comandaDate === app.date || c.date === app.date)
+          );
+        });
+
+        return matchByDetails;
+      });
+
+      if (pendingToClose.length > 0) {
+        for (const app of pendingToClose) {
+          try {
+            await updateDoc(doc(db, 'appointments', app.id), {
+              status: 'concluído',
+              updatedAt: serverTimestamp()
+            });
+            setAppointments(prev => prev.map(a => a.id === app.id ? { ...a, status: 'concluído' } : a));
+          } catch (e) {
+            console.warn("Failed to auto-heal appointment status:", e);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Error auto-healing client appointments with closed comandas:", err);
+    }
+  };
+
   useEffect(() => {
     loadData();
 
@@ -242,6 +308,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       { cliente_id: profile.uid },
       (updatedApps) => {
         setAppointments(updatedApps);
+        syncClientAppointmentsWithComandas(profile.uid, updatedApps);
       }
     );
 
@@ -257,11 +324,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     }
   }, [selectedBarber, selectedService, selectedDate]);
 
-  useEffect(() => {
-    if (activeTab === 'fidelidade' && loyaltyConfig && !loyaltyConfig.cashbackEnabled) {
-      setActiveTab('home');
-    }
-  }, [activeTab, loyaltyConfig]);
+  // Fidelidade tab is available for client cashback view
 
   const loadData = async () => {
     setLoading(true);
@@ -376,6 +439,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       try {
         const clientApps = await appointmentService.getAppointments({ cliente_id: profile.uid });
         setAppointments(clientApps);
+        syncClientAppointmentsWithComandas(profile.uid, clientApps);
       } catch (err) {
         console.warn("Could not load client appointments list:", err);
       }
@@ -384,8 +448,29 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       try {
         const loyaltyPoints = await loyaltyService.getClientPoints(profile.uid);
         setLoyalty(loyaltyPoints);
+        const history = await loyaltyService.getHistory(profile.uid);
+        setLoyaltyHistory(history);
       } catch (err) {
-        console.warn("Could not load client loyalty points:", err);
+        console.warn("Could not load client loyalty points & history:", err);
+      }
+
+      // Calculate total spent in barbearia
+      try {
+        const qComandas = query(
+          collection(db, 'comandas'),
+          where('cliente_id', '==', profile.uid),
+          where('status', '==', 'fechada')
+        );
+        const comSnap = await getDocs(qComandas);
+        let sum = 0;
+        comSnap.docs.forEach(d => {
+          const data = d.data();
+          sum += Number(data.paidAmount || data.totalAmount || 0);
+        });
+        setTotalSpent(sum);
+      } catch (err) {
+        console.warn("Could not calculate total spent:", err);
+        setTotalSpent(profile.total_pago || profile.total_gasto || 0);
       }
 
       // Load subscriptions
@@ -611,7 +696,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
   // Filter future active appointments
   const futureAppointments = appointments.filter(app => {
-    if (app.status === 'cancelado' || app.status === 'faltou') return false;
+    if (app.status === 'cancelado' || app.status === 'faltou' || app.status === 'concluído') return false;
     // Keep today's and future ones
     const today = format(new Date(), 'yyyy-MM-dd');
     return app.date >= today;
@@ -2067,6 +2152,137 @@ export function PortalCliente({ profile }: PortalClienteProps) {
             </motion.div>
           )}
 
+          {/* TAB: FIDELIDADE / CASHBACK */}
+          {activeTab === 'fidelidade' && (
+            <motion.div 
+              key="fidelidade"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
+              className="space-y-6"
+            >
+              {/* Header Banner */}
+              <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 rounded-[32px] p-6 md:p-8 text-white relative overflow-hidden shadow-xl border border-indigo-800/40">
+                <div className="absolute top-0 right-0 p-6 opacity-10 text-amber-400 pointer-events-none">
+                  <Coins size={160} />
+                </div>
+
+                <div className="relative z-10 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-400 flex items-center justify-center font-bold">
+                        <Award size={18} />
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">
+                        Programa de Cashback
+                      </span>
+                    </div>
+                    {loyaltyConfig?.cashbackEnabled !== false ? (
+                      <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-black uppercase tracking-widest rounded-full flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> Programa Ativo ({loyaltyConfig?.cashbackPercentage ?? 5}%)
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-slate-800 text-slate-400 border border-slate-700 text-[9px] font-black uppercase tracking-widest rounded-full">
+                        Programa Inativo
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    {/* Cashback Balance Card */}
+                    <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-300/80">
+                          Seu Saldo de Cashback
+                        </span>
+                        <Coins size={18} className="text-amber-400" />
+                      </div>
+                      <p className="text-3xl font-black text-amber-300 tracking-tight">
+                        R$ {(loyalty?.cashback || 0).toFixed(2)}
+                      </p>
+                      <p className="text-[10px] font-semibold text-slate-300">
+                        Disponível para descontar no seu próximo atendimento
+                      </p>
+                    </div>
+
+                    {/* Total Spent Card */}
+                    <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200/80">
+                          Total Gasto na Barbearia
+                        </span>
+                        <TrendingUp size={18} className="text-emerald-400" />
+                      </div>
+                      <p className="text-3xl font-black text-white tracking-tight">
+                        R$ {totalSpent.toFixed(2)}
+                      </p>
+                      <p className="text-[10px] font-semibold text-slate-300">
+                        Acumulado em atendimentos concluídos
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Rule explanation box */}
+                  <div className="p-4 bg-indigo-900/50 border border-indigo-700/50 rounded-2xl flex items-start gap-3 text-xs font-semibold text-indigo-100">
+                    <Zap size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                    <p>
+                      <strong className="text-white">Como funciona?</strong> Você recebe <span className="text-amber-300 font-bold">{loyaltyConfig?.cashbackPercentage ?? 5}% de cashback</span> de volta sobre o valor gasto em cada atendimento ou comanda finalizada nesta barbearia!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Statement / History Section */}
+              <div className="bg-white rounded-[32px] border border-slate-100 p-6 md:p-8 space-y-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <History size={18} className="text-indigo-600" />
+                    <h3 className="text-sm font-black text-slate-800 tracking-tight">Extrato de Cashback</h3>
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    {loyaltyHistory.length} {loyaltyHistory.length === 1 ? 'registro' : 'registros'}
+                  </span>
+                </div>
+
+                {loyaltyHistory.length > 0 ? (
+                  <div className="divide-y divide-slate-100">
+                    {loyaltyHistory.map((item, idx) => (
+                      <div key={item.id || idx} className="py-3.5 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold ${
+                            item.type === 'earn' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
+                          }`}>
+                            {item.type === 'earn' ? '+' : '-'}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-800">{item.description}</p>
+                            <p className="text-[10px] font-medium text-slate-400">{item.date}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-xs font-black ${item.type === 'earn' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {item.type === 'earn' ? '+' : '-'}R$ {(item.cashback || 0).toFixed(2)}
+                          </p>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                            {item.type === 'earn' ? 'Cashback Creditado' : 'Resgatado'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                    <Coins className="mx-auto text-slate-300" size={32} />
+                    <p className="text-xs text-slate-500 font-bold">Nenhuma movimentação de cashback registrada ainda.</p>
+                    <p className="text-[10px] text-slate-400 font-medium">Seu cashback acumulado aparecerá aqui ao concluir seus próximos atendimentos.</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
           {/* TAB: PERFIL */}
           {activeTab === 'perfil' && (
             <motion.div 
@@ -2188,17 +2404,15 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           <span className="text-[8px] font-black uppercase tracking-wider">Histórico</span>
         </button>
 
-        {loyaltyConfig?.cashbackEnabled && (
-          <button
-            onClick={() => setActiveTab('fidelidade')}
-            className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-              activeTab === 'fidelidade' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            <Award size={18} />
-            <span className="text-[8px] font-black uppercase tracking-wider">Fidelidade</span>
-          </button>
-        )}
+        <button
+          onClick={() => setActiveTab('fidelidade')}
+          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+            activeTab === 'fidelidade' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Award size={18} />
+          <span className="text-[8px] font-black uppercase tracking-wider">Fidelidade</span>
+        </button>
 
         <button
           onClick={() => setActiveTab('pacotes')}

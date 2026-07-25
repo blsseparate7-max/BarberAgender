@@ -246,8 +246,26 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
         status: 'paid',
         paidAt: new Date().toISOString() as any,
         paymentMethod: deductFromCash ? 'dinheiro' : 'pix',
-        transactionId
+        transactionId,
+        profissional_id: selectedBarberId,
+        profissional_name: selectedBarber.nome || 'Profissional'
       });
+
+      // 3.5. Register as Professional Advance (Vale)
+      try {
+        await commissionService.registerAdvance({
+          profissional_id: selectedBarberId,
+          profissional_name: selectedBarber.nome || 'Profissional',
+          amount: val,
+          description: valeDescription || 'Adiantamento / Vale',
+          date: todayStr,
+          status: 'pendente',
+          responsible_id: user.uid,
+          responsible_name: profile?.nome || user.displayName || 'Sistema'
+        });
+      } catch (e) {
+        console.warn("Could not register professional advance in CashWidget:", e);
+      }
 
       // 4. Register Cash Movement if requested
       if (deductFromCash) {
@@ -261,8 +279,10 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
           is_receivable: false,
           usuario_id: user.uid,
           usuario_name: profile?.nome || user.displayName || 'Sistema',
+          profissional_id: selectedBarberId,
+          profissional_name: selectedBarber.nome || 'Profissional',
           date: todayStr
-        });
+        } as any);
       }
 
       setValeAmount('');

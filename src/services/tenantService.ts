@@ -84,7 +84,7 @@ export function getActiveTenantId(): string {
   if (saved) return saved.trim().toLowerCase();
 
   // 3. Default fallback
-  return '';
+  return 'gbcortes7';
 }
 
 export const tenantService = {

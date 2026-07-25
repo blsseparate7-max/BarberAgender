@@ -133,6 +133,8 @@ export const comandaService = {
 
     const totalAmount = subtotalServices + subtotalProducts;
 
+    const linkedAppId = data.agendamento_id || (data as any).agendamentoId || (data as any).appointment_id || (data as any).appointmentId || '';
+
     const newComanda: Comanda = {
       id: docRef.id,
       tenantId: getActiveTenantId(),
@@ -141,7 +143,7 @@ export const comandaService = {
       cliente_name: data.cliente_name || '',
       profissional_id: data.profissional_id || '',
       profissional_name: data.profissional_name || '',
-      agendamento_id: data.agendamento_id || '',
+      agendamento_id: linkedAppId,
       origin: data.origin || 'balcao',
       status: data.status || 'aberta',
       subtotalServices,
@@ -168,6 +170,18 @@ export const comandaService = {
 
     try {
       await setDoc(docRef, newComanda);
+
+      if (linkedAppId) {
+        try {
+          await updateDoc(doc(db, 'appointments', linkedAppId), {
+            comanda_id: docRef.id,
+            comanda_number: number,
+            updatedAt: serverTimestamp()
+          });
+        } catch (err) {
+          console.warn("Could not link comanda_id on appointment:", err);
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, COLLECTION);
     }
@@ -298,10 +312,11 @@ export const comandaService = {
       }
 
       // 2.2 Read appointment snap
+      const linkedAppId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
       let appSnap = null;
-      if (comanda.agendamento_id) {
+      if (linkedAppId) {
         try {
-          appSnap = await transaction.get(doc(db, 'appointments', comanda.agendamento_id));
+          appSnap = await transaction.get(doc(db, 'appointments', linkedAppId));
         } catch (e) {
           console.warn("Appointment not found during payment closure", e);
         }
@@ -531,82 +546,179 @@ export const comandaService = {
     try {
       const updatedSnap = await getDoc(docRef);
       if (updatedSnap.exists() && updatedSnap.data().status === 'fechada') {
-        await this.closeLinkedAppointments(id);
+        const uData = updatedSnap.data();
+        const apptId = uData.agendamento_id || uData.agendamentoId || uData.appointment_id || uData.appointmentId;
+        await this.closeLinkedAppointments(id, apptId);
+
+        if (uData.cliente_id) {
+          try {
+            await loyaltyService.addPoints(
+              uData.cliente_id,
+              0,
+              uData.paidAmount || uData.totalAmount || 0,
+              `Cashback - Comanda #${uData.number}`,
+              'appointment'
+            );
+          } catch (loyaltyErr) {
+            console.warn("Could not calculate/credit cashback for closed comanda:", loyaltyErr);
+          }
+        }
       }
     } catch (err) {
       console.warn("Error in post-payment appointment closure sync:", err);
     }
   },
 
-  async closeLinkedAppointments(comandaId: string) {
+  async closeLinkedAppointments(comandaId: string, agendamentoId?: string) {
     try {
+      const batch = writeBatch(db);
+      let updatedCount = 0;
+
+      if (agendamentoId) {
+        batch.update(doc(db, 'appointments', agendamentoId), {
+          status: 'concluído',
+          updatedAt: serverTimestamp()
+        });
+        updatedCount++;
+      }
+
+      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+      if (comandaSnap.exists()) {
+        const cData = comandaSnap.data();
+        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+        if (linkedId && linkedId !== agendamentoId) {
+          batch.update(doc(db, 'appointments', linkedId), {
+            status: 'concluído',
+            updatedAt: serverTimestamp()
+          });
+          updatedCount++;
+        }
+      }
+
       const apptsQuery = query(
         collection(db, 'appointments'),
         where('comanda_id', '==', comandaId)
       );
       const apptsSnap = await getDocs(apptsQuery);
       if (!apptsSnap.empty) {
-        const batch = writeBatch(db);
         apptsSnap.forEach((docSnap) => {
           if (docSnap.data().status !== 'concluído') {
             batch.update(docSnap.ref, {
               status: 'concluído',
               updatedAt: serverTimestamp()
             });
+            updatedCount++;
           }
         });
+      }
+
+      if (updatedCount > 0) {
         await batch.commit();
-        console.log(`Successfully completed linked appointments for comanda ${comandaId}`);
+        console.log(`Successfully completed ${updatedCount} linked appointments for comanda ${comandaId}`);
       }
     } catch (err) {
       console.warn("Error auto-closing linked appointments for comanda:", err);
     }
   },
 
-  async cancelLinkedAppointments(comandaId: string) {
+  async cancelLinkedAppointments(comandaId: string, agendamentoId?: string) {
     try {
+      const batch = writeBatch(db);
+      let updatedCount = 0;
+
+      if (agendamentoId) {
+        batch.update(doc(db, 'appointments', agendamentoId), {
+          status: 'cancelado',
+          updatedAt: serverTimestamp()
+        });
+        updatedCount++;
+      }
+
+      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+      if (comandaSnap.exists()) {
+        const cData = comandaSnap.data();
+        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+        if (linkedId && linkedId !== agendamentoId) {
+          batch.update(doc(db, 'appointments', linkedId), {
+            status: 'cancelado',
+            updatedAt: serverTimestamp()
+          });
+          updatedCount++;
+        }
+      }
+
       const apptsQuery = query(
         collection(db, 'appointments'),
         where('comanda_id', '==', comandaId)
       );
       const apptsSnap = await getDocs(apptsQuery);
       if (!apptsSnap.empty) {
-        const batch = writeBatch(db);
         apptsSnap.forEach((docSnap) => {
           if (docSnap.data().status !== 'cancelado') {
             batch.update(docSnap.ref, {
               status: 'cancelado',
               updatedAt: serverTimestamp()
             });
+            updatedCount++;
           }
         });
+      }
+
+      if (updatedCount > 0) {
         await batch.commit();
-        console.log(`Successfully canceled linked appointments for comanda ${comandaId}`);
+        console.log(`Successfully canceled ${updatedCount} linked appointments for comanda ${comandaId}`);
       }
     } catch (err) {
       console.warn("Error auto-canceling linked appointments for comanda:", err);
     }
   },
 
-  async markAbsentLinkedAppointments(comandaId: string) {
+  async markAbsentLinkedAppointments(comandaId: string, agendamentoId?: string) {
     try {
+      const batch = writeBatch(db);
+      let updatedCount = 0;
+
+      if (agendamentoId) {
+        batch.update(doc(db, 'appointments', agendamentoId), {
+          status: 'faltou',
+          updatedAt: serverTimestamp()
+        });
+        updatedCount++;
+      }
+
+      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+      if (comandaSnap.exists()) {
+        const cData = comandaSnap.data();
+        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+        if (linkedId && linkedId !== agendamentoId) {
+          batch.update(doc(db, 'appointments', linkedId), {
+            status: 'faltou',
+            updatedAt: serverTimestamp()
+          });
+          updatedCount++;
+        }
+      }
+
       const apptsQuery = query(
         collection(db, 'appointments'),
         where('comanda_id', '==', comandaId)
       );
       const apptsSnap = await getDocs(apptsQuery);
       if (!apptsSnap.empty) {
-        const batch = writeBatch(db);
         apptsSnap.forEach((docSnap) => {
           if (docSnap.data().status !== 'faltou') {
             batch.update(docSnap.ref, {
               status: 'faltou',
               updatedAt: serverTimestamp()
             });
+            updatedCount++;
           }
         });
+      }
+
+      if (updatedCount > 0) {
         await batch.commit();
-        console.log(`Successfully marked linked appointments as faltou for comanda ${comandaId}`);
+        console.log(`Successfully marked ${updatedCount} linked appointments as faltou for comanda ${comandaId}`);
       }
     } catch (err) {
       console.warn("Error auto-marking absent linked appointments for comanda:", err);
@@ -625,14 +737,10 @@ export const comandaService = {
     productExistsMap: Record<string, boolean> = {},
     servicesMap: Record<string, any> = {}
   ) {
-    // 0. Loyalty Points Calculation (Pre-load config)
-    // In a real scenario, we might want to pass config into this method if called from a place that already has it.
-    // For now, let's assume we might need to fetch it if we want custom logic, 
-    // but we can also use increment() for some parts.
-    
     // 1. Update Appointment if exists
-    if (comanda.agendamento_id && appointmentExists) {
-      const appointmentRef = doc(db, 'appointments', comanda.agendamento_id);
+    const apptId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
+    if (apptId) {
+      const appointmentRef = doc(db, 'appointments', apptId);
       transaction.update(appointmentRef, {
         status: 'concluído',
         updatedAt: serverTimestamp()
@@ -835,10 +943,11 @@ export const comandaService = {
       }
 
       // 3. Read appointment snap
+      const linkedAppId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
       let appSnap = null;
-      if (comanda.agendamento_id) {
+      if (linkedAppId) {
         try {
-          appSnap = await transaction.get(doc(db, 'appointments', comanda.agendamento_id));
+          appSnap = await transaction.get(doc(db, 'appointments', linkedAppId));
         } catch (e) {
           console.warn("Appointment not found during closure", e);
         }
@@ -932,8 +1041,9 @@ export const comandaService = {
           servicesMap
         );
       } else if (finalStatus === 'cancelada' || finalStatus === 'ausente') {
-        if (comanda.agendamento_id && appSnap?.exists()) {
-          const appointmentRef = doc(db, 'appointments', comanda.agendamento_id);
+        const linkedAppId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
+        if (linkedAppId) {
+          const appointmentRef = doc(db, 'appointments', linkedAppId);
           transaction.update(appointmentRef, {
             status: finalStatus === 'ausente' ? 'faltou' : 'cancelado',
             updatedAt: serverTimestamp()
@@ -943,12 +1053,16 @@ export const comandaService = {
     });
 
     try {
+      const comandaSnapPost = await getDoc(docRef);
+      const postData = comandaSnapPost.exists() ? comandaSnapPost.data() : null;
+      const linkedAppIdPost = postData ? (postData.agendamento_id || postData.agendamentoId || postData.appointment_id || postData.appointmentId) : undefined;
+
       if (status === 'fechada') {
-        await this.closeLinkedAppointments(id);
+        await this.closeLinkedAppointments(id, linkedAppIdPost);
       } else if (status === 'cancelada') {
-        await this.cancelLinkedAppointments(id);
+        await this.cancelLinkedAppointments(id, linkedAppIdPost);
       } else if (status === 'ausente') {
-        await this.markAbsentLinkedAppointments(id);
+        await this.markAbsentLinkedAppointments(id, linkedAppIdPost);
       }
     } catch (e) {
       console.error("Error updating linked appointments inside closeComanda:", e);

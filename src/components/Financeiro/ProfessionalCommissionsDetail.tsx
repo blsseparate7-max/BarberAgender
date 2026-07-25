@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, Calendar, Plus, Printer, DollarSign, TrendingUp, Percent, 
   Receipt, CheckCircle2, Wallet, Briefcase, FileText, History, Loader2, Info,
-  Scissors, Coffee, Box, Sparkles, Tag, Users, X, ChevronRight, Filter, Download, Share2
+  Scissors, Coffee, Box, Sparkles, Tag, Users, X, ChevronRight, Filter, Download, Share2,
+  Gift, Award
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { toast } from 'sonner';
@@ -162,6 +163,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   const [activeSubTab, setActiveSubTab] = useState<'analytical' | 'vales' | 'repasse'>('analytical');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isValeModalOpen, setIsValeModalOpen] = useState(false);
+  const [isBonusModalOpen, setIsBonusModalOpen] = useState(false);
 
   // States to choose which vales to deduct from current payout session
   const [selectedAdvanceIds, setSelectedAdvanceIds] = useState<string[]>([]);
@@ -183,6 +185,13 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     paymentMethod: 'pix'
   });
 
+  const [bonusData, setBonusData] = useState({
+    amount: '',
+    description: '',
+    source: 'financeiro',
+    paymentMethod: 'pix'
+  });
+
   // Reactive listeners to avoid any manual reload and give live synchronization
   useEffect(() => {
     if (!tenantId) return;
@@ -198,12 +207,106 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       setLoading(false);
     });
 
+    // Reactive listeners for advances, payables, and cash movements
+    let rawAdvs: any[] = [];
+    let rawPayables: any[] = [];
+    let rawCashMovs: any[] = [];
+
+    const mergeAdvances = () => {
+      const merged: any[] = [...rawAdvs];
+      const proNameLower = (professionalName || '').toLowerCase().trim();
+
+      // Merge matching payables
+      rawPayables.forEach(p => {
+        const category = (p.category || '').toLowerCase();
+        const desc = (p.description || '').toLowerCase();
+        const supplier = (p.supplier || '').toLowerCase();
+        const pProName = (p.profissional_name || '').toLowerCase();
+        const isVale = category.includes('adiantamento') || category.includes('vale') || category.includes('comissão') || category.includes('comissoes') || desc.includes('adiantamento') || desc.includes('vale');
+
+        let matchesPro = p.profissional_id === professionalId;
+        if (!matchesPro && proNameLower) {
+          matchesPro = supplier.includes(proNameLower) || pProName.includes(proNameLower) || desc.includes(proNameLower);
+        }
+
+        if ((isVale || p.profissional_id) && matchesPro) {
+          const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
+          const pAmount = p.amount || 0;
+          const isDup = merged.some(m => m.id === p.id || (m.amount === pAmount && m.date === pDate && m.description === p.description));
+          if (!isDup) {
+            merged.push({
+              id: p.id,
+              tenantId: p.tenantId,
+              profissional_id: p.profissional_id || professionalId,
+              profissional_name: p.profissional_name || p.supplier || professionalName,
+              amount: pAmount,
+              date: pDate || new Date().toISOString().split('T')[0],
+              description: p.description || 'Adiantamento / Vale',
+              status: p.status === 'paid' ? 'pago' : 'pendente',
+              createdAt: p.createdAt,
+              updatedAt: p.updatedAt
+            } as ProfessionalAdvance);
+          }
+        }
+      });
+
+      // Merge matching cash_movements
+      rawCashMovs.forEach(c => {
+        const category = (c.category || '').toLowerCase();
+        const desc = (c.description || '').toLowerCase();
+        const isVale = c.type === 'sangria' || category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento');
+
+        let matchesPro = c.profissional_id === professionalId || c.barber_id === professionalId;
+        if (!matchesPro && proNameLower) {
+          matchesPro = desc.includes(proNameLower);
+        }
+
+        if (isVale && matchesPro) {
+          const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          const cAmount = c.amount || 0;
+          const isDup = merged.some(m => m.id === c.id || (m.amount === cAmount && m.date === cDate && m.description === c.description));
+          if (!isDup) {
+            merged.push({
+              id: c.id,
+              tenantId: c.tenantId,
+              profissional_id: c.profissional_id || professionalId,
+              profissional_name: c.profissional_name || professionalName,
+              amount: cAmount,
+              date: cDate || new Date().toISOString().split('T')[0],
+              description: c.description || 'Vale / Sangria de Caixa',
+              status: 'pendente',
+              createdAt: c.createdAt,
+              updatedAt: c.updatedAt
+            } as ProfessionalAdvance);
+          }
+        }
+      });
+
+      setAllAdvances(merged);
+    };
+
     const advsQuery = query(collection(db, 'professional_advances'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
-      const advsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
-      setAllAdvances(advsList);
+      rawAdvs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
+      mergeAdvances();
     }, (error) => {
       console.error("Erro ao escutar vales detalhados:", error);
+    });
+
+    const payablesQuery = query(collection(db, 'accounts_payable'), where('tenantId', '==', tenantId));
+    const unsubPayables = onSnapshot(payablesQuery, (snapshot) => {
+      rawPayables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      mergeAdvances();
+    }, (error) => {
+      console.error("Erro ao escutar contas a pagar para vales detalhados:", error);
+    });
+
+    const cashMovsQuery = query(collection(db, 'cash_movements'), where('tenantId', '==', tenantId));
+    const unsubCashMovs = onSnapshot(cashMovsQuery, (snapshot) => {
+      rawCashMovs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      mergeAdvances();
+    }, (error) => {
+      console.error("Erro ao escutar movimentacoes para vales detalhados:", error);
     });
 
     const payoutsQuery = query(collection(db, 'professional_payments'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
@@ -226,6 +329,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     return () => {
       unsubComms();
       unsubAdvs();
+      unsubPayables();
+      unsubCashMovs();
       unsubPayouts();
       unsubCash();
     };
@@ -430,6 +535,70 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     }
   };
 
+  // Handle Adding Bonus / Gratificação
+  const handleRegisterBonusFromDetail = async () => {
+    if (!bonusData.amount || !user) return;
+
+    try {
+      const amount = parseFloat(bonusData.amount);
+      if (isNaN(amount) || amount <= 0) {
+        toast.error("Valor inválido");
+        return;
+      }
+
+      const todayString = new Date().toISOString().split('T')[0];
+      await commissionService.registerBonus({
+        profissional_id: professionalId,
+        profissional_name: professionalName,
+        amount,
+        description: bonusData.description || 'Bônus / Gratificação Especial',
+        date: todayString,
+        responsible_id: user.uid,
+        responsible_name: profile?.nome || 'Admin'
+      });
+
+      if (bonusData.source === 'caixa' && isOpenCash) {
+        await cashService.addMovement({
+          caixa_id: isOpenCash.id,
+          type: 'expense',
+          category: 'Gratificação / Bônus Profissional',
+          description: `Saída Bônus p/ ${professionalName} - ${bonusData.description || 'Incentivo'}`,
+          amount,
+          paymentMethod: bonusData.paymentMethod as any,
+          is_receivable: false,
+          usuario_id: user.uid,
+          usuario_name: profile?.nome || 'Admin',
+          date: todayString
+        });
+      } else if (bonusData.source === 'financeiro') {
+        await financialService.createTransaction({
+          type: 'expense',
+          category: 'Gratificação / Bônus Profissional',
+          description: `Bônus / Gratificação - ${professionalName} (${bonusData.description || 'Incentivo'})`,
+          amount,
+          net_amount: amount,
+          fee_amount: 0,
+          paymentMethod: bonusData.paymentMethod as any,
+          date: todayString,
+          settlement_date: todayString,
+          status: 'pago',
+          is_settled: true,
+          profissional_id: professionalId,
+          profissional_name: professionalName,
+          responsavel_id: user.uid,
+          responsavel_name: profile?.nome || 'Admin'
+        });
+      }
+
+      toast.success("Bônus lançado com sucesso!");
+      setIsBonusModalOpen(false);
+      setBonusData({ amount: '', description: '', source: isOpenCash ? 'caixa' : 'financeiro', paymentMethod: isOpenCash ? 'dinheiro' : 'pix' });
+    } catch (error) {
+      console.error("Erro ao registrar bônus:", error);
+      toast.error("Erro ao registrar bônus.");
+    }
+  };
+
   const handlePrintSummary = () => {
     window.print();
   };
@@ -626,6 +795,15 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
             )}
             {!isBarbeiro && (
               <>
+                <button 
+                  id="btn-launch-bonus"
+                  onClick={() => setIsBonusModalOpen(true)}
+                  className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/10 active:scale-95"
+                  title="Conceder Bônus ou Gratificação ao Profissional"
+                >
+                  <Gift size={18} />
+                  Lançar Bônus
+                </button>
                 <button 
                   id="btn-launch-advance"
                   onClick={() => setIsValeModalOpen(true)}
@@ -1794,6 +1972,106 @@ Assinatura: _______________________________
                   className="flex-1 py-4 bg-primary text-white rounded-3xl font-black text-sm shadow-lg shadow-primary/20 hover:bg-slate-800 transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
                   Confirmar e Lançar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Bonus Registration Modal */}
+      <AnimatePresence>
+        {isBonusModalOpen && (
+          <div id="modal-register-bonus" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsBonusModalOpen(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden text-left">
+              <div className="p-8 pb-4">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                      <Gift size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800 leading-tight">Lançar Bônus / Gratificação</h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Incentivo p/ {professionalName}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setIsBonusModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-all text-slate-400"><X size={20} /></button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-800 ml-1">Valor do Bônus</label>
+                    <div className="relative">
+                      <span className="absolute left-5 top-1/2 -translate-y-1/2 text-sm font-black text-emerald-600">R$</span>
+                      <input 
+                        type="number" 
+                        placeholder="0,00"
+                        step="0.01"
+                        value={bonusData.amount}
+                        onChange={(e) => setBonusData({ ...bonusData, amount: e.target.value })}
+                        className="w-full pl-12 pr-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-xl text-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-800 ml-1">Motivo / Descrição</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ex: Bônus por bater meta mensal / Destaque do mês"
+                      value={bonusData.description}
+                      onChange={(e) => setBonusData({ ...bonusData, description: e.target.value })}
+                      className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-800 ml-1">Modalidade de Registro</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setBonusData({ ...bonusData, source: 'financeiro', paymentMethod: 'pix' })}
+                        className={`p-3 rounded-2xl border text-left transition-all ${
+                          bonusData.source === 'financeiro'
+                            ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 bg-white text-slate-500'
+                        }`}
+                      >
+                        <span className="text-xs font-black block">Pendente (Acerto)</span>
+                        <span className="text-[8px] text-slate-400 mt-1 block">Somar ao repasse futuro</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setBonusData({ ...bonusData, source: 'caixa', paymentMethod: 'dinheiro' })}
+                        disabled={!isOpenCash}
+                        className={`p-3 rounded-2xl border text-left transition-all ${
+                          bonusData.source === 'caixa'
+                            ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 bg-white text-slate-500'
+                        } ${!isOpenCash ? 'opacity-40 cursor-not-allowed' : ''}`}
+                      >
+                        <span className="text-xs font-black block">Pago do Caixa Agora</span>
+                        <span className="text-[8px] text-slate-400 mt-1 block">Saída imediata da gaveta</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-8 pt-4 bg-slate-50 border-t border-slate-100 flex gap-4 w-full">
+                <button 
+                  onClick={() => setIsBonusModalOpen(false)}
+                  className="flex-1 py-4 border border-slate-200 text-slate-500 rounded-3xl font-black text-sm hover:bg-slate-100 transition-all active:scale-95"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={handleRegisterBonusFromDetail}
+                  className="flex-1 py-4 bg-emerald-600 text-white rounded-3xl font-black text-sm shadow-lg shadow-emerald-600/20 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  Confirmar e Lançar Bônus
                 </button>
               </div>
             </motion.div>

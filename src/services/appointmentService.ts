@@ -250,12 +250,16 @@ export const appointmentService = {
       const activeTenantId = getActiveTenantId();
       
       const appointments = rawAppointments.filter(app => {
-        if (app.tenantId !== activeTenantId) return false;
+        if (filters.cliente_id) {
+          const appClientId = app.cliente_id || (app as any).client_id || (app as any).cliente_uid;
+          if (appClientId !== filters.cliente_id) return false;
+        } else if (activeTenantId) {
+          if (app.tenantId && app.tenantId !== activeTenantId) return false;
+        }
         if (filters.date && app.date !== filters.date) return false;
         if (filters.startDate && app.date < filters.startDate) return false;
         if (filters.endDate && app.date > filters.endDate) return false;
         if (filters.profissional_id && app.profissional_id !== filters.profissional_id) return false;
-        if (filters.cliente_id && app.cliente_id !== filters.cliente_id) return false;
         if (filters.status && app.status !== filters.status) return false;
         return true;
       });

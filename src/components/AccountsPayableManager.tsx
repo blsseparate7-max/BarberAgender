@@ -241,8 +241,25 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
             status: 'paid',
             paidAt: new Date().toISOString() as any,
             paymentMethod: 'pix',
-            transactionId
+            transactionId,
+            profissional_id: selectedBarberId,
+            profissional_name: selectedBarber.nome
           });
+
+          try {
+            await commissionService.registerAdvance({
+              profissional_id: selectedBarberId,
+              profissional_name: selectedBarber.nome,
+              amount: parsedAmount,
+              description: formData.description || 'Adiantamento / Vale',
+              date: formData.dueDate,
+              status: 'pendente',
+              responsible_id: userId,
+              responsible_name: userName
+            });
+          } catch (e) {
+            console.warn("Could not register professional advance in AccountsPayableManager:", e);
+          }
         } else {
           // Create Pending AccountPayable
           await billService.createPayable({
@@ -252,8 +269,25 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
             dueDate: formData.dueDate,
             supplier: selectedBarber.nome,
             recurrence: 'none',
-            status: 'pending'
+            status: 'pending',
+            profissional_id: selectedBarberId,
+            profissional_name: selectedBarber.nome
           });
+
+          try {
+            await commissionService.registerAdvance({
+              profissional_id: selectedBarberId,
+              profissional_name: selectedBarber.nome,
+              amount: parsedAmount,
+              description: formData.description || 'Adiantamento / Vale Pendente',
+              date: formData.dueDate,
+              status: 'pendente',
+              responsible_id: userId,
+              responsible_name: userName
+            });
+          } catch (e) {
+            console.warn("Could not register professional advance in AccountsPayableManager:", e);
+          }
         }
       } else {
         // Standard Common Expense Flow

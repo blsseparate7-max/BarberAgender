@@ -101,11 +101,8 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
     if (!config) return;
     const formData = new FormData(e.currentTarget);
     const data = {
-      pointsPerReal: Number(formData.get('pointsPerReal')),
-      pointsPerAppointment: Number(formData.get('pointsPerAppointment')),
+      cashbackEnabled: formData.get('cashbackEnabled') === 'true',
       cashbackPercentage: Number(formData.get('cashbackPercentage')),
-      minRedemptionPoints: Number(formData.get('minRedemptionPoints')),
-      vipThreshold: Number(formData.get('vipThreshold')),
     };
 
     try {
@@ -312,26 +309,38 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
                 </button>
               </div>
               <form onSubmit={handleUpdateConfig} className="p-8 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Pontos por Real Gasto</label>
-                    <input name="pointsPerReal" type="number" defaultValue={config.pointsPerReal} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl">
+                    <div>
+                      <label className="text-sm font-bold text-primary block">Ativar Programa de Cashback</label>
+                      <p className="text-xs text-muted">Quando ativo, o cashback em % é gerado automaticamente ao fechar comandas do cliente.</p>
+                    </div>
+                    <select 
+                      name="cashbackEnabled" 
+                      defaultValue={config.cashbackEnabled !== false ? 'true' : 'false'}
+                      className="px-3 py-2 bg-white border border-border rounded-lg text-sm font-bold text-primary focus:outline-none"
+                    >
+                      <option value="true">Ativado</option>
+                      <option value="false">Desativado</option>
+                    </select>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Pontos por Atendimento</label>
-                    <input name="pointsPerAppointment" type="number" defaultValue={config.pointsPerAppointment} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
+
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Percentual de Cashback (%)</label>
-                    <input name="cashbackPercentage" type="number" defaultValue={config.cashbackPercentage} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Mínimo para Resgate (Pontos)</label>
-                    <input name="minRedemptionPoints" type="number" defaultValue={config.minRedemptionPoints} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Limite para Status VIP (Pontos)</label>
-                    <input name="vipThreshold" type="number" defaultValue={config.vipThreshold} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                    <div className="relative">
+                      <input 
+                        name="cashbackPercentage" 
+                        type="number" 
+                        step="0.1"
+                        min="0"
+                        max="100"
+                        defaultValue={config.cashbackPercentage ?? 5} 
+                        required 
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-bold text-lg pr-12" 
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">%</span>
+                    </div>
+                    <p className="text-xs text-muted ml-1">Exemplo: Em um atendimento de R$ 100,00 com 5%, o cliente receberá R$ 5,00 de cashback.</p>
                   </div>
                 </div>
                 <div className="flex gap-4 pt-4">

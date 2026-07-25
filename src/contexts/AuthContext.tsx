@@ -103,10 +103,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
 
               // Set the profile state with any corrected values immediately to prevent UI lag/mismatch
-              setProfile({
+              const updatedProfile = {
                 ...data,
                 ...updateFields
-              });
+              };
+              if (updatedProfile.tenantId && typeof window !== 'undefined') {
+                localStorage.setItem('barberelite_tenant_id', updatedProfile.tenantId.trim().toLowerCase());
+              }
+              setProfile(updatedProfile);
             }
           } else {
             console.log("No profile document found in Firestore for UID:", firebaseUser.uid);

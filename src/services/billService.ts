@@ -16,6 +16,7 @@ import { db } from '../firebase';
 import { AccountPayable, AccountReceivable } from '../types';
 import { financialService } from './financialService';
 import { cashService } from './cashService';
+import { commissionService } from './commissionService';
 import { getActiveTenantId } from './tenantService';
 
 const PAYABLES_COLLECTION = 'accounts_payable';
@@ -125,7 +126,25 @@ export const billService = {
       }
     }
 
-    // 3. Update the Payable status
+    // 3. Register Professional Advance (Vale) if this bill is associated with a professional
+    if (payable.profissional_id || ['Adiantamento', 'Vale', 'Comissões'].includes(payable.category)) {
+      try {
+        await commissionService.registerAdvance({
+          profissional_id: payable.profissional_id || '',
+          profissional_name: payable.profissional_name || payable.supplier || 'Profissional',
+          amount: payable.amount,
+          date: todayStr,
+          description: payable.description || 'Adiantamento/Vale de Comissão',
+          status: 'pendente',
+          responsible_id: userId,
+          responsible_name: userName
+        });
+      } catch (err) {
+        console.warn("Could not register professional advance during bill settlement:", err);
+      }
+    }
+
+    // 4. Update the Payable status
     await updateDoc(docRef, {
       status: 'paid',
       paidAt: serverTimestamp(),

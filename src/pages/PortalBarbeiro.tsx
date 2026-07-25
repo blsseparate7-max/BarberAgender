@@ -193,12 +193,23 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
   // 3. Fetch Commissions and Financial Data when entering Comissão tab
   useEffect(() => {
-    if (activeTab === 'comissao' || activeTab === 'agenda') {
+    if ((activeTab === 'comissao' || activeTab === 'agenda') && profile?.uid) {
       setLoadingCommissions(true);
+      const proTenant = profile.tenantId || getActiveTenantId();
+
+      const refreshAdvances = async () => {
+        try {
+          const advs = await commissionService.getAdvances({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant });
+          setAdvances(advs);
+        } catch (e) {
+          console.warn("Error refreshing advances in PortalBarbeiro:", e);
+        }
+      };
+
       Promise.all([
-        commissionService.getCommissions({ profissional_id: profile.uid }),
-        commissionService.getAdvances({ profissional_id: profile.uid }),
-        commissionService.getPayouts(profile.uid)
+        commissionService.getCommissions({ profissional_id: profile.uid, tenantId: proTenant }),
+        commissionService.getAdvances({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant }),
+        commissionService.getPayouts(profile.uid, proTenant)
       ]).then(([commsData, advsData, payoutsData]) => {
         setCommissions(commsData);
         setAdvances(advsData);
@@ -209,8 +220,24 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         toast.error('Erro ao carregar dados financeiros.');
         setLoadingCommissions(false);
       });
+
+      // Realtime listeners for updates
+      const qAdvs = query(collection(db, 'professional_advances'));
+      const unsubAdvs = onSnapshot(qAdvs, () => { refreshAdvances(); }, (e) => console.warn(e));
+
+      const qPay = query(collection(db, 'accounts_payable'));
+      const unsubPay = onSnapshot(qPay, () => { refreshAdvances(); }, (e) => console.warn(e));
+
+      const qCash = query(collection(db, 'cash_movements'));
+      const unsubCash = onSnapshot(qCash, () => { refreshAdvances(); }, (e) => console.warn(e));
+
+      return () => {
+        unsubAdvs();
+        unsubPay();
+        unsubCash();
+      };
     }
-  }, [activeTab, profile.uid]);
+  }, [activeTab, profile?.uid, profile?.tenantId]);
 
   // Tab states: Avaliações
   const [reviews, setReviews] = useState<any[]>([]);
@@ -402,9 +429,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   // Filtered commissions and advances based on the selected date range and status/type filters
   const filteredCommissions = React.useMemo(() => {
     return commissions.filter(c => {
+      const cDate = (c.date || '').split('T')[0];
       // Date filter
-      if (startDate && c.date < startDate) return false;
-      if (endDate && c.date > endDate) return false;
+      if (startDate && cDate < startDate) return false;
+      if (endDate && cDate > endDate) return false;
       // Status filter
       if (statusFilter !== 'todos' && c.status !== statusFilter) return false;
       return true;
@@ -413,9 +441,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
   const filteredAdvances = React.useMemo(() => {
     return advances.filter(a => {
+      const aDate = (a.date || '').split('T')[0];
       // Date filter
-      if (startDate && a.date < startDate) return false;
-      if (endDate && a.date > endDate) return false;
+      if (startDate && aDate < startDate) return false;
+      if (endDate && aDate > endDate) return false;
       // Status filter
       if (statusFilter !== 'todos' && a.status !== statusFilter) return false;
       return true;

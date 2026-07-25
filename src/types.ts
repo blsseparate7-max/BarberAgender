@@ -760,6 +760,8 @@ export interface AccountPayable {
   paymentMethod?: string;
   transactionId?: string;
   movementId?: string;
+  profissional_id?: string;
+  profissional_name?: string;
   createdAt: any;
   updatedAt: any;
 }

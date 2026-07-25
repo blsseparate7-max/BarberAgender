@@ -16,7 +16,8 @@ import {
   AlertCircle,
   Loader2,
   Percent,
-  X
+  X,
+  Gift
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -84,6 +85,16 @@ export function ProfessionalCommissions({
     source: 'caixa' as 'caixa' | 'financeiro', 
     paymentMethod: 'dinheiro' as string 
   });
+
+  // Modal for Bonus
+  const [isBonusModalOpen, setIsBonusModalOpen] = useState(false);
+  const [bonusPro, setBonusPro] = useState<ProSummary | null>(null);
+  const [bonusData, setBonusData] = useState({ 
+    amount: '', 
+    description: '', 
+    source: 'financeiro' as 'caixa' | 'financeiro', 
+    paymentMethod: 'pix' as string 
+  });
   const [isOpenCash, setIsOpenCash] = useState<any>(null);
 
   // Setup actual reactive listeners to stay in absolute sync with Comandas, Caixa, and launches
@@ -111,12 +122,93 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar comissões:", error);
     });
 
+    // Reactive listeners for advances, payables, and cash movements
+    let rawAdvs: any[] = [];
+    let rawPayables: any[] = [];
+    let rawCashMovs: any[] = [];
+
+    const mergeAdvances = () => {
+      const merged: any[] = [...rawAdvs];
+
+      // Merge from accounts_payable
+      rawPayables.forEach(p => {
+        const category = (p.category || '').toLowerCase();
+        const desc = (p.description || '').toLowerCase();
+        const isVale = category.includes('adiantamento') || category.includes('vale') || category.includes('comissão') || category.includes('comissoes') || desc.includes('adiantamento') || desc.includes('vale');
+
+        if (isVale || p.profissional_id) {
+          const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
+          const pAmount = p.amount || 0;
+          const isDup = merged.some(m => m.id === p.id || (m.amount === pAmount && m.date === pDate && m.description === p.description));
+          if (!isDup) {
+            merged.push({
+              id: p.id,
+              tenantId: p.tenantId,
+              profissional_id: p.profissional_id || '',
+              profissional_name: p.profissional_name || p.supplier || 'Profissional',
+              amount: pAmount,
+              date: pDate || new Date().toISOString().split('T')[0],
+              description: p.description || 'Adiantamento / Vale',
+              status: p.status === 'paid' ? 'pago' : 'pendente',
+              createdAt: p.createdAt,
+              updatedAt: p.updatedAt
+            });
+          }
+        }
+      });
+
+      // Merge from cash_movements
+      rawCashMovs.forEach(c => {
+        const category = (c.category || '').toLowerCase();
+        const desc = (c.description || '').toLowerCase();
+        const isVale = c.type === 'sangria' || category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento');
+
+        if (isVale) {
+          const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          const cAmount = c.amount || 0;
+          const isDup = merged.some(m => m.id === c.id || (m.amount === cAmount && m.date === cDate && m.description === c.description));
+          if (!isDup) {
+            merged.push({
+              id: c.id,
+              tenantId: c.tenantId,
+              profissional_id: c.profissional_id || c.barber_id || '',
+              profissional_name: c.profissional_name || 'Profissional',
+              amount: cAmount,
+              date: cDate || new Date().toISOString().split('T')[0],
+              description: c.description || 'Vale / Sangria',
+              status: 'pendente',
+              createdAt: c.createdAt,
+              updatedAt: c.updatedAt
+            });
+          }
+        }
+      });
+
+      setAllAdvances(merged);
+    };
+
     const advsQuery = query(collection(db, 'professional_advances'), where('tenantId', '==', activeTenantId));
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
-      const aList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAllAdvances(aList);
+      rawAdvs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      mergeAdvances();
     }, (error) => {
       console.error("Erro ao escutar vales:", error);
+    });
+
+    const payablesQuery = query(collection(db, 'accounts_payable'), where('tenantId', '==', activeTenantId));
+    const unsubPayables = onSnapshot(payablesQuery, (snapshot) => {
+      rawPayables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      mergeAdvances();
+    }, (error) => {
+      console.error("Erro ao escutar contas a pagar para vales:", error);
+    });
+
+    const cashMovsQuery = query(collection(db, 'cash_movements'), where('tenantId', '==', activeTenantId));
+    const unsubCashMovs = onSnapshot(cashMovsQuery, (snapshot) => {
+      rawCashMovs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      mergeAdvances();
+    }, (error) => {
+      console.error("Erro ao escutar movimentacoes para vales:", error);
     });
 
     const cashQuery = query(collection(db, 'cash_sessions'), where('tenantId', '==', activeTenantId));
@@ -135,6 +227,8 @@ export function ProfessionalCommissions({
       unsubBarbers();
       unsubComms();
       unsubAdvs();
+      unsubPayables();
+      unsubCashMovs();
       unsubCash();
     };
   }, []);
@@ -150,7 +244,17 @@ export function ProfessionalCommissions({
   const summaries = React.useMemo(() => {
     return barbers.map(barber => {
       const proCommsAll = allCommissions.filter(c => c.profissional_id === barber.uid);
-      const proAdvancesAll = allAdvances.filter(a => a.profissional_id === barber.uid);
+      const proAdvancesAll = allAdvances.filter(a => {
+        if (a.profissional_id === barber.uid) return true;
+        if (barber.nome) {
+          const bName = barber.nome.toLowerCase().trim();
+          const pName = (a.profissional_name || a.supplier || '').toLowerCase();
+          const desc = (a.description || '').toLowerCase();
+          if (pName && (pName.includes(bName) || bName.includes(pName))) return true;
+          if (desc && desc.includes(bName)) return true;
+        }
+        return false;
+      });
 
       // Filter in period chosen by datepicker
       const proCommsPeriod = proCommsAll.filter(c => c.date >= dateRange.start && c.date <= dateRange.end);
@@ -265,6 +369,73 @@ export function ProfessionalCommissions({
     } catch (error) {
       console.error("Erro ao registrar vale:", error);
       toast.error("Erro ao registrar vale.");
+    }
+  };
+
+  const handleRegisterBonus = async () => {
+    if (!bonusPro || !bonusData.amount || !user) return;
+
+    const amount = parseFloat(bonusData.amount);
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Valor inválido.");
+      return;
+    }
+
+    try {
+      const todayString = new Date().toISOString().split('T')[0];
+
+      await commissionService.registerBonus({
+        profissional_id: bonusPro.id,
+        profissional_name: bonusPro.nome,
+        amount,
+        description: bonusData.description || 'Bônus / Gratificação Especial',
+        date: todayString,
+        responsible_id: user.uid,
+        responsible_name: profile?.nome || 'Admin'
+      });
+
+      if (bonusData.source === 'caixa') {
+        const cash = await cashService.getCurrentCash();
+        if (cash) {
+          await cashService.addMovement({
+            caixa_id: cash.id,
+            type: 'expense',
+            category: 'Gratificação / Bônus Profissional',
+            description: `Bônus - ${bonusPro.nome} (${bonusData.description || 'Incentivo'})`,
+            amount,
+            paymentMethod: bonusData.paymentMethod as any,
+            is_receivable: false,
+            usuario_id: user.uid,
+            usuario_name: profile?.nome || 'Admin',
+            date: todayString
+          });
+        }
+      } else {
+        await financialService.createTransaction({
+          type: 'expense',
+          category: 'Gratificação / Bônus Profissional',
+          description: `Bônus / Gratificação - ${bonusPro.nome} (${bonusData.description || 'Incentivo'})`,
+          amount,
+          net_amount: amount,
+          fee_amount: 0,
+          paymentMethod: bonusData.paymentMethod as any,
+          date: todayString,
+          settlement_date: todayString,
+          status: 'pago',
+          is_settled: true,
+          profissional_id: bonusPro.id,
+          profissional_name: bonusPro.nome,
+          responsavel_id: user.uid,
+          responsavel_name: profile?.nome || 'Admin'
+        });
+      }
+
+      toast.success("Bônus registrado com sucesso!");
+      setIsBonusModalOpen(false);
+      setBonusData({ amount: '', description: '', source: isOpenCash ? 'caixa' : 'financeiro', paymentMethod: isOpenCash ? 'dinheiro' : 'pix' });
+    } catch (error) {
+      console.error("Erro ao registrar bônus:", error);
+      toast.error("Erro ao registrar bônus.");
     }
   };
 
@@ -462,23 +633,35 @@ export function ProfessionalCommissions({
                     </div>
 
                     {/* Compact, clean, professional actions */}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-2">
                       <button 
                         onClick={() => {
                           setValePro(pro);
                           setIsValeModalOpen(true);
                         }}
-                        className="py-3 bg-slate-50 hover:bg-amber-50/60 text-amber-700 border border-slate-150 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 active:scale-95"
+                        className="py-3 bg-slate-50 hover:bg-amber-50/60 text-amber-700 border border-slate-150 rounded-2xl text-[11px] font-black transition-all flex items-center justify-center gap-1 active:scale-95"
+                        title="Lançar Adiantamento/Vale"
                       >
-                        <Wallet size={14} />
-                        Lançar Vale
+                        <Wallet size={13} />
+                        Vale
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setBonusPro(pro);
+                          setIsBonusModalOpen(true);
+                        }}
+                        className="py-3 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 border border-emerald-100 rounded-2xl text-[11px] font-black transition-all flex items-center justify-center gap-1 active:scale-95"
+                        title="Lançar Bônus/Gratificação"
+                      >
+                        <Gift size={13} />
+                        Bônus
                       </button>
                       <button 
                         onClick={() => setSelectedProId(pro.id)}
-                        className="py-3 bg-slate-950 text-white hover:bg-slate-800 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm shadow-slate-950/10"
+                        className="py-3 bg-slate-950 text-white hover:bg-slate-800 rounded-2xl text-[11px] font-black transition-all flex items-center justify-center gap-1 active:scale-95 shadow-sm shadow-slate-950/10"
                       >
                         Extrato
-                        <ArrowRight size={13} />
+                        <ArrowRight size={12} />
                       </button>
                     </div>
                   </div>
@@ -646,6 +829,129 @@ export function ProfessionalCommissions({
                   className="flex-1 py-3 bg-primary text-white rounded-xl font-black text-sm shadow-md hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
                 >
                   Registrar Vale
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Lançar Bônus */}
+      <AnimatePresence>
+        {isBonusModalOpen && bonusPro && (
+          <div id="modal-register-bonus-list" className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => setIsBonusModalOpen(false)} 
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" 
+            />
+            
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }} 
+              className="relative bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden z-10 flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <Gift size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-800 text-lg">Lançar Bônus / Gratificação</h3>
+                    <p className="text-xs font-bold text-slate-400">Profissional: <span className="text-emerald-700">{bonusPro.nome}</span></p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsBonusModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-5 overflow-y-auto">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-2">Origem do Recurso</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setBonusData({ ...bonusData, source: 'financeiro', paymentMethod: 'pix' })}
+                      className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between ${
+                        bonusData.source === 'financeiro'
+                          ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                      }`}
+                    >
+                      <span className="text-[10px] font-black uppercase tracking-wider block">Pendente (Repasse)</span>
+                      <p className="text-[10px] text-slate-400 mt-2 leading-tight">Será somado ao fechamento do profissional.</p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBonusData({ ...bonusData, source: 'caixa', paymentMethod: 'dinheiro' })}
+                      disabled={!isOpenCash}
+                      className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between ${
+                        bonusData.source === 'caixa'
+                          ? 'border-emerald-600 bg-emerald-50/60 text-emerald-900 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                      } ${!isOpenCash ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex justify-between items-start w-full">
+                        <span className="text-[10px] font-black uppercase tracking-wider block">Caixa Diário</span>
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide ${isOpenCash ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}`}>
+                          {isOpenCash ? 'Aberto' : 'Fechado'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-2 leading-tight">Retira do caixa físico da recepção agora.</p>
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-2">Valor do Bônus (R$)</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-emerald-600 text-lg">R$</span>
+                    <input 
+                      type="number" 
+                      step="0.01" 
+                      placeholder="0,00"
+                      value={bonusData.amount}
+                      onChange={(e) => setBonusData({...bonusData, amount: e.target.value})}
+                      className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-black text-xl text-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-2">Motivo / Descrição</label>
+                  <input 
+                    type="text"
+                    placeholder="Ex: Meta de atendimento batida / Destaque da semana"
+                    value={bonusData.description}
+                    onChange={(e) => setBonusData({...bonusData, description: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Actions Footer */}
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex gap-3 shrink-0">
+                <button 
+                  onClick={() => setIsBonusModalOpen(false)}
+                  className="flex-1 py-3 bg-white border border-slate-250 text-slate-650 rounded-xl font-bold text-sm hover:bg-slate-100 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={handleRegisterBonus}
+                  className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-black text-sm shadow-md shadow-emerald-600/20 hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
+                >
+                  Confirmar e Conceder Bônus
                 </button>
               </div>
             </motion.div>

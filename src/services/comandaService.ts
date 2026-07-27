@@ -20,7 +20,6 @@ import { db, auth } from '../firebase';
 import { Comanda, ComandaItem, ComandaPayment, ComandaLog, ComandaStatus, ClientDebt, FinancialTransaction, CashMovement, PaymentMethod, PaymentMethodConfig } from '../types';
 import { paymentMethodService } from './paymentMethodService';
 import { cashService } from './cashService';
-import { debtService } from './debtService';
 import { commissionService } from './commissionService';
 import { inventoryService } from './inventoryService';
 import { userService } from './userService';
@@ -106,6 +105,8 @@ export const comandaService = {
         return bTime - aTime;
       });
       callback(comandas);
+    }, (error) => {
+      console.error("Erro na inscrição de comandas em tempo real:", error);
     });
   },
 
@@ -337,7 +338,16 @@ export const comandaService = {
       const pendingAmount = comanda.totalAmount - paidAmount;
       const willBeClosed = pendingAmount <= 0;
 
-      const methodConfig = methods.find(m => m.id === payment.metodo_pagamento_id || m.type === payment.method);
+      const methodConfig = methods.find(m => m.id === payment.metodo_pagamento_id || m.type === payment.method) || (payment.method === 'resgate' ? {
+        id: 'resgate',
+        name: 'Resgate de Cashback',
+        type: 'resgate' as PaymentMethod,
+        feePercentage: 0,
+        settlementDays: 0,
+        goesToClientAccount: false,
+        active: true,
+        createdAt: ''
+      } : null);
       if (!methodConfig) throw new Error("Método de pagamento não configurado");
 
       if (methodConfig.goesToClientAccount) {
@@ -468,7 +478,7 @@ export const comandaService = {
         };
         transaction.set(financialRef, financialTx);
 
-        if (!cashDoc) {
+        if (!cashDoc && ['fiado', 'resgate'].indexOf(payment.method) === -1) {
           throw new Error("O caixa do dia está fechado. Por favor, abra o caixa antes de registrar este pagamento.");
         }
 
@@ -534,8 +544,6 @@ export const comandaService = {
           const clientRef = doc(db, 'usuarios', comanda.cliente_id);
           transaction.update(clientRef, {
             total_em_aberto: increment(payment.amount),
-            saldo_atual: increment(-payment.amount),
-            balance: increment(-payment.amount),
             updatedAt: serverTimestamp()
           });
         }
@@ -1130,22 +1138,27 @@ export const comandaService = {
       const clientRef = doc(db, 'usuarios', debt.cliente_id);
       const clientSnapOnPay = await transaction.get(clientRef);
 
-      const newRemaining = debt.remainingAmount - amount;
+      const newRemaining = Math.max(0, debt.remainingAmount - amount);
       
       // 3. Transactional Writes
       transaction.update(debtRef, {
         remainingAmount: newRemaining,
-        status: newRemaining <= 0 ? 'pago' : 'parcial',
+        status: newRemaining <= 0.001 ? 'pago' : 'parcial',
         updatedAt: serverTimestamp()
       });
 
       if (clientSnapOnPay.exists()) {
+        const clientData = clientSnapOnPay.data();
+        const currentEmAberto = clientData.total_em_aberto ?? clientData.saldo_devedor ?? 0;
+        const newEmAberto = Math.max(0, currentEmAberto - amount);
+
         transaction.update(clientRef, {
           saldo_atual: increment(amount),
           balance: increment(amount), // Legacy
           total_pago: increment(amount),
           totalPaid: increment(amount), // Legacy
-          total_em_aberto: increment(-amount),
+          total_em_aberto: newEmAberto,
+          saldo_devedor: newEmAberto,
           updatedAt: serverTimestamp()
         });
       }
@@ -1198,6 +1211,7 @@ export const comandaService = {
         id: finRef.id,
         tenantId: getActiveTenantId(),
         type: 'income',
+        status: 'pago',
         category: 'Recebimento Fiado',
         amount: amount,
         description: `Recebimento Fiado - ${debt.cliente_name}`,
@@ -1396,13 +1410,6 @@ export const comandaService = {
 
       // Client Debts & their payments
       clientDebtDocs.docs.forEach(d => {
-        const debt = d.data() as ClientDebt;
-        if (clientSnap?.exists()) {
-          transaction.update(clientRef!, {
-            balance: increment(debt.amount), // Revert the debt creation (fiado)
-            updatedAt: serverTimestamp()
-          });
-        }
         transaction.delete(d.ref);
       });
       debtPayments.docs.forEach(d => transaction.delete(d.ref));

@@ -203,7 +203,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
           const debtsSnap = await getDocs(
             query(collection(db, 'client_debts'), where('tenantId', '==', tenantId))
           );
-          setClientesDevedores(debtsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((d: any) => !['paga', 'cancelada'].includes(d.status)));
+          setClientesDevedores(debtsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((d: any) => !['paga', 'pago', 'cancelada', 'quitado'].includes(d.status) && (d.remainingAmount || 0) > 0));
 
           // 3. Get Low Stock
           const productsSnap = await getDocs(

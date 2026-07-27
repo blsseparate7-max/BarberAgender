@@ -169,11 +169,13 @@ export const subscriptionService = {
   // Usage
   async registerUsage(
     subscriptionId: string, 
-    type: 'haircut' | 'beard', 
+    type: 'haircut' | 'beard' | string, 
     agendamento_id?: string,
     profissional_id?: string,
     profissional_name?: string,
-    valor_servico?: number
+    valor_servico?: number,
+    service_id?: string,
+    service_name?: string
   ) {
     const activeTenantId = getActiveTenantId();
     return await runTransaction(db, async (transaction) => {
@@ -214,6 +216,8 @@ export const subscriptionService = {
         profissional_id: profissional_id || null,
         profissional_name: profissional_name || null,
         valor_servico: valor_servico || 0,
+        service_id: service_id || null,
+        service_name: service_name || null,
         createdAt: serverTimestamp()
       });
 

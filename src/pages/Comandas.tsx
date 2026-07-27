@@ -277,17 +277,17 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
               <div className="flex items-center justify-between pt-4 border-t border-border/50">
                 <div>
                   <p className="text-[10px] text-muted uppercase tracking-wider font-bold">Total</p>
-                  <p className="text-lg font-bold text-primary">R$ {comanda.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                  <p className="text-lg font-bold text-primary">R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] text-muted uppercase tracking-wider font-bold">Pendente</p>
-                  <p className={`text-sm font-bold ${comanda.pendingAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                    R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  <p className={`text-sm font-bold ${(comanda.pendingAmount ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
                 </div>
               </div>
 
-              <div className="absolute bottom-0 left-0 h-1 bg-accent transition-all duration-500" style={{ width: `${(comanda.paidAmount / comanda.totalAmount) * 100}%` }} />
+              <div className="absolute bottom-0 left-0 h-1 bg-accent transition-all duration-500" style={{ width: `${Math.min(100, Math.max(0, (((comanda.paidAmount ?? 0) / (comanda.totalAmount || 1)) * 100)))}%` }} />
             </motion.div>
           ))}
 

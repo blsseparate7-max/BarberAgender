@@ -19,15 +19,17 @@ import {
   UserX,
   Phone,
   Sparkles,
-  ChevronRight
+  ChevronRight,
+  Receipt
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../../firebase';
 import { collection, query, where, onSnapshot, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { getActiveTenantId } from '../../services/tenantService';
-import { UserProfile, Service, DailyFlowItem } from '../../types';
+import { UserProfile, Service, DailyFlowItem, Comanda } from '../../types';
 import { serviceService } from '../../services/serviceService';
 import { userService } from '../../services/userService';
+import { ComandaModal } from '../Comanda/ComandaModal';
 import { toast } from 'sonner';
 
 export function OperationsManager() {
@@ -38,6 +40,11 @@ export function OperationsManager() {
   const [showModal, setShowModal] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedFlowItem, setSelectedFlowItem] = useState<DailyFlowItem | null>(null);
+
+  // Comanda Modal States
+  const [isComandaModalOpen, setIsComandaModalOpen] = useState(false);
+  const [selectedComandaId, setSelectedComandaId] = useState<string | undefined>(undefined);
+  const [comandaInitialData, setComandaInitialData] = useState<Partial<Comanda> | null>(null);
 
   // Waitlist selection states
   const [clientSelectionType, setClientSelectionType] = useState<'sem_cadastro' | 'cadastrado' | 'novo_cadastro'>('sem_cadastro');
@@ -290,6 +297,38 @@ export function OperationsManager() {
     }
   };
 
+  // Open Comanda modal for item
+  const handleOpenItemComanda = (item: DailyFlowItem) => {
+    const serviceObj = services.find(s => s.id === item.servico_id);
+    const itemPrice = serviceObj?.preco || (serviceObj as any)?.price || 0;
+
+    if ((item as any).comanda_id) {
+      setSelectedComandaId((item as any).comanda_id);
+      setComandaInitialData(null);
+    } else {
+      setSelectedComandaId(undefined);
+      setComandaInitialData({
+        cliente_id: item.cliente_id || '',
+        cliente_name: item.cliente_name || 'Consumidor Final',
+        profissional_id: item.profissional_id || '',
+        profissional_name: item.profissional_name || '',
+        origin: 'balcao',
+        daily_flow_id: item.id,
+        items: item.servico_id ? [{
+          id: item.servico_id,
+          name: item.servico_name || serviceObj?.nome || 'Serviço',
+          type: 'servico',
+          price: itemPrice,
+          quantity: 1,
+          totalPrice: itemPrice,
+          profissional_id: item.profissional_id || '',
+          profissional_name: item.profissional_name || ''
+        }] : []
+      } as any);
+    }
+    setIsComandaModalOpen(true);
+  };
+
   // Complete service
   const handleCompleteService = async (item: DailyFlowItem) => {
     try {
@@ -319,6 +358,9 @@ export function OperationsManager() {
       }
 
       toast.success(`Atendimento de ${item.cliente_name} concluído com sucesso!`);
+
+      // Automatically trigger comanda checkout modal
+      handleOpenItemComanda(item);
     } catch (err) {
       console.error(err);
       toast.error("Erro ao concluir atendimento.");
@@ -627,6 +669,13 @@ export function OperationsManager() {
                     <span>Profissional: {item.profissional_name}</span>
                     <span>Concluído às: {item.fim_hora}</span>
                   </div>
+
+                  <button
+                    onClick={() => handleOpenItemComanda(item)}
+                    className="w-full mt-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-wider py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Receipt size={12} className="text-primary" /> {(item as any).comanda_id ? 'Ver Comanda' : 'Abrir Comanda'}
+                  </button>
                 </div>
               ))}
 
@@ -940,6 +989,24 @@ export function OperationsManager() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* COMANDA CHECKOUT MODAL */}
+      {isComandaModalOpen && (
+        <ComandaModal
+          comanda_id={selectedComandaId}
+          initialData={comandaInitialData || undefined}
+          onClose={() => {
+            setIsComandaModalOpen(false);
+            setSelectedComandaId(undefined);
+            setComandaInitialData(null);
+          }}
+          onSave={() => {
+            setIsComandaModalOpen(false);
+            setSelectedComandaId(undefined);
+            setComandaInitialData(null);
+          }}
+        />
+      )}
 
     </div>
   );

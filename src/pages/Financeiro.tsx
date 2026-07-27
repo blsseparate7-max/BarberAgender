@@ -470,21 +470,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         userId: user.uid,
         userName: profile?.nome || 'Sistema'
       });
-      
-      if (currentCash) {
-        await cashService.addMovement({
-          caixa_id: currentCash.id,
-          type: 'income',
-          amount: paymentAmount,
-          description: `Recebimento de Fiado - ${confirmDebtPayment.cliente_name}`,
-          category: 'Recebimento Fiado',
-          paymentMethod: 'dinheiro',
-          is_receivable: false,
-          usuario_id: user.uid,
-          usuario_name: profile?.nome || 'Sistema',
-          date: new Date().toISOString().split('T')[0]
-        });
-      }
 
       toast.success(`Pagamento de R$ ${paymentAmount.toFixed(2)} registrado!`);
       loadData();
@@ -2694,15 +2679,17 @@ function ClientAccountDetailsModal({
     // Realtime digital notes/ledger listener
     const q = query(
       collection(db, 'client_ledger_notes'),
-      where('cliente_id', '==', cliente_id),
-      orderBy('createdAt', 'desc')
+      where('cliente_id', '==', cliente_id)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data: any[] = [];
       snapshot.forEach(doc => {
         data.push({ id: doc.id, ...doc.data() });
       });
+      data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setNotes(data);
+    }, (error) => {
+      console.error("Error fetching client ledger notes:", error);
     });
     return () => unsubscribe();
   }, [cliente_id]);
@@ -2725,7 +2712,7 @@ function ClientAccountDetailsModal({
     }
   };
 
-  const totalOutstanding = debts.reduce((acc, d) => d.status !== 'pago' ? acc + d.remainingAmount : acc, 0);
+  const totalOutstanding = debts.reduce((acc, d) => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status) ? acc + (d.remainingAmount || 0) : acc, 0);
 
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3769,23 +3756,23 @@ function MovementDetailsModal({ movement, onClose }: { movement: any, onClose: (
                     <div className="pt-3 border-t border-slate-200 space-y-2">
                       <div className="flex justify-between text-[11px] text-muted font-bold uppercase tracking-wider">
                         <span>Subtotal</span>
-                        <span>R$ {(comanda.totalAmount + (comanda.discountAmount || 0) - (comanda.surchargeAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span>R$ {((comanda.totalAmount || 0) + (comanda.discountAmount || 0) - (comanda.surchargeAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
-                      {comanda.discountAmount > 0 && (
+                      {!!comanda.discountAmount && comanda.discountAmount > 0 && (
                         <div className="flex justify-between text-[11px] text-red-500 font-bold uppercase tracking-wider">
                           <span>Desconto</span>
-                          <span>- R$ {comanda.discountAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span>- R$ {(comanda.discountAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {comanda.surchargeAmount > 0 && (
+                      {!!comanda.surchargeAmount && comanda.surchargeAmount > 0 && (
                         <div className="flex justify-between text-[11px] text-emerald-500 font-bold uppercase tracking-wider">
                           <span>Acréscimo</span>
-                          <span>+ R$ {comanda.surchargeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span>+ R$ {(comanda.surchargeAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
                       <div className="flex justify-between text-xs font-black text-primary uppercase tracking-widest pt-1 border-t border-slate-100">
                         <span>Total Geral</span>
-                        <span>R$ {comanda.totalAmount?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span>R$ {(comanda.totalAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   </div>

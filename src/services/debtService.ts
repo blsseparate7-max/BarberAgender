@@ -15,6 +15,7 @@ import {
 import { db } from '../firebase';
 import { ClientDebt, DebtPayment, PaymentMethod } from '../types';
 import { getActiveTenantId } from './tenantService';
+import { comandaService } from './comandaService';
 
 const COLLECTION_DEBTS = 'client_debts';
 const COLLECTION_PAYMENTS = 'debt_payments';
@@ -53,41 +54,15 @@ export const debtService = {
     userId: string,
     userName: string
   }) {
-    const debtRef = doc(db, COLLECTION_DEBTS, data.divida_id);
-    const paymentRef = doc(collection(db, COLLECTION_PAYMENTS));
-
-    await runTransaction(db, async (transaction) => {
-      const debtSnap = await transaction.get(debtRef);
-      if (!debtSnap.exists()) throw new Error("Dívida não encontrada");
-      
-      const debt = debtSnap.data() as ClientDebt;
-      const newRemaining = debt.remainingAmount - data.amount;
-      
-      if (newRemaining < 0) throw new Error("Valor do pagamento maior que a dívida");
-
-      const status = newRemaining === 0 ? 'pago' : 'parcial';
-
-      transaction.update(debtRef, {
-        remainingAmount: newRemaining,
-        status,
-        updatedAt: serverTimestamp()
-      });
-
-      const newPayment: DebtPayment = {
-        id: paymentRef.id,
-        tenantId: getActiveTenantId(),
-        divida_id: data.divida_id,
-        cliente_id: data.cliente_id,
-        amount: data.amount,
-        paymentMethod: data.paymentMethod,
-        date: new Date().toISOString().split('T')[0],
-        createdAt: serverTimestamp()
-      };
-
-      transaction.set(paymentRef, newPayment);
-    });
-
-    return paymentRef.id;
+    await comandaService.payDebt(
+      data.divida_id,
+      data.amount,
+      data.paymentMethod || 'dinheiro',
+      '',
+      data.userId,
+      data.userName
+    );
+    return data.divida_id;
   },
 
   async getDebtPayments(divida_id: string) {

@@ -61,7 +61,6 @@ import { debtService } from '../services/debtService';
 import { comandaService } from '../services/comandaService';
 import { userService } from '../services/userService';
 import { useAuth } from '../contexts/AuthContext';
-import { ClientDebt, PaymentMethod } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
@@ -345,7 +344,7 @@ export function Clientes() {
         )}
         {isDetailsOpen && selectedCustomer && (
           <CustomerDetails 
-            customer={selectedCustomer} 
+            customer={customers.find(c => c.uid === selectedCustomer.uid) || selectedCustomer} 
             onClose={() => setIsDetailsOpen(false)}
             onEdit={() => {
               setIsDetailsOpen(false);
@@ -740,13 +739,17 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
     const q = query(
       collection(db, 'appointments'),
       where('cliente_id', '==', customer.uid),
-      orderBy('date', 'desc'),
-      orderBy('startTime', 'desc'),
-      limit(50)
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+      docs.sort((a, b) => {
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
+        return (b.startTime || '').localeCompare(a.startTime || '');
+      });
       setHistory(docs);
       setLoadingHistory(false);
     }, (error) => {
@@ -757,13 +760,20 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
     // Fetch Debts
     const qDebts = query(
       collection(db, 'client_debts'),
-      where('cliente_id', '==', customer.uid),
-      orderBy('createdAt', 'desc')
+      where('cliente_id', '==', customer.uid)
     );
 
     const unsubscribeDebts = onSnapshot(qDebts, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
+      docs.sort((a, b) => {
+        const timeA = a.createdAt?.seconds || 0;
+        const timeB = b.createdAt?.seconds || 0;
+        return timeB - timeA;
+      });
       setDebts(docs);
+      setLoadingDebts(false);
+    }, (error) => {
+      console.error("Error fetching debts:", error);
       setLoadingDebts(false);
     });
 
@@ -854,11 +864,14 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
         updatedAt: serverTimestamp()
       });
 
+      const currentBal = customer.saldo_atual ?? customer.balance ?? 0;
+      const newBal = currentBal - amt;
+
       const clientRef = doc(db, 'usuarios', customer.uid);
       await updateDoc(clientRef, {
         total_em_aberto: increment(amt),
-        saldo_atual: increment(-amt),
-        balance: increment(-amt),
+        saldo_atual: newBal,
+        balance: newBal,
         updatedAt: serverTimestamp()
       });
 
@@ -883,10 +896,13 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
     }
     setSubmittingCredit(true);
     try {
+      const currentBal = customer.saldo_atual ?? customer.balance ?? 0;
+      const newBal = currentBal + amt;
+
       const clientRef = doc(db, 'usuarios', customer.uid);
       await updateDoc(clientRef, {
-        saldo_atual: increment(amt),
-        balance: increment(amt),
+        saldo_atual: newBal,
+        balance: newBal,
         total_pago: increment(amt),
         totalPaid: increment(amt),
         updatedAt: serverTimestamp()

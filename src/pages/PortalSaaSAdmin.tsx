@@ -1437,14 +1437,14 @@ export default function PortalSaaSAdmin() {
                 <div className="flex items-center gap-2">
                   <DollarSign className="text-emerald-600" size={20} />
                   <div>
-                    <h5 className="font-black text-slate-900 text-sm">Configuração de Pagamento via Pix (QR Code Automático)</h5>
-                    <p className="text-xs text-slate-500 font-medium">Defina a chave Pix para que as barbearias façam o pagamento e ativem o sistema instantaneamente.</p>
+                    <h5 className="font-black text-slate-900 text-sm">Configuração de Pagamento via Pix & Gateway SaaS (Asaas / Mercado Pago)</h5>
+                    <p className="text-xs text-slate-500 font-medium">Defina a chave Pix ou utilize variáveis de ambiente no servidor (<code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-purple-700">ASAAS_API_KEY</code>) para cobranças e baixas automáticas das barbearias.</p>
                   </div>
                 </div>
 
                 <form onSubmit={handleSavePixSettings} className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Chave Pix</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Chave Pix Manual / Padrão</label>
                     <input 
                       type="text" 
                       value={pixKey}
@@ -1493,6 +1493,18 @@ export default function PortalSaaSAdmin() {
                     </button>
                   </div>
                 </form>
+
+                <div className="mt-4 p-3 bg-purple-50/80 border border-purple-100 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                  <div className="space-y-0.5">
+                    <span className="font-extrabold text-purple-900 block">⚡ Gateway de Cobrança Automática Integrado:</span>
+                    <p className="text-purple-700 text-[11px]">
+                      A cobrança das barbearias suporta integração direta com <strong>Asaas API</strong> e <strong>Mercado Pago</strong> com geração de Pix QR Code Copia e Cola instantâneo e URL de Webhook para confirmação de pagamento em <code className="bg-white/80 px-1 py-0.5 rounded border border-purple-200 text-[10px] font-mono">/api/saas/payment/webhook</code>.
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 bg-purple-600 text-white text-[10px] font-black rounded-lg uppercase tracking-wider whitespace-nowrap shadow-xs">
+                    Gateway Ativo
+                  </span>
+                </div>
               </div>
 
               {/* Plans List Table/Cards */}

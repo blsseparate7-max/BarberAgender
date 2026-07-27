@@ -162,6 +162,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [planPontosCorte, setPlanPontosCorte] = useState(1);
   const [planPontosBarba, setPlanPontosBarba] = useState(1);
   const [planPontosOutros, setPlanPontosOutros] = useState(0.5);
+  const [planPontosServicos, setPlanPontosServicos] = useState<Record<string, number>>({});
 
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [allUsages, setAllUsages] = useState<any[]>([]);
@@ -341,6 +342,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setPlanPontosCorte((editingPlan as any).pontos_corte ?? 1);
         setPlanPontosBarba((editingPlan as any).pontos_barba ?? 1);
         setPlanPontosOutros((editingPlan as any).pontos_outros ?? 0.5);
+        setPlanPontosServicos((editingPlan as any).pontos_servicos || {});
         setPlanDiscounts(editingPlan.discounts || []);
         setDiscountItemId('');
         setDiscountPercentage(10);
@@ -352,6 +354,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setPlanPontosCorte(1);
         setPlanPontosBarba(1);
         setPlanPontosOutros(0.5);
+        setPlanPontosServicos({});
         setPlanDiscounts([]);
         setDiscountItemId('');
         setDiscountPercentage(10);
@@ -487,6 +490,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       pontos_corte: planPontosCorte,
       pontos_barba: planPontosBarba,
       pontos_outros: planPontosOutros,
+      pontos_servicos: planPontosServicos,
       discounts: planDiscounts,
     };
 
@@ -558,16 +562,22 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         const wBarba = (plan as any).pontos_barba ?? 1;
         const wOutro = (plan as any).pontos_outros ?? 0.5;
 
+        const getUsagePoints = (u: any) => {
+          const customPoints = (plan as any).pontos_servicos;
+          if (customPoints && u.service_id && typeof customPoints[u.service_id] === 'number') {
+            return customPoints[u.service_id];
+          }
+          if (u.type === 'haircut') return wCorte;
+          if (u.type === 'beard') return wBarba;
+          return wOutro;
+        };
+
         const totalPlanPoints = planUsages.reduce((sum, u) => {
-          if (u.type === 'haircut') return sum + wCorte;
-          if (u.type === 'beard') return sum + wBarba;
-          return sum + wOutro;
+          return sum + getUsagePoints(u);
         }, 0);
 
         const barberPlanPoints = barberPlanUsages.reduce((sum, u) => {
-          if (u.type === 'haircut') return sum + wCorte;
-          if (u.type === 'beard') return sum + wBarba;
-          return sum + wOutro;
+          return sum + getUsagePoints(u);
         }, 0);
 
         if (totalPlanPoints > 0) {
@@ -1536,38 +1546,91 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       )}
 
                       {planComissaoTipo === 'pool_pontos' && (
-                        <div className="space-y-3 pt-2 border-t">
-                          <p className="text-[9px] font-bold uppercase text-indigo-900">Peso de Pontuação dos Atendimentos</p>
-                          <div className="grid grid-cols-3 gap-2">
+                        <div className="space-y-4 pt-2 border-t">
+                          <p className="text-[10px] font-black uppercase text-indigo-900 tracking-wider">Peso de Pontuação dos Atendimentos</p>
+                          
+                          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-100">
                             <div className="space-y-1">
-                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Cabelo (pts)</label>
+                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Corte Padrão (pts)</label>
                               <input 
                                 type="number" 
                                 step="0.1" 
                                 value={planPontosCorte} 
                                 onChange={(e) => setPlanPontosCorte(Number(e.target.value))}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs text-primary outline-none text-center font-bold" 
+                                className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-primary outline-none text-center font-bold" 
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Barba (pts)</label>
+                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Barba Padrão (pts)</label>
                               <input 
                                 type="number" 
                                 step="0.1" 
                                 value={planPontosBarba} 
                                 onChange={(e) => setPlanPontosBarba(Number(e.target.value))}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs text-primary outline-none text-center font-bold" 
+                                className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-primary outline-none text-center font-bold" 
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Outros (pts)</label>
+                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Outros Padrão (pts)</label>
                               <input 
                                 type="number" 
                                 step="0.1" 
                                 value={planPontosOutros} 
                                 onChange={(e) => setPlanPontosOutros(Number(e.target.value))}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs text-primary outline-none text-center font-bold" 
+                                className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-primary outline-none text-center font-bold" 
                               />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex flex-col">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                                Pontos Personalizados por Serviço
+                              </label>
+                              <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                                Deixe em branco para usar o peso padrão acima (Corte, Barba ou Outros).
+                              </span>
+                            </div>
+
+                            <div className="max-h-48 overflow-y-auto border border-slate-150 rounded-xl divide-y divide-slate-100 bg-white">
+                              {services.length === 0 ? (
+                                <p className="text-[10px] text-slate-400 p-3 text-center">Nenhum serviço cadastrado.</p>
+                              ) : (
+                                services.map(s => {
+                                  const currentPoints = planPontosServicos[s.id] !== undefined ? planPontosServicos[s.id] : '';
+                                  return (
+                                    <div key={s.id} className="flex items-center justify-between p-2.5 hover:bg-slate-50 transition-colors">
+                                      <div className="flex flex-col">
+                                        <span className="text-[11px] font-bold text-slate-700">{s.nome}</span>
+                                        <span className="text-[9px] font-semibold text-slate-400">R$ {s.preco?.toFixed(2)}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <input 
+                                          type="number"
+                                          placeholder="Padrão"
+                                          step="0.1"
+                                          min="0"
+                                          value={currentPoints}
+                                          onChange={(e) => {
+                                            const rawVal = e.target.value;
+                                            setPlanPontosServicos(prev => {
+                                              const updated = { ...prev };
+                                              if (rawVal === '') {
+                                                delete updated[s.id];
+                                              } else {
+                                                updated[s.id] = Number(rawVal);
+                                              }
+                                              return updated;
+                                            });
+                                          }}
+                                          className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-primary text-center font-bold focus:bg-white focus:ring-1 focus:ring-amber-500 outline-none"
+                                        />
+                                        <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">pts</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
                             </div>
                           </div>
                         </div>

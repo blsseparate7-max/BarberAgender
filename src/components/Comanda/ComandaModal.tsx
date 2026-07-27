@@ -28,7 +28,8 @@ import {
   EyeOff,
   Sparkles,
   Award,
-  BellRing
+  BellRing,
+  Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc } from 'firebase/firestore';
@@ -118,6 +119,72 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [amountToPay, setAmountToPay] = useState<string>('');
   const [customTipValue, setCustomTipValue] = useState<string>('');
   const [showCustomTipInput, setShowCustomTipInput] = useState(false);
+
+  // States for coupon
+  const [couponInput, setCouponInput] = useState('');
+  const [availableCoupons, setAvailableCoupons] = useState<{ id: string; code: string; discount: number; expiresAt: string; active?: boolean }[]>([]);
+
+  useEffect(() => {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return;
+    const qCoupons = query(collection(db, 'cupons_desconto'), where('tenantId', '==', tenantId));
+    getDocs(qCoupons).then(snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const today = new Date().toISOString().split('T')[0];
+      const valid = list.filter(c => c.active !== false && (!c.expiresAt || c.expiresAt >= today));
+      setAvailableCoupons(valid);
+    }).catch(err => console.error("Error fetching coupons:", err));
+  }, [comanda?.id]);
+
+  const applyCouponDiscount = async (coupon: { code: string; discount: number }) => {
+    if (!comanda) return;
+    const subtotal = (comanda.subtotalServices || 0) + (comanda.subtotalProducts || 0);
+    if (subtotal <= 0) {
+      toast.error("A comanda não possui valor para aplicar o cupom.");
+      return;
+    }
+    const discountVal = Math.round(((subtotal * coupon.discount) / 100) * 100) / 100;
+    await updateFinancials({ discount: discountVal });
+    toast.success(`Cupom ${coupon.code} (${coupon.discount}% OFF) aplicado! Desconto de R$ ${discountVal.toFixed(2)}.`);
+    setCouponInput('');
+  };
+
+  const handleApplyCoupon = async (codeToApply?: string) => {
+    const targetCode = (codeToApply || couponInput).trim().toUpperCase();
+    if (!targetCode) {
+      toast.error("Informe o código do cupom.");
+      return;
+    }
+    const today = new Date().toISOString().split('T')[0];
+    let coupon = availableCoupons.find(c => c.code?.toUpperCase() === targetCode);
+
+    if (!coupon) {
+      try {
+        const q = query(collection(db, 'cupons_desconto'), where('tenantId', '==', getActiveTenantId()), where('code', '==', targetCode));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          toast.error("Cupom inválido ou não encontrado.");
+          return;
+        }
+        const cData = snap.docs[0].data() as any;
+        if (cData.active === false || (cData.expiresAt && cData.expiresAt < today)) {
+          toast.error("Este cupom está expirado ou inativo.");
+          return;
+        }
+        coupon = { id: snap.docs[0].id, code: cData.code, discount: cData.discount, expiresAt: cData.expiresAt, active: cData.active };
+      } catch (e) {
+        toast.error("Erro ao validar cupom.");
+        return;
+      }
+    }
+
+    if (coupon.active === false || (coupon.expiresAt && coupon.expiresAt < today)) {
+      toast.error("Este cupom está expirado ou inativo.");
+      return;
+    }
+
+    applyCouponDiscount(coupon);
+  };
 
   useEffect(() => {
     if (comanda) {
@@ -530,6 +597,18 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           });
         } catch (linkErr) {
           console.error("Erro ao sincronizar comanda com o agendamento de origem:", linkErr);
+        }
+      }
+
+      // Se a comanda foi aberta a partir do fluxo de operações do dia
+      if ((initialData as any)?.daily_flow_id) {
+        try {
+          await updateDoc(doc(db, 'daily_flow', (initialData as any).daily_flow_id), {
+            comanda_id: newComanda.id,
+            comanda_number: newComanda.number
+          });
+        } catch (linkErr) {
+          console.error("Erro ao sincronizar comanda com o fluxo de atendimento:", linkErr);
         }
       }
 
@@ -990,7 +1069,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             comanda.agendamento_id,
             item.profissional_id,
             item.profissional_name,
-            item.unitPrice || item.totalPrice || 0
+            item.unitPrice || item.totalPrice || 0,
+            item.id,
+            item.name
           );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
         } else if (item.type === 'pacote') {
@@ -1093,7 +1174,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             comanda.agendamento_id,
             item.profissional_id,
             item.profissional_name,
-            item.unitPrice || item.totalPrice || 0
+            item.unitPrice || item.totalPrice || 0,
+            item.id,
+            item.name
           );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
         } else if (item.type === 'pacote') {
@@ -1160,7 +1243,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           cliente_id: comanda.cliente_id,
           cliente_name: comanda.cliente_name,
           clientPhone: phone,
-          message: `Olá, ${comanda.cliente_name}! Passando para lembrar que o pagamento do seu saldo devedor de R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} referente à comanda #${comanda.number} está agendado para o dia ${format(new Date(fiadoDueDate + 'T12:00:00'), 'dd/MM/yyyy')}. Qualquer dúvida, estamos à disposição!`,
+          message: `Olá, ${comanda.cliente_name}! Passando para lembrar que o pagamento do seu saldo devedor de R$ ${(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} referente à comanda #${comanda.number} está agendado para o dia ${format(new Date(fiadoDueDate + 'T12:00:00'), 'dd/MM/yyyy')}. Qualquer dúvida, estamos à disposição!`,
           campanha_id: '',
           automacao_id: 'cobranca_fiado'
         });
@@ -1582,7 +1665,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         <p className={`text-xs font-bold ${
                           (clients.find(c => c.uid === comanda.cliente_id)?.balance || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'
                         }`}>
-                          R$ {(clients.find(c => c.uid === comanda.cliente_id)?.balance || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          R$ {((clients.find(c => c.uid === comanda.cliente_id)?.balance || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </p>
                       </div>
                     </div>
@@ -1642,7 +1725,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         <div>
                           <h4 className="text-sm font-black text-rose-900 uppercase tracking-widest">Saldo Devedor Ativo</h4>
                           <p className="text-xs font-bold text-rose-700 mt-0.5">
-                            Este cliente possui <span className="underline font-extrabold">R$ {totalEmAberto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> em aberto (FIADO).
+                            Este cliente possui <span className="underline font-extrabold">R$ {(totalEmAberto ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> em aberto (FIADO).
                           </p>
                         </div>
                       </div>
@@ -1924,10 +2007,10 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                     />
                                   </div>
                                 ) : (
-                                  <span>R$ {item.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                  <span>R$ {(item.unitPrice ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                                 )}
                               </td>
-                              <td className="px-6 py-5 text-sm font-bold text-primary text-right">R$ {item.totalPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                              <td className="px-6 py-5 text-sm font-bold text-primary text-right">R$ {(item.totalPrice ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                               <td className="px-6 py-5 text-right">
                                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                                   <div className="flex items-center justify-end gap-2">
@@ -1986,7 +2069,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                               <p className="text-[10px] text-emerald-600/70 font-bold">{format(new Date(p.date), 'dd/MM/yyyy')}</p>
                             </div>
                           </div>
-                          <p className="text-emerald-600 font-black text-lg">R$ {p.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                          <p className="text-emerald-600 font-black text-lg">R$ {(p.amount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                         </div>
                       ))}
                     </div>
@@ -2074,11 +2157,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               <div className="space-y-4">
                 <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
                   <span className="text-muted">Serviços</span>
-                  <span className="text-primary">R$ {comanda.subtotalServices.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  <span className="text-primary">R$ {(comanda.subtotalServices ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
                   <span className="text-muted">Produtos</span>
-                  <span className="text-primary">R$ {comanda.subtotalProducts.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  <span className="text-primary">R$ {(comanda.subtotalProducts ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
                 
                 {/* Gorjeta / Caixinha Interactive Selector */}
@@ -2143,10 +2226,63 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   </div>
                 )}
 
+                {/* Cupom de Desconto */}
+                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                  <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1"><Tag size={11} className="text-amber-500" /> Cupom de Desconto</span>
+                      {availableCoupons.length > 0 && (
+                        <span className="text-[9px] text-amber-600 font-bold bg-amber-50 px-1.5 py-0.5 rounded-full">
+                          {availableCoupons.length} disponível{availableCoupons.length > 1 ? 'is' : ''}
+                        </span>
+                      )}
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+                        <input 
+                          type="text"
+                          value={couponInput}
+                          disabled={loading}
+                          onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleApplyCoupon(); } }}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-xs text-primary font-bold uppercase placeholder:normal-case placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500/50 transition-all disabled:opacity-50"
+                          placeholder="Digite o cupom (ex: PROMO10)"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={loading || !couponInput.trim()}
+                        onClick={() => handleApplyCoupon()}
+                        className="px-3.5 py-2 bg-amber-500 text-white font-bold text-xs rounded-xl hover:bg-amber-600 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+
+                    {/* Quick badges for available coupons */}
+                    {availableCoupons.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {availableCoupons.slice(0, 4).map(c => (
+                          <button
+                            key={`cp-badge-${c.id}`}
+                            type="button"
+                            onClick={() => handleApplyCoupon(c.code)}
+                            className="text-[10px] font-black px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shadow-2xs"
+                          >
+                            <Tag size={9} />
+                            <span>{c.code} ({c.discount}%)</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Desconto Input */}
                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Aplicar Desconto</label>
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Aplicar Desconto Manual (R$)</label>
                     <div className="relative">
                       <Trash2 className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500" size={12} />
                       <input 
@@ -2164,19 +2300,19 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 <div className="pt-6 border-t border-slate-200 space-y-4">
                   <div className="flex justify-between items-center">
                     <span className="text-primary font-bold text-sm uppercase tracking-wider">Total Geral</span>
-                    <span className="text-3xl font-black text-primary tracking-tighter">R$ {comanda.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-3xl font-black text-primary tracking-tighter">R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
 
                   {selectedClientProfile && (
                     <div className="p-4 bg-slate-100 rounded-2xl flex items-center justify-between border border-slate-200">
                       <div>
                         <p className="text-[10px] text-muted font-bold uppercase tracking-widest leading-none mb-1">Saldo do Cliente</p>
-                        <p className={`text-sm font-black ${selectedClientProfile.balance < 0 ? 'text-red-600' : selectedClientProfile.balance > 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
-                          {selectedClientProfile.balance < 0 ? 'DÉBITO' : selectedClientProfile.balance > 0 ? 'CRÉDITO' : 'SEM PENDÊNCIA'}
+                        <p className={`text-sm font-black ${(selectedClientProfile.balance || 0) < 0 ? 'text-red-600' : (selectedClientProfile.balance || 0) > 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
+                          {(selectedClientProfile.balance || 0) < 0 ? 'DÉBITO' : (selectedClientProfile.balance || 0) > 0 ? 'CRÉDITO' : 'SEM PENDÊNCIA'}
                         </p>
                       </div>
-                      <span className={`text-lg font-black ${selectedClientProfile.balance < 0 ? 'text-red-700' : selectedClientProfile.balance > 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
-                        R$ {Math.abs(selectedClientProfile.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      <span className={`text-lg font-black ${(selectedClientProfile.balance || 0) < 0 ? 'text-red-700' : (selectedClientProfile.balance || 0) > 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
+                        R$ {Math.abs(selectedClientProfile.balance || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
                   )}
@@ -2188,7 +2324,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         <span>Contas pendentes anteriores</span>
                       </div>
                       <p className="text-amber-700 leading-tight">
-                        Este cliente tem R$ {clientDebts.reduce((acc, d) => acc + d.amount, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em contas em aberto.
+                        Este cliente tem R$ {clientDebts.reduce((acc, d) => acc + (d.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em contas em aberto.
                       </p>
                     </div>
                   )}
@@ -2199,11 +2335,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               <div className="pt-6 border-t border-slate-200 space-y-4">
                 <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
                   <span className="text-muted">Total Pago</span>
-                  <span className="text-emerald-600 font-extrabold">R$ {comanda.paidAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  <span className="text-emerald-600 font-extrabold">R$ {(comanda.paidAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
                   <span className="text-muted">Pendente</span>
-                  <span className="text-amber-600 font-extrabold">R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  <span className="text-amber-600 font-extrabold">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
                 {comanda.payments.length > 0 && (
@@ -2226,7 +2362,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       {comanda.payments.map((p, index) => (
                         <div key={`p-list-${index}`} className="flex justify-between items-center text-xs font-medium text-slate-700 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200/50">
                           <span className="capitalize">{p.method === 'cartao' ? 'Cartão' : p.method}</span>
-                          <span className="font-bold text-primary">R$ {p.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="font-bold text-primary">R$ {(p.amount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       ))}
                     </div>
@@ -2275,7 +2411,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             </div>
                             <div>
                               <p className="text-[9px] font-black uppercase tracking-widest text-amber-700 leading-none mb-1">Usar Cashback</p>
-                              <p className="text-xs font-bold text-amber-900">R$ {clientLoyalty.cashback.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis</p>
+                              <p className="text-xs font-bold text-amber-900">R$ {(clientLoyalty?.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis</p>
                             </div>
                           </div>
                           <span className="text-[9px] font-black uppercase tracking-widest bg-amber-600 text-white px-2 py-1 rounded-lg">Resgatar</span>
@@ -2529,7 +2665,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         >
                           CORTESIA
                         </button>
-                        <p className="font-black text-primary min-w-[90px] text-right">R$ {s.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        <p className="font-black text-primary min-w-[90px] text-right">R$ {(s.price ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                       </div>
                     </div>
                   ))
@@ -2549,7 +2685,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Estoque: {p.currentStock}</p>
                         </div>
                       </div>
-                      <p className="font-black text-primary">R$ {(p.salePrice ?? (p as any).preco ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      <p className="font-black text-primary">R$ {((p.salePrice ?? (p as any).preco ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                     </div>
                   ))
                 )}
@@ -2596,7 +2732,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 <div className="bg-emerald-50 border border-emerald-100 p-8 rounded-3xl text-center relative overflow-hidden shadow-sm">
                   <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500/20" />
                   <p className="text-[10px] text-emerald-600 uppercase tracking-widest font-black mb-1">Valor Pendente</p>
-                  <p className="text-5xl font-black text-emerald-700 tracking-tighter">R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                  <p className="text-5xl font-black text-emerald-700 tracking-tighter">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                 </div>
 
                 <div className="space-y-2">
@@ -2635,7 +2771,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         </div>
                         <div className="text-left">
                           <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 leading-none mb-1">Usar Cashback</p>
-                          <p className="text-sm font-bold text-amber-900">Você tem R$ {clientLoyalty.cashback.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis</p>
+                          <p className="text-sm font-bold text-amber-900">Você tem R$ {(clientLoyalty?.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -2809,8 +2945,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         onConfirm={handleCloseComanda}
         title="Finalizar Comanda"
         description={
-          comanda.pendingAmount > 0
-            ? `Atenção: Há um saldo pendente de R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Ao finalizar, este valor será lançado automaticamente como FIADO na conta do cliente ${comanda.cliente_name}. O profissional receberá a comissão integral e a barbearia receberá posteriormente.`
+          (comanda.pendingAmount ?? 0) > 0
+            ? `Atenção: Há um saldo pendente de R$ ${(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Ao finalizar, este valor será lançado automaticamente como FIADO na conta do cliente ${comanda.cliente_name}. O profissional receberá a comissão integral e a barbearia receberá posteriormente.`
             : "Deseja finalizar esta comanda manualmente? Isso a marcará como concluída no sistema financeiro."
         }
         confirmLabel="Finalizar"
@@ -2846,7 +2982,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           }
         }}
         title="Confirmar Fiado"
-        description={`Deseja lançar R$ ${confirmFiado?.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} como FIADO na conta do cliente?`}
+        description={`Deseja lançar R$ ${(confirmFiado?.amount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} como FIADO na conta do cliente?`}
         confirmLabel="Confirmar"
       />
 
@@ -2872,7 +3008,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   <div>
                     <h3 className="text-xl font-bold text-rose-900">Finalizar com Fiado</h3>
                     <p className="text-[10px] text-rose-600 font-bold uppercase tracking-widest leading-none mt-1">
-                      Saldo pendente: R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      Saldo pendente: R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </p>
                   </div>
                 </div>
@@ -2887,7 +3023,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
               <div className="p-8 space-y-6">
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  A comanda possui um saldo pendente de <span className="text-rose-600 font-bold">R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>. Este valor será lançado como FIADO para o cliente <span className="font-bold text-slate-800">{comanda.cliente_name}</span>. O profissional receberá a comissão normalmente.
+                  A comanda possui um saldo pendente de <span className="text-rose-600 font-bold">R$ ${(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>. Este valor será lançado como FIADO para o cliente <span className="font-bold text-slate-800">{comanda.cliente_name}</span>. O profissional receberá a comissão normalmente.
                 </p>
 
                 <div className="space-y-2">
@@ -3008,7 +3144,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <option value="">-- Mais antigo primeiro (Automático) --</option>
                       {clientDebts.map(d => (
                         <option key={d.id} value={d.id}>
-                          Comanda #{d.comanda_id?.slice(-4) || 's/n'} - R$ {d.remainingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({format(new Date(d.date + 'T12:00:00'), 'dd/MM/yyyy')})
+                          Comanda #{d.comanda_id?.slice(-4) || 's/n'} - R$ {(d.remainingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({format(new Date(d.date + 'T12:00:00'), 'dd/MM/yyyy')})
                         </option>
                       ))}
                     </select>

@@ -248,6 +248,184 @@ Instruções:
     }
   });
 
+  // ==========================================
+  // SAAS PAYMENT GATEWAY ROUTES (Asaas / MP / Pix)
+  // ==========================================
+
+  // Endpoint to create a SaaS Subscription/Payment Charge
+  app.post("/api/saas/payment/create-charge", async (req, res) => {
+    try {
+      const { tenantId, tenantName, ownerEmail, ownerCpfCnpj, planName, amount, billingType } = req.body;
+
+      if (!tenantId || !amount) {
+        return res.status(400).json({ error: "Parâmetros obrigatórios incompletos (tenantId e amount)." });
+      }
+
+      const asaasApiKey = process.env.ASAAS_API_KEY;
+      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+      const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+
+      // 1. ASAAS GATEWAY INTEGRATION
+      if (asaasApiKey) {
+        const baseUrl = asaasEnv === 'production' 
+          ? 'https://www.asaas.com/api/v3' 
+          : 'https://sandbox.asaas.com/api/v3';
+
+        // a) Create or Find Customer in Asaas
+        const custRes = await fetch(`${baseUrl}/customers?email=${encodeURIComponent(ownerEmail || '')}`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        const custData = await custRes.json();
+        
+        let customerId = custData?.data?.[0]?.id;
+        if (!customerId) {
+          const createCustRes = await fetch(`${baseUrl}/customers`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'access_token': asaasApiKey
+            },
+            body: JSON.stringify({
+              name: tenantName || tenantId,
+              email: ownerEmail || `financeiro@${tenantId}.com`,
+              cpfCnpj: ownerCpfCnpj || undefined,
+              externalReference: tenantId
+            })
+          });
+          const newCust = await createCustRes.json();
+          customerId = newCust.id;
+        }
+
+        // b) Create Payment Charge in Asaas
+        const today = new Date();
+        today.setDate(today.getDate() + 3); // 3 days due date
+        const dueDateStr = today.toISOString().split('T')[0];
+
+        const payRes = await fetch(`${baseUrl}/payments`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'access_token': asaasApiKey
+          },
+          body: JSON.stringify({
+            customer: customerId,
+            billingType: billingType || 'PIX',
+            value: Number(amount),
+            dueDate: dueDateStr,
+            description: `Assinatura BarberElite SaaS - Plano ${planName || 'Mensal'} (${tenantId})`,
+            externalReference: tenantId
+          })
+        });
+
+        const payData = await payRes.json();
+
+        if (payData.errors) {
+          throw new Error(payData.errors[0]?.description || "Erro no gateway Asaas");
+        }
+
+        // c) If PIX, fetch Pix QR Code
+        let pixCopiaECola = payData.invoiceUrl;
+        let pixQrCodeUrl = '';
+
+        if (payData.id && (billingType === 'PIX' || !billingType)) {
+          const pixRes = await fetch(`${baseUrl}/payments/${payData.id}/pixQrCode`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          const pixData = await pixRes.json();
+          if (pixData.payload) pixCopiaECola = pixData.payload;
+          if (pixData.encodedImage) pixQrCodeUrl = `data:image/png;base64,${pixData.encodedImage}`;
+        }
+
+        return res.json({
+          success: true,
+          chargeId: payData.id,
+          paymentUrl: payData.bankSlipUrl || payData.invoiceUrl,
+          pixCopiaECola: pixCopiaECola || payData.invoiceUrl,
+          pixQrCodeUrl: pixQrCodeUrl,
+          status: payData.status === 'RECEIVED' || payData.status === 'CONFIRMED' ? 'CONFIRMED' : 'PENDING',
+          gatewayUsed: 'asaas',
+          message: 'Cobrança gerada com sucesso via Asaas.'
+        });
+      }
+
+      // 2. MERCADO PAGO INTEGRATION
+      if (mpToken) {
+        const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${mpToken}`
+          },
+          body: JSON.stringify({
+            transaction_amount: Number(amount),
+            description: `Assinatura BarberElite - ${planName || 'SaaS'}`,
+            payment_method_id: 'pix',
+            payer: { email: ownerEmail || 'cliente@barberelite.com' },
+            external_reference: tenantId
+          })
+        });
+
+        const mpData = await mpRes.json();
+        const pixPayload = mpData.point_of_interaction?.transaction_data?.qr_code;
+        const qrCodeImg = mpData.point_of_interaction?.transaction_data?.qr_code_base64;
+
+        return res.json({
+          success: true,
+          chargeId: String(mpData.id),
+          pixCopiaECola: pixPayload,
+          pixQrCodeUrl: qrCodeImg ? `data:image/png;base64,${qrCodeImg}` : undefined,
+          status: mpData.status === 'approved' ? 'CONFIRMED' : 'PENDING',
+          gatewayUsed: 'mercadopago',
+          message: 'Cobrança PIX gerada via Mercado Pago.'
+        });
+      }
+
+      // 3. FALLBACK / DEMO / DIRECT PIX DYNAMIC PAYLOAD
+      // Generates a mock PIX copia e cola string with QR code generator URL
+      const mockChargeId = `charge_${Date.now()}`;
+      const cleanAmount = Number(amount).toFixed(2).replace('.', '');
+      const mockPixPayload = `00020126580014BR.GOV.BCB.PIX0136barberelite.saas.pix@gateway.com.br520400005303986540${cleanAmount.length}${cleanAmount}5802BR5915BarberElite SaaS6008LONDRINA62070503***6304`;
+      const qrCodeApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(mockPixPayload)}`;
+
+      return res.json({
+        success: true,
+        chargeId: mockChargeId,
+        paymentUrl: qrCodeApiUrl,
+        pixCopiaECola: mockPixPayload,
+        pixQrCodeUrl: qrCodeApiUrl,
+        status: 'PENDING',
+        gatewayUsed: 'simulated',
+        message: 'Cobrança gerada com sucesso em ambiente de simulação/demonstração PIX.'
+      });
+
+    } catch (error: any) {
+      console.error("Erro ao criar cobrança de assinatura SaaS:", error);
+      res.status(500).json({ error: error.message || "Falha ao gerar cobrança de pagamento." });
+    }
+  });
+
+  // Webhook Receiver for Asaas / Mercado Pago / Stripe
+  app.post("/api/saas/payment/webhook", async (req, res) => {
+    try {
+      const event = req.body;
+      console.log("Recebido Webhook de Pagamento SaaS:", JSON.stringify(event));
+
+      // Handle Asaas event
+      if (event?.event === 'PAYMENT_RECEIVED' || event?.event === 'PAYMENT_CONFIRMED') {
+        const tenantId = event.payment?.externalReference;
+        if (tenantId) {
+          console.log(`[Webhook] Ativando plano SaaS para o tenant: ${tenantId}`);
+          // Note: Frontend and Server sync tenant doc upon status poll
+        }
+      }
+
+      res.json({ received: true });
+    } catch (error: any) {
+      console.error("Erro ao processar Webhook SaaS:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // API Routes (Exemplos iniciais para o Dashboard)
   app.get("/api/stats", (req, res) => {
     res.json({

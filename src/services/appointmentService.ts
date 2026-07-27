@@ -33,6 +33,22 @@ import { comandaService } from './comandaService';
 const COLLECTION = 'appointments';
 const RECURRING_COLLECTION = 'recurring_appointments';
 
+function removeUndefinedFields<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(removeUndefinedFields) as any;
+  }
+  const cleaned: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = removeUndefinedFields(value);
+    }
+  }
+  return cleaned;
+}
+
 export const appointmentService = {
   async createAppointment(data: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>) {
     // 1. Check for availability (bypass for encaixes to allow squeeze-ins/overbooking)
@@ -43,14 +59,16 @@ export const appointmentService = {
       }
     }
 
-    // 2. Add to Firestore
-    const docRef = await addDoc(collection(db, COLLECTION), {
+    const payload = removeUndefinedFields({
       ...data,
       tenantId: (data as any).tenantId || getActiveTenantId(),
       origin: data.origin || 'agenda',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+
+    // 2. Add to Firestore
+    const docRef = await addDoc(collection(db, COLLECTION), payload);
 
     return docRef.id;
   },
@@ -653,12 +671,14 @@ export const appointmentService = {
 
   // Recurring Appointments
   async createRecurringAppointment(data: Omit<RecurringAppointment, 'id' | 'createdAt' | 'updatedAt'>) {
-    const docRef = await addDoc(collection(db, RECURRING_COLLECTION), {
+    const payload = removeUndefinedFields({
       ...data,
       tenantId: getActiveTenantId(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+
+    const docRef = await addDoc(collection(db, RECURRING_COLLECTION), payload);
     // Trigger generation for this newly created recurrence immediately
     const fullRec: RecurringAppointment = {
       id: docRef.id,
@@ -670,24 +690,31 @@ export const appointmentService = {
     return docRef.id;
   },
 
-  async deleteRecurringAppointment(id: string) {
-    // Delete the recurring record itself
-    await deleteDoc(doc(db, RECURRING_COLLECTION, id));
+  async deleteRecurringAppointment(id: string, mode: 'future' | 'all' | 'deactivate' = 'future') {
+    // Delete or update the recurring record itself
+    if (mode === 'deactivate') {
+      await updateDoc(doc(db, RECURRING_COLLECTION, id), {
+        status: 'inactive',
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      await deleteDoc(doc(db, RECURRING_COLLECTION, id));
+    }
     
-    // Also, optionally delete future 'recorrente' appointments that are in 'agendamento' status
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     const q = query(
       collection(db, COLLECTION),
-      where('tenantId', '==', getActiveTenantId()),
-      where('recurringAppointmentId', '==', id),
-      where('date', '>=', todayStr)
+      where('recurringAppointmentId', '==', id)
     );
+
     const snap = await getDocs(q);
     const batch = writeBatch(db);
     snap.docs.forEach(docSnap => {
       const appData = docSnap.data();
       if (appData.status === 'agendado') {
-        batch.delete(docSnap.ref);
+        if (mode === 'all' || appData.date >= todayStr) {
+          batch.delete(docSnap.ref);
+        }
       }
     });
     await batch.commit();
@@ -704,19 +731,17 @@ export const appointmentService = {
 
   async generateAppointmentsForRecurring(recurring: RecurringAppointment) {
     const today = startOfDay(new Date());
-    const endWindow = addDays(today, 30); // 30 days window
     const startDateObj = parse(recurring.startDate, 'yyyy-MM-dd', new Date());
     const endDateObj = recurring.endDate ? parse(recurring.endDate, 'yyyy-MM-dd', new Date()) : null;
 
+    // Expand window up to endDateObj or up to 180 days (6 months) from today
+    const maxFutureWindow = addDays(today, 180);
+    const endWindow = endDateObj && isBefore(endDateObj, maxFutureWindow) ? endDateObj : maxFutureWindow;
+
     const targetDates: string[] = [];
 
-    // Let's loop for the next 30 days
-    let current = today;
+    let current = isBefore(startDateObj, today) ? today : startDateObj;
     while (isBefore(current, endWindow) || isEqual(current, endWindow)) {
-      if (isBefore(current, startDateObj)) {
-        current = addDays(current, 1);
-        continue;
-      }
       if (endDateObj && isAfter(current, endDateObj)) {
         break;
       }
@@ -752,20 +777,20 @@ export const appointmentService = {
       current = addDays(current, 1);
     }
 
-    // Now, for each target date, check if appointment already exists
+    // Fetch existing appointments for this recurring series once
+    const qSeries = query(
+      collection(db, COLLECTION),
+      where('recurringAppointmentId', '==', recurring.id)
+    );
+    const seriesSnap = await getDocs(qSeries);
+    const existingDates = new Set(seriesSnap.docs.map(doc => doc.data().date));
+
+    // For each target date, check if appointment already exists or create it
     for (const date of targetDates) {
-      const q = query(
-        collection(db, COLLECTION),
-        where('tenantId', '==', getActiveTenantId()),
-        where('recurringAppointmentId', '==', recurring.id),
-        where('date', '==', date)
-      );
-      const snap = await getDocs(q);
-      
-      if (snap.empty) {
+      if (!existingDates.has(date)) {
         const template = recurring.appointmentTemplate;
         
-        // Double check if professional is available for this slot
+        // Check availability
         const avail = await this.checkAvailability(
           template.profissional_id,
           date,
@@ -774,7 +799,7 @@ export const appointmentService = {
         );
 
         if (avail.available) {
-          await addDoc(collection(db, COLLECTION), {
+          const payload = removeUndefinedFields({
             ...template,
             date,
             origin: 'recorrente',
@@ -783,9 +808,29 @@ export const appointmentService = {
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
+          await addDoc(collection(db, COLLECTION), payload);
         }
       }
     }
+  },
+
+  async checkRecurringSeriesConflicts(
+    profissional_id: string,
+    targetDates: string[],
+    startTime: string,
+    endTime: string
+  ): Promise<{ date: string; reason: string }[]> {
+    const conflicts: { date: string; reason: string }[] = [];
+    for (const date of targetDates) {
+      const res = await this.checkAvailability(profissional_id, date, startTime, endTime);
+      if (!res.available) {
+        conflicts.push({
+          date,
+          reason: res.reason || 'Horário já ocupado ou indisponível'
+        });
+      }
+    }
+    return conflicts;
   },
 
   async syncAllRecurringAppointments() {

@@ -41,6 +41,7 @@ import { settingsService, BarbershopProfile } from '../services/settingsService'
 import { userService } from '../services/userService';
 import { resetService } from '../services/resetService';
 import { loyaltyService } from '../services/loyaltyService';
+import { saasGatewayService, SaaSChargeResponse } from '../services/saasGatewayService';
 import { toast } from 'sonner';
 
 export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
@@ -88,6 +89,60 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [selectedPlan, setSelectedPlan] = useState('elite');
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMsg, setTicketMsg] = useState('');
+
+  // SaaS Payment Modal States
+  const [showSaaSPaymentModal, setShowSaaSPaymentModal] = useState(false);
+  const [saasChargeData, setSaasChargeData] = useState<SaaSChargeResponse | null>(null);
+  const [generatingSaaSCharge, setGeneratingSaaSCharge] = useState(false);
+  const [confirmingSaaSPayment, setConfirmingSaaSPayment] = useState(false);
+  const [selectedPlanName, setSelectedPlanName] = useState('Elite');
+  const [selectedPlanPrice, setSelectedPlanPrice] = useState(149.90);
+
+  const handleGenerateSaaSCharge = async (planName: string, price: number) => {
+    try {
+      setSelectedPlanName(planName);
+      setSelectedPlanPrice(price);
+      setGeneratingSaaSCharge(true);
+      setShowSaaSPaymentModal(true);
+      setSaasChargeData(null);
+
+      const charge = await saasGatewayService.createSaaSCharge({
+        tenantId: tenant?.id || 'barbearia',
+        tenantName: tenant?.name || 'Barbearia',
+        ownerEmail: profile?.email || tenant?.ownerEmail || '',
+        planId: planName.toLowerCase(),
+        planName,
+        amount: price,
+        billingType: 'PIX'
+      });
+      setSaasChargeData(charge);
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao gerar fatura do plano SaaS');
+    } finally {
+      setGeneratingSaaSCharge(false);
+    }
+  };
+
+  const handleConfirmSaaSPayment = async () => {
+    try {
+      setConfirmingSaaSPayment(true);
+      await saasGatewayService.confirmSaaSPlanPayment(
+        tenant?.id || 'barbearia',
+        selectedPlanName,
+        selectedPlanPrice,
+        1
+      );
+      toast.success(`Plano ${selectedPlanName} ativado com sucesso para sua barbearia!`);
+      setShowSaaSPaymentModal(false);
+      if (updateTenantProfile) {
+        await updateTenantProfile({ plan: selectedPlanName, planStatus: 'active' });
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao confirmar renovação do plano.');
+    } finally {
+      setConfirmingSaaSPayment(false);
+    }
+  };
 
   // Business / rules states
   const [loyaltyConfigId, setLoyaltyConfigId] = useState<string>('');

@@ -655,9 +655,11 @@ export interface SubscriptionUsage {
   id: string;
   assinatura_id: string;
   cliente_id: string;
-  type: 'haircut' | 'beard';
+  type: 'haircut' | 'beard' | string;
   date: string;
   agendamento_id?: string;
+  service_id?: string;
+  service_name?: string;
   createdAt: any;
 }
 

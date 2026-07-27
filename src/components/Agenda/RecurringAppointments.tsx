@@ -44,6 +44,7 @@ export function RecurringAppointments() {
   // New Recurrence fields
   const [selectedClientId, setSelectedClientId] = useState('');
   const [clientSearch, setClientSearch] = useState('');
+  const [clientPhone, setClientPhone] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [selectedBarberId, setSelectedBarberId] = useState('');
@@ -118,6 +119,7 @@ export function RecurringAppointments() {
   const resetForm = () => {
     setSelectedClientId('');
     setClientSearch('');
+    setClientPhone('');
     setSelectedServiceId('');
     setSelectedBarberId('');
     setPattern('weekly');
@@ -133,13 +135,18 @@ export function RecurringAppointments() {
   const handleClientSelect = (client: UserProfile) => {
     setSelectedClientId(client.uid);
     setClientSearch(client.nome);
+    setClientPhone(client.telefone || client.phone || '');
     setShowClientDropdown(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedClientId) {
-      toast.error('Por favor, selecione um cliente.');
+    const finalClientName = selectedClientId 
+      ? (clients.find(c => c.uid === selectedClientId)?.nome || clientSearch) 
+      : clientSearch.trim();
+
+    if (!finalClientName) {
+      toast.error('Por favor, selecione ou digite o nome do cliente.');
       return;
     }
     if (!selectedServiceId) {
@@ -151,12 +158,11 @@ export function RecurringAppointments() {
       return;
     }
 
-    const client = clients.find(c => c.uid === selectedClientId);
     const service = services.find(s => s.id === selectedServiceId);
     const barber = barbers.find(b => b.uid === selectedBarberId);
 
-    if (!client || !service || !barber) {
-      toast.error('Erro de validação dos dados selecionados.');
+    if (!service || !barber) {
+      toast.error('Erro de validação dos dados do serviço ou profissional.');
       return;
     }
 
@@ -168,8 +174,9 @@ export function RecurringAppointments() {
       const endTime = format(endParse, 'HH:mm');
 
       const appointmentTemplate: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'> = {
-        cliente_id: client.uid,
-        cliente_name: client.nome,
+        cliente_id: selectedClientId || 'sem_cadastro',
+        cliente_name: finalClientName,
+        cliente_telefone: clientPhone || undefined,
         profissional_id: barber.uid,
         profissional_name: barber.nome,
         servico_id: service.id,
@@ -249,11 +256,13 @@ export function RecurringAppointments() {
   };
 
   // Filters
-  const filteredClientsForSearch = clientSearch.trim() === '' ? [] : clients.filter(c => 
-    c.nome.toLowerCase().includes(clientSearch.toLowerCase()) ||
-    c.telefone?.includes(clientSearch) ||
-    c.phone?.includes(clientSearch)
-  ).slice(0, 5);
+  const filteredClientsForSearch = clientSearch.trim() === '' 
+    ? clients.slice(0, 8) 
+    : clients.filter(c => 
+        c.nome.toLowerCase().includes(clientSearch.toLowerCase()) ||
+        c.telefone?.includes(clientSearch) ||
+        c.phone?.includes(clientSearch)
+      ).slice(0, 8);
 
   const filteredRecurring = recurring.filter(rec => {
     const template = rec.appointmentTemplate;
@@ -540,12 +549,15 @@ export function RecurringAppointments() {
               <form onSubmit={handleSubmit} className="space-y-5">
                 {/* Searchable Client Selector */}
                 <div className="space-y-2 relative">
-                  <label className="text-xs font-black text-primary uppercase tracking-wider">Cliente <span className="text-red-500">*</span></label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-black text-primary uppercase tracking-wider">Cliente <span className="text-red-500">*</span></label>
+                    <span className="text-[10px] text-muted font-bold">Selecione da lista ou digite o nome</span>
+                  </div>
                   <div className="relative">
                     <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                     <input
                       type="text"
-                      placeholder="Pesquisar por nome ou telefone do cliente..."
+                      placeholder="Pesquisar cliente cadastrado ou digitar nome avulso..."
                       value={clientSearch}
                       onChange={(e) => {
                         setClientSearch(e.target.value);
@@ -556,34 +568,63 @@ export function RecurringAppointments() {
                       className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-12 pr-6 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner font-medium"
                     />
                     {selectedClientId && (
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-500 bg-emerald-50 p-1 rounded-full">
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-500 bg-emerald-50 p-1 rounded-full flex items-center gap-1">
                         <Check size={14} />
                       </div>
                     )}
                   </div>
 
-                  {showClientDropdown && clientSearch.trim() !== '' && (
-                    <div className="absolute z-10 w-full bg-white border border-slate-200 rounded-2xl mt-1 shadow-xl overflow-hidden max-h-48 overflow-y-auto">
+                  {showClientDropdown && (
+                    <div className="absolute z-20 w-full bg-white border border-slate-200 rounded-2xl mt-1 shadow-2xl overflow-hidden max-h-56 overflow-y-auto">
+                      {clientSearch.trim() !== '' && !selectedClientId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedClientId('');
+                            setShowClientDropdown(false);
+                          }}
+                          className="w-full text-left p-3 hover:bg-emerald-50 text-xs font-bold border-b border-slate-100 flex items-center justify-between text-emerald-800 bg-emerald-50/60"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Plus size={14} className="text-emerald-600" />
+                            <span>Usar "<strong>{clientSearch}</strong>" (Cliente sem cadastro)</span>
+                          </div>
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-black">Usar Digitado</span>
+                        </button>
+                      )}
+
                       {filteredClientsForSearch.length === 0 ? (
-                        <div className="p-4 text-xs text-muted font-medium text-center">Nenhum cliente encontrado</div>
+                        <div className="p-4 text-xs text-muted font-medium text-center">Nenhum cliente cadastrado encontrado com este nome</div>
                       ) : (
                         filteredClientsForSearch.map(client => (
                           <button
                             key={client.uid}
                             type="button"
                             onClick={() => handleClientSelect(client)}
-                            className="w-full text-left p-3 hover:bg-slate-50 text-xs font-medium border-b border-slate-100 flex items-center justify-between text-primary"
+                            className="w-full text-left p-3 hover:bg-slate-50 text-xs font-medium border-b border-slate-100 flex items-center justify-between text-primary transition-colors"
                           >
                             <div>
-                              <span className="font-bold">{client.nome}</span>
+                              <span className="font-bold block">{client.nome}</span>
                               <span className="text-slate-400 block text-[10px]">{client.telefone || client.phone || 'Sem telefone'}</span>
                             </div>
-                            <Plus size={14} className="text-slate-400" />
+                            <span className="text-[10px] font-bold text-accent bg-accent/5 px-2 py-1 rounded-lg">Selecionar</span>
                           </button>
                         ))
                       )}
                     </div>
                   )}
+                </div>
+
+                {/* Optional Client Phone */}
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-primary uppercase tracking-wider">Telefone do Cliente (Opcional)</label>
+                  <input
+                    type="tel"
+                    placeholder="(00) 00000-0000"
+                    value={clientPhone}
+                    onChange={(e) => setClientPhone(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium shadow-inner"
+                  />
                 </div>
 
                 {/* Service Selector */}

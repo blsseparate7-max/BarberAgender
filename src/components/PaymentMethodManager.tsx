@@ -325,8 +325,30 @@ export function PaymentMethodManager() {
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Tipo de Pagamento</label>
                     <select 
-                      value={formData.type}
-                      onChange={e => setFormData({ ...formData, type: e.target.value as PaymentMethod })}
+                      value={formData.type || formData.tipo || 'outros'}
+                      onChange={e => {
+                        const newType = e.target.value as PaymentMethod;
+                        const isFiado = newType === 'fiado';
+                        const isCredit = newType === 'credito';
+                        const days = isCredit ? (formData.settlementDays || 30) : isFiado ? 0 : 0;
+                        const isNow = days === 0 && !isFiado;
+
+                        setFormData({
+                          ...formData,
+                          type: newType,
+                          tipo: newType,
+                          settlementDays: days,
+                          prazo_recebimento: days,
+                          receivesImmediately: isNow,
+                          recebe_na_hora: isNow,
+                          entersCashImmediately: isNow,
+                          entra_no_caixa: isNow,
+                          goesToReceivables: !isFiado && !isNow,
+                          vai_para_recebiveis: !isFiado && !isNow,
+                          goesToClientAccount: isFiado,
+                          vai_para_conta_cliente: isFiado
+                        });
+                      }}
                       className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none cursor-pointer"
                     >
                       <option value="dinheiro">Dinheiro</option>
@@ -345,7 +367,7 @@ export function PaymentMethodManager() {
                     <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Descrição (Opcional)</label>
                     <input 
                       type="text"
-                      value={formData.description}
+                      value={formData.description || ''}
                       onChange={e => setFormData({ ...formData, description: e.target.value })}
                       className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none"
                       placeholder="Ex: Recebimento via Pix"
@@ -410,11 +432,12 @@ export function PaymentMethodManager() {
                             if (normalized === '' || /^[0-9]*\.?[0-9]*$/.test(normalized)) {
                               setFeeInputStr(val);
                               const parsed = parseFloat(normalized);
-                              if (!isNaN(parsed)) {
-                                setFormData(prev => ({ ...prev, feePercentage: parsed }));
-                              } else {
-                                setFormData(prev => ({ ...prev, feePercentage: 0 }));
-                              }
+                              const numVal = !isNaN(parsed) ? parsed : 0;
+                              setFormData(prev => ({ 
+                                ...prev, 
+                                feePercentage: numVal,
+                                taxa_percentual: numVal
+                              }));
                             }
                           }}
                           placeholder="0.00"
@@ -427,8 +450,27 @@ export function PaymentMethodManager() {
                       <div className="relative">
                         <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                         <select 
-                          value={formData.settlementDays}
-                          onChange={e => setFormData({ ...formData, settlementDays: parseInt(e.target.value) })}
+                          value={formData.settlementDays ?? formData.prazo_recebimento ?? 0}
+                          onChange={e => {
+                            const days = parseInt(e.target.value, 10);
+                            const currentType = formData.type || formData.tipo;
+                            const isFiado = currentType === 'fiado';
+                            const isNow = days === 0 && !isFiado;
+
+                            setFormData({
+                              ...formData,
+                              settlementDays: days,
+                              prazo_recebimento: days,
+                              receivesImmediately: isNow,
+                              recebe_na_hora: isNow,
+                              entersCashImmediately: isNow,
+                              entra_no_caixa: isNow,
+                              goesToReceivables: !isFiado && !isNow,
+                              vai_para_recebiveis: !isFiado && !isNow,
+                              goesToClientAccount: isFiado,
+                              vai_para_conta_cliente: isFiado
+                            });
+                          }}
                           className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none cursor-pointer"
                         >
                           <option value="0">D+0 (Na hora)</option>
@@ -445,33 +487,33 @@ export function PaymentMethodManager() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <ToggleButton 
                       label="Recebe na hora?" 
-                      checked={formData.receivesImmediately || false} 
-                      onChange={v => setFormData({...formData, receivesImmediately: v})} 
+                      checked={formData.receivesImmediately ?? formData.recebe_na_hora ?? false} 
+                      onChange={v => setFormData({ ...formData, receivesImmediately: v, recebe_na_hora: v })} 
                     />
                     <ToggleButton 
                       label="Entra no caixa na hora?" 
-                      checked={formData.entersCashImmediately || false} 
-                      onChange={v => setFormData({...formData, entersCashImmediately: v})} 
+                      checked={formData.entersCashImmediately ?? formData.entra_no_caixa ?? false} 
+                      onChange={v => setFormData({ ...formData, entersCashImmediately: v, entra_no_caixa: v })} 
                     />
                     <ToggleButton 
                       label="Vai para Recebíveis?" 
-                      checked={formData.goesToReceivables || false} 
-                      onChange={v => setFormData({...formData, goesToReceivables: v})} 
+                      checked={formData.goesToReceivables ?? formData.vai_para_recebiveis ?? false} 
+                      onChange={v => setFormData({ ...formData, goesToReceivables: v, vai_para_recebiveis: v })} 
                     />
                     <ToggleButton 
                       label="Vai para Conta do Cliente?" 
-                      checked={formData.goesToClientAccount || false} 
-                      onChange={v => setFormData({...formData, goesToClientAccount: v})} 
+                      checked={formData.goesToClientAccount ?? formData.vai_para_conta_cliente ?? false} 
+                      onChange={v => setFormData({ ...formData, goesToClientAccount: v, vai_para_conta_cliente: v })} 
                     />
                     <ToggleButton 
                       label="Permite Pagamento Parcial?" 
-                      checked={formData.allowsPartial || false} 
-                      onChange={v => setFormData({...formData, allowsPartial: v})} 
+                      checked={formData.allowsPartial ?? formData.permite_parcial ?? false} 
+                      onChange={v => setFormData({ ...formData, allowsPartial: v, permite_parcial: v })} 
                     />
                     <ToggleButton 
                       label="Permite Split (Dividido)?" 
-                      checked={formData.allowsSplit || false} 
-                      onChange={v => setFormData({...formData, allowsSplit: v})} 
+                      checked={formData.allowsSplit ?? formData.permite_split ?? false} 
+                      onChange={v => setFormData({ ...formData, allowsSplit: v, permite_split: v })} 
                     />
                   </div>
                 </div>

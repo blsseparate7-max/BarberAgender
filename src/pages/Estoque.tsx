@@ -33,8 +33,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { inventoryService } from '../services/inventoryService';
 import { Product, ProductCategory, InventoryMovement, MovementType, ProductType } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, where, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getActiveTenantId } from '../services/tenantService';
 
 export function Estoque() {
   const { user, profile, isAdmin, isGerente } = useAuth();
@@ -71,8 +72,20 @@ export function Estoque() {
   const [newSupplierName, setNewSupplierName] = useState('');
   const [isCreatingSupplierOnTheFly, setIsCreatingSupplierOnTheFly] = useState(false);
 
-  // Barbers / active professionals state
+  // Movement modal extended states
+  const [movementSupplierId, setMovementSupplierId] = useState('');
+  const [movementCostPrice, setMovementCostPrice] = useState<number>(0);
+  const [movementQuantity, setMovementQuantity] = useState<number>(1);
+  const [movementTotalAmount, setMovementTotalAmount] = useState<number>(0);
+  const [amountManuallyEdited, setAmountManuallyEdited] = useState(false);
+  const [movementCategoryReason, setMovementCategoryReason] = useState<string>('');
+  const [movementProfessionalId, setMovementProfessionalId] = useState<string>('');
+  const [movementClientId, setMovementClientId] = useState<string>('');
+  const [movementRecordFinancial, setMovementRecordFinancial] = useState<boolean>(false);
+
+  // Barbers & Clients state
   const [barbers, setBarbers] = useState<any[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
 
   // Commission settings state inside product modal
   const [activeModalTab, setActiveModalTab] = useState<'dados' | 'comissao'>('dados');
@@ -145,9 +158,10 @@ export function Estoque() {
     };
 
     // 1. Subscribe to Products
-    const qProducts = query(collection(db, 'products'), orderBy('name', 'asc'));
+    const qProducts = query(collection(db, 'products'), where('tenantId', '==', getActiveTenantId()));
     const unsubscribeProducts = onSnapshot(qProducts, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setProducts(data);
       loadedProducts = true;
       checkLoading();
@@ -158,9 +172,10 @@ export function Estoque() {
     });
 
     // 2. Subscribe to Categories
-    const qCategories = query(collection(db, 'product_categories'), orderBy('name', 'asc'));
+    const qCategories = query(collection(db, 'product_categories'), where('tenantId', '==', getActiveTenantId()));
     const unsubscribeCategories = onSnapshot(qCategories, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductCategory));
+      data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setCategories(data);
       loadedCategories = true;
       checkLoading();
@@ -171,9 +186,17 @@ export function Estoque() {
     });
 
     // 3. Subscribe to Movements
-    const qMovements = query(collection(db, 'inventory_movements'), orderBy('date', 'desc'), orderBy('createdAt', 'desc'));
+    const qMovements = query(collection(db, 'inventory_movements'), where('tenantId', '==', getActiveTenantId()));
     const unsubscribeMovements = onSnapshot(qMovements, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement));
+      data.sort((a, b) => {
+        const aDate = a.date || '';
+        const bDate = b.date || '';
+        if (aDate !== bDate) return bDate.localeCompare(aDate);
+        const aTime = a.createdAt || '';
+        const bTime = b.createdAt || '';
+        return bTime.localeCompare(aTime);
+      });
       setMovements(data);
       loadedMovements = true;
       checkLoading();
@@ -184,9 +207,10 @@ export function Estoque() {
     });
 
     // 4. Subscribe to Suppliers (Fornecedores)
-    const qSuppliers = query(collection(db, 'tipos_fornecedores'), orderBy('name', 'asc'));
+    const qSuppliers = query(collection(db, 'tipos_fornecedores'), where('tenantId', '==', getActiveTenantId()));
     const unsubscribeSuppliers = onSnapshot(qSuppliers, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
       setSuppliers(data);
       loadedSuppliers = true;
       checkLoading();
@@ -206,17 +230,28 @@ export function Estoque() {
       console.error("Erro ao assinar profissionais:", error);
     });
 
+    // 6. Subscribe to Clients
+    const qClients = query(collection(db, 'clientes'), where('tenantId', '==', getActiveTenantId()));
+    const unsubscribeClients = onSnapshot(qClients, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a: any, b: any) => (a.nome || a.name || '').localeCompare(b.nome || b.name || ''));
+      setClients(data);
+    }, (error) => {
+      console.error("Erro ao assinar clientes:", error);
+    });
+
     return () => {
       unsubscribeProducts();
       unsubscribeCategories();
       unsubscribeMovements();
       unsubscribeSuppliers();
       unsubscribeProf();
+      unsubscribeClients();
     };
   }, []);
 
   const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (p.name || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = filterCategory === 'all' || p.categoria_id === filterCategory;
     const matchesStatus = filterStatus === 'all' || p.status === filterStatus;
     return matchesSearch && matchesCategory && matchesStatus;
@@ -237,13 +272,18 @@ export function Estoque() {
     }
 
     const formData = new FormData(e.currentTarget);
+    const rawCostPrice = Number(formData.get('costPrice'));
+    const costPrice = !isNaN(rawCostPrice) && rawCostPrice >= 0 ? rawCostPrice : (editingProduct?.costPrice ?? 0);
+    const rawSalePrice = Number(formData.get('salePrice'));
+    const salePrice = !isNaN(rawSalePrice) && rawSalePrice > 0 ? rawSalePrice : (editingProduct?.salePrice ?? editingProduct?.preco ?? 0);
+
     const productData = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
       categoria_id: selectedCategoryId,
       categoryName: categories.find(c => c.id === selectedCategoryId)?.name || '',
-      costPrice: Number(formData.get('costPrice')),
-      salePrice: Number(formData.get('salePrice')),
+      costPrice,
+      salePrice,
       currentStock: Number(formData.get('currentStock')),
       minStock: Number(formData.get('minStock')),
       type: formData.get('type') as ProductType,
@@ -272,6 +312,24 @@ export function Estoque() {
     }
   });
 
+  const openMovementModal = (product: Product, type: MovementType) => {
+    setSelectedProduct(product);
+    setMovementType(type);
+    setMovementSupplierId(product.fornecedor_id || '');
+    const unitCost = product.costPrice || 0;
+    const unitSale = product.salePrice || 0;
+    setMovementCostPrice(unitCost);
+    const initialQty = 1;
+    setMovementQuantity(initialQty);
+    setMovementTotalAmount(type === 'venda' ? initialQty * unitSale : initialQty * unitCost);
+    setAmountManuallyEdited(false);
+    setMovementCategoryReason(type === 'saida' ? 'avaria' : type === 'consumo_interno' ? 'bancada' : '');
+    setMovementProfessionalId(user?.uid || '');
+    setMovementClientId('');
+    setMovementRecordFinancial(type === 'venda' || type === 'entrada');
+    setShowMovementModal(true);
+  };
+
   const { execute: handleRegisterMovement, isLoading: isRegisteringMovement } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedProduct || !user || !profile) return;
@@ -279,30 +337,79 @@ export function Estoque() {
     const formData = new FormData(e.currentTarget);
     const quantity = Number(formData.get('quantity'));
     const reason = formData.get('reason') as string;
-    const amount = Number(formData.get('amount'));
-    const paymentMethod = formData.get('paymentMethod') as string;
+    const categoryReason = (formData.get('categoryReason') as string) || movementCategoryReason;
+    const amount = Number(formData.get('amount') || movementTotalAmount);
+    const paymentMethod = (formData.get('paymentMethod') as string) || 'dinheiro';
+    const costPrice = Number(formData.get('costPrice') || movementCostPrice);
+    
+    const profId = movementProfessionalId || user.uid;
+    const selectedProf = barbers.find(b => b.uid === profId || b.id === profId);
+    const profName = selectedProf ? (selectedProf.nome || selectedProf.name || profile.displayName) : profile.displayName;
+
+    const selectedClientObj = clients.find(c => c.id === movementClientId);
+    const clientName = selectedClientObj ? (selectedClientObj.nome || selectedClientObj.name || '') : '';
 
     try {
-      const financialData = (movementType === 'venda' || movementType === 'emerald' || movementType === 'entrada') && amount > 0 ? {
-        amount,
-        paymentMethod: paymentMethod || 'dinheiro',
-        category: movementType === 'venda' ? 'Venda de Produtos' : 'Compra de Produtos'
-      } : undefined;
+      let financialData: { amount: number; paymentMethod: string; category: string } | undefined = undefined;
 
-      await inventoryService.registerMovement({
+      if (movementType === 'venda' && amount > 0) {
+        financialData = {
+          amount,
+          paymentMethod: paymentMethod || 'dinheiro',
+          category: 'Venda de Produtos'
+        };
+      } else if (movementType === 'entrada' && amount > 0) {
+        financialData = {
+          amount,
+          paymentMethod: paymentMethod || 'dinheiro',
+          category: 'Compra de Produtos'
+        };
+      } else if (movementType === 'saida' && movementRecordFinancial && amount > 0) {
+        financialData = {
+          amount,
+          paymentMethod: 'dinheiro',
+          category: 'Avarias e Perdas de Estoque'
+        };
+      } else if (movementType === 'consumo_interno' && movementRecordFinancial && amount > 0) {
+        financialData = {
+          amount,
+          paymentMethod: 'dinheiro',
+          category: 'Insumos e Consumo Interno'
+        };
+      }
+
+      const movementPayload: any = {
         produto_id: selectedProduct.id,
         productName: selectedProduct.name,
         type: movementType,
         quantity,
+        unitPrice: selectedProduct.salePrice || 0,
+        costPrice: costPrice > 0 ? costPrice : (selectedProduct.costPrice || 0),
+        totalAmount: amount,
         reason,
-        profissional_id: user.uid,
-        profissional_name: profile.displayName,
+        categoryReason,
+        profissional_id: profId,
+        profissional_name: profName,
+        cliente_id: movementClientId || '',
+        cliente_name: clientName,
+        paymentMethod: movementType === 'venda' ? paymentMethod : '',
         date: format(new Date(), 'yyyy-MM-dd')
-      }, financialData);
+      };
+
+      if (movementType === 'entrada') {
+        if (movementSupplierId) {
+          movementPayload.fornecedor_id = movementSupplierId;
+          movementPayload.fornecedor_name = suppliers.find(s => s.id === movementSupplierId)?.name || '';
+        }
+      }
+
+      await inventoryService.registerMovement(movementPayload, financialData);
       setShowMovementModal(false);
       setSelectedProduct(null);
+      toast.success('Movimentação registrada com sucesso!');
     } catch (error: any) {
       console.error("Erro ao registrar movimentação:", error);
+      toast.error(error.message || 'Erro ao registrar movimentação.');
     }
   });
 
@@ -344,6 +451,7 @@ export function Estoque() {
     try {
       const docRef = await addDoc(collection(db, 'tipos_fornecedores'), {
         name: newSupplierName.trim(),
+        tenantId: getActiveTenantId(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -521,7 +629,7 @@ export function Estoque() {
                 key={product.id} 
                 product={product} 
                 onEdit={() => { setEditingProduct(product); setShowProductModal(true); }}
-                onMovement={(type) => { setSelectedProduct(product); setMovementType(type); setShowMovementModal(true); }}
+                onMovement={(type) => openMovementModal(product, type)}
                 onDelete={() => confirmDeleteProduct(product)}
                 isAdmin={isAdmin || isGerente}
               />
@@ -538,9 +646,10 @@ export function Estoque() {
                 <tr className="bg-slate-50/50 border-b border-border">
                   <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Data</th>
                   <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Produto</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Tipo</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Tipo / Destino</th>
                   <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Qtd</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Motivo</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Valor</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Observação / Envolvidos</th>
                   <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Responsável</th>
                 </tr>
               </thead>
@@ -552,18 +661,36 @@ export function Estoque() {
                       <p className="text-sm font-bold text-primary group-hover:text-accent transition-colors">{m.productName}</p>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-lg border ${
-                        m.type === 'entrada' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                        m.type === 'saida' ? 'bg-red-50 text-red-600 border-red-100' :
-                        m.type === 'consumo_interno' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                        m.type === 'venda' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                        'bg-slate-50 text-slate-600 border-slate-100'
-                      }`}>
-                        {m.type.replace('_', ' ')}
-                      </span>
+                      <div className="flex flex-col gap-1 items-start">
+                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-lg border ${
+                          m.type === 'entrada' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                          m.type === 'saida' ? 'bg-red-50 text-red-600 border-red-100' :
+                          m.type === 'consumo_interno' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                          m.type === 'venda' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                          'bg-slate-50 text-slate-600 border-slate-100'
+                        }`}>
+                          {m.type === 'entrada' && 'Entrada'}
+                          {m.type === 'saida' && 'Saída / Baixa'}
+                          {m.type === 'consumo_interno' && 'Consumo Interno'}
+                          {m.type === 'venda' && 'Venda Direta'}
+                          {m.type === 'ajuste' && 'Ajuste'}
+                        </span>
+                        {m.categoryReason && (
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100 px-1.5 py-0.5 rounded">
+                            {m.categoryReason}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm font-bold text-primary">{m.quantity}</td>
-                    <td className="px-6 py-4 text-xs text-slate-500 font-medium">{m.reason}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-slate-700">
+                      {m.totalAmount ? `R$ ${m.totalAmount.toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-slate-500 font-medium space-y-0.5">
+                      <p>{m.reason}</p>
+                      {m.cliente_name && <p className="text-[10px] font-bold text-amber-700 uppercase">Cliente: {m.cliente_name}</p>}
+                      {m.fornecedor_name && <p className="text-[10px] font-bold text-emerald-700 uppercase">Forn: {m.fornecedor_name}</p>}
+                    </td>
                     <td className="px-6 py-4 text-xs text-muted font-bold">{m.profissional_name}</td>
                   </tr>
                 ))}
@@ -1082,53 +1209,348 @@ export function Estoque() {
         )}
 
         {showMovementModal && selectedProduct && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowMovementModal(false)}>
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-surface border border-border rounded-2xl w-full max-w-md overflow-hidden shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface border border-border rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl"
             >
-              <div className="p-8 border-b border-border flex items-center justify-between bg-slate-50/50">
-                <div>
-                  <h2 className="text-xl font-bold text-primary uppercase tracking-tight">Registrar {movementType.replace('_', ' ')}</h2>
-                  <p className="text-muted text-[10px] font-bold uppercase tracking-widest mt-1">{selectedProduct.name}</p>
+              {/* Modal Header */}
+              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                    movementType === 'entrada' ? 'bg-emerald-50 text-emerald-600' :
+                    movementType === 'saida' ? 'bg-red-50 text-red-600' :
+                    movementType === 'consumo_interno' ? 'bg-blue-50 text-blue-600' :
+                    movementType === 'venda' ? 'bg-amber-50 text-amber-600' :
+                    'bg-slate-100 text-slate-600'
+                  }`}>
+                    {movementType === 'entrada' && <PlusCircle size={22} />}
+                    {movementType === 'saida' && <MinusCircle size={22} />}
+                    {movementType === 'consumo_interno' && <UserMinus size={22} />}
+                    {movementType === 'venda' && <ShoppingCart size={22} />}
+                    {movementType === 'ajuste' && <RefreshCw size={22} />}
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-primary uppercase tracking-tight">
+                      {movementType === 'entrada' && 'Registrar Entrada de Estoque'}
+                      {movementType === 'saida' && 'Registrar Saída / Baixa'}
+                      {movementType === 'consumo_interno' && 'Registrar Consumo Interno'}
+                      {movementType === 'venda' && 'Registrar Venda Direta'}
+                      {movementType === 'ajuste' && 'Ajuste de Estoque'}
+                    </h2>
+                    <p className="text-muted text-[11px] font-bold uppercase tracking-wider mt-0.5">{selectedProduct.name}</p>
+                  </div>
                 </div>
-                <button onClick={() => setShowMovementModal(false)} className="p-2 hover:bg-slate-100 rounded-full text-muted transition-colors">
-                  <XCircle size={24} />
+                <button type="button" onClick={() => setShowMovementModal(false)} className="p-2 hover:bg-slate-100 rounded-full text-muted transition-colors">
+                  <XCircle size={22} />
                 </button>
               </div>
-              <form onSubmit={handleRegisterMovement} className="p-8 space-y-6">
+
+              {/* Form Body */}
+              <form onSubmit={handleRegisterMovement} className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
+                
+                {/* Quantity Field */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Quantidade</label>
-                  <input name="quantity" type="number" required min="1" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">
+                    {movementType === 'ajuste' ? 'Nova Quantidade Final em Estoque' : 'Quantidade da Movimentação'}
+                  </label>
+                  <input 
+                    name="quantity" 
+                    type="number" 
+                    required 
+                    min="1" 
+                    value={movementQuantity}
+                    onChange={(e) => {
+                      const q = Number(e.target.value);
+                      setMovementQuantity(q);
+                      if (!amountManuallyEdited) {
+                        if (movementType === 'venda') {
+                          setMovementTotalAmount(q * (selectedProduct.salePrice || 0));
+                        } else if (['entrada', 'saida', 'consumo_interno'].includes(movementType)) {
+                          setMovementTotalAmount(q * movementCostPrice);
+                        }
+                      }
+                    }}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-bold text-lg" 
+                  />
                 </div>
 
-                {(movementType === 'venda' || movementType === 'entrada') && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor Total (R$)</label>
-                      <input name="amount" type="number" step="0.01" placeholder="0.00" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                {/* ENTRADA SPECIFIC FIELDS */}
+                {movementType === 'entrada' && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor Total da Compra (R$)</label>
+                        <input 
+                          name="amount" 
+                          type="number" 
+                          step="0.01" 
+                          value={movementTotalAmount}
+                          onChange={(e) => {
+                            setMovementTotalAmount(Number(e.target.value));
+                            setAmountManuallyEdited(true);
+                          }}
+                          placeholder="0.00" 
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" 
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço Custo Unitário (R$)</label>
+                        <input 
+                          name="costPrice" 
+                          type="number" 
+                          step="0.01" 
+                          value={movementCostPrice} 
+                          onChange={(e) => {
+                            const cp = Number(e.target.value);
+                            setMovementCostPrice(cp);
+                            if (!amountManuallyEdited) {
+                              setMovementTotalAmount(movementQuantity * cp);
+                            }
+                          }} 
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" 
+                        />
+                      </div>
                     </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>
+                        <select name="paymentMethod" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
+                          <option value="dinheiro">Dinheiro</option>
+                          <option value="pix">PIX</option>
+                          <option value="cartao_credito">Crédito</option>
+                          <option value="cartao_debito">Débito</option>
+                          <option value="boleto">Boleto / Faturamento</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Fornecedor</label>
+                        <select 
+                          value={movementSupplierId} 
+                          onChange={(e) => setMovementSupplierId(e.target.value)}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                        >
+                          <option value="">Sem Fornecedor</option>
+                          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* SAÍDA SPECIFIC FIELDS */}
+                {movementType === 'saida' && (
+                  <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Pagamento</label>
-                      <select name="paymentMethod" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
-                        <option value="dinheiro">Dinheiro</option>
-                        <option value="pix">PIX</option>
-                        <option value="cartao_credito">Crédito</option>
-                        <option value="cartao_debito">Débito</option>
+                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Motivo Principal da Baixa</label>
+                      <select
+                        name="categoryReason"
+                        value={movementCategoryReason}
+                        onChange={(e) => setMovementCategoryReason(e.target.value)}
+                        required
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                      >
+                        <option value="avaria">📦 Avaria / Produto Danificado ou Quebrado</option>
+                        <option value="vencimento">⏳ Vencimento / Data de Validade Expirada</option>
+                        <option value="perda">🔍 Perda / Extravio de Estoque</option>
+                        <option value="doacao">🎁 Amostra / Doação / Cortesia</option>
+                        <option value="outro">❓ Outros Motivos</option>
                       </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Profissional Responsável</label>
+                      <select
+                        value={movementProfessionalId}
+                        onChange={(e) => setMovementProfessionalId(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                      >
+                        <option value={user?.uid}>{profile?.displayName} (Você)</option>
+                        {barbers.filter(b => b.uid !== user?.uid).map(b => (
+                          <option key={b.uid || b.id} value={b.uid || b.id}>{b.nome || b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="p-4 bg-red-50/50 border border-red-100 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-red-900">Valor Custo Total da Baixa:</span>
+                        <span className="text-sm font-black text-red-600">
+                          R$ {(movementQuantity * (movementCostPrice || selectedProduct.costPrice || 0)).toFixed(2)}
+                        </span>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer pt-1">
+                        <input
+                          type="checkbox"
+                          checked={movementRecordFinancial}
+                          onChange={(e) => setMovementRecordFinancial(e.target.checked)}
+                          className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500"
+                        />
+                        <span className="text-xs font-medium text-slate-700">Lançar perda no Financeiro / DRE (Avarias/Perdas)</span>
+                      </label>
                     </div>
                   </div>
                 )}
 
+                {/* CONSUMO INTERNO SPECIFIC FIELDS */}
+                {movementType === 'consumo_interno' && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Destino / Finalidade do Uso</label>
+                      <select
+                        name="categoryReason"
+                        value={movementCategoryReason}
+                        onChange={(e) => setMovementCategoryReason(e.target.value)}
+                        required
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                      >
+                        <option value="bancada">💈 Uso em Bancada de Atendimento</option>
+                        <option value="lavatorio">🧴 Uso em Lavatório (Shampoos, Máscaras, etc)</option>
+                        <option value="limpeza">🧹 Higiene e Limpeza do Salão</option>
+                        <option value="treinamento">🎓 Treinamento / Testes de Produto</option>
+                        <option value="outro">❓ Outro Uso Interno</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Profissional Que Retirou / Utilizou</label>
+                      <select
+                        value={movementProfessionalId}
+                        onChange={(e) => setMovementProfessionalId(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                      >
+                        <option value={user?.uid}>{profile?.displayName} (Você)</option>
+                        {barbers.filter(b => b.uid !== user?.uid).map(b => (
+                          <option key={b.uid || b.id} value={b.uid || b.id}>{b.nome || b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-blue-900">Custo Total dos Insumos:</span>
+                        <span className="text-sm font-black text-blue-600">
+                          R$ {(movementQuantity * (movementCostPrice || selectedProduct.costPrice || 0)).toFixed(2)}
+                        </span>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer pt-1">
+                        <input
+                          type="checkbox"
+                          checked={movementRecordFinancial}
+                          onChange={(e) => setMovementRecordFinancial(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                        />
+                        <span className="text-xs font-medium text-slate-700">Lançar custo no Financeiro / DRE (Insumos e Consumo Interno)</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* VENDA DIRETA SPECIFIC FIELDS */}
+                {movementType === 'venda' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Preço Unitário (R$)</label>
+                        <input 
+                          type="number" 
+                          step="0.01" 
+                          value={selectedProduct.salePrice} 
+                          disabled 
+                          className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-600 font-bold text-sm" 
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor Total Venda (R$)</label>
+                        <input 
+                          name="amount" 
+                          type="number" 
+                          step="0.01" 
+                          value={movementTotalAmount}
+                          onChange={(e) => {
+                            setMovementTotalAmount(Number(e.target.value));
+                            setAmountManuallyEdited(true);
+                          }}
+                          placeholder="0.00" 
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-bold text-sm" 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Vendedor / Profissional Faturador</label>
+                      <select
+                        value={movementProfessionalId}
+                        onChange={(e) => setMovementProfessionalId(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                      >
+                        <option value={user?.uid}>{profile?.displayName} (Você)</option>
+                        {barbers.filter(b => b.uid !== user?.uid).map(b => (
+                          <option key={b.uid || b.id} value={b.uid || b.id}>{b.nome || b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>
+                        <select name="paymentMethod" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none">
+                          <option value="dinheiro">Dinheiro</option>
+                          <option value="pix">PIX</option>
+                          <option value="cartao_credito">Crédito</option>
+                          <option value="cartao_debito">Débito</option>
+                          <option value="fiado">Fiado / Pendente</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Cliente (Opcional)</label>
+                        <select
+                          value={movementClientId}
+                          onChange={(e) => setMovementClientId(e.target.value)}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
+                        >
+                          <option value="">Cliente Avulso</option>
+                          {clients.map(c => (
+                            <option key={c.id} value={c.id}>{c.nome || c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center gap-2">
+                      <Info size={16} className="text-amber-600 shrink-0" />
+                      <p className="text-[11px] text-amber-800 font-medium leading-tight">
+                        A venda faturará a receita no Financeiro e creditará comissão ao vendedor caso esteja configurada no produto.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reason / Observation Textarea */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Motivo / Observação</label>
-                  <textarea name="reason" required rows={3} placeholder="Ex: Reposição de estoque, Venda direta, Consumo em bancada..." className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium resize-none" />
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Observações Detalhadas</label>
+                  <textarea 
+                    name="reason" 
+                    required 
+                    rows={2} 
+                    placeholder={
+                      movementType === 'entrada' ? 'Ex: Nota Fiscal 1234, Reposição de estoque...' : 
+                      movementType === 'saida' ? 'Ex: Produto caiu e quebrou na bancada 2...' : 
+                      movementType === 'consumo_interno' ? 'Ex: Retirado para uso durante os cortes da semana...' : 
+                      'Ex: Venda direta balcão para cliente...'
+                    } 
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium resize-none text-sm" 
+                  />
                 </div>
-                <div className="flex gap-4 pt-4">
-                  <button type="button" onClick={() => setShowMovementModal(false)} className="flex-1 py-4 border border-border text-muted rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
-                  <button type="submit" disabled={isRegisteringMovement} className="flex-1 py-4 bg-primary text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95">
+
+                {/* Submit Buttons */}
+                <div className="flex gap-4 pt-2">
+                  <button type="button" onClick={() => setShowMovementModal(false)} className="flex-1 py-3.5 border border-border text-muted rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
+                  <button type="submit" disabled={isRegisteringMovement} className="flex-1 py-3.5 bg-primary text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95">
                     {isRegisteringMovement && <Loader2 size={18} className="animate-spin" />}
                     Confirmar
                   </button>

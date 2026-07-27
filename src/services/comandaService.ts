@@ -128,7 +128,7 @@ export const comandaService = {
       .reduce((acc, i) => acc + i.totalPrice, 0);
     
     const subtotalProducts = items
-      .filter(i => (i.type === 'produto' || i.type === 'pacote') && !i.isCortesia)
+      .filter(i => (i.type === 'produto' || i.type === 'product' || i.type === 'pacote') && !i.isCortesia)
       .reduce((acc, i) => acc + i.totalPrice, 0);
 
     const totalAmount = subtotalServices + subtotalProducts;
@@ -220,7 +220,7 @@ export const comandaService = {
       .reduce((acc, i) => acc + i.totalPrice, 0);
     
     const subtotalProducts = items
-      .filter(i => (i.type === 'produto' || i.type === 'pacote') && !i.isCortesia)
+      .filter(i => (i.type === 'produto' || i.type === 'product' || i.type === 'pacote') && !i.isCortesia)
       .reduce((acc, i) => acc + i.totalPrice, 0);
 
     const totalAmount = subtotalServices + subtotalProducts + tip - discount;
@@ -325,7 +325,7 @@ export const comandaService = {
       // 2.3 Read product snaps for all items
       const productExistsMap: Record<string, boolean> = {};
       for (const item of comanda.items) {
-        if (item.type === 'produto' && !productExistsMap[item.referencia_id]) {
+        if ((item.type === 'produto' || item.type === 'product') && !productExistsMap[item.referencia_id]) {
           const pSnap = await transaction.get(doc(db, 'products', item.referencia_id));
           productExistsMap[item.referencia_id] = pSnap.exists();
         }
@@ -348,8 +348,9 @@ export const comandaService = {
 
       const barberDataMap: Record<string, any> = {};
       const servicesMap: Record<string, any> = {};
+      const productsMap: Record<string, any> = {};
       if (willBeClosed) {
-        const barberIds = Array.from(new Set(comanda.items.filter(i => i.type === 'servico' && i.profissional_id).map(i => i.profissional_id)));
+        const barberIds = Array.from(new Set(comanda.items.map(i => i.profissional_id || comanda.profissional_id).filter(Boolean)));
         for (const bId of barberIds) {
           if (bId) {
             const bSnap = await transaction.get(doc(db, 'usuarios', bId));
@@ -364,6 +365,15 @@ export const comandaService = {
             const sSnap = await transaction.get(doc(db, 'services', sId));
             if (sSnap.exists()) {
               servicesMap[sId] = sSnap.data();
+            }
+          }
+        }
+        const productIds = Array.from(new Set(comanda.items.filter(i => (i.type === 'produto' || i.type === 'product') && i.referencia_id).map(i => i.referencia_id)));
+        for (const pId of productIds) {
+          if (pId) {
+            const pSnap = await transaction.get(doc(db, 'products', pId));
+            if (pSnap.exists()) {
+              productsMap[pId] = pSnap.data();
             }
           }
         }
@@ -506,6 +516,7 @@ export const comandaService = {
         const debtRef = doc(collection(db, 'client_debts'));
         const debt: ClientDebt = {
           id: debtRef.id,
+          tenantId: getActiveTenantId(),
           cliente_id: comanda.cliente_id,
           cliente_name: comanda.cliente_name,
           comanda_id: comanda.id,
@@ -513,6 +524,7 @@ export const comandaService = {
           remainingAmount: payment.amount,
           status: 'pendente',
           date: today,
+          dueDate: (comanda as any).fiadoDueDate || (comanda as any).dueDate || today,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         };
@@ -522,6 +534,8 @@ export const comandaService = {
           const clientRef = doc(db, 'usuarios', comanda.cliente_id);
           transaction.update(clientRef, {
             total_em_aberto: increment(payment.amount),
+            saldo_atual: increment(-payment.amount),
+            balance: increment(-payment.amount),
             updatedAt: serverTimestamp()
           });
         }
@@ -538,7 +552,8 @@ export const comandaService = {
           0,
           appSnap?.exists() || false,
           productExistsMap,
-          servicesMap
+          servicesMap,
+          productsMap
         );
       }
     });
@@ -735,7 +750,8 @@ export const comandaService = {
     finalPendingAmountLeft: number = 0,
     appointmentExists: boolean = false,
     productExistsMap: Record<string, boolean> = {},
-    servicesMap: Record<string, any> = {}
+    servicesMap: Record<string, any> = {},
+    productsMap: Record<string, any> = {}
   ) {
     // 1. Update Appointment if exists
     const apptId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
@@ -804,9 +820,11 @@ export const comandaService = {
         const barberData = barberDataMap[targetBarberId];
         const defaultPercentage = barberData?.commission_percentage || 0; // Default to 0 if not set
 
-        const sData = servicesMap[item.referencia_id] || {};
-        const tipoComissao = sData.tipo_comissao || 'padrao';
-        const valorComissao = sData.valor_comissao !== undefined ? sData.valor_comissao : 0;
+        const itemData = (item.type === 'produto' || item.type === 'product') 
+          ? (productsMap[item.referencia_id] || {})
+          : (servicesMap[item.referencia_id] || {});
+        const tipoComissao = itemData.tipo_comissao || 'padrao';
+        const valorComissao = itemData.valor_comissao !== undefined ? itemData.valor_comissao : 0;
 
         let commission_percentage = defaultPercentage;
         let commission_value = 0;
@@ -819,8 +837,8 @@ export const comandaService = {
               : (item.unitPrice * item.quantity))
           : item.totalPrice;
 
-        // Check if there's a specific professional-level override for this service
-        const proOverride = sData.comissoes_por_profissional?.[targetBarberId];
+        // Check if there's a specific professional-level override for this item
+        const proOverride = itemData.comissoes_por_profissional?.[targetBarberId];
         const effectiveRule = proOverride || { tipo: tipoComissao, valor: valorComissao };
 
         if (effectiveRule.tipo === 'percentual') {
@@ -851,7 +869,7 @@ export const comandaService = {
             commission_percentage,
             commission_value,
             status: 'pendente',
-            commission_type: item.type === 'produto' ? 'venda' : (item.name?.toLowerCase().includes('assinatura') || item.name?.toLowerCase().includes('plano') || item.name?.toLowerCase().includes('pacote') ? 'assinatura' : 'servico'),
+            commission_type: (item.type === 'produto' || item.type === 'product') ? 'venda' : (item.name?.toLowerCase().includes('assinatura') || item.name?.toLowerCase().includes('plano') || item.name?.toLowerCase().includes('pacote') ? 'assinatura' : 'servico'),
             tenantId: comanda.tenantId || '',
             date: new Date().toISOString().split('T')[0],
             createdAt: serverTimestamp(),
@@ -871,7 +889,7 @@ export const comandaService = {
       }
 
       // 3.2 Inventory
-      if (item.type === 'produto') {
+      if (item.type === 'produto' || item.type === 'product') {
         const productRef = doc(db, 'products', item.referencia_id);
         const exists = productExistsMap[item.referencia_id] || false;
         if (exists) {
@@ -884,6 +902,7 @@ export const comandaService = {
         const movementRef = doc(collection(db, 'inventory_movements'));
         transaction.set(movementRef, {
           id: movementRef.id,
+          tenantId: comanda.tenantId || getActiveTenantId(),
           produto_id: item.referencia_id,
           productName: item.name,
           type: 'venda',
@@ -956,7 +975,7 @@ export const comandaService = {
       // 4. Read product snaps for all items
       const productExistsMap: Record<string, boolean> = {};
       for (const item of comanda.items) {
-        if (item.type === 'produto' && !productExistsMap[item.referencia_id]) {
+        if ((item.type === 'produto' || item.type === 'product') && !productExistsMap[item.referencia_id]) {
           const pSnap = await transaction.get(doc(db, 'products', item.referencia_id));
           productExistsMap[item.referencia_id] = pSnap.exists();
         }
@@ -968,8 +987,9 @@ export const comandaService = {
 
       const barberDataMap: Record<string, any> = {};
       const servicesMap: Record<string, any> = {};
+      const productsMap: Record<string, any> = {};
       if (isClosing) {
-        const barberIds = Array.from(new Set(comanda.items.filter(i => i.generateCommission && i.profissional_id).map(i => i.profissional_id)));
+        const barberIds = Array.from(new Set(comanda.items.filter(i => i.generateCommission).map(i => i.profissional_id || comanda.profissional_id).filter(Boolean)));
         for (const bId of barberIds) {
           if (bId) {
             const bSnap = await transaction.get(doc(db, 'usuarios', bId));
@@ -987,6 +1007,15 @@ export const comandaService = {
             }
           }
         }
+        const productIds = Array.from(new Set(comanda.items.filter(i => i.generateCommission && (i.type === 'produto' || i.type === 'product') && i.referencia_id).map(i => i.referencia_id)));
+        for (const pId of productIds) {
+          if (pId) {
+            const pSnap = await transaction.get(doc(db, 'products', pId));
+            if (pSnap.exists()) {
+              productsMap[pId] = pSnap.data();
+            }
+          }
+        }
       }
       
       // Se fechar sem pagamento total e não for cancelada, o resto vira fiado (não paga)
@@ -998,6 +1027,7 @@ export const comandaService = {
         const debtRef = doc(collection(db, 'client_debts'));
         transaction.set(debtRef, {
           id: debtRef.id,
+          tenantId: getActiveTenantId(),
           cliente_id: comanda.cliente_id,
           cliente_name: comanda.cliente_name,
           comanda_id: comanda.id,
@@ -1005,7 +1035,7 @@ export const comandaService = {
           remainingAmount: pending,
           status: 'pendente',
           date: new Date().toISOString().split('T')[0],
-          dueDate: dueDate || '',
+          dueDate: dueDate || (comanda as any).fiadoDueDate || '',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -1038,7 +1068,8 @@ export const comandaService = {
           comanda.pendingAmount,
           appSnap?.exists() || false,
           productExistsMap,
-          servicesMap
+          servicesMap,
+          productsMap
         );
       } else if (finalStatus === 'cancelada' || finalStatus === 'ausente') {
         const linkedAppId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
@@ -1122,6 +1153,7 @@ export const comandaService = {
       const paymentRef = doc(collection(db, 'debt_payments'));
       transaction.set(paymentRef, {
         id: paymentRef.id,
+        tenantId: getActiveTenantId(),
         divida_id: debtId,
         cliente_id: debt.cliente_id,
         amount,
@@ -1135,6 +1167,7 @@ export const comandaService = {
         const movementRef = doc(collection(db, 'cash_movements'));
         transaction.set(movementRef, {
           id: movementRef.id,
+          tenantId: getActiveTenantId(),
           caixa_id,
           type: 'income',
           category: 'Recebimento de Dívida',
@@ -1158,6 +1191,23 @@ export const comandaService = {
           updatedAt: serverTimestamp()
         });
       }
+
+      // Also create financial_transaction entry for accounting
+      const finRef = doc(collection(db, 'financial_transactions'));
+      transaction.set(finRef, {
+        id: finRef.id,
+        tenantId: getActiveTenantId(),
+        type: 'income',
+        category: 'Recebimento Fiado',
+        amount: amount,
+        description: `Recebimento Fiado - ${debt.cliente_name}`,
+        date: today,
+        paymentMethod: method,
+        cliente_id: debt.cliente_id,
+        cliente_name: debt.cliente_name,
+        created_at: serverTimestamp(),
+        createdAt: serverTimestamp()
+      });
     });
   },
 

@@ -260,7 +260,8 @@ export function ProfessionalCommissions({
       const proCommsPeriod = proCommsAll.filter(c => c.date >= dateRange.start && c.date <= dateRange.end);
       const proAdvancesPeriod = proAdvancesAll.filter(a => a.date >= dateRange.start && a.date <= dateRange.end);
 
-      const production = proCommsPeriod.reduce((acc, c) => acc + (c.base_value || 0), 0);
+      const production = proCommsPeriod.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.base_value || 0), 0);
+      const bonus = proCommsPeriod.filter(c => c.commission_type === 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0);
       const commissionGenerated = proCommsPeriod.reduce((acc, c) => acc + (c.commission_value || 0), 0);
       const vales = proAdvancesPeriod.reduce((acc, a) => acc + (a.amount || 0), 0);
 
@@ -276,6 +277,7 @@ export function ProfessionalCommissions({
         id: barber.uid,
         nome: barber.nome,
         production,
+        bonus,
         commissionGenerated,
         vales,
         paid: 0,
@@ -288,11 +290,12 @@ export function ProfessionalCommissions({
   const aggregatedTotals = React.useMemo(() => {
     return summaries.reduce((acc, curr) => {
       acc.production += curr.production;
+      acc.bonus += curr.bonus;
       acc.commissionGenerated += curr.commissionGenerated;
       acc.vales += curr.vales;
       acc.balance += curr.balance;
       return acc;
-    }, { production: 0, commissionGenerated: 0, vales: 0, balance: 0 });
+    }, { production: 0, bonus: 0, commissionGenerated: 0, vales: 0, balance: 0 });
   }, [summaries]);
 
   const filteredSummaries = summaries.filter(s => 
@@ -584,6 +587,17 @@ export function ProfessionalCommissions({
                         <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Produção do Período</span>
                         <span className="text-sm font-bold text-slate-700">R$ {pro.production.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
+
+                      {pro.bonus > 0 && (
+                        <div className="flex justify-between items-center py-2 border-b border-slate-100 bg-emerald-50/50 px-2.5 rounded-xl">
+                          <span className="text-xs font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
+                            <Gift size={13} className="text-emerald-600" /> Bônus / Gratificação
+                          </span>
+                          <span className="text-sm font-black text-emerald-700">
+                            +R$ {pro.bonus.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      )}
 
                       <div className="flex justify-between items-center py-2.5 border-b border-slate-100">
                         <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Comissão Gerada</span>

@@ -209,6 +209,7 @@ export interface Appointment {
   id: string;
   cliente_id: string;
   cliente_name: string;
+  cliente_telefone?: string;
   profissional_id: string;
   profissional_name: string;
   servico_id: string;
@@ -356,7 +357,7 @@ export type ComandaStatus =
   | 'ausente';
 
 export type ComandaOrigin = 'agenda' | 'encaixe' | 'balcao';
-export type ComandaItemType = 'servico' | 'produto' | 'ajuste' | 'pacote' | 'assinatura';
+export type ComandaItemType = 'servico' | 'produto' | 'product' | 'ajuste' | 'pacote' | 'assinatura';
 
 export interface ComandaItem {
   id: string;
@@ -442,13 +443,15 @@ export interface Comanda {
 
 export interface ClientDebt {
   id: string;
+  tenantId?: string;
   cliente_id: string;
   cliente_name: string;
-  comanda_id: string;
+  comanda_id?: string;
   amount: number;
   remainingAmount: number;
-  status: 'pago' | 'pendente' | 'vencido' | 'parcial';
+  status: 'pago' | 'pendente' | 'vencido' | 'parcial' | 'quitado';
   dueDate?: string;
+  description?: string;
   date: string;
   createdAt: any;
   updatedAt: any;
@@ -574,12 +577,22 @@ export interface InventoryMovement {
   productName: string;
   type: MovementType;
   quantity: number;
+  unitPrice?: number;
+  costPrice?: number;
+  totalAmount?: number;
   reason: string;
+  categoryReason?: string;
   referencia_id?: string;
   profissional_id: string;
   profissional_name: string;
-  date: string;
+  cliente_id?: string;
+  cliente_name?: string;
+  fornecedor_id?: string;
+  fornecedor_name?: string;
+  paymentMethod?: string;
   financialId?: string;
+  commissionId?: string;
+  date: string;
   createdAt: any;
 }
 

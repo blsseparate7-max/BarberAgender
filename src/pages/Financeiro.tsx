@@ -4561,36 +4561,53 @@ const getFlowUpdates = (tipo: string, prazo: number): Partial<PaymentMethodConfi
   if (tipo === 'fiado') {
     return {
       recebe_na_hora: false,
+      receivesImmediately: false,
       entra_no_caixa: false,
+      entersCashImmediately: false,
       vai_para_recebiveis: false,
+      goesToReceivables: false,
       vai_para_conta_cliente: true,
+      goesToClientAccount: true,
     };
   }
   
   if (tipo === 'assinatura') {
     return {
       recebe_na_hora: true,
+      receivesImmediately: true,
       entra_no_caixa: false,
+      entersCashImmediately: false,
       vai_para_recebiveis: false,
+      goesToReceivables: false,
       vai_para_conta_cliente: false,
+      goesToClientAccount: false,
     };
   }
 
   // Se o prazo for 0, recebe na hora
   if (prazo === 0) {
+    const isDinheiro = tipo === 'dinheiro';
     return {
       recebe_na_hora: true,
-      entra_no_caixa: tipo === 'dinheiro', // Apenas físico entra na gaveta
+      receivesImmediately: true,
+      entra_no_caixa: isDinheiro,
+      entersCashImmediately: isDinheiro,
       vai_para_recebiveis: false,
+      goesToReceivables: false,
       vai_para_conta_cliente: false,
+      goesToClientAccount: false,
     };
   } else {
     // Prazo > 0 (D+1, D+30, etc.)
     return {
       recebe_na_hora: false,
+      receivesImmediately: false,
       entra_no_caixa: false,
+      entersCashImmediately: false,
       vai_para_recebiveis: true,
+      goesToReceivables: true,
       vai_para_conta_cliente: false,
+      goesToClientAccount: false,
     };
   }
 };
@@ -4640,12 +4657,13 @@ function PaymentMethodModal({ method, onClose, onSuccess }: {
     const parsed = parseInt(cleanStr, 10);
     const validParsed = !isNaN(parsed) ? parsed : 0;
     
-    const currentTipo = formData.tipo || 'outros';
+    const currentTipo = formData.tipo || formData.type || 'outros';
     const flowRules = getFlowUpdates(currentTipo, validParsed);
     
     setFormData(prev => ({ 
       ...prev, 
       prazo_recebimento: validParsed,
+      settlementDays: validParsed,
       ...flowRules
     }));
   };

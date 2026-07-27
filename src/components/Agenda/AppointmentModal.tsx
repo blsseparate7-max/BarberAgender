@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2 } from 'lucide-react';
+import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2, ChevronDown, Search, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -155,6 +155,10 @@ export function AppointmentModal({
 
     try {
       const slots = await appointmentService.getAvailableSlots(formData.profissional_id, formData.date, service.duration);
+      if (formData.startTime && !slots.includes(formData.startTime)) {
+        slots.push(formData.startTime);
+        slots.sort();
+      }
       setAvailableSlots(slots);
     } catch (err) {
       console.error(err);
@@ -273,14 +277,18 @@ export function AppointmentModal({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+    <div 
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+      onClick={onClose}
+    >
       <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white border border-slate-200 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col text-primary"
+        onClick={(e) => e.stopPropagation()}
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        className="bg-white border border-slate-200/80 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col text-primary max-h-[90vh] my-auto"
       >
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
           <div>
             <h2 className="text-xl font-bold text-primary">{appointment ? 'Editar Agendamento' : 'Novo Agendamento'}</h2>
             <p className="text-xs text-muted">Preencha os dados para reservar o horário</p>
@@ -290,7 +298,7 @@ export function AppointmentModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[80vh] overflow-y-auto custom-scrollbar">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
           {error && (
             <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-3 text-red-600 text-sm">
               <AlertCircle size={18} />
@@ -317,12 +325,13 @@ export function AppointmentModal({
                           cliente_name: cid === 'sem_cadastro' ? 'Sem Cadastro' : (clients.find(c => c.uid === cid)?.nome || '')
                         });
                       }}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
                     >
                       <option value="" className="text-muted">Selecione o cliente</option>
                       <option value="sem_cadastro" className="text-indigo-600 font-bold">★ Sem Cadastro (Avulso) ★</option>
                       {clients.map(c => <option key={c.uid} value={c.uid} className="text-primary font-medium">{c.nome}</option>)}
                     </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" size={18} />
                   </div>
                 </div>
 
@@ -354,11 +363,12 @@ export function AppointmentModal({
                   disabled={currentUser.tipo === 'barbeiro'}
                   value={formData.profissional_id}
                   onChange={(e) => setFormData({...formData, profissional_id: e.target.value})}
-                  className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none disabled:opacity-50"
+                  className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none disabled:opacity-50"
                 >
                   <option value="" className="text-muted">Selecione o profissional</option>
                   {eligibleBarbers.map(b => <option key={b.uid} value={b.uid} className="text-primary font-medium">{b.nome}</option>)}
                 </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" size={18} />
               </div>
             </div>
 
@@ -371,11 +381,12 @@ export function AppointmentModal({
                   required
                   value={formData.servico_id}
                   onChange={(e) => setFormData({...formData, servico_id: e.target.value})}
-                  className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
+                  className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
                 >
                   <option value="" className="text-muted">Selecione o serviço</option>
                   {services.map(s => <option key={s.id} value={s.id} className="text-primary font-medium">{s.name} ({s.duration} min - R$ {s.price})</option>)}
                 </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" size={18} />
               </div>
             </div>
 
@@ -529,7 +540,7 @@ export function AppointmentModal({
             </div>
           )}
 
-          <div className="pt-4 flex flex-col gap-4">
+          <div className="sticky -bottom-6 bg-white/95 backdrop-blur-md pt-4 pb-2 border-t border-slate-100 z-10 -mx-6 -mb-6 px-6 flex flex-col gap-4">
             {appointment && (
               <div className="flex flex-col gap-2">
                 {(appointment.status === 'agendado' || appointment.status === 'confirmado') && (

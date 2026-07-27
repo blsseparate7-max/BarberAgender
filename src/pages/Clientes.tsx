@@ -15,7 +15,7 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { UserProfile, Appointment } from '../types';
+import { UserProfile, Appointment, ClientDebt, DebtPayment, PaymentMethod } from '../types';
 import { 
   Search, 
   Plus, 
@@ -46,6 +46,12 @@ import {
   ArrowRight,
   Trash2,
   Link2,
+  Printer,
+  FileText,
+  Download,
+  ArrowDownRight,
+  ArrowUpRight,
+  Receipt,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -700,11 +706,14 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
   const { user } = useAuth();
   const [history, setHistory] = useState<Appointment[]>([]);
   const [debts, setDebts] = useState<ClientDebt[]>([]);
+  const [payments, setPayments] = useState<DebtPayment[]>([]);
   const [notes, setNotes] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [loadingDebts, setLoadingDebts] = useState(true);
+  const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [activeTab, setActiveTab] = useState<'history' | 'debts' | 'notes'>('history');
+  const [showPrintStatement, setShowPrintStatement] = useState(false);
   
   const [paymentModal, setPaymentModal] = useState<{ isOpen: boolean; debt: ClientDebt | null }>({ isOpen: false, debt: null });
   const [paymentAmount, setPaymentAmount] = useState('');
@@ -758,6 +767,21 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
       setLoadingDebts(false);
     });
 
+    // Fetch Debt Payments
+    const qPayments = query(
+      collection(db, 'debt_payments'),
+      where('cliente_id', '==', customer.uid)
+    );
+
+    const unsubscribePayments = onSnapshot(qPayments, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DebtPayment));
+      setPayments(docs);
+      setLoadingPayments(false);
+    }, (error) => {
+      console.error("Error fetching debt payments:", error);
+      setLoadingPayments(false);
+    });
+
     // Fetch Technical Notes
     const qNotes = query(
       collection(db, 'usuarios', customer.uid, 'anotacoes'),
@@ -776,6 +800,7 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
     return () => {
       unsubscribe();
       unsubscribeDebts();
+      unsubscribePayments();
       unsubscribeNotes();
     };
   }, [customer.uid]);
@@ -1371,50 +1396,182 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                   </div>
                 )
               ) : activeTab === 'debts' ? (
-                loadingDebts ? (
+                loadingDebts || loadingPayments ? (
                   <div className="flex justify-center py-12">
                     <Loader2 className="animate-spin text-accent" size={32} />
                   </div>
-                ) : debts.length === 0 ? (
-                  <div className="text-center py-12 bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
-                    <p className="text-muted text-sm font-bold italic">Nenhuma dívida registrada.</p>
-                  </div>
                 ) : (
-                  <div className="space-y-4">
-                    {debts.map((debt, index) => (
-                      <div key={`customer-debt-${debt.id || index}-${index}`} className="bg-white border border-slate-200 p-5 rounded-2xl flex items-center justify-between group hover:border-accent/20 transition-all shadow-sm">
-                        <div className="flex items-center gap-4">
-                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shadow-inner ${
-                            debt.status === 'quitado' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'
-                          }`}>
-                            {debt.status === 'quitado' ? <CheckCircle2 size={22} /> : <AlertCircle size={22} />}
+                  <div className="space-y-6">
+                    {/* Header Bar with Print Extrato Button */}
+                    <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-xl space-y-4">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Receipt className="text-amber-400" size={20} />
+                            <h3 className="text-lg font-black tracking-tight">Livro Caixa & Extrato do Cliente</h3>
                           </div>
-                          <div>
-                            <p className="text-sm font-black text-primary group-hover:text-accent transition-colors">
-                              {debt.description || `Fiado de ${format(new Date(debt.date), 'dd/MM/yyyy')}`}
-                            </p>
-                            <p className="text-[10px] text-muted font-black uppercase tracking-widest mt-0.5">Restante: R$ {debt.remainingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                          </div>
+                          <p className="text-xs text-slate-400 font-semibold mt-1">
+                            Acompanhamento detalhado de débitos/fiados e pagamentos efetuados
+                          </p>
                         </div>
-                        <div className="text-right flex flex-col items-end gap-2">
-                          <p className="text-sm font-black text-primary">R$ {debt.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                          {debt.status !== 'quitado' && (
-                            <button 
-                              onClick={() => {
-                                setPaymentModal({ isOpen: true, debt });
-                                setPaymentAmount(debt.remainingAmount.toString());
-                                setPaymentMethod('dinheiro');
-                              }}
-                              disabled={isPayingDebt}
-                              className="flex items-center gap-2 px-3 py-1.5 bg-primary text-white rounded-xl text-[10px] font-black hover:bg-slate-800 transition-all shadow-lg shadow-primary/10 active:scale-95 disabled:opacity-50 uppercase tracking-widest"
-                            >
-                              {isPayingDebt ? <Loader2 size={12} className="animate-spin" /> : <CreditCard size={12} />}
-                              <span>Pagar</span>
-                            </button>
-                          )}
+                        <button
+                          type="button"
+                          onClick={() => setShowPrintStatement(true)}
+                          className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 active:scale-95"
+                        >
+                          <Printer size={16} />
+                          <span>Imprimir / Baixar Extrato</span>
+                        </button>
+                      </div>
+
+                      {/* Financial KPI Summary Cards */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                        <div className="bg-slate-800/80 border border-slate-700 p-4 rounded-2xl">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Dívidas Geradas</p>
+                          <p className="text-base font-black text-red-400">
+                            R$ {debts.reduce((acc, d) => acc + (d.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/80 border border-slate-700 p-4 rounded-2xl">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Pagamentos</p>
+                          <p className="text-base font-black text-emerald-400">
+                            R$ {payments.reduce((acc, p) => acc + (p.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/80 border border-slate-700 p-4 rounded-2xl">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Saldo Devedor Atual</p>
+                          <p className={`text-base font-black ${
+                            (customer.total_em_aberto ?? debts.filter(d => d.status !== 'quitado' && d.status !== 'pago').reduce((acc, d) => acc + (d.remainingAmount || 0), 0)) > 0 
+                              ? 'text-amber-400' 
+                              : 'text-emerald-400'
+                          }`}>
+                            R$ {(customer.total_em_aberto ?? debts.filter(d => d.status !== 'quitado' && d.status !== 'pago').reduce((acc, d) => acc + (d.remainingAmount || 0), 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
                         </div>
                       </div>
-                    ))}
+                    </div>
+
+                    {/* Pending Debts Section */}
+                    {debts.filter(d => d.status !== 'quitado' && d.status !== 'pago').length > 0 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                            <AlertCircle size={14} className="text-red-500" />
+                            Dívidas Pendentes em Aberto ({debts.filter(d => d.status !== 'quitado' && d.status !== 'pago').length})
+                          </h4>
+                        </div>
+                        <div className="space-y-3">
+                          {debts.filter(d => d.status !== 'quitado' && d.status !== 'pago').map((debt, index) => (
+                            <div key={`pending-debt-${debt.id || index}`} className="bg-red-50/50 border border-red-200 p-5 rounded-2xl flex items-center justify-between group transition-all shadow-sm">
+                              <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center border border-red-200">
+                                  <AlertCircle size={20} />
+                                </div>
+                                <div>
+                                  <p className="text-sm font-black text-primary">
+                                    {debt.description || `Fiado de ${debt.date ? format(new Date(debt.date), 'dd/MM/yyyy') : 'Data N/D'}`}
+                                  </p>
+                                  <p className="text-[10px] text-muted font-black uppercase tracking-widest mt-0.5">
+                                    Restante: <span className="text-red-600 font-black">R$ {debt.remainingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                    {debt.dueDate && ` • Vence: ${debt.dueDate}`}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-right flex items-center gap-3">
+                                <div>
+                                  <p className="text-xs text-muted font-bold">Total Original</p>
+                                  <p className="text-sm font-black text-primary">R$ {debt.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                                </div>
+                                <button 
+                                  onClick={() => {
+                                    setPaymentModal({ isOpen: true, debt });
+                                    setPaymentAmount(debt.remainingAmount.toString());
+                                    setPaymentMethod('dinheiro');
+                                  }}
+                                  disabled={isPayingDebt}
+                                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/20 active:scale-95 disabled:opacity-50 uppercase tracking-widest"
+                                >
+                                  {isPayingDebt ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />}
+                                  <span>Pagar</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Complete Chronological Livro Caixa Feed */}
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                        <FileText size={14} className="text-slate-500" />
+                        Histórico de Lançamentos do Livro Caixa ({debts.length + payments.length})
+                      </h4>
+
+                      {debts.length === 0 && payments.length === 0 ? (
+                        <div className="text-center py-12 bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
+                          <p className="text-muted text-sm font-bold italic">Nenhum lançamento no Livro Caixa para este cliente.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {[
+                            ...debts.map(d => ({
+                              id: d.id,
+                              kind: 'debit' as const,
+                              dateStr: d.date || (d.createdAt?.seconds ? format(new Date(d.createdAt.seconds * 1000), 'yyyy-MM-dd') : ''),
+                              timestamp: d.createdAt?.seconds || 0,
+                              title: d.description || `Dívida / Fiado${d.comanda_id ? ` (Comanda #${d.comanda_id.slice(-4)})` : ''}`,
+                              amount: d.amount,
+                              status: d.status,
+                              remaining: d.remainingAmount
+                            })),
+                            ...payments.map(p => ({
+                              id: p.id,
+                              kind: 'credit' as const,
+                              dateStr: p.date || (p.createdAt?.seconds ? format(new Date(p.createdAt.seconds * 1000), 'yyyy-MM-dd') : ''),
+                              timestamp: p.createdAt?.seconds || 0,
+                              title: `Pagamento Recebido (${(p.paymentMethod || 'Dinheiro').toUpperCase()})`,
+                              amount: p.amount,
+                              status: 'pago',
+                              remaining: 0
+                            }))
+                          ]
+                          .sort((a, b) => b.timestamp - a.timestamp)
+                          .map((entry, idx) => (
+                            <div key={`livro-entry-${entry.id || idx}-${idx}`} className="bg-white border border-slate-200 p-4 rounded-2xl flex items-center justify-between shadow-sm hover:border-slate-300 transition-all">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center border shadow-inner ${
+                                  entry.kind === 'credit' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'
+                                }`}>
+                                  {entry.kind === 'credit' ? <ArrowDownRight size={20} /> : <ArrowUpRight size={20} />}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-black text-primary">{entry.title}</p>
+                                  <p className="text-[10px] text-muted font-black uppercase tracking-widest mt-0.5">
+                                    {entry.dateStr ? format(new Date(entry.dateStr), 'dd/MM/yyyy') : 'Data N/D'}
+                                    {entry.kind === 'debit' && entry.remaining > 0 && ` • Em aberto: R$ ${entry.remaining.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className={`text-sm font-black ${entry.kind === 'credit' ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {entry.kind === 'credit' ? '+' : '-'} R$ {entry.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </p>
+                                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border mt-1 inline-block ${
+                                  entry.kind === 'credit' 
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
+                                    : entry.status === 'quitado' || entry.status === 'pago' 
+                                      ? 'bg-slate-100 text-slate-600 border-slate-200' 
+                                      : 'bg-red-50 text-red-700 border-red-100'
+                                }`}>
+                                  {entry.kind === 'credit' ? 'Pagamento' : entry.status === 'quitado' ? 'Quitado' : 'Débito'}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )
               ) : (
@@ -1546,6 +1703,182 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                   {isPayingDebt ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle2 size={20} />}
                   Confirmar Pagamento
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Printable Extrato / Livro Caixa Modal */}
+      <AnimatePresence>
+        {showPrintStatement && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white border border-slate-200 w-full max-w-3xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col my-8 max-h-[90vh]"
+            >
+              {/* Modal Top Bar (Screen only) */}
+              <div className="p-6 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 print:hidden">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-amber-500/20 text-amber-400 rounded-xl flex items-center justify-center border border-amber-500/30">
+                    <Printer size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black tracking-tight">Extrato do Livro Caixa</h3>
+                    <p className="text-xs text-slate-400 font-medium">Pronto para impressão e prestação de contas com o cliente</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black uppercase tracking-wider rounded-xl flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all active:scale-95"
+                  >
+                    <Printer size={16} />
+                    <span>Imprimir Agora</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrintStatement(false)}
+                    className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 hover:bg-slate-700 transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Document Sheet Body */}
+              <div id="printable-client-statement" className="p-8 sm:p-12 overflow-y-auto space-y-8 bg-white text-slate-900 font-sans text-xs">
+                {/* Document Header */}
+                <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6">
+                  <div>
+                    <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900">EXTRATO DO LIVRO CAIXA</h1>
+                    <p className="text-sm font-bold text-slate-600 mt-1">Histórico Oficial de Débitos & Pagamentos</p>
+                    <p className="text-[10px] text-slate-400 font-mono mt-1">
+                      Gerado em: {format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-black uppercase tracking-wider text-slate-900">{customer.nome}</p>
+                    <p className="text-xs font-semibold text-slate-600">{customer.telefone || customer.phone || 'Telefone não informado'}</p>
+                    {customer.email && <p className="text-xs text-slate-500">{customer.email}</p>}
+                    <span className="inline-block mt-2 px-3 py-1 bg-slate-100 font-mono text-[10px] font-bold rounded border border-slate-300">
+                      ID CLIENTE: {customer.uid.slice(0, 8).toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Balance Summary Box */}
+                <div className="grid grid-cols-3 gap-4 bg-slate-50 p-6 rounded-2xl border border-slate-200">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Total de Débitos / Fiados</p>
+                    <p className="text-lg font-black text-red-600">
+                      R$ {debts.reduce((acc, d) => acc + (d.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Total de Pagamentos Efetuados</p>
+                    <p className="text-lg font-black text-emerald-600">
+                      R$ {payments.reduce((acc, p) => acc + (p.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Saldo Pendente Atual</p>
+                    <p className="text-lg font-black text-amber-600">
+                      R$ {(customer.total_em_aberto ?? debts.filter(d => d.status !== 'quitado' && d.status !== 'pago').reduce((acc, d) => acc + (d.remainingAmount || 0), 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Itemized Table */}
+                <div className="space-y-3">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">Detalhamento dos Lançamentos</h3>
+                  <table className="w-full text-left border-collapse border border-slate-200 rounded-xl overflow-hidden">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-700 font-black uppercase text-[10px] tracking-wider border-b border-slate-200">
+                        <th className="p-3 border-r border-slate-200">Data</th>
+                        <th className="p-3 border-r border-slate-200">Tipo</th>
+                        <th className="p-3 border-r border-slate-200">Descrição / Forma</th>
+                        <th className="p-3 text-right border-r border-slate-200">Valor (R$)</th>
+                        <th className="p-3 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-medium">
+                      {[
+                        ...debts.map(d => ({
+                          id: d.id,
+                          kind: 'debit' as const,
+                          dateStr: d.date || (d.createdAt?.seconds ? format(new Date(d.createdAt.seconds * 1000), 'yyyy-MM-dd') : ''),
+                          timestamp: d.createdAt?.seconds || 0,
+                          desc: d.description || `Fiado / Dívida${d.comanda_id ? ` (Comanda #${d.comanda_id.slice(-4)})` : ''}`,
+                          amount: d.amount,
+                          status: d.status,
+                          remaining: d.remainingAmount
+                        })),
+                        ...payments.map(p => ({
+                          id: p.id,
+                          kind: 'credit' as const,
+                          dateStr: p.date || (p.createdAt?.seconds ? format(new Date(p.createdAt.seconds * 1000), 'yyyy-MM-dd') : ''),
+                          timestamp: p.createdAt?.seconds || 0,
+                          desc: `Pagamento de Fiado - ${(p.paymentMethod || 'Dinheiro').toUpperCase()}`,
+                          amount: p.amount,
+                          status: 'pago',
+                          remaining: 0
+                        }))
+                      ]
+                      .sort((a, b) => b.timestamp - a.timestamp)
+                      .map((row, i) => (
+                        <tr key={`print-row-${row.id || i}`} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                          <td className="p-3 border-r border-slate-200 font-mono">
+                            {row.dateStr ? format(new Date(row.dateStr), 'dd/MM/yyyy') : '-'}
+                          </td>
+                          <td className="p-3 border-r border-slate-200 font-bold">
+                            {row.kind === 'debit' ? (
+                              <span className="text-red-600 font-black uppercase">Débito</span>
+                            ) : (
+                              <span className="text-emerald-600 font-black uppercase">Pagamento</span>
+                            )}
+                          </td>
+                          <td className="p-3 border-r border-slate-200 font-semibold">{row.desc}</td>
+                          <td className={`p-3 text-right border-r border-slate-200 font-mono font-bold ${row.kind === 'debit' ? 'text-red-600' : 'text-emerald-600'}`}>
+                            {row.kind === 'debit' ? '-' : '+'} R$ {row.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-3 text-center uppercase font-bold text-[10px]">
+                            {row.kind === 'credit' ? (
+                              <span className="text-emerald-700">Confirmado</span>
+                            ) : row.remaining === 0 ? (
+                              <span className="text-slate-500">Quitado</span>
+                            ) : (
+                              <span className="text-red-600">Pendente (R$ {row.remaining.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Declarations and Signature Block */}
+                <div className="pt-8 space-y-12 border-t border-slate-200">
+                  <p className="text-[10px] text-slate-500 italic text-center">
+                    Declaro para os devidos fins que reconheço as movimentações acima descritas e o saldo devedor apontado neste extrato.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-12 pt-6">
+                    <div className="text-center space-y-2">
+                      <div className="border-b border-slate-900 w-full h-8"></div>
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-900">{customer.nome}</p>
+                      <p className="text-[9px] text-slate-500 font-semibold">Assinatura do Cliente</p>
+                    </div>
+                    <div className="text-center space-y-2">
+                      <div className="border-b border-slate-900 w-full h-8"></div>
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-900">Representante do Estabelecimento</p>
+                      <p className="text-[9px] text-slate-500 font-semibold">Assinatura / Carimbo</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>

@@ -136,16 +136,20 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     const vendas: Commission[] = [];
     const gorjetas: Commission[] = [];
     const assinaturas: Commission[] = [];
+    const bonus: Commission[] = [];
 
     commissions.forEach(c => {
-      const type = c.commission_type || (
+      const isBonusItem = c.commission_type === 'bonus' || c.servico_name?.toLowerCase().includes('bônus') || c.servico_name?.toLowerCase().includes('bonus') || c.servico_name?.toLowerCase().includes('gratificação');
+      const type = isBonusItem ? 'bonus' : (c.commission_type || (
         c.servico_name?.toLowerCase().includes('gorjeta') ? 'gorjeta' :
         (c.servico_name?.toLowerCase().includes('assinatura') || c.servico_name?.toLowerCase().includes('plano') || c.servico_name?.toLowerCase().includes('pacote')) ? 'assinatura' :
         (c.servico_name?.toLowerCase().includes('produto') || c.servico_name?.toLowerCase().includes('venda')) ? 'venda' :
         'servico'
-      );
+      ));
 
-      if (type === 'gorjeta') {
+      if (type === 'bonus') {
+        bonus.push(c);
+      } else if (type === 'gorjeta') {
         gorjetas.push(c);
       } else if (type === 'assinatura') {
         assinaturas.push(c);
@@ -156,7 +160,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       }
     });
 
-    return { servicos, vendas, gorjetas, assinaturas };
+    return { servicos, vendas, gorjetas, assinaturas, bonus };
   }, [commissions]);
   
   const { tenantId } = useTenant();
@@ -232,7 +236,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         if ((isVale || p.profissional_id) && matchesPro) {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
           const pAmount = p.amount || 0;
-          const isDup = merged.some(m => m.id === p.id || (m.amount === pAmount && m.date === pDate && m.description === p.description));
+          const isDup = merged.some(m => m.id === p.id || (Math.abs(m.amount - pAmount) < 0.01 && m.date === pDate));
           if (!isDup) {
             merged.push({
               id: p.id,
@@ -266,7 +270,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         if (isVale && matchesPro) {
           const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
           const cAmount = c.amount || 0;
-          const isDup = merged.some(m => m.id === c.id || (m.amount === cAmount && m.date === cDate && m.description === c.description));
+          const isDup = merged.some(m => m.id === c.id || (Math.abs(m.amount - cAmount) < 0.01 && m.date === cDate));
           if (!isDup) {
             merged.push({
               id: c.id,
@@ -613,16 +617,20 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     let vendas = 0;
     let gorjetas = 0;
     let assinaturas = 0;
+    let bonus = 0;
 
     commissions.forEach(c => {
-      const type = c.commission_type || (
+      const isBonusItem = c.commission_type === 'bonus' || c.servico_name?.toLowerCase().includes('bônus') || c.servico_name?.toLowerCase().includes('bonus') || c.servico_name?.toLowerCase().includes('gratificação');
+      const type = isBonusItem ? 'bonus' : (c.commission_type || (
         c.servico_name?.toLowerCase().includes('gorjeta') ? 'gorjeta' :
         (c.servico_name?.toLowerCase().includes('assinatura') || c.servico_name?.toLowerCase().includes('plano') || c.servico_name?.toLowerCase().includes('pacote')) ? 'assinatura' :
         (c.servico_name?.toLowerCase().includes('produto') || c.servico_name?.toLowerCase().includes('venda')) ? 'venda' :
         'servico'
-      );
+      ));
 
-      if (type === 'gorjeta') {
+      if (type === 'bonus') {
+        bonus += c.commission_value || 0;
+      } else if (type === 'gorjeta') {
         gorjetas += c.commission_value || 0;
       } else if (type === 'assinatura') {
         assinaturas += c.commission_value || 0;
@@ -633,13 +641,18 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       }
     });
 
-    return { servicos, vendas, gorjetas, assinaturas };
+    return { servicos, vendas, gorjetas, assinaturas, bonus };
   })();
 
   const totals = {
-    produced: commissions.reduce((acc, c) => acc + (c.base_value || 0), 0),
+    // Only sum base_value for non-bonus items (real services/products)
+    produced: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.base_value || 0), 0),
     commission: commissions.reduce((acc, c) => acc + (c.commission_value || 0), 0),
+    serviceCommission: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0),
+    bonus: periodCommissionsByCategory.bonus,
     pending: commissions.filter(c => c.status === 'pendente').reduce((acc, c) => acc + (c.commission_value || 0), 0),
+    pendingService: commissions.filter(c => c.status === 'pendente' && c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0),
+    pendingBonus: commissions.filter(c => c.status === 'pendente' && c.commission_type === 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0),
     advances: advances.reduce((acc, a) => acc + (a.amount || 0), 0),
     paid: payouts.reduce((acc, p) => acc + (p.date >= localDateRange.start && p.date <= localDateRange.end ? p.amount : 0), 0)
   };
@@ -862,26 +875,26 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         {/* Stats Board */}
         {isBarbeiro ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
-            <SummaryCard title="Comissão Gerada (Filtro)" value={totals.commission - periodCommissionsByCategory.gorjetas - periodCommissionsByCategory.assinaturas} icon={<PercentIcon size={18} />} color="emerald" />
+            <SummaryCard title="Comissão Gerada (Filtro)" value={totals.serviceCommission - periodCommissionsByCategory.gorjetas - periodCommissionsByCategory.assinaturas} icon={<PercentIcon size={18} />} color="emerald" />
+            <SummaryCard title="Bônus / Ajuda de Custo" value={totals.bonus} icon={<Gift size={18} />} color="emerald" />
             <SummaryCard title="Gorjetas (Filtro)" value={periodCommissionsByCategory.gorjetas} icon={<Sparkles size={18} />} color="blue" />
-            <SummaryCard title="Assinaturas (Filtro)" value={periodCommissionsByCategory.assinaturas} icon={<Tag size={18} />} color="slate" />
             <SummaryCard title="Vales Ativos (Histórico)" value={allTimePendingAdvancesTotal} icon={<Receipt size={18} />} color="amber" negative />
             <SummaryCard title="Total Geral a Receber" value={realBalanceToPayAllTime} icon={<Wallet size={18} />} color="primary" highlight />
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
             <SummaryCard title="Produção Bruta (Filtro)" value={totals.produced} icon={<TrendingUp size={18} />} color="slate" />
-            <SummaryCard title="Comissão Gerada (Filtro)" value={totals.commission} icon={<PercentIcon size={18} />} color="emerald" />
+            <SummaryCard title="Comissão de Serviços" value={totals.serviceCommission} icon={<PercentIcon size={18} />} color="emerald" />
+            <SummaryCard title="Bônus / Ajuda Custo" value={totals.bonus} icon={<Gift size={18} />} color="blue" />
             <SummaryCard title="Vales Ativos (Histórico)" value={allTimePendingAdvancesTotal} icon={<Receipt size={18} />} color="amber" negative />
-            <SummaryCard title="Já Payouts (Filtro)" value={totals.paid} icon={<CheckCircle2 size={18} />} color="blue" />
             <SummaryCard title="Total Geral a Pagar" value={realBalanceToPayAllTime} icon={<Wallet size={18} />} color="primary" highlight />
           </div>
         )}
 
         {/* Detailed Commission Categorization Chart Row */}
         <div className="bg-slate-50 border border-slate-200/60 rounded-[2.5rem] p-6 lg:p-8">
-          <h3 className="text-xs font-black uppercase text-primary tracking-widest mb-6">Detalhamento das Receitas de Comissão (Deste Período)</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <h3 className="text-xs font-black uppercase text-primary tracking-widest mb-6">Detalhamento das Receitas de Comissão e Benefícios (Deste Período)</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {/* SERVIÇOS */}
             <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
               <p className="text-[10px] font-black uppercase text-muted tracking-wider mb-1">Comissão de Serviços</p>
@@ -904,6 +917,20 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                 />
               </div>
             </div>
+            {/* BÔNUS & AJUDA DE CUSTO */}
+            <div className="bg-emerald-50/50 border border-emerald-200/60 rounded-3xl p-5 shadow-sm">
+              <div className="flex items-center gap-1 mb-1">
+                <Gift size={12} className="text-emerald-600 shrink-0" />
+                <p className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">Bônus & Ajuda de Custo</p>
+              </div>
+              <p className="text-xl font-extrabold text-emerald-700">R$ {periodCommissionsByCategory.bonus.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+              <div className="w-full bg-emerald-100 h-1 mt-3 rounded-full overflow-hidden">
+                <div 
+                  className="bg-emerald-600 h-full" 
+                  style={{ width: `${totals.commission > 0 ? (periodCommissionsByCategory.bonus / totals.commission) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
             {/* GORJETAS */}
             <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
               <p className="text-[10px] font-black uppercase text-muted tracking-wider mb-1">Gorjetas Recebidas (Clientes)</p>
@@ -917,7 +944,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
             </div>
             {/* ASSINATURAS */}
             <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
-              <p className="text-[10px] font-black uppercase text-muted tracking-wider mb-1">Comissão de Assinaturas/Pacotes</p>
+              <p className="text-[10px] font-black uppercase text-muted tracking-wider mb-1">Comissão Assinaturas/Pacotes</p>
               <p className="text-xl font-bold text-primary">R$ {periodCommissionsByCategory.assinaturas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
               <div className="w-full bg-slate-100 h-1 mt-3 rounded-full overflow-hidden">
                 <div 
@@ -1016,26 +1043,43 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                             {displayedCommissions.length === 0 ? (
                               <tr>
                                 <td colSpan={8} className="px-8 py-16 text-center text-slate-400 font-medium italic text-xs">
-                                  Nenhuma comissão encontrada nesta opção para o período selecionado.
+                                  Nenhuma comissão ou bônus encontrado nesta opção para o período selecionado.
                                 </td>
                               </tr>
                             ) : (
                               displayedCommissions.map((c, index) => {
-                                const typeLabel = c.commission_type === 'gorjeta' ? 'Gorjeta' :
+                                const isBonusItem = c.commission_type === 'bonus' || c.servico_name?.toLowerCase().includes('bônus') || c.servico_name?.toLowerCase().includes('bonus') || c.servico_name?.toLowerCase().includes('gratificação');
+                                const typeLabel = isBonusItem ? 'Bônus / Gratificação' :
+                                                  c.commission_type === 'gorjeta' ? 'Gorjeta' :
                                                   c.commission_type === 'venda' ? 'Venda' :
                                                   c.commission_type === 'assinatura' ? 'Assinatura' : 'Serviço';
                                 return (
-                                  <tr key={`comm-det-${c.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
+                                  <tr key={`comm-det-${c.id || index}-${index}`} className={`hover:bg-slate-50/50 transition-colors ${isBonusItem ? 'bg-emerald-50/30' : ''}`}>
                                     <td className="px-8 py-5 text-sm font-bold text-slate-500">{format(parseISO(c.date), 'dd/MM/yyyy')}</td>
-                                    <td className="px-8 py-5 font-black text-primary text-sm">#{c.comanda_number}</td>
+                                    <td className="px-8 py-5 font-black text-primary text-sm">{c.comanda_number ? `#${c.comanda_number}` : '-'}</td>
                                     <td className="px-8 py-5">
-                                      <p className="text-sm font-bold text-primary">{c.servico_name}</p>
-                                      <p className="text-[10px] text-muted font-bold truncate max-w-[150px]">{c.cliente_name || 'Cliente Consumidor'}</p>
+                                      <p className="text-sm font-bold text-primary flex items-center gap-1.5">
+                                        {isBonusItem && <Gift size={14} className="text-emerald-600 shrink-0" />}
+                                        {c.servico_name}
+                                      </p>
+                                      <p className="text-[10px] text-muted font-bold truncate max-w-[150px]">{c.cliente_name || (isBonusItem ? 'Lançamento Administrativo' : 'Cliente Consumidor')}</p>
                                     </td>
-                                    <td className="px-8 py-5 text-right font-bold text-xs text-slate-500">{typeLabel}</td>
-                                    {!isBarbeiro && <td className="px-8 py-5 text-right text-sm font-medium text-slate-500">R$ {c.base_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>}
-                                    <td className="px-8 py-5 text-center text-[10px] font-black text-slate-400">{c.commission_percentage}%</td>
-                                    <td className="px-8 py-5 text-right text-sm font-black text-primary">R$ {c.commission_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                    <td className="px-8 py-5 text-right font-bold text-xs text-slate-500">
+                                      <span className={isBonusItem ? "bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-black text-[10px] border border-emerald-200" : ""}>
+                                        {typeLabel}
+                                      </span>
+                                    </td>
+                                    {!isBarbeiro && (
+                                      <td className="px-8 py-5 text-right text-sm font-medium text-slate-500">
+                                        {isBonusItem ? (
+                                          <span className="text-[10px] text-emerald-700 font-extrabold uppercase bg-emerald-100/60 px-2 py-0.5 rounded-md">Bônus Direto</span>
+                                        ) : (
+                                          `R$ ${(c.base_value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                                        )}
+                                      </td>
+                                    )}
+                                    <td className="px-8 py-5 text-center text-[10px] font-black text-slate-400">{isBonusItem ? '100%' : `${c.commission_percentage}%`}</td>
+                                    <td className="px-8 py-5 text-right text-sm font-black text-emerald-700">+R$ {c.commission_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                                     <td className="px-8 py-5 text-center">
                                       <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
                                         c.status === 'pago' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'
@@ -1236,6 +1280,26 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                   </td>
                                   <td className="py-3.5 text-center font-bold text-slate-700">{pendingAssinaturas.length}</td>
                                   <td className="py-3.5 text-right font-bold text-emerald-600">R$ {pendingAssinaturasTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                  <td className="py-3.5 text-right text-slate-300">-</td>
+                                </tr>
+                              );
+                            })()}
+
+                            {/* Row 5: Bônus e Ajuda de Custo */}
+                            {(() => {
+                              const pendingBonus = (payrollGroups.bonus || []).filter(c => c.status === 'pendente');
+                              const pendingBonusTotal = pendingBonus.reduce((acc, c) => acc + c.commission_value, 0);
+                              return (
+                                <tr className="hover:bg-slate-50/50 transition-all duration-150">
+                                  <td className="py-3.5 font-mono text-[10px] text-slate-400">005</td>
+                                  <td className="py-3.5">
+                                    <div>
+                                      <span className="font-bold text-slate-800">Bônus & Ajuda de Custo (Almoço / Premiações)</span>
+                                      <span className="text-[10px] text-slate-400 block mt-0.5">Valores diretos sem incidência sobre a produção bruta</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-3.5 text-center font-bold text-slate-700">{pendingBonus.length}</td>
+                                  <td className="py-3.5 text-right font-bold text-emerald-600">R$ {pendingBonusTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                                   <td className="py-3.5 text-right text-slate-300">-</td>
                                 </tr>
                               );

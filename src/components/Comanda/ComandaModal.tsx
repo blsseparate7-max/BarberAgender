@@ -378,11 +378,34 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     const unsubscribeClients = userService.subscribeToAllClients(true, (data) => {
       setClients(data);
     });
+
+    const tenantId = getActiveTenantId();
+    const qProducts = query(collection(db, 'products'), where('tenantId', '==', tenantId));
+    const unsubscribeProducts = onSnapshot(qProducts, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setProducts(data);
+    });
+
+    const qServices = query(collection(db, 'services'), where('tenantId', '==', tenantId), where('active', '==', true));
+    const unsubscribeServices = onSnapshot(qServices, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
+      data.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      setServices(data);
+    });
+
     return () => {
       unsubscribeBarbers();
       unsubscribeClients();
+      unsubscribeProducts();
+      unsubscribeServices();
     };
   }, []);
+
+  const handleOpenItemSelector = (type: 'service' | 'product') => {
+    loadData();
+    setShowItemSelector(type);
+  };
 
   useEffect(() => {
     let unsubscribe: () => void;
@@ -565,7 +588,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     // Duplication protection: check if item is already being added
     setLoading(true);
     try {
-      const originalPrice = type === 'servico' ? (item as Service).preco ?? (item as Service).price ?? 0 : (item as Product).salePrice ?? 0;
+      const originalPrice = type === 'servico' ? (item as Service).preco ?? (item as Service).price ?? 0 : (item as Product).salePrice ?? (item as any).preco ?? 0;
       const subDiscount = getSubscriptionDiscount(item, type);
       const unitPrice = subDiscount > 0 ? originalPrice * (1 - subDiscount / 100) : originalPrice;
       const totalPrice = isCortesia ? 0 : unitPrice;
@@ -586,7 +609,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         profissional_id: comanda.profissional_id,
         profissional_name: comanda.profissional_name,
         isCortesia,
-        generateCommission: type === 'servico' && !isCortesia
+        generateCommission: (type === 'servico' || type === 'product') && !isCortesia
       };
 
       const updatedItems = [...(comanda.items || []), newItem];
@@ -743,7 +766,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             ...i,
             isCortesia,
             totalPrice: isCortesia ? 0 : i.unitPrice * i.quantity,
-            generateCommission: i.type === 'servico' && !isCortesia
+            generateCommission: (i.type === 'servico' || i.type === 'produto') && !isCortesia
           };
         }
         return i;
@@ -1303,11 +1326,15 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   if (!comanda && !comanda_id) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+      <div 
+        className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+        onClick={onClose}
+      >
         <motion.div 
+          onClick={(e) => e.stopPropagation()}
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-surface border border-border w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+          className="bg-surface border border-border w-full max-w-md rounded-3xl shadow-2xl overflow-hidden my-auto"
         >
           <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50">
             <h2 className="text-xl font-bold text-primary">Abrir Nova Comanda</h2>
@@ -1411,8 +1438,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   if (loading || !comanda) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-        <div className="flex flex-col items-center gap-4">
+      <div 
+        className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+        onClick={onClose}
+      >
+        <div className="flex flex-col items-center gap-4 my-auto">
           <Loader2 className="animate-spin text-accent" size={40} />
           <p className="text-white font-bold text-sm animate-pulse">Carregando comanda...</p>
         </div>
@@ -1421,11 +1451,15 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+    <div 
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+      onClick={onClose}
+    >
       <motion.div 
+        onClick={(e) => e.stopPropagation()}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-surface border border-border w-full max-w-5xl max-h-[95vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+        className="bg-surface border border-border w-full max-w-5xl max-h-[95vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto"
       >
         {/* Header */}
         <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50">
@@ -1632,7 +1666,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 {isPDVMode && (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-in slide-in-from-top duration-500">
                     <button 
-                      onClick={() => setShowItemSelector('service')}
+                      onClick={() => handleOpenItemSelector('service')}
                       className="p-6 bg-emerald-50 border border-emerald-100 rounded-3xl flex flex-col items-center gap-3 hover:bg-emerald-100 hover:border-emerald-200 transition-all text-emerald-700 shadow-sm group active:scale-95"
                     >
                       <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
@@ -1641,7 +1675,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <span className="text-[10px] font-black uppercase tracking-widest">+ Serviço</span>
                     </button>
                     <button 
-                      onClick={() => setShowItemSelector('product')}
+                      onClick={() => handleOpenItemSelector('product')}
                       className="p-6 bg-blue-50 border border-blue-100 rounded-3xl flex flex-col items-center gap-3 hover:bg-blue-100 hover:border-blue-200 transition-all text-blue-700 shadow-sm group active:scale-95"
                     >
                       <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
@@ -1680,14 +1714,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                       <div className="flex gap-2">
                         <button 
-                          onClick={() => setShowItemSelector('service')}
+                          onClick={() => handleOpenItemSelector('service')}
                           className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-primary rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95"
                         >
                           <Plus size={14} />
                           <span>Serviço</span>
                         </button>
                         <button 
-                          onClick={() => setShowItemSelector('product')}
+                          onClick={() => handleOpenItemSelector('product')}
                           className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-primary rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95"
                         >
                           <Plus size={14} />
@@ -2442,12 +2476,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       {/* Item Selector Modal */}
       <AnimatePresence>
         {showItemSelector && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+          <div 
+            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+            onClick={() => setShowItemSelector(null)}
+          >
             <motion.div 
+              onClick={(e) => e.stopPropagation()}
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-surface border border-border w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden"
+              className="bg-surface border border-border w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden my-auto"
             >
               <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50">
                 <div className="flex items-center gap-3">
@@ -2511,7 +2549,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Estoque: {p.currentStock}</p>
                         </div>
                       </div>
-                      <p className="font-black text-primary">R$ {p.salePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      <p className="font-black text-primary">R$ {(p.salePrice ?? (p as any).preco ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                     </div>
                   ))
                 )}
@@ -2524,12 +2562,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       {/* Payment Modal */}
       <AnimatePresence>
         {showPaymentModal && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+          <div 
+            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+            onClick={() => setShowPaymentModal(false)}
+          >
             <motion.div 
+              onClick={(e) => e.stopPropagation()}
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-surface border border-border w-full max-w-xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+              className="bg-surface border border-border w-full max-w-xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto"
             >
               <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50 shrink-0">
                 <div className="flex items-center gap-3">
@@ -2674,12 +2716,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       {/* Reopen Modal */}
         <AnimatePresence>
           {showReopenModal && (
-            <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+            <div 
+              className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+              onClick={() => setShowReopenModal(false)}
+            >
               <motion.div 
+                onClick={(e) => e.stopPropagation()}
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="bg-white rounded-[32px] w-full max-w-lg overflow-hidden shadow-2xl"
+                className="bg-white rounded-[32px] w-full max-w-lg overflow-hidden shadow-2xl my-auto"
               >
                 <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-orange-50/30">
                   <div className="flex items-center gap-4">
@@ -2806,12 +2852,17 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
       <AnimatePresence>
         {showFiadoConfirmationModal && (
-          <div id="modal-fiado-confirm" className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div 
+            id="modal-fiado-confirm" 
+            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto animate-in fade-in duration-300"
+            onClick={() => setShowFiadoConfirmationModal(false)}
+          >
             <motion.div 
+              onClick={(e) => e.stopPropagation()}
               initial={{ scale: 0.95, y: 15 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 15 }}
-              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col"
+              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col my-auto"
             >
               <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-rose-50/30">
                 <div className="flex items-center gap-4">
@@ -2906,12 +2957,17 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
       <AnimatePresence>
         {isPayingDebt && (
-          <div id="modal-pay-debt" className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div 
+            id="modal-pay-debt" 
+            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto animate-in fade-in duration-300"
+            onClick={() => setIsPayingDebt(false)}
+          >
             <motion.div 
+              onClick={(e) => e.stopPropagation()}
               initial={{ scale: 0.95, y: 15 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 15 }}
-              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col"
+              className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col my-auto"
             >
               <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-emerald-50/30">
                 <div className="flex items-center gap-4">

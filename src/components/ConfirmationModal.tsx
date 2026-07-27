@@ -27,12 +27,16 @@ export function ConfirmationModal({
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+        <div 
+          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md"
+          onClick={onClose}
+        >
           <motion.div
+            onClick={(e) => e.stopPropagation()}
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="bg-white border border-slate-200 w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden"
+            className="bg-white border border-slate-200 w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden my-auto"
           >
             <div className="p-8 text-center space-y-6">
               <div className={`w-16 h-16 rounded-3xl mx-auto flex items-center justify-center border shadow-sm ${

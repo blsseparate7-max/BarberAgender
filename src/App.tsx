@@ -218,6 +218,7 @@ function MainApp() {
     }
 
     // Cadastros
+    if (activeTab === 'cadastros') return <Servicos />;
     if (activeTab === 'cadastros-clientes') return <Clientes />;
     if (activeTab === 'cadastros-profissionais') return <Barbeiros />;
     if (activeTab === 'cadastros-servicos') return <Servicos />;

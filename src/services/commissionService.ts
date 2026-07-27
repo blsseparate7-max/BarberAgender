@@ -154,7 +154,7 @@ export const commissionService = {
           // Check if already in results
           const isDuplicate = results.some(r => 
             r.id === docSnap.id || 
-            (r.amount === pAmount && r.date === pDate && (r.description === p.description || r.description?.includes(p.supplier || '')))
+            (Math.abs(r.amount - pAmount) < 0.01 && r.date === pDate)
           );
 
           if (!isDuplicate) {
@@ -215,7 +215,7 @@ export const commissionService = {
 
           const isDuplicate = results.some(r => 
             r.id === docSnap.id || 
-            (r.amount === cAmount && r.date === cDate && r.description === c.description)
+            (Math.abs(r.amount - cAmount) < 0.01 && r.date === cDate)
           );
 
           if (!isDuplicate) {
@@ -284,7 +284,7 @@ export const commissionService = {
       profissional_name: data.profissional_name,
       servico_name: `Bônus / Gratificação: ${data.description || 'Desempenho'}`,
       commission_type: 'bonus',
-      base_value: data.amount,
+      base_value: 0,
       commission_percentage: 100,
       commission_value: data.amount,
       status: 'pendente',

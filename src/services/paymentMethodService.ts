@@ -125,55 +125,107 @@ export const paymentMethodService = {
     
     // Maintain dual fields for compatibility
     if (data.nome !== undefined || data.name !== undefined) {
-      const val = data.nome || data.name || '';
+      const val = data.name !== undefined && data.name !== '' ? data.name : (data.nome || '');
       updateData.nome = val;
       updateData.name = val;
     }
     if (data.tipo !== undefined || data.type !== undefined) {
-      const val = data.tipo || data.type || 'outros';
+      const val = data.type || data.tipo || 'outros';
       updateData.tipo = val;
       updateData.type = val;
       updateData.tipo_legado = val;
     }
     if (data.taxa_percentual !== undefined || data.feePercentage !== undefined) {
-      const val = data.taxa_percentual !== undefined ? data.taxa_percentual : data.feePercentage;
-      updateData.taxa_percentual = val;
-      updateData.feePercentage = val;
+      const val = data.feePercentage !== undefined ? data.feePercentage : data.taxa_percentual;
+      const numVal = Number(val) || 0;
+      updateData.taxa_percentual = numVal;
+      updateData.feePercentage = numVal;
     }
-    if (data.prazo_recebimento !== undefined || data.settlementDays !== undefined) {
-      const val = data.prazo_recebimento !== undefined ? data.prazo_recebimento : data.settlementDays;
-      updateData.prazo_recebimento = val;
-      updateData.settlementDays = val;
+    
+    // Determine the updated days properly. If settlementDays or prazo_recebimento were supplied:
+    let updatedDays: number | undefined = undefined;
+    if (data.settlementDays !== undefined && data.prazo_recebimento !== undefined) {
+      // If both are present in data (e.g. from spread object), check which one changed or prefer settlementDays if they differ
+      updatedDays = Number(data.settlementDays);
+    } else if (data.settlementDays !== undefined) {
+      updatedDays = Number(data.settlementDays);
+    } else if (data.prazo_recebimento !== undefined) {
+      updatedDays = Number(data.prazo_recebimento);
     }
+
+    if (updatedDays !== undefined && !isNaN(updatedDays)) {
+      updateData.prazo_recebimento = updatedDays;
+      updateData.settlementDays = updatedDays;
+
+      // Automatically sync flow rules if changing settlement days or type
+      const currentType = updateData.type || updateData.tipo || data.type || data.tipo || 'outros';
+      if (currentType === 'fiado') {
+        updateData.recebe_na_hora = false;
+        updateData.receivesImmediately = false;
+        updateData.entra_no_caixa = false;
+        updateData.entersCashImmediately = false;
+        updateData.vai_para_recebiveis = false;
+        updateData.goesToReceivables = false;
+        updateData.vai_para_conta_cliente = true;
+        updateData.goesToClientAccount = true;
+      } else if (updatedDays > 0) {
+        updateData.recebe_na_hora = false;
+        updateData.receivesImmediately = false;
+        updateData.entra_no_caixa = false;
+        updateData.entersCashImmediately = false;
+        updateData.vai_para_recebiveis = true;
+        updateData.goesToReceivables = true;
+        updateData.vai_para_conta_cliente = false;
+        updateData.goesToClientAccount = false;
+      } else {
+        updateData.recebe_na_hora = true;
+        updateData.receivesImmediately = true;
+        updateData.entra_no_caixa = true;
+        updateData.entersCashImmediately = true;
+        updateData.vai_para_recebiveis = false;
+        updateData.goesToReceivables = false;
+        updateData.vai_para_conta_cliente = false;
+        updateData.goesToClientAccount = false;
+      }
+    }
+
     if (data.recebe_na_hora !== undefined || data.receivesImmediately !== undefined) {
-      const val = data.recebe_na_hora !== undefined ? data.recebe_na_hora : data.receivesImmediately;
-      updateData.recebe_na_hora = val;
-      updateData.receivesImmediately = val;
+      const val = data.receivesImmediately !== undefined ? data.receivesImmediately : data.recebe_na_hora;
+      if (updateData.receivesImmediately === undefined) {
+        updateData.recebe_na_hora = !!val;
+        updateData.receivesImmediately = !!val;
+      }
     }
     if (data.entra_no_caixa !== undefined || data.entersCashImmediately !== undefined) {
-      const val = data.entra_no_caixa !== undefined ? data.entra_no_caixa : data.entersCashImmediately;
-      updateData.entra_no_caixa = val;
-      updateData.entersCashImmediately = val;
+      const val = data.entersCashImmediately !== undefined ? data.entersCashImmediately : data.entra_no_caixa;
+      if (updateData.entersCashImmediately === undefined) {
+        updateData.entra_no_caixa = !!val;
+        updateData.entersCashImmediately = !!val;
+      }
     }
     if (data.vai_para_recebiveis !== undefined || data.goesToReceivables !== undefined) {
-      const val = data.vai_para_recebiveis !== undefined ? data.vai_para_recebiveis : data.goesToReceivables;
-      updateData.vai_para_recebiveis = val;
-      updateData.goesToReceivables = val;
+      const val = data.goesToReceivables !== undefined ? data.goesToReceivables : data.vai_para_recebiveis;
+      if (updateData.goesToReceivables === undefined) {
+        updateData.vai_para_recebiveis = !!val;
+        updateData.goesToReceivables = !!val;
+      }
     }
     if (data.vai_para_conta_cliente !== undefined || data.goesToClientAccount !== undefined) {
-      const val = data.vai_para_conta_cliente !== undefined ? data.vai_para_conta_cliente : data.goesToClientAccount;
-      updateData.vai_para_conta_cliente = val;
-      updateData.goesToClientAccount = val;
+      const val = data.goesToClientAccount !== undefined ? data.goesToClientAccount : data.vai_para_conta_cliente;
+      if (updateData.goesToClientAccount === undefined) {
+        updateData.vai_para_conta_cliente = !!val;
+        updateData.goesToClientAccount = !!val;
+      }
     }
     if (data.permite_parcial !== undefined || data.allowsPartial !== undefined) {
-      const val = data.permite_parcial !== undefined ? data.permite_parcial : data.allowsPartial;
-      updateData.permite_parcial = val;
-      updateData.allowsPartial = val;
+      const val = data.allowsPartial !== undefined ? data.allowsPartial : data.permite_parcial;
+      updateData.permite_parcial = !!val;
+      updateData.allowsPartial = !!val;
     }
     if (data.permite_split !== undefined || data.allowsSplit !== undefined) {
-      const val = data.permite_split !== undefined ? data.permite_split : data.allowsSplit;
-      updateData.permite_split = val;
-      updateData.allowsSplit = val;
+      const val = data.allowsSplit !== undefined ? data.allowsSplit : data.permite_split;
+      updateData.permite_split = !!val;
+      updateData.allowsSplit = !!val;
     }
 
     await updateDoc(docRef, updateData);

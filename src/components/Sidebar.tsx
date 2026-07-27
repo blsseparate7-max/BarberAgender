@@ -128,8 +128,6 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         { id: 'dashboard-overview', label: 'Resumo Geral', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'dashboard-indicators', label: 'Metas da Equipe', roles: ['admin', 'gerente'] },
         { id: 'insights', label: 'Insights de IA', roles: ['admin', 'gerente'] },
-        { id: 'dashboard-alerts', label: 'Alertas Operacionais', roles: ['admin', 'gerente'] },
-        { id: 'dashboard-financial', label: 'Visão de Faturamento', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -141,7 +139,6 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         { id: 'agenda-main', label: 'Quadro de Horários', roles: ['admin', 'gerente', 'barbeiro', 'cliente'] },
         { id: 'agenda-operations', label: 'Painel de Fluxo (Salão)', roles: ['admin', 'gerente'] },
         { id: 'agenda-appointments', label: 'Lista de Reservas', roles: ['admin', 'gerente'] },
-        { id: 'agenda-recurring', label: 'Horários Fixos / Recorrentes', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -150,7 +147,6 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       icon: <Receipt size={20} />,
       roles: ['admin', 'gerente', 'barbeiro'],
       subItems: [
-        { id: 'comandas-nova', label: 'Lançar Nova Venda', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'comandas-abertas', label: 'Comandas em Aberto', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'comandas-checkout', label: 'Frente de Caixa (PDV)', roles: ['admin', 'gerente'] },
         { id: 'financeiro-caixa', label: 'Caixa de Hoje', roles: ['admin', 'gerente'] },
@@ -165,14 +161,10 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       roles: ['admin', 'gerente', 'cliente', 'barbeiro'],
       subItems: [
         { id: 'cadastros-clientes', label: 'Fichas de Clientes', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'cadastros-assinantes', label: 'Planos de Assinatura (VIP)', roles: ['admin', 'gerente'] },
+        { id: 'cadastros-assinantes', label: 'Planos & Assinantes (VIP)', roles: ['admin', 'gerente'] },
         { id: 'cadastros-pacotes', label: 'Pacotes de Sessões', roles: ['admin', 'gerente'] },
         { id: 'fidelidade-programa', label: 'Programa de Cashback', roles: ['admin', 'gerente', 'cliente'] },
         { id: 'cadastros-cupons', label: 'Cupons de Desconto', roles: ['admin', 'gerente'] },
-        { id: 'cadastros-satisfacao', label: 'Pesquisa de Satisfação', roles: ['admin', 'gerente'] },
-        { id: 'cadastros-mensagens', label: 'Mensagens Automáticas', roles: ['admin', 'gerente'] },
-        { id: 'cadastros-noticias', label: 'Avisos & Promoções', roles: ['admin', 'gerente'] },
-        { id: 'cadastros-lembretes', label: 'Lembretes Internos', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -183,10 +175,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       subItems: [
         { id: 'cadastros-profissionais', label: 'Cadastro de Barbeiros', roles: ['admin', 'gerente'] },
         { id: 'financeiro-comissoes', label: 'Apuração de Comissões', roles: ['admin', 'gerente'] },
-        { id: 'comissoes', label: 'Minhas Comissões', roles: ['barbeiro'] },
-        { id: 'dashboard-agenda', label: 'Minha Agenda de Hoje', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'agenda-availability', label: 'Escalas de Trabalho', roles: ['admin', 'gerente'] },
-        { id: 'agenda-blocks', label: 'Bloqueios de Horários', roles: ['admin', 'gerente'] },
+        { id: 'agenda-availability', label: 'Escalas & Horários', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -197,25 +186,30 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       subItems: [
         { id: 'cadastros-servicos', label: 'Catálogo de Serviços', roles: ['admin', 'gerente', 'cliente'] },
         { id: 'cadastros-combos', label: 'Combos Promocionais', roles: ['admin', 'gerente'] },
-        { id: 'cadastros-produtos', label: 'Catálogo de Produtos', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'estoque-produtos', label: 'Controle de Estoque', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'estoque-movimentacoes', label: 'Movimentações de Produtos', roles: ['admin', 'gerente'] },
-        { id: 'estoque-inventario', label: 'Auditoria de Inventário', roles: ['admin', 'gerente'] },
+        { id: 'estoque-produtos', label: 'Produtos & Estoque', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'cadastros-tipos', label: 'Categorias & Tipos', roles: ['admin', 'gerente'] },
       ]
     },
     {
       id: 'financeiro',
-      label: 'Financeiro & Relatórios',
+      label: 'Financeiro',
       icon: <DollarSign size={20} />,
       roles: ['admin', 'gerente'],
       subItems: [
-        { id: 'financeiro-historico', label: 'Histórico de Fechamentos', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-caixa', label: 'Caixa do Dia', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-pagar', label: 'Contas a Pagar', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-receber', label: 'Contas a Receber', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-fluxo', label: 'Fluxo de Caixa (DRE)', roles: ['admin', 'gerente'] },
-        { id: 'cadastros-metodos-pagamento', label: 'Configurar Meios de Pgto', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-geral', label: 'Relatório de Desempenho', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-fluxo', label: 'DRE & Fluxo de Caixa', roles: ['admin', 'gerente'] },
+        { id: 'cadastros-metodos-pagamento', label: 'Meios de Pagamento', roles: ['admin', 'gerente'] },
+      ]
+    },
+    {
+      id: 'relatorios',
+      label: 'Relatórios & DRE',
+      icon: <BarChart3 size={20} />,
+      roles: ['admin', 'gerente'],
+      subItems: [
+        { id: 'relatorios-geral', label: 'Desempenho Geral', roles: ['admin', 'gerente'] },
         { id: 'relatorios-agendamentos', label: 'Análise de Agendas', roles: ['admin', 'gerente'] },
         { id: 'relatorios-clientes', label: 'Análise de Clientes', roles: ['admin', 'gerente'] },
         { id: 'relatorios-financeiro', label: 'Análise Financeira', roles: ['admin', 'gerente'] },
@@ -228,10 +222,9 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       roles: ['admin', 'gerente'],
       subItems: [
         { id: 'configuracoes-parametros', label: 'Dados da Barbearia', roles: ['admin', 'gerente'] },
-        { id: 'configuracoes-rodizio', label: 'Regras de Rodízio', roles: ['admin', 'gerente'] },
         { id: 'configuracoes-funcionamento', label: 'Horários de Expediente', roles: ['admin', 'gerente'] },
         { id: 'admin-usuarios', label: 'Operadores & Acessos', roles: ['admin'] },
-        { id: 'admin-logs', label: 'Auditoria & Logs', roles: ['admin'] },
+        { id: 'admin-logs', label: 'Logs de Auditoria', roles: ['admin'] },
       ]
     }
   ];
@@ -275,7 +268,12 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
             return (
               <div key={item.id} className="space-y-1.5">
                 <button 
-                  onClick={() => hasSubItems ? toggleMenu(item.id) : handleNavItemClick(item.id)}
+                  onClick={() => {
+                    handleNavItemClick(item.id);
+                    if (hasSubItems && !isExpanded) {
+                      toggleMenu(item.id);
+                    }
+                  }}
                   className={`w-full flex items-center justify-between px-5 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all group active:scale-[0.98] ${
                     isActive 
                       ? 'bg-primary text-white shadow-lg shadow-primary/10' 
@@ -289,7 +287,13 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
                     {item.label}
                   </div>
                   {hasSubItems && (
-                    <span className={`${isActive ? 'text-white/50' : 'text-slate-300 group-hover:text-slate-500'} transition-colors`}>
+                    <span 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMenu(item.id);
+                      }}
+                      className={`p-1 rounded-lg hover:bg-white/10 ${isActive ? 'text-white/70' : 'text-slate-300 group-hover:text-slate-500'} transition-colors`}
+                    >
                       {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </span>
                   )}

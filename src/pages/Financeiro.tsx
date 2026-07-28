@@ -86,6 +86,7 @@ import { comandaService } from '../services/comandaService';
 import { paymentMethodService } from '../services/paymentMethodService';
 import { inventoryService } from '../services/inventoryService';
 import { subscriptionService } from '../services/subscriptionService';
+import { getActiveTenantId } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { parseDate } from '../lib/utils';
@@ -223,6 +224,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     // Real-time transactions for the current period
     const q = query(
       collection(db, 'financial_transactions'),
+      where('tenantId', '==', getActiveTenantId()),
       where('date', '>=', dateRange.start),
       where('date', '<=', dateRange.end)
     );
@@ -258,12 +260,12 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         .reduce((acc, t) => acc + t.amount, 0);
 
       const aReceberCartoes = txs
-        .filter(t => t.type === 'income' && t.status === 'pago' && (t.is_settled === false || t.paymentMethod === 'credito' || t.paymentMethod === 'debito'))
+        .filter(t => t.type === 'income' && t.status === 'pago' && t.is_settled === false && (t.paymentMethod === 'credito' || t.paymentMethod === 'debito'))
         .reduce((acc, t) => acc + (t.net_amount || t.amount), 0);
 
       const disponivel = txs
-        .filter(t => t.type === 'income' && t.status === 'pago' && t.is_settled !== false && t.paymentMethod !== 'credito' && t.paymentMethod !== 'debito')
-        .reduce((acc, t) => acc + t.amount, 0) - expense;
+        .filter(t => t.type === 'income' && t.status === 'pago' && t.is_settled !== false)
+        .reduce((acc, t) => acc + (t.net_amount || t.amount), 0) - expense;
 
       setStats({
         income,
@@ -683,10 +685,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         <TabButton active={activeTab === 'daily-cash'} onClick={() => setActiveTab('daily-cash')} label="Caixa" icon={<Receipt size={16} />} />
         <TabButton active={activeTab === 'cash-history'} onClick={() => setActiveTab('cash-history')} label="Histórico de Caixas" icon={<History size={16} />} />
         <TabButton active={activeTab === 'entries-exits'} onClick={() => setActiveTab('entries-exits')} label="Entradas e Saídas" icon={<ArrowRightLeft size={16} />} />
-        <TabButton active={activeTab === 'commissions'} onClick={() => setActiveTab('commissions')} label="Comissões" icon={<Percent size={16} />} />
         <TabButton active={activeTab === 'client-accounts'} onClick={() => setActiveTab('client-accounts')} label="Conta do Cliente" icon={<User size={16} />} />
         <TabButton active={activeTab === 'inventory-finance'} onClick={() => setActiveTab('inventory-finance')} label="Estoque" icon={<BarChart3 size={16} />} />
-        <TabButton active={activeTab === 'professional-accounts'} onClick={() => setActiveTab('professional-accounts')} label="Conta do Profissional" icon={<Briefcase size={16} />} />
         {(isAdmin || isGerente) && (
           <TabButton active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} label="Assinaturas" icon={<Sparkles className="text-purple-500 scale-110" size={16} />} />
         )}

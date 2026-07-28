@@ -1124,7 +1124,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                   </div>
 
                   <button 
-                    onClick={() => setActiveTab('financeiro-comissoes')}
+                    onClick={() => setActiveTab('comissoes')}
                     className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-primary rounded-xl font-black text-[10px] uppercase tracking-widest transition-all"
                   >
                     Gerenciar Pagamento de Comissão

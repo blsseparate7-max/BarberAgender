@@ -336,6 +336,63 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   }, [comanda?.cliente_id]);
 
+  // Auto-apply active subscription to services in open comanda if eligible
+  useEffect(() => {
+    if (comanda && comanda.status === 'aberta' && clientSubscriptions && clientSubscriptions.length > 0 && user) {
+      const activeSub = clientSubscriptions.find(s => s.status === 'active');
+      if (activeSub) {
+        let hasChanges = false;
+        const updatedItems = comanda.items.map(item => {
+          if ((item.type === 'servico' || item.type === 'assinatura') && !item.deductType) {
+            // Check eligibility
+            let isEligible = false;
+            if (activeSub.services && activeSub.services.length > 0) {
+              const planService = activeSub.services.find((ps: any) => ps.serviceId === item.referencia_id);
+              if (planService) {
+                if (planService.isUnlimited) isEligible = true;
+                else {
+                  const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.referencia_id]) || 0;
+                  isEligible = currentUsed < planService.limit;
+                }
+              }
+            } else {
+              // Legacy fallback
+              const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
+              const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
+              if (isCut) isEligible = activeSub.haircutsUsed < (activeSub.haircutsPerMonth || 999);
+              if (isBeard) isEligible = activeSub.beardsUsed < (activeSub.beardsPerMonth || 999);
+            }
+
+            if (isEligible) {
+              hasChanges = true;
+              return {
+                ...item,
+                deductType: 'assinatura' as const,
+                packageSaleId: '',
+                subscriptionId: activeSub.id,
+                isCortesia: true,
+                totalPrice: 0,
+                generateCommission: false
+              };
+            }
+          }
+          return item;
+        });
+
+        if (hasChanges) {
+          comandaService.updateComandaItems(
+            comanda.id,
+            updatedItems,
+            comanda.discount,
+            comanda.tip,
+            user.uid,
+            profile?.nome || user.email || 'Usuário'
+          ).catch(err => console.error("Error auto-applying subscription to comanda:", err));
+        }
+      }
+    }
+  }, [clientSubscriptions, comanda?.id, comanda?.status, user]);
+
   // Virtual packages purchased in the active comanda but not finalized/saved to DB yet
   const virtualPackages = React.useMemo(() => {
     if (!comanda?.items || !comanda?.cliente_id) return [];
@@ -530,7 +587,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       ]);
       setServices(s);
       setProducts(p);
-      setPaymentMethods(pm.filter(m => m.status === 'active'));
+      // Filter out 'assinatura' so it is not selectable as a payment method at checkout
+      setPaymentMethods(pm.filter(m => m.status === 'active' && m.type !== 'assinatura'));
     } catch (error) {
       console.error("Erro ao carregar dados:", error);
     }
@@ -942,7 +1000,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               subscriptionId: activeSub?.id || '',
               isCortesia: true,
               totalPrice: 0,
-              generateCommission: true
+              generateCommission: false
             };
           } else {
             return {
@@ -1070,7 +1128,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             item.profissional_id,
             item.profissional_name,
             item.unitPrice || item.totalPrice || 0,
-            item.id,
+            item.referencia_id || item.id,
             item.name
           );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
@@ -1175,7 +1233,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             item.profissional_id,
             item.profissional_name,
             item.unitPrice || item.totalPrice || 0,
-            item.id,
+            item.referencia_id || item.id,
             item.name
           );
           console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
@@ -1872,12 +1930,24 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             p => p.remainingCuts > 0 && (p.serviceId === item.referencia_id || p.packageName.toLowerCase().includes(item.name.toLowerCase()))
                           );
                           const activeSub = clientSubscriptions.find(s => s.status === 'active');
-                          const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
-                          const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
-                          const hasSub = activeSub && (
-                            (isCut && activeSub.haircutsUsed < (activeSub.haircutsPerMonth || 999)) ||
-                            (isBeard && activeSub.beardsUsed < (activeSub.beardsPerMonth || 999))
-                          );
+                          const hasSub = activeSub && (() => {
+                            if (activeSub.services && activeSub.services.length > 0) {
+                              const planService = activeSub.services.find((ps: any) => ps.serviceId === item.referencia_id);
+                              if (planService) {
+                                if (planService.isUnlimited) return true;
+                                const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.referencia_id]) || 0;
+                                return currentUsed < planService.limit;
+                              }
+                              return false;
+                            }
+                            
+                            // Legacy fallback (haircuts and beards)
+                            const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
+                            const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
+                            if (isCut) return activeSub.haircutsUsed < (activeSub.haircutsPerMonth || 999);
+                            if (isBeard) return activeSub.beardsUsed < (activeSub.beardsPerMonth || 999);
+                            return false;
+                          })();
 
                           return (
                             <tr key={`${item.id || 'item'}-${index}`} className="hover:bg-slate-50/50 transition-colors group">

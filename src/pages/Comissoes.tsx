@@ -33,7 +33,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Commission, CommissionPayout, CommissionStatus, UserProfile } from '../types';
+import { Commission, CommissionPayout, CommissionStatus, ProfessionalAdvance, UserProfile } from '../types';
 import { commissionService } from '../services/commissionService';
 import { userService } from '../services/userService';
 import { useAuth } from '../contexts/AuthContext';
@@ -47,6 +47,7 @@ export function Comissoes() {
   const [stats, setStats] = useState({ pending: 0, paid: 0, total: 0, totalBase: 0, count: 0 });
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [payouts, setPayouts] = useState<CommissionPayout[]>([]);
+  const [advances, setAdvances] = useState<ProfessionalAdvance[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   
   // Drill-down state
@@ -86,7 +87,7 @@ export function Comissoes() {
     try {
       const barberId = profile?.tipo === 'barbeiro' ? user?.uid : selectedBarber;
       
-      const [statsData, commissionsData, payoutsData] = await Promise.all([
+      const [statsData, commissionsData, payoutsData, advancesData] = await Promise.all([
         commissionService.getCommissionStats(barberId, dateRange.start, dateRange.end),
         commissionService.getCommissions({ 
           profissional_id: barberId, 
@@ -94,12 +95,18 @@ export function Comissoes() {
           startDate: dateRange.start,
           endDate: dateRange.end
         }),
-        commissionService.getPayouts(barberId)
+        commissionService.getPayouts(barberId),
+        commissionService.getAdvances({
+          profissional_id: barberId || undefined,
+          startDate: dateRange.start,
+          endDate: dateRange.end
+        })
       ]);
       
       setStats(statsData);
       setCommissions(commissionsData);
       setPayouts(payoutsData);
+      setAdvances(advancesData);
     } catch (error) {
       console.error("Erro ao carregar dados de comissões:", error);
     } finally {
@@ -173,18 +180,52 @@ export function Comissoes() {
     );
   }
 
+  // Calculate global stats dynamically in-memory to incorporate vales (advances) for 100% mathematical precision
+  const calculatedStats = React.useMemo(() => {
+    const pendingComms = commissions
+      .filter(c => c.status === 'pendente')
+      .reduce((acc, c) => acc + (c.commission_value || 0), 0);
+    
+    const pendingAdvs = advances
+      .filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'))
+      .reduce((acc, a) => acc + (a.amount || 0), 0);
+
+    const pending = Math.max(0, pendingComms - pendingAdvs);
+    
+    const paid = commissions
+      .filter(c => c.status === 'pago')
+      .reduce((acc, c) => acc + (c.commission_value || 0), 0);
+
+    const totalBase = commissions
+      .reduce((acc, c) => acc + (c.base_value || 0), 0);
+
+    return {
+      pending,
+      paid,
+      totalBase,
+      count: commissions.length
+    };
+  }, [commissions, advances]);
+
   // Calculate roster summary dynamically in memory based on loaded data for perfect real-time feedback
   const teamRoster = barbers.map(barber => {
     const barberComms = commissions.filter(c => c.profissional_id === barber.uid);
-    const pending = barberComms.filter(c => c.status === 'pendente').reduce((acc, c) => acc + c.commission_value, 0);
-    const paid = barberComms.filter(c => c.status === 'pago').reduce((acc, c) => acc + c.commission_value, 0);
-    const totalBase = barberComms.reduce((acc, c) => acc + c.base_value, 0);
+    const barberAdvs = advances.filter(a => a.profissional_id === barber.uid && (a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido')));
+    
+    const grossPending = barberComms.filter(c => c.status === 'pendente').reduce((acc, c) => acc + (c.commission_value || 0), 0);
+    const pendingAdvances = barberAdvs.reduce((acc, a) => acc + (a.amount || 0), 0);
+    const pending = grossPending - pendingAdvances;
+
+    const paid = barberComms.filter(c => c.status === 'pago').reduce((acc, c) => acc + (c.commission_value || 0), 0);
+    const totalBase = barberComms.reduce((acc, c) => acc + (c.base_value || 0), 0);
     const count = barberComms.length;
 
     return {
       uid: barber.uid,
       nome: barber.nome,
       email: barber.email,
+      grossPending,
+      pendingAdvances,
       pending,
       paid,
       totalBase,
@@ -271,28 +312,28 @@ export function Comissoes() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
           title="Comissão Pendente" 
-          value={stats.pending} 
+          value={calculatedStats.pending} 
           icon={<Clock className="text-amber-500" size={18} />} 
           color="amber"
           subtitle="Aguardando liquidação"
         />
         <StatCard 
           title="Comissão Repassada" 
-          value={stats.paid} 
+          value={calculatedStats.paid} 
           icon={<CheckCircle2 className="text-emerald-500" size={18} />} 
           color="emerald"
           subtitle="Ganhos liquidados no período"
         />
         <StatCard 
           title="Faturamento Base" 
-          value={stats.totalBase} 
+          value={calculatedStats.totalBase} 
           icon={<TrendingUp className="text-blue-500" size={18} />} 
           color="blue"
           subtitle="Valor total dos serviços"
         />
         <StatCard 
           title="Atendimentos Realizados" 
-          value={stats.count} 
+          value={calculatedStats.count} 
           icon={<UserCheck className="text-slate-500" size={18} />} 
           color="zinc"
           subtitle="Serviços comissionados"
@@ -378,13 +419,24 @@ export function Comissoes() {
 
                       {/* Barber Mini stats */}
                       <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-5 text-left">
-                        <div>
-                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Pendente</span>
-                          <span className={`text-base font-black font-mono ${isPending ? 'text-amber-600' : 'text-slate-500'}`}>
-                            R$ {barber.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                          </span>
+                        <div className="flex flex-col justify-between">
+                          <div>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
+                              {barber.pendingAdvances > 0 ? 'Pendente Líquido' : 'Pendente'}
+                            </span>
+                            <span className={`text-base font-black font-mono ${isPending ? 'text-amber-600' : 'text-slate-500'}`}>
+                              R$ {barber.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          {barber.pendingAdvances > 0 && (
+                            <div className="text-[9px] text-slate-400 font-extrabold mt-1.5 leading-none bg-amber-500/10 border border-amber-500/20 px-1.5 py-1 rounded-lg">
+                              Bruto: <span className="font-mono">R$ {barber.grossPending.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
+                              <br />
+                              Vales: <span className="font-mono text-red-600">-R$ {barber.pendingAdvances.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
+                            </div>
+                          )}
                         </div>
-                        <div className="border-l border-slate-200 pl-4">
+                        <div className="border-l border-slate-200 pl-4 flex flex-col justify-center">
                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Repassado</span>
                           <span className="text-base font-black font-mono text-emerald-600">
                             R$ {barber.paid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}

@@ -618,6 +618,13 @@ export interface SubscriptionDiscount {
   percentage: number; // Discount percentage (e.g., 10 for 10%)
 }
 
+export interface SubscriptionPlanService {
+  serviceId: string;
+  name: string;
+  limit: number;
+  isUnlimited: boolean;
+}
+
 export interface SubscriptionPlan {
   id: string;
   name: string;
@@ -625,6 +632,7 @@ export interface SubscriptionPlan {
   price: number;
   haircutsPerMonth: number;
   beardsPerMonth: number;
+  services?: SubscriptionPlanService[];
   extraBenefits: string[];
   status: 'active' | 'inactive';
   showInPortal?: boolean;
@@ -645,8 +653,12 @@ export interface Subscription {
   autoRenew: boolean;
   haircutsUsed: number;
   beardsUsed: number;
+  serviceUsages?: Record<string, number>;
   lastRenewalDate: string;
   discounts?: SubscriptionDiscount[];
+  activationType?: 'manual' | 'asaas';
+  asaasPaymentStatus?: string;
+  asaasInvoiceId?: string;
   createdAt: any;
   updatedAt: any;
 }

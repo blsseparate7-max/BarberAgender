@@ -41,6 +41,7 @@ import { userService } from '../services/userService';
 import { cashService } from '../services/cashService';
 import { comandaService } from '../services/comandaService';
 import { agendaBlockService } from '../services/agendaBlockService';
+import { subscriptionService } from '../services/subscriptionService';
 import { useAuth } from '../contexts/AuthContext';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
@@ -92,9 +93,23 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
   const [blocks, setBlocks] = useState<AgendaBlock[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [clients, setClients] = useState<UserProfile[]>([]);
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
+  const loadSubscriptions = async () => {
+    try {
+      const data = await subscriptionService.getAllSubscriptionsSystem();
+      setSubscriptions(data);
+    } catch (err) {
+      console.error("Error loading subscriptions for Agenda:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadSubscriptions();
+  }, [appointments]);
+
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBarberFilter, setSelectedBarberFilter] = useState<string>('all');
@@ -465,6 +480,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                   barbers={filteredBarbersForGrid}
                   appointments={appointments}
                   clients={clients}
+                  subscriptions={subscriptions}
                   blocks={blocks}
                   onNewAppointment={handleNew}
                   onOpenAppointment={handleOpenAppointment}
@@ -478,6 +494,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                   barbers={filteredBarbersForGrid}
                   appointments={appointments}
                   clients={clients}
+                  subscriptions={subscriptions}
                   blocks={blocks}
                   onNewAppointment={handleNew}
                   onOpenAppointment={handleOpenAppointment}

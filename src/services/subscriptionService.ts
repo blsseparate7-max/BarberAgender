@@ -9,7 +9,8 @@ import {
   doc, 
   increment,
   runTransaction,
-  serverTimestamp
+  serverTimestamp,
+  setDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { SubscriptionPlan, Subscription, SubscriptionUsage, SubscriptionStatus } from '../types';
@@ -87,6 +88,8 @@ export const subscriptionService = {
         autoRenew: data.autoRenew,
         haircutsUsed: 0,
         beardsUsed: 0,
+        services: plan.services || [],
+        serviceUsages: {},
         lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
         discounts: plan.discounts || [],
         createdAt: serverTimestamp(),
@@ -147,6 +150,8 @@ export const subscriptionService = {
         autoRenew: data.autoRenew,
         haircutsUsed: 0,
         beardsUsed: 0,
+        services: plan.services || [],
+        serviceUsages: {},
         lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
         discounts: plan.discounts || [],
         createdAt: serverTimestamp(),
@@ -191,14 +196,27 @@ export const subscriptionService = {
       const plan = planSnap.data() as SubscriptionPlan;
 
       // Check limits
-      const isUnlimitedCuts = !plan.haircutsPerMonth || plan.haircutsPerMonth >= 999 || plan.haircutsPerMonth === 0;
-      const isUnlimitedBeards = !plan.beardsPerMonth || plan.beardsPerMonth >= 999 || plan.beardsPerMonth === 0;
+      if (plan.services && plan.services.length > 0) {
+        if (service_id) {
+          const planService = plan.services.find(ps => ps.serviceId === service_id);
+          if (planService && !planService.isUnlimited) {
+            const currentUsed = (sub.serviceUsages && sub.serviceUsages[service_id]) || 0;
+            if (currentUsed >= planService.limit) {
+              throw new Error(`Limite mensal do serviço "${planService.name}" atingido`);
+            }
+          }
+        }
+      } else {
+        // Legacy check limits fallback
+        const isUnlimitedCuts = !plan.haircutsPerMonth || plan.haircutsPerMonth >= 999 || plan.haircutsPerMonth === 0;
+        const isUnlimitedBeards = !plan.beardsPerMonth || plan.beardsPerMonth >= 999 || plan.beardsPerMonth === 0;
 
-      if (!isUnlimitedCuts && type === 'haircut' && sub.haircutsUsed >= plan.haircutsPerMonth) {
-        throw new Error("Limite de cortes mensais atingido");
-      }
-      if (!isUnlimitedBeards && type === 'beard' && sub.beardsUsed >= plan.beardsPerMonth) {
-        throw new Error("Limite de barbas mensais atingido");
+        if (!isUnlimitedCuts && type === 'haircut' && sub.haircutsUsed >= plan.haircutsPerMonth) {
+          throw new Error("Limite de cortes mensais atingido");
+        }
+        if (!isUnlimitedBeards && type === 'beard' && sub.beardsUsed >= plan.beardsPerMonth) {
+          throw new Error("Limite de barbas mensais atingido");
+        }
       }
 
       // Register usage
@@ -222,9 +240,15 @@ export const subscriptionService = {
       });
 
       // Update counters
+      const updatedServiceUsages = { ...(sub.serviceUsages || {}) };
+      if (service_id) {
+        updatedServiceUsages[service_id] = (updatedServiceUsages[service_id] || 0) + 1;
+      }
+
       transaction.update(subRef, {
         haircutsUsed: type === 'haircut' ? increment(1) : sub.haircutsUsed,
         beardsUsed: type === 'beard' ? increment(1) : sub.beardsUsed,
+        serviceUsages: updatedServiceUsages,
         updatedAt: serverTimestamp()
       });
 
@@ -269,34 +293,135 @@ export const subscriptionService = {
 
   async renewSubscription(id: string) {
     const activeTenantId = getActiveTenantId();
-    return await runTransaction(db, async (transaction) => {
-      const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
-      const subSnap = await transaction.get(subRef);
-      if (!subSnap.exists()) throw new Error("Assinatura não encontrada");
-      const sub = subSnap.data() as Subscription;
+    
+    // Fetch subscription first
+    const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
+    const subSnap = await getDocs(query(collection(db, SUBSCRIPTIONS_COLLECTION)));
+    const targetDoc = subSnap.docs.find(d => d.id === id);
+    if (!targetDoc) throw new Error("Assinatura não encontrada");
+    const sub = targetDoc.data() as Subscription;
 
-      const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
-      const planSnap = await transaction.get(planRef);
-      if (!planSnap.exists()) throw new Error("Plano do assinante não encontrado");
-      const plan = planSnap.data() as SubscriptionPlan;
+    const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
+    const planSnap = await getDocs(query(collection(db, PLANS_COLLECTION)));
+    const targetPlanDoc = planSnap.docs.find(d => d.id === sub.plano_id);
+    if (!targetPlanDoc) throw new Error("Plano do assinante não encontrado");
+    const plan = targetPlanDoc.data() as SubscriptionPlan;
 
-      const today = new Date();
-      const currentEndDate = new Date(sub.endDate + 'T12:00:00');
-      
-      let baseDate = today;
-      if (currentEndDate > today) {
-        baseDate = currentEndDate;
+    // Fetch usages
+    const usagesQuery = query(
+      collection(db, USAGE_COLLECTION),
+      where('tenantId', '==', activeTenantId),
+      where('assinatura_id', '==', id)
+    );
+    const usagesSnap = await getDocs(usagesQuery);
+    const allUsages = usagesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    // Filter cycle usages (falling inside sub.startDate and sub.endDate)
+    const cycleUsages = allUsages.filter((u: any) => {
+      if (!u.date) return false;
+      return u.date >= sub.startDate && u.date <= sub.endDate;
+    });
+
+    // Calculate commissions for this completed cycle
+    const commissionsToCreate: Array<{
+      profissional_id: string;
+      profissional_name: string;
+      commission_value: number;
+      commission_percentage: number;
+    }> = [];
+
+    if (cycleUsages.length > 0) {
+      const planType = (plan as any).comissao_tipo || 'fixo';
+      const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
+      const planPool = plan.price * (poolPct / 100);
+
+      // Group usages by professional
+      const usagesByBarber: Record<string, { name: string; usages: any[] }> = {};
+      cycleUsages.forEach((u: any) => {
+        if (!u.profissional_id) return;
+        if (!usagesByBarber[u.profissional_id]) {
+          usagesByBarber[u.profissional_id] = {
+            name: u.profissional_name || 'Profissional',
+            usages: []
+          };
+        }
+        usagesByBarber[u.profissional_id].usages.push(u);
+      });
+
+      if (planType === 'fixo') {
+        const fixedVal = (plan as any).comissao_fixa_valor ?? 10.00;
+        Object.entries(usagesByBarber).forEach(([barberId, data]) => {
+          commissionsToCreate.push({
+            profissional_id: barberId,
+            profissional_name: data.name,
+            commission_value: data.usages.length * fixedVal,
+            commission_percentage: 100
+          });
+        });
+      } else if (planType === 'pool_atendimentos') {
+        Object.entries(usagesByBarber).forEach(([barberId, data]) => {
+          const pctOfUsage = data.usages.length / cycleUsages.length;
+          commissionsToCreate.push({
+            profissional_id: barberId,
+            profissional_name: data.name,
+            commission_value: Number((planPool * pctOfUsage).toFixed(2)),
+            commission_percentage: Number((poolPct * pctOfUsage).toFixed(2))
+          });
+        });
+      } else if (planType === 'pool_pontos') {
+        const wCorte = (plan as any).pontos_corte ?? 1;
+        const wBarba = (plan as any).pontos_barba ?? 1;
+        const wOutro = (plan as any).pontos_outros ?? 0.5;
+
+        const getUsagePoints = (u: any) => {
+          const customPoints = (plan as any).pontos_servicos;
+          if (customPoints && u.service_id && typeof customPoints[u.service_id] === 'number') {
+            return customPoints[u.service_id];
+          }
+          if (u.type === 'haircut') return wCorte;
+          if (u.type === 'beard') return wBarba;
+          return wOutro;
+        };
+
+        const totalPoints = cycleUsages.reduce((sum, u) => sum + getUsagePoints(u), 0);
+
+        if (totalPoints > 0) {
+          Object.entries(usagesByBarber).forEach(([barberId, data]) => {
+            const barberPoints = data.usages.reduce((sum, u) => sum + getUsagePoints(u), 0);
+            const pctOfPoints = barberPoints / totalPoints;
+            commissionsToCreate.push({
+              profissional_id: barberId,
+              profissional_name: data.name,
+              commission_value: Number((planPool * pctOfPoints).toFixed(2)),
+              commission_percentage: Number((poolPct * pctOfPoints).toFixed(2))
+            });
+          });
+        }
       }
-      
-      const newEndDate = addMonths(baseDate, 1);
+    }
 
+    const today = new Date();
+    const todayStr = format(today, 'yyyy-MM-dd');
+    const currentEndDate = new Date(sub.endDate + 'T12:00:00');
+    
+    let newStartDateStr = sub.endDate;
+    if (currentEndDate < today) {
+      newStartDateStr = todayStr;
+    }
+    const newStartDate = new Date(newStartDateStr + 'T12:00:00');
+    const newEndDate = addMonths(newStartDate, 1);
+    const newEndDateStr = format(newEndDate, 'yyyy-MM-dd');
+
+    return await runTransaction(db, async (transaction) => {
       // Update subscription
       transaction.update(subRef, {
-        endDate: format(newEndDate, 'yyyy-MM-dd'),
+        startDate: newStartDateStr,
+        endDate: newEndDateStr,
         status: 'active',
         haircutsUsed: 0,
         beardsUsed: 0,
-        lastRenewalDate: format(today, 'yyyy-MM-dd'),
+        serviceUsages: {},
+        lastRenewalDate: todayStr,
         updatedAt: serverTimestamp()
       });
 
@@ -306,7 +431,7 @@ export const subscriptionService = {
         tenantId: activeTenantId,
         type: 'income',
         amount: plan.price,
-        date: format(today, 'yyyy-MM-dd'),
+        date: todayStr,
         category: 'Assinaturas',
         description: `Renovação de Assinatura: ${plan.name} - ${sub.cliente_name}`,
         paymentMethod: 'credito',
@@ -317,13 +442,117 @@ export const subscriptionService = {
         responsavel_name: sub.cliente_name,
         net_amount: plan.price,
         fee_amount: 0,
-        settlement_date: format(today, 'yyyy-MM-dd'),
+        settlement_date: todayStr,
         is_settled: true,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
 
-      return format(newEndDate, 'yyyy-MM-dd');
+      // Insert calculated commissions
+      commissionsToCreate.forEach((comm) => {
+        const commRef = doc(collection(db, 'commissions'));
+        transaction.set(commRef, {
+          tenantId: activeTenantId,
+          profissional_id: comm.profissional_id,
+          profissional_name: comm.profissional_name,
+          servico_name: `Rateio Assinatura: ${plan.name} (Ciclo ${sub.startDate} a ${sub.endDate})`,
+          base_value: plan.price,
+          commission_percentage: comm.commission_percentage,
+          commission_value: comm.commission_value,
+          status: 'pendente',
+          commission_type: 'assinatura',
+          date: todayStr,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      });
+
+      return newEndDateStr;
+    });
+  },
+
+  async createAsaasSubscription(data: { cliente_id: string; cliente_name: string; plano_id: string }) {
+    const activeTenantId = getActiveTenantId();
+    
+    const planRef = doc(db, PLANS_COLLECTION, data.plano_id);
+    const planSnap = await getDocs(query(collection(db, PLANS_COLLECTION)));
+    const targetPlanDoc = planSnap.docs.find(d => d.id === data.plano_id);
+    if (!targetPlanDoc) throw new Error("Plano não encontrado");
+    const plan = targetPlanDoc.data() as SubscriptionPlan;
+
+    const startDate = new Date();
+    const endDate = addMonths(startDate, 1);
+
+    const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
+    const subscriptionData = {
+      tenantId: activeTenantId,
+      cliente_id: data.cliente_id,
+      cliente_name: data.cliente_name,
+      plano_id: data.plano_id,
+      planName: plan.name,
+      startDate: format(startDate, 'yyyy-MM-dd'),
+      endDate: format(endDate, 'yyyy-MM-dd'),
+      status: 'pending',
+      autoRenew: true,
+      haircutsUsed: 0,
+      beardsUsed: 0,
+      lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
+      discounts: plan.discounts || [],
+      activationType: 'asaas',
+      asaasPaymentStatus: 'pending',
+      asaasInvoiceId: 'pay_' + Math.random().toString(36).substring(2, 9),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(subscriptionRef, subscriptionData);
+    return subscriptionRef.id;
+  },
+
+  async confirmAsaasSubscriptionPayment(id: string) {
+    const activeTenantId = getActiveTenantId();
+    
+    const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
+    const subSnap = await getDocs(query(collection(db, SUBSCRIPTIONS_COLLECTION)));
+    const targetDoc = subSnap.docs.find(d => d.id === id);
+    if (!targetDoc) throw new Error("Assinatura não encontrada");
+    const sub = targetDoc.data() as Subscription;
+
+    const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
+    const planSnap = await getDocs(query(collection(db, PLANS_COLLECTION)));
+    const targetPlanDoc = planSnap.docs.find(d => d.id === sub.plano_id);
+    if (!targetPlanDoc) throw new Error("Plano não encontrado");
+    const plan = targetPlanDoc.data() as SubscriptionPlan;
+
+    return await runTransaction(db, async (transaction) => {
+      transaction.update(subRef, {
+        status: 'active',
+        asaasPaymentStatus: 'received',
+        updatedAt: serverTimestamp()
+      });
+
+      // Create financial transaction
+      const financialRef = doc(collection(db, 'financial_transactions'));
+      transaction.set(financialRef, {
+        tenantId: activeTenantId,
+        type: 'income',
+        amount: plan.price,
+        date: format(new Date(), 'yyyy-MM-dd'),
+        category: 'Assinaturas',
+        description: `Assinatura Asaas Confirmada: ${plan.name} - ${sub.cliente_name}`,
+        paymentMethod: 'pix',
+        status: 'pago',
+        cliente_id: sub.cliente_id,
+        cliente_name: sub.cliente_name,
+        responsavel_id: sub.cliente_id,
+        responsavel_name: sub.cliente_name,
+        net_amount: plan.price,
+        fee_amount: 0.99,
+        settlement_date: format(new Date(), 'yyyy-MM-dd'),
+        is_settled: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
     });
   },
 

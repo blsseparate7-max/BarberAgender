@@ -26,7 +26,9 @@ import {
   DollarSign,
   Percent,
   Briefcase,
-  Info
+  Info,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -154,6 +156,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [discountPercentage, setDiscountPercentage] = useState<number>(10);
 
   const [deleteSubId, setDeleteSubId] = useState<string | null>(null);
+  const [assignActivationType, setAssignActivationType] = useState<'manual' | 'asaas'>('manual');
 
   const [planShowInPortal, setPlanShowInPortal] = useState(true);
   const [planComissaoTipo, setPlanComissaoTipo] = useState<'fixo' | 'pool_atendimentos' | 'pool_pontos'>('fixo');
@@ -163,6 +166,45 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [planPontosBarba, setPlanPontosBarba] = useState(1);
   const [planPontosOutros, setPlanPontosOutros] = useState(0.5);
   const [planPontosServicos, setPlanPontosServicos] = useState<Record<string, number>>({});
+  const [planServices, setPlanServices] = useState<any[]>([]);
+  const [selectedPlanServiceId, setSelectedPlanServiceId] = useState<string>('');
+
+  const handleAddPlanService = () => {
+    if (!selectedPlanServiceId) {
+      toast.error('Selecione um serviço para adicionar.');
+      return;
+    }
+    if (planServices.some(ps => ps.serviceId === selectedPlanServiceId)) {
+      toast.error('Este serviço já está na assinatura.');
+      return;
+    }
+    const service = services.find(s => s.id === selectedPlanServiceId);
+    if (!service) return;
+
+    setPlanServices([
+      ...planServices,
+      {
+        serviceId: service.id,
+        name: service.nome,
+        limit: 4,
+        isUnlimited: false
+      }
+    ]);
+    setSelectedPlanServiceId('');
+  };
+
+  const handleRemovePlanService = (serviceId: string) => {
+    setPlanServices(planServices.filter(ps => ps.serviceId !== serviceId));
+  };
+
+  const handleUpdatePlanService = (serviceId: string, fields: Partial<any>) => {
+    setPlanServices(planServices.map(ps => {
+      if (ps.serviceId === serviceId) {
+        return { ...ps, ...fields };
+      }
+      return ps;
+    }));
+  };
 
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [allUsages, setAllUsages] = useState<any[]>([]);
@@ -170,6 +212,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [releasedRuns, setReleasedRuns] = useState<Record<string, any>>({});
   const [loadingUsages, setLoadingUsages] = useState(false);
   const [postingCommissions, setPostingCommissions] = useState(false);
+  const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
 
   const handleAddDiscount = () => {
     if (!discountItemId) {
@@ -274,17 +317,30 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         console.error("Erro no processamento de renovações reativas:", err);
       }
 
-      // Fetch Subscription plans & clients
-      const [p, s, c] = await Promise.all([
+      // Fetch Subscription plans, clients, and usage history/commission data
+      const [p, s, c, usages, b, runsSnap] = await Promise.all([
         subscriptionService.getPlans(),
         subscriptionService.getSubscriptions(profile?.tipo === 'cliente' ? user?.uid : undefined),
-        canManage ? userService.getAllClients() : Promise.resolve([])
+        canManage ? userService.getAllClients() : Promise.resolve([]),
+        canManage ? subscriptionService.getAllUsageHistory() : Promise.resolve([]),
+        canManage ? userService.getUsersByRole('barbeiro') : Promise.resolve([]),
+        canManage ? getDocs(collection(db, 'subscription_commission_runs')) : Promise.resolve({ forEach: () => {} } as any)
       ]);
       setPlans(p);
       setSubscriptions(s);
       
       if (canManage) {
         setClients(c.filter(client => client.ativo !== false));
+        setAllUsages(usages);
+        setBarbeiros(b);
+        
+        const runs: Record<string, any> = {};
+        if (runsSnap && typeof runsSnap.forEach === 'function') {
+          runsSnap.forEach((doc: any) => {
+            runs[doc.id] = doc.data();
+          });
+        }
+        setReleasedRuns(runs);
       }
     } catch (error) {
       console.error("Erro ao carregar dados estáticos de assinaturas:", error);
@@ -343,6 +399,36 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setPlanPontosBarba((editingPlan as any).pontos_barba ?? 1);
         setPlanPontosOutros((editingPlan as any).pontos_outros ?? 0.5);
         setPlanPontosServicos((editingPlan as any).pontos_servicos || {});
+        
+        let initialServices = editingPlan.services || [];
+        if (initialServices.length === 0) {
+          const loadedServices: any[] = [];
+          if (editingPlan.haircutsPerMonth && editingPlan.haircutsPerMonth > 0) {
+            const corteService = services.find(s => s.nome.toLowerCase().includes('corte') || s.nome.toLowerCase().includes('cabelo') || s.nome.toLowerCase().includes('hair'));
+            if (corteService) {
+              loadedServices.push({
+                serviceId: corteService.id,
+                name: corteService.nome,
+                limit: editingPlan.haircutsPerMonth,
+                isUnlimited: editingPlan.haircutsPerMonth >= 999
+              });
+            }
+          }
+          if (editingPlan.beardsPerMonth && editingPlan.beardsPerMonth > 0) {
+            const barbaService = services.find(s => s.nome.toLowerCase().includes('barba') || s.nome.toLowerCase().includes('beard'));
+            if (barbaService) {
+              loadedServices.push({
+                serviceId: barbaService.id,
+                name: barbaService.nome,
+                limit: editingPlan.beardsPerMonth,
+                isUnlimited: editingPlan.beardsPerMonth >= 999
+              });
+            }
+          }
+          initialServices = loadedServices;
+        }
+        setPlanServices(initialServices);
+
         setPlanDiscounts(editingPlan.discounts || []);
         setDiscountItemId('');
         setDiscountPercentage(10);
@@ -355,15 +441,16 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setPlanPontosBarba(1);
         setPlanPontosOutros(0.5);
         setPlanPontosServicos({});
+        setPlanServices([]);
         setPlanDiscounts([]);
         setDiscountItemId('');
         setDiscountPercentage(10);
       }
     }
-  }, [showPlanModal, editingPlan]);
+  }, [showPlanModal, editingPlan, services]);
 
   // Handle plan assignments (assign subscription)
-  const handleAssignSubscription = (e: React.FormEvent<HTMLFormElement>) => {
+  const { execute: handleAssignSubscription, isLoading: isAssigningSub } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedPlan) return;
     
@@ -373,39 +460,59 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     
     if (!client) return;
 
+    const activationType = formData.get('activationType') as 'manual' | 'asaas';
     const autoRenew = formData.get('autoRenew') === 'on';
 
-    setComandaInitialData({
-      cliente_id: client.uid,
-      cliente_name: client.nome,
-      origin: 'balcao' as const,
-      items: [
-        {
-          id: `subscription-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          type: 'assinatura' as const,
-          referencia_id: selectedPlan.id,
-          name: `Venda Plano: ${selectedPlan.name}`,
-          quantity: 1,
-          unitPrice: selectedPlan.price,
-          totalPrice: selectedPlan.price,
-          isCortesia: false,
-          generateCommission: false,
-          metadata: {
-            autoRenew
-          }
-        }
-      ]
-    });
+    if (activationType === 'asaas') {
+      await subscriptionService.createAsaasSubscription({
+        cliente_id: client.uid,
+        cliente_name: client.nome,
+        plano_id: selectedPlan.id,
+      });
+      toast.success(`Assinatura via Asaas criada como pendente para ${client.nome}!`);
+      setShowAssignModal(false);
+      setSelectedPlan(null);
+      loadData();
+    } else {
+      await subscriptionService.createSubscription({
+        cliente_id: client.uid,
+        cliente_name: client.nome,
+        plano_id: selectedPlan.id,
+        autoRenew
+      });
+      toast.success(`Assinatura ativa vinculada com sucesso para ${client.nome}!`);
+      setShowAssignModal(false);
+      setSelectedPlan(null);
+      loadData();
+    }
+  });
 
-    setShowAssignModal(false);
-    setSelectedPlan(null);
-    setShowComandaModal(true);
+  // Action to confirm Asaas payment (simulate webhook)
+  const handleConfirmAsaasPayment = async (subId: string) => {
+    try {
+      await subscriptionService.confirmAsaasSubscriptionPayment(subId);
+      toast.success("Pagamento confirmado via webhook! Assinatura ativada com sucesso.");
+      loadData();
+    } catch (error: any) {
+      console.error("Erro ao confirmar pagamento Asaas:", error);
+      toast.error(error.message || "Erro ao confirmar pagamento.");
+    }
   };
 
   // Action to register subscriber benefit usage
-  const { execute: handleRegisterUsage, isLoading: isRegisteringUsage } = useAsyncAction(async (subId: string, type: 'haircut' | 'beard') => {
+  const { execute: handleRegisterUsage, isLoading: isRegisteringUsage } = useAsyncAction(async (subId: string, type: string, serviceId?: string) => {
     try {
-      await subscriptionService.registerUsage(subId, type);
+      const service = services.find(s => s.id === serviceId);
+      await subscriptionService.registerUsage(
+        subId,
+        type,
+        undefined,
+        undefined,
+        undefined,
+        service?.preco || 0,
+        serviceId,
+        service?.nome
+      );
       loadData();
       toast.success("Utilização registrada no clube de benefícios!");
     } catch (error: any) {
@@ -475,12 +582,20 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const { execute: handleSavePlan, isLoading: isSavingPlan } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    
+    const corteItem = planServices.find(s => s.name.toLowerCase().includes('corte') || s.name.toLowerCase().includes('cabelo') || s.name.toLowerCase().includes('hair'));
+    const barbaItem = planServices.find(s => s.name.toLowerCase().includes('barba') || s.name.toLowerCase().includes('beard'));
+
+    const haircutsPerMonth = corteItem ? (corteItem.isUnlimited ? 999 : corteItem.limit) : 0;
+    const beardsPerMonth = barbaItem ? (barbaItem.isUnlimited ? 999 : barbaItem.limit) : 0;
+
     const planData = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
       price: Number(formData.get('price')),
-      haircutsPerMonth: Number(formData.get('haircutsPerMonth')),
-      beardsPerMonth: Number(formData.get('beardsPerMonth')),
+      haircutsPerMonth,
+      beardsPerMonth,
+      services: planServices,
       extraBenefits: (formData.get('extraBenefits') as string).split(',').map(s => s.trim()).filter(Boolean),
       status: formData.get('status') as 'active' | 'inactive',
       showInPortal: planShowInPortal,
@@ -517,9 +632,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   });
 
   // --- GESTÃO DE COMISSÕES DE ASSINATURA ---
+  const isSubActiveInMonth = (sub: Subscription, monthStr: string) => {
+    if (!sub.startDate) return false;
+    const startYm = sub.startDate.slice(0, 7);
+    const endYm = sub.endDate ? sub.endDate.slice(0, 7) : startYm;
+    return startYm <= monthStr && endYm >= monthStr;
+  };
+
   const filteredUsages = allUsages.filter(u => u.date && u.date.startsWith(selectedMonth));
-  const activeSubs = subscriptions.filter(s => s.status === 'active');
-  const totalSubRevenue = activeSubs.reduce((acc, s) => {
+  const activeSubsForSelectedMonth = subscriptions.filter(s => isSubActiveInMonth(s, selectedMonth));
+  const activeSubs = activeSubsForSelectedMonth;
+  const totalSubRevenue = activeSubsForSelectedMonth.reduce((acc, s) => {
     const plan = plans.find(p => p.id === s.plano_id);
     return acc + (plan?.price || 0);
   }, 0);
@@ -601,6 +724,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   });
 
   const totalCommissionsToRelease = calculatedCommissions.reduce((acc, c) => acc + c.commission, 0);
+  const totalProjectedCommissionPool = activeSubsForSelectedMonth.reduce((acc, s) => {
+    const plan = plans.find(p => p.id === s.plano_id);
+    if (!plan) return acc;
+    const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
+    return acc + (plan.price * (poolPct / 100));
+  }, 0);
+  const houseNetRevenue = totalSubRevenue - totalCommissionsToRelease;
   const isMonthReleased = !!releasedRuns[selectedMonth];
   const releasedRunInfo = releasedRuns[selectedMonth];
 
@@ -666,6 +796,31 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const cutsPercent = filteredUsages.length > 0 ? Math.round((totalCutsCount / filteredUsages.length) * 100) : 0;
   const beardsPercent = filteredUsages.length > 0 ? Math.round((totalBeardsCount / filteredUsages.length) * 100) : 0;
   const othersPercent = filteredUsages.length > 0 ? Math.round((totalOthersCount / filteredUsages.length) * 100) : 0;
+
+  const usagesByPlan = React.useMemo(() => {
+    const groups: Record<string, {
+      planId: string;
+      planName: string;
+      price: number;
+      usages: any[];
+    }> = {};
+
+    filteredUsages.forEach(u => {
+      const pId = u.plano_id || 'unknown';
+      if (!groups[pId]) {
+        const plan = plans.find(p => p.id === pId);
+        groups[pId] = {
+          planId: pId,
+          planName: u.plano_name || plan?.name || 'Outro / Sem Plano',
+          price: plan?.price || 0,
+          usages: []
+        };
+      }
+      groups[pId].usages.push(u);
+    });
+
+    return Object.values(groups).sort((a, b) => b.usages.length - a.usages.length);
+  }, [filteredUsages, plans]);
 
   const handleReleaseCommissions = async () => {
     if (totalCommissionsToRelease === 0) {
@@ -757,8 +912,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       {/* Aggregate Analytical Panels for Admins */}
       {canManage && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="Assinantes Ativos" value={subscriptions.filter(s => s.status === 'active').length} icon={<Users className="text-blue-600" />} />
-          <StatCard title="Receita Recorrente" value={subscriptions.filter(s => s.status === 'active').reduce((acc, s) => acc + (plans.find(p => p.id === s.plano_id)?.price || 0), 0)} icon={<TrendingUp className="text-emerald-600" />} isCurrency />
+          <StatCard title="Assinantes Ativos" value={activeSubsForSelectedMonth.length} icon={<Users className="text-blue-600" />} />
+          <StatCard title="Receita Recorrente" value={totalSubRevenue} icon={<TrendingUp className="text-emerald-600" />} isCurrency />
           <StatCard title="Economia de Clientes" value={`R$ ${Math.max(0, clientSavings).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={<Percent className="text-indigo-600" />} />
           <StatCard title="Visitas Sob Assinatura" value={`${filteredUsages.length} vezes`} icon={<Clock className="text-rose-600" />} />
         </div>
@@ -875,6 +1030,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   onToggleAutoRenew={handleToggleAutoRenew}
                   onStatusChange={handleUpdateSubscriptionStatus}
                   onDelete={(id) => setDeleteSubId(id)}
+                  onConfirmAsaasPayment={handleConfirmAsaasPayment}
                   isClient={false}
                 />
               ))}
@@ -948,38 +1104,193 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white border p-5 rounded-[2rem] shadow-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in">
+            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
               <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita de Assinaturas Ativas</span>
               <span className="text-xl font-black text-slate-800">
                 R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
               <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Soma de {activeSubs.length} planos ativos</span>
             </div>
+
+            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Fundo de Comissão Projetado</span>
+              <span className="text-xl font-black text-amber-600">
+                R$ {totalProjectedCommissionPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Provisão teórica ({((totalSubRevenue > 0 ? (totalProjectedCommissionPool / totalSubRevenue) * 100 : 50)).toFixed(0)}% configurado)</span>
+            </div>
             
-            <div className="bg-white border p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Comissões Calculadas</span>
+            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Comissões Reais Calculadas</span>
               <span className="text-xl font-black text-indigo-600">
                 R$ {totalCommissionsToRelease.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Rateio de comissão mensal</span>
+              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Rateio de comissão mensal real</span>
             </div>
 
-            <div className="bg-white border p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Cortes Realizados</span>
-              <span className="text-xl font-black text-slate-800">
-                {totalCutsCount} atendimentos
+            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Líquida da Barbearia</span>
+              <span className="text-xl font-black text-emerald-600">
+                R$ {houseNetRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Utilização de cabelo</span>
+              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Valor retido pela casa após repasses</span>
+            </div>
+          </div>
+
+          {/* Card de informações explicativas */}
+          <div className="bg-gradient-to-r from-indigo-50/80 to-blue-50/40 border border-indigo-100 p-5 rounded-[2rem] shadow-sm flex gap-4 items-start">
+            <div className="p-2.5 bg-white text-indigo-600 rounded-xl shadow-sm border border-indigo-50 shrink-0">
+              <Info size={18} />
+            </div>
+            <div className="space-y-1">
+              <h5 className="text-xs font-black text-indigo-950 uppercase tracking-wider">Como funciona o fluxo de Comissionamento & Receitas?</h5>
+              <p className="text-slate-600 text-xs leading-relaxed font-medium">
+                As assinaturas geram uma <strong>Receita de Assinaturas Ativas</strong> para a barbearia. Cada plano tem uma porcentagem de comissão (ex: 50%), determinando o <strong>Fundo de Comissão Projetado</strong>. O repasse real (<strong>Comissões Reais Calculadas</strong>) ocorre conforme os profissionais prestam serviços para os assinantes no mês. Se nenhum atendimento for registrado pelos profissionais para os assinantes no período, o valor da comissão distribuída será de <strong className="text-amber-700">R$ 0,00</strong>, e a barbearia reterá <strong className="text-emerald-700">100% da receita</strong> (Receita Líquida). Isso garante que repasses ocorram somente mediante o serviço de fato prestado.
+              </p>
+            </div>
+          </div>
+
+          {/* Nova Seção Interativa de Rendimento de Serviços por Assinatura */}
+          <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden animate-fade-in">
+            <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="space-y-1">
+                <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                  <Scissors size={14} className="text-indigo-600" />
+                  <span>Utilização de Serviços por Plano</span>
+                </h5>
+                <p className="text-slate-500 text-[11px] font-semibold">
+                  Acompanhe quais planos geraram atendimentos e detalhe o histórico de profissionais e clientes
+                </p>
+              </div>
+              <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-4 py-2 rounded-2xl shrink-0 flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider">Total de Serviços:</span>
+                <span className="text-base font-black">{filteredUsages.length} atendimentos</span>
+              </div>
             </div>
 
-            <div className="bg-white border p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Barbas Realizadas</span>
-              <span className="text-xl font-black text-slate-800">
-                {totalBeardsCount} atendimentos
-              </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Utilização de barba</span>
-            </div>
+            {usagesByPlan.length === 0 ? (
+              <div className="p-10 text-center space-y-2">
+                <p className="text-slate-400 text-xs font-bold">Nenhum serviço realizado sob assinatura neste período.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {usagesByPlan.map((item) => {
+                  const isExpanded = expandedPlanId === item.planId;
+                  
+                  // Calcular atendimentos por barbeiro para este plano
+                  const barberBreakdown: Record<string, number> = {};
+                  item.usages.forEach(u => {
+                    const bName = u.profissional_name || 'Desconhecido';
+                    barberBreakdown[bName] = (barberBreakdown[bName] || 0) + 1;
+                  });
+
+                  return (
+                    <div key={item.planId} className="transition-colors">
+                      {/* Linha do Plano */}
+                      <div 
+                        onClick={() => setExpandedPlanId(isExpanded ? null : item.planId)}
+                        className="p-5 flex items-center justify-between hover:bg-slate-50/50 cursor-pointer transition select-none"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100/60 flex items-center justify-center text-indigo-600 shrink-0">
+                            <CreditCard size={18} />
+                          </div>
+                          <div>
+                            <h6 className="text-xs font-black text-slate-800 uppercase tracking-wider">{item.planName}</h6>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase font-black">
+                              Valor do Plano: R$ {item.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <span className="text-xs font-black text-slate-800 block">
+                              {item.usages.length} {item.usages.length === 1 ? 'serviço' : 'serviços'}
+                            </span>
+                            <span className="text-[9px] font-black text-indigo-600 uppercase tracking-wider">
+                              {Math.round((item.usages.length / filteredUsages.length) * 100)}% do total
+                            </span>
+                          </div>
+                          <div className="text-slate-400">
+                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Conteúdo Expandido */}
+                      <AnimatePresence initial={false}>
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden bg-slate-50/40 border-t border-slate-100"
+                          >
+                            <div className="p-5 space-y-5">
+                              {/* Divisão por Profissional */}
+                              <div className="space-y-2">
+                                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">Atendimentos por Profissional</span>
+                                <div className="flex flex-wrap gap-2">
+                                  {Object.entries(barberBreakdown).map(([barberName, count]) => (
+                                    <div key={barberName} className="bg-white border border-slate-200/65 px-3 py-1.5 rounded-full text-[10px] font-bold text-slate-600 shadow-sm flex items-center gap-1.5">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                      <span>{barberName}:</span>
+                                      <span className="font-black text-indigo-600">{count}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Histórico Detalhado */}
+                              <div className="space-y-2">
+                                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">Histórico de Atendimentos</span>
+                                <div className="border border-slate-200/80 rounded-2xl overflow-hidden bg-white shadow-sm">
+                                  <div className="max-h-60 overflow-y-auto">
+                                    <table className="w-full text-left border-collapse">
+                                      <thead>
+                                        <tr className="bg-slate-50 text-[9px] font-black text-slate-450 uppercase tracking-widest border-b">
+                                          <th className="p-3">Data</th>
+                                          <th className="p-3">Cliente</th>
+                                          <th className="p-3">Profissional</th>
+                                          <th className="p-3">Serviço</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-150 text-[11px] font-semibold text-slate-600">
+                                        {item.usages.map((u: any) => (
+                                          <tr key={u.id} className="hover:bg-slate-50/50 transition">
+                                            <td className="p-3 whitespace-nowrap">
+                                              {format(parseISO(u.date), 'dd/MM/yyyy')}
+                                            </td>
+                                            <td className="p-3 font-bold text-slate-700">
+                                              {u.cliente_name || 'Assinante'}
+                                            </td>
+                                            <td className="p-3">
+                                              {u.profissional_name || 'Desconhecido'}
+                                            </td>
+                                            <td className="p-3">
+                                              <span className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md text-[9px] font-black uppercase">
+                                                {u.service_name || (u.type === 'haircut' ? 'Corte' : u.type === 'beard' ? 'Barba' : 'Outro')}
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
@@ -1475,18 +1786,81 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 border border-dashed border-slate-200 p-4 rounded-xl bg-slate-50/40">
+                    <div className="space-y-4 border border-slate-150 p-4 rounded-2xl bg-slate-50/40">
                       <div>
-                        <label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest ml-1">Cortes / mês</label>
-                        <input required type="number" name="haircutsPerMonth" defaultValue={editingPlan?.haircutsPerMonth ?? 4} min="0" className="w-full bg-white border border-slate-150 rounded-xl py-2 px-3 text-sm focus:outline-none text-primary outline-none font-bold text-center" />
-                        <span className="text-[8px] text-slate-400 mt-1 block text-center uppercase tracking-wider font-semibold">Cabelo Inclusos</span>
+                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-1.5">
+                          <Scissors size={14} className="text-indigo-600" />
+                          Serviços Inclusos na Assinatura
+                        </h4>
+                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-1">Selecione os serviços que fazem parte da assinatura.</p>
                       </div>
 
-                      <div>
-                        <label className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest ml-1">Barbas / mês</label>
-                        <input required type="number" name="beardsPerMonth" defaultValue={editingPlan?.beardsPerMonth ?? 0} min="0" className="w-full bg-white border border-slate-150 rounded-xl py-2 px-3 text-sm focus:outline-none text-primary outline-none font-bold text-center" />
-                        <span className="text-[8px] text-slate-400 mt-1 block text-center uppercase tracking-wider font-semibold">Barba Inclusas</span>
+                      <div className="flex gap-2">
+                        <select
+                          value={selectedPlanServiceId}
+                          onChange={(e) => setSelectedPlanServiceId(e.target.value)}
+                          className="flex-1 bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-primary outline-none cursor-pointer font-bold"
+                        >
+                          <option value="">Selecione um serviço...</option>
+                          {services.map(s => (
+                            <option key={s.id} value={s.id}>{s.nome} - R$ {s.preco?.toFixed(2)}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={handleAddPlanService}
+                          className="px-4 py-2 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-800 transition shadow-sm"
+                        >
+                          Adicionar
+                        </button>
                       </div>
+
+                      {planServices.length > 0 ? (
+                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                          {planServices.map((ps) => (
+                            <div key={ps.serviceId} className="flex flex-col md:flex-row items-start md:items-center justify-between p-3 bg-white border border-slate-100 rounded-xl gap-2 shadow-sm">
+                              <span className="text-[11px] font-bold text-slate-700">{ps.name}</span>
+                              
+                              <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
+                                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={ps.isUnlimited}
+                                    onChange={(e) => handleUpdatePlanService(ps.serviceId, { isUnlimited: e.target.checked })}
+                                    className="accent-accent w-4 h-4 rounded cursor-pointer"
+                                  />
+                                  <span>Atendimento Ilimitado</span>
+                                </label>
+
+                                {!ps.isUnlimited && (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={ps.limit}
+                                      onChange={(e) => handleUpdatePlanService(ps.serviceId, { limit: Number(e.target.value) })}
+                                      className="w-12 bg-slate-50 border border-slate-150 rounded-lg py-1 px-1.5 text-xs text-center font-bold text-primary outline-none"
+                                    />
+                                    <span className="text-[9px] font-semibold text-slate-400">/mês</span>
+                                  </div>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePlanService(ps.serviceId)}
+                                  className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-white border border-dashed border-slate-200 rounded-xl text-center text-[10px] text-slate-400 font-bold uppercase tracking-wider italic">
+                          Nenhum serviço adicionado ainda.
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -1547,92 +1921,52 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
                       {planComissaoTipo === 'pool_pontos' && (
                         <div className="space-y-4 pt-2 border-t">
-                          <p className="text-[10px] font-black uppercase text-indigo-900 tracking-wider">Peso de Pontuação dos Atendimentos</p>
+                          <div className="flex flex-col">
+                            <p className="text-[10px] font-black uppercase text-indigo-950 tracking-wider">Peso de Pontuação dos Atendimentos</p>
+                            <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                              Defina o peso/pontuação para cada serviço que compõe esta assinatura.
+                            </span>
+                          </div>
                           
-                          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                            <div className="space-y-1">
-                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Corte Padrão (pts)</label>
-                              <input 
-                                type="number" 
-                                step="0.1" 
-                                value={planPontosCorte} 
-                                onChange={(e) => setPlanPontosCorte(Number(e.target.value))}
-                                className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-primary outline-none text-center font-bold" 
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Barba Padrão (pts)</label>
-                              <input 
-                                type="number" 
-                                step="0.1" 
-                                value={planPontosBarba} 
-                                onChange={(e) => setPlanPontosBarba(Number(e.target.value))}
-                                className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-primary outline-none text-center font-bold" 
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Outros Padrão (pts)</label>
-                              <input 
-                                type="number" 
-                                step="0.1" 
-                                value={planPontosOutros} 
-                                onChange={(e) => setPlanPontosOutros(Number(e.target.value))}
-                                className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-primary outline-none text-center font-bold" 
-                              />
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="flex flex-col">
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                                Pontos Personalizados por Serviço
-                              </label>
-                              <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                                Deixe em branco para usar o peso padrão acima (Corte, Barba ou Outros).
-                              </span>
-                            </div>
-
-                            <div className="max-h-48 overflow-y-auto border border-slate-150 rounded-xl divide-y divide-slate-100 bg-white">
-                              {services.length === 0 ? (
-                                <p className="text-[10px] text-slate-400 p-3 text-center">Nenhum serviço cadastrado.</p>
-                              ) : (
-                                services.map(s => {
-                                  const currentPoints = planPontosServicos[s.id] !== undefined ? planPontosServicos[s.id] : '';
-                                  return (
-                                    <div key={s.id} className="flex items-center justify-between p-2.5 hover:bg-slate-50 transition-colors">
-                                      <div className="flex flex-col">
-                                        <span className="text-[11px] font-bold text-slate-700">{s.nome}</span>
-                                        <span className="text-[9px] font-semibold text-slate-400">R$ {s.preco?.toFixed(2)}</span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <input 
-                                          type="number"
-                                          placeholder="Padrão"
-                                          step="0.1"
-                                          min="0"
-                                          value={currentPoints}
-                                          onChange={(e) => {
-                                            const rawVal = e.target.value;
-                                            setPlanPontosServicos(prev => {
-                                              const updated = { ...prev };
-                                              if (rawVal === '') {
-                                                delete updated[s.id];
-                                              } else {
-                                                updated[s.id] = Number(rawVal);
-                                              }
-                                              return updated;
-                                            });
-                                          }}
-                                          className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-primary text-center font-bold focus:bg-white focus:ring-1 focus:ring-amber-500 outline-none"
-                                        />
-                                        <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">pts</span>
-                                      </div>
+                          {planServices.length > 0 ? (
+                            <div className="max-h-48 overflow-y-auto border border-slate-150 rounded-xl divide-y divide-slate-100 bg-white shadow-sm">
+                              {planServices.map(ps => {
+                                const currentPoints = planPontosServicos[ps.serviceId] !== undefined ? planPontosServicos[ps.serviceId] : 1;
+                                return (
+                                  <div key={ps.serviceId} className="flex items-center justify-between p-2.5 hover:bg-slate-50 transition-colors">
+                                    <span className="text-[11px] font-bold text-slate-700">{ps.name}</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <input 
+                                        type="number"
+                                        placeholder="1"
+                                        step="0.1"
+                                        min="0"
+                                        value={currentPoints}
+                                        onChange={(e) => {
+                                          const rawVal = e.target.value;
+                                          setPlanPontosServicos(prev => {
+                                            const updated = { ...prev };
+                                            if (rawVal === '') {
+                                              delete updated[ps.serviceId];
+                                            } else {
+                                              updated[ps.serviceId] = Number(rawVal);
+                                            }
+                                            return updated;
+                                          });
+                                        }}
+                                        className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-primary text-center font-bold focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                                      />
+                                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">pts</span>
                                     </div>
-                                  );
-                                })
-                              )}
+                                  </div>
+                                );
+                              })}
                             </div>
-                          </div>
+                          ) : (
+                            <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-[10px] text-slate-400 font-bold uppercase tracking-wider italic">
+                              Adicione primeiro os serviços inclusos na assinatura acima para configurar seus pontos.
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1798,6 +2132,32 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     {clients.map((c, index) => <option key={`assign-client-${c.uid || index}-${index}`} value={c.uid}>{c.nome}</option>)}
                   </select>
                 </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Cadastro / Ativação</label>
+                  <select 
+                    name="activationType" 
+                    required 
+                    value={assignActivationType} 
+                    onChange={(e) => setAssignActivationType(e.target.value as 'manual' | 'asaas')} 
+                    className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
+                  >
+                    <option value="manual">Cadastro Manual (Ativar agora abrindo Caixa/PDV)</option>
+                    <option value="asaas">Cadastro via Asaas (Fica Pendente até simular pagamento ou webhook)</option>
+                  </select>
+                </div>
+
+                {assignActivationType === 'manual' ? (
+                  <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl text-xs text-emerald-800 space-y-1">
+                    <p className="font-extrabold uppercase tracking-wide text-[10px] text-emerald-600">Fluxo Manual:</p>
+                    <p>O cliente assina na hora. O sistema irá abrir o Caixa/PDV para você lançar o recebimento no dinheiro, cartão ou fiado.</p>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl text-xs text-purple-800 space-y-1">
+                    <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Webhook):</p>
+                    <p>A assinatura é criada com o status <strong className="text-purple-900 font-extrabold">pendente</strong>. Só será liberada quando o cliente efetuar o pagamento (simulado por você ou via integração webhook).</p>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-3 p-4 bg-slate-50 border border-slate-100 rounded-xl">
                   <input type="checkbox" name="autoRenew" id="autoRenew" defaultChecked className="w-5 h-5 accent-accent rounded-lg cursor-pointer" />
                   <label htmlFor="autoRenew" className="text-sm font-bold text-primary cursor-pointer select-none">Renovação Mensal Automática</label>
@@ -1808,7 +2168,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     type="submit" 
                     className="flex-[2] py-4 bg-primary text-white rounded-xl text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
                   >
-                    Ir para o Caixa / PDV
+                    {assignActivationType === 'manual' ? 'Ir para o Caixa / PDV' : 'Criar Pendente'}
                   </button>
                 </div>
               </form>
@@ -1894,8 +2254,22 @@ function PlanCard({ plan, isAdmin, onEdit, onAssign }: PlanCardProps) {
       </div>
 
       <div className="space-y-4 flex-1 mb-8">
-        <BenefitItem icon={<Scissors size={14} />} text={`${plan.haircutsPerMonth} Cortes por mês`} />
-        {plan.beardsPerMonth > 0 && <BenefitItem icon={<Zap size={14} />} text={`${plan.beardsPerMonth} Barbas por mês`} />}
+        {plan.services && plan.services.length > 0 ? (
+          plan.services.map((ps) => (
+            <BenefitItem 
+              key={ps.serviceId} 
+              icon={<Scissors size={14} />} 
+              text={ps.isUnlimited ? `${ps.name} Ilimitados` : `${ps.limit} ${ps.name} por mês`} 
+            />
+          ))
+        ) : (
+          <>
+            <BenefitItem icon={<Scissors size={14} />} text={plan.haircutsPerMonth >= 999 ? 'Cortes Ilimitados' : `${plan.haircutsPerMonth} Cortes por mês`} />
+            {plan.beardsPerMonth > 0 && (
+              <BenefitItem icon={<Zap size={14} />} text={plan.beardsPerMonth >= 999 ? 'Barbas Ilimitadas' : `${plan.beardsPerMonth} Barbas por mês`} />
+            )}
+          </>
+        )}
         {plan.extraBenefits.map((benefit, i) => (
           <BenefitItem key={i} icon={<CheckCircle2 size={14} />} text={benefit} />
         ))}
@@ -1940,11 +2314,12 @@ interface SubscriptionCardProps {
   sub: Subscription;
   plan?: SubscriptionPlan;
   isAdmin: boolean;
-  onRegisterUsage: (id: string, type: 'haircut' | 'beard') => void;
+  onRegisterUsage: (id: string, type: string, serviceId?: string) => void;
   onRenew?: (id: string) => void;
   onToggleAutoRenew?: (id: string, autoRenew: boolean) => void;
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
+  onConfirmAsaasPayment?: (id: string) => void;
   isClient?: boolean;
 }
 
@@ -1957,6 +2332,7 @@ function SubscriptionCard({
   onToggleAutoRenew, 
   onStatusChange, 
   onDelete,
+  onConfirmAsaasPayment,
   isClient 
 }: SubscriptionCardProps) {
   if (!plan) return null;
@@ -1979,11 +2355,16 @@ function SubscriptionCard({
             </div>
             <div>
               <h4 className="font-bold text-primary group-hover:text-accent transition-colors font-black">{sub.cliente_name}</h4>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex flex-wrap items-center gap-2 mt-1">
                 <span className="text-[10px] font-bold text-muted uppercase tracking-widest font-black">{plan.name}</span>
                 <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-lg border ${statusColors[sub.status]} font-black`}>
-                  {sub.status}
+                  {sub.status === 'pending' ? 'Aguardando Pagamento' : sub.status}
                 </span>
+                {sub.activationType === 'asaas' && (
+                  <span className="text-[8px] font-extrabold uppercase bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 rounded-lg tracking-widest">
+                    Asaas
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -1993,19 +2374,58 @@ function SubscriptionCard({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <UsageIndicator 
-            label="Cortes" 
-            used={sub.haircutsUsed} 
-            total={plan.haircutsPerMonth} 
-            onAdd={isAdmin && sub.status === 'active' ? () => onRegisterUsage(sub.id, 'haircut') : undefined}
-          />
-          <UsageIndicator 
-            label="Barbas" 
-            used={sub.beardsUsed} 
-            total={plan.beardsPerMonth} 
-            onAdd={isAdmin && sub.status === 'active' && plan.beardsPerMonth > 0 ? () => onRegisterUsage(sub.id, 'beard') : undefined}
-          />
+        {sub.status === 'pending' && sub.activationType === 'asaas' && (
+          <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl flex flex-col gap-3">
+            <div className="flex items-start gap-2 text-purple-900 font-bold text-xs">
+              <div className="w-2 h-2 bg-purple-500 rounded-full animate-ping mt-1.5 shrink-0" />
+              <span>Aguardando Pix de R$ {plan.price.toFixed(2)} (Asaas)</span>
+            </div>
+            {isAdmin && onConfirmAsaasPayment && (
+              <button
+                type="button"
+                onClick={() => onConfirmAsaasPayment(sub.id)}
+                className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <RefreshCw size={12} className="animate-spin" />
+                <span>Simular Webhook: Confirmar Pix</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {plan.services && plan.services.length > 0 ? (
+            plan.services.map((ps) => {
+              const used = (sub.serviceUsages && sub.serviceUsages[ps.serviceId]) || 0;
+              const typeLabel = ps.name.toLowerCase().includes('corte') || ps.name.toLowerCase().includes('cabelo') || ps.name.toLowerCase().includes('hair') ? 'haircut' : (ps.name.toLowerCase().includes('barba') || ps.name.toLowerCase().includes('beard') ? 'beard' : 'other');
+              return (
+                <UsageIndicator 
+                  key={ps.serviceId}
+                  label={ps.name} 
+                  used={used} 
+                  total={ps.isUnlimited ? 999 : ps.limit} 
+                  onAdd={isAdmin && sub.status === 'active' ? () => onRegisterUsage(sub.id, typeLabel, ps.serviceId) : undefined}
+                />
+              );
+            })
+          ) : (
+            <>
+              <UsageIndicator 
+                label="Cortes" 
+                used={sub.haircutsUsed} 
+                total={plan.haircutsPerMonth} 
+                onAdd={isAdmin && sub.status === 'active' ? () => onRegisterUsage(sub.id, 'haircut') : undefined}
+              />
+              {plan.beardsPerMonth > 0 && (
+                <UsageIndicator 
+                  label="Barbas" 
+                  used={sub.beardsUsed} 
+                  total={plan.beardsPerMonth} 
+                  onAdd={isAdmin && sub.status === 'active' ? () => onRegisterUsage(sub.id, 'beard') : undefined}
+                />
+              )}
+            </>
+          )}
         </div>
 
         <div className="pt-6 border-t border-slate-100 flex items-center justify-between">

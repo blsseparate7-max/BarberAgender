@@ -19,14 +19,19 @@ export const financialService = {
   // --- Transactions ---
   async getTransactions(startDate?: string, endDate?: string, type?: TransactionType) {
     let q;
+    const activeTenantId = getActiveTenantId();
     if (startDate && endDate) {
-      q = query(collection(db, TRANSACTIONS_COLLECTION), where('date', '>=', startDate), where('date', '<=', endDate));
+      q = query(
+        collection(db, TRANSACTIONS_COLLECTION),
+        where('tenantId', '==', activeTenantId),
+        where('date', '>=', startDate),
+        where('date', '<=', endDate)
+      );
     } else {
-      q = query(collection(db, TRANSACTIONS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
+      q = query(collection(db, TRANSACTIONS_COLLECTION), where('tenantId', '==', activeTenantId));
     }
     
     const querySnapshot = await getDocs(q);
-    const activeTenantId = getActiveTenantId();
     let transactions = querySnapshot.docs
       .map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as FinancialTransaction))
       .filter(t => t.tenantId === activeTenantId);

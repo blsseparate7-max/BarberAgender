@@ -789,8 +789,14 @@ export const comandaService = {
       // We'll use a fixed calculation or attempt to fetch config if we were in a context allowing it.
       // Since this is inside a transaction, we can't easily do 'await' for a NEW doc here without pre-fetching.
       // However, we can use a standard logic: 1 point per Real, 5% cashback (matching default config)
-      const pointsToAdd = Math.floor(comanda.totalAmount); // 1 point per Real
-      const cashbackToAdd = (comanda.totalAmount * 5) / 100; // 5% cashback
+      // If a service is deducted via subscription, calculate points based on its original price so points are still credited
+      const originalSubscriptionAmount = (comanda.items || [])
+        .filter(item => item.deductType === 'assinatura')
+        .reduce((sum, item) => sum + ((item.unitPrice || 0) * (item.quantity || 1)), 0);
+
+      const effectiveAmountForPoints = (comanda.totalAmount || 0) + originalSubscriptionAmount;
+      const pointsToAdd = Math.floor(effectiveAmountForPoints); // 1 point per Real
+      const cashbackToAdd = ((comanda.totalAmount || 0) * 5) / 100; // 5% cashback on actual paid amount
       const activeTenantId = comanda.tenantId || getActiveTenantId();
       const pointsDocId = `${activeTenantId}_${comanda.cliente_id}`;
 
@@ -824,7 +830,7 @@ export const comandaService = {
       const targetBarberId = item.profissional_id || comanda.profissional_id;
       const targetBarberName = item.profissional_name || comanda.profissional_name;
 
-      if (item.generateCommission && targetBarberId) {
+      if (item.generateCommission && targetBarberId && item.deductType !== 'assinatura') {
         const barberData = barberDataMap[targetBarberId];
         const defaultPercentage = barberData?.commission_percentage || 0; // Default to 0 if not set
 
@@ -884,7 +890,7 @@ export const comandaService = {
             updatedAt: serverTimestamp()
           });
         }
-      } else if (item.generateCommission && !targetBarberId) {
+      } else if (item.generateCommission && !targetBarberId && item.deductType !== 'assinatura') {
         // Log inconsistency if commission should be generated but no barber is linked
         const logRef = doc(collection(db, 'inconsistency_logs'));
         transaction.set(logRef, {
@@ -1096,11 +1102,11 @@ export const comandaService = {
       const postData = comandaSnapPost.exists() ? comandaSnapPost.data() : null;
       const linkedAppIdPost = postData ? (postData.agendamento_id || postData.agendamentoId || postData.appointment_id || postData.appointmentId) : undefined;
 
-      if (status === 'fechada') {
+      if (status === 'fechada' || status === 'nao_paga' || postData?.status === 'fechada' || postData?.status === 'nao_paga') {
         await this.closeLinkedAppointments(id, linkedAppIdPost);
-      } else if (status === 'cancelada') {
+      } else if (status === 'cancelada' || postData?.status === 'cancelada') {
         await this.cancelLinkedAppointments(id, linkedAppIdPost);
-      } else if (status === 'ausente') {
+      } else if (status === 'ausente' || postData?.status === 'ausente') {
         await this.markAbsentLinkedAppointments(id, linkedAppIdPost);
       }
     } catch (e) {

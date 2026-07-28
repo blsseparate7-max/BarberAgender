@@ -476,7 +476,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       // Load subscriptions
       try {
         const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
-        setSubscriptions(clientSubs.filter(s => s.status === 'active'));
+        setSubscriptions(clientSubs);
       } catch (err) {
         console.warn("Could not load client subscriptions list:", err);
       }
@@ -1203,7 +1203,28 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-8"
             >
-              {profile?.bloqueadoParaAgendar ? (
+              {subscriptions.length > 0 && !subscriptions.some(s => s.status === 'active') ? (
+                <div className="flex flex-col items-center justify-center text-center py-12 px-4 space-y-6">
+                  <div className="w-20 h-20 bg-rose-50 border border-rose-100 rounded-3xl flex items-center justify-center text-rose-500 shadow-inner animate-pulse">
+                    <AlertCircle size={36} className="text-red-500" />
+                  </div>
+                  <div className="space-y-2 max-w-md">
+                    <h3 className="text-xl font-black text-rose-600 tracking-tight">Agendamento Bloqueado - Assinatura Vencida</h3>
+                    <p className="text-sm font-medium text-slate-500 leading-relaxed">
+                      Sua assinatura do clube de benefícios está vencida ou suspensa. Por este motivo, o agendamento de novos atendimentos está bloqueado.
+                    </p>
+                    <p className="text-xs font-semibold text-rose-500 bg-rose-50 px-4 py-2 rounded-xl border border-rose-100">
+                      Acesse a aba de "Assinaturas" para conferir os detalhes e regularizar o seu plano.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('assinaturas')}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-600/10 active:scale-95 transition-all flex items-center gap-2"
+                  >
+                    <Sparkles size={14} /> Ver Minha Assinatura
+                  </button>
+                </div>
+              ) : profile?.bloqueadoParaAgendar ? (
                 <div className="flex flex-col items-center justify-center text-center py-12 px-4 space-y-6">
                   <div className="w-20 h-20 bg-rose-50 border border-rose-100 rounded-3xl flex items-center justify-center text-rose-500 shadow-inner">
                     <UserX size={36} />
@@ -2018,6 +2039,43 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     Acompanhe o status e a utilização dos serviços inclusos no seu plano de assinatura mensal.
                   </p>
                 </div>
+
+                {/* Expired/Past Due subscriptions Alert */}
+                {subscriptions.filter(s => s.status !== 'active').length > 0 && (
+                  <div className="bg-red-50 border border-red-100 p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-pulse">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center text-red-600 flex-shrink-0">
+                        <AlertCircle size={20} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-red-950">Assinatura Vencida ou Suspensa</h4>
+                        <p className="text-xs text-red-700 font-bold mt-1">
+                          Sua assinatura do plano <span className="underline font-black">{subscriptions.find(s => s.status !== 'active')?.planName}</span> está inativa, vencida ou suspensa.
+                        </p>
+                        <p className="text-[10px] text-red-600 font-semibold mt-1">
+                          ⚠️ O agendamento de novos atendimentos está BLOQUEADO até a regularização.
+                        </p>
+                      </div>
+                    </div>
+                    {(() => {
+                      const expiredSub = subscriptions.find(s => s.status !== 'active');
+                      const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
+                      const waText = encodeURIComponent(`Olá! Minha assinatura do plano "${expiredSub?.planName}" está vencida ou pendente de renovação. Gostaria de regularizar para reativar meu clube de benefícios e liberar meus agendamentos!`);
+                      const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
+
+                      return (
+                        <a 
+                          href={waUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shadow-md self-start sm:self-center"
+                        >
+                          <Phone size={12} /> Regularizar Plano
+                        </a>
+                      );
+                    })()}
+                  </div>
+                )}
 
                 {subscriptions.filter(s => s.status === 'active').length > 0 ? (
                   <div className="space-y-4">

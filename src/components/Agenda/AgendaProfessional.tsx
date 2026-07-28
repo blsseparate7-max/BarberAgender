@@ -40,6 +40,7 @@ interface AgendaProfessionalProps {
   barbers: UserProfile[];
   appointments: Appointment[];
   clients?: UserProfile[];
+  subscriptions?: any[];
   blocks?: AgendaBlock[];
   onNewAppointment: (time: string, profissional_id: string) => void;
   onOpenAppointment: (app: Appointment) => void;
@@ -53,6 +54,7 @@ export function AgendaProfessional({
   barbers, 
   appointments, 
   clients = [],
+  subscriptions = [],
   blocks = [],
   onNewAppointment, 
   onOpenAppointment,
@@ -119,6 +121,25 @@ export function AgendaProfessional({
         label: 'VIP',
         icon: <Award size={10} />,
         className: 'bg-indigo-500/10 text-indigo-700 border border-indigo-500/40'
+      });
+    }
+
+    // 5. Subscription check
+    const clientSubs = (subscriptions || []).filter(sub => sub.cliente_id === clienteId);
+    const hasActiveSub = clientSubs.some(sub => sub.status === 'active');
+    const hasExpiredSub = !hasActiveSub && clientSubs.some(sub => sub.status === 'expired' || sub.status === 'past_due' || sub.status === 'inactive');
+
+    if (hasActiveSub) {
+      badges.push({
+        label: 'Assinante',
+        icon: <Sparkles size={10} fill="currentColor" className="text-indigo-600 animate-pulse" />,
+        className: 'bg-indigo-600/10 text-indigo-700 border border-indigo-600/25 shadow-sm'
+      });
+    } else if (hasExpiredSub) {
+      badges.push({
+        label: 'Assinatura Vencida',
+        icon: <AlertCircle size={10} />,
+        className: 'bg-red-500 text-white border border-red-600 font-extrabold animate-pulse'
       });
     }
 
@@ -390,6 +411,16 @@ export function AgendaProfessional({
                           const durationMin = Math.max(30, (end.getTime() - start.getTime()) / (1000 * 60));
                           const slotsCount = Math.ceil(durationMin / 30);
 
+                          const clientSubs = (subscriptions || []).filter(sub => sub.cliente_id === app.cliente_id);
+                          const hasActiveSub = clientSubs.some(sub => sub.status === 'active');
+                          const hasExpiredSub = !hasActiveSub && clientSubs.some(sub => sub.status === 'expired' || sub.status === 'past_due' || sub.status === 'inactive');
+
+                          const subscriptionBorderClass = hasActiveSub 
+                            ? '!border-indigo-500 !ring-2 !ring-indigo-500/20 shadow-indigo-100/50' 
+                            : hasExpiredSub 
+                              ? '!border-rose-500 !ring-4 !ring-red-500/20 bg-rose-50/20' 
+                              : '';
+
                           return (
                             <motion.div
                               key={app.id}
@@ -416,7 +447,7 @@ export function AgendaProfessional({
                                 left: '4px',
                                 right: '4px'
                               }}
-                              className={`absolute rounded-xl border p-2 flex flex-col justify-between shadow-sm z-10 ${getStatusColor(app.status)}`}
+                              className={`absolute rounded-xl border p-2 flex flex-col justify-between shadow-sm z-10 ${getStatusColor(app.status)} ${subscriptionBorderClass}`}
                             >
                               <div>
                                 <p className="text-[10px] font-bold uppercase leading-none mb-1 truncate">{app.cliente_name}</p>

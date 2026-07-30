@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   UserCheck, 
   Plus, 
@@ -28,7 +28,8 @@ import {
   Settings,
   AlertCircle,
   ThumbsUp,
-  UserX
+  UserX,
+  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { userService } from '../services/userService';
@@ -42,6 +43,7 @@ import { db, auth } from '../firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
+import { ImageCropModal } from '../components/ImageCropModal';
 
 // Default weekdays list for schedule configuring
 const DAYS_OF_WEEK = [
@@ -479,8 +481,16 @@ function BarberCard({ barber, commissions, onEdit, onToggleAtivo, onDelete, canE
 
       {/* Main card row header */}
       <div className="flex items-center gap-4 mb-6">
-        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl border shadow-inner transition grow-0 shrink-0 ${style.bg}`}>
-          {barber.nome.charAt(0).toUpperCase()}
+        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl border shadow-inner overflow-hidden transition grow-0 shrink-0 ${barber.fotoUrl || barber.avatarUrl ? 'bg-white' : style.bg}`}>
+          {barber.fotoUrl || barber.avatarUrl ? (
+            <img 
+              src={barber.fotoUrl || barber.avatarUrl} 
+              alt={barber.nome} 
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            barber.nome.charAt(0).toUpperCase()
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="font-extrabold text-lg text-primary tracking-tight truncate leading-tight">{barber.nome}</h3>
@@ -693,6 +703,42 @@ interface BarberModalProps {
 function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
   const [activeTab, setActiveTab] = useState<'cadastro' | 'pessoais' | 'agenda'>('cadastro');
   
+  // Campos de Foto do Profissional (somente jpeg)
+  const [fotoUrl, setFotoUrl] = useState(barber?.fotoUrl ?? barber?.avatarUrl ?? '');
+  const [tempImageSrc, setTempImageSrc] = useState<string>('');
+  const [isCropModalOpen, setIsCropModalOpen] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validação estrita para JPEG
+    const isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+    if (!isJpeg) {
+      toast.error('Formato não suportado. Por favor, selecione apenas arquivos de imagem no formato JPEG/JPG.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setTempImageSrc(event.target.result as string);
+        setIsCropModalOpen(true);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleOpenCropExisting = () => {
+    if (fotoUrl) {
+      setTempImageSrc(fotoUrl);
+      setIsCropModalOpen(true);
+    }
+  };
+
   // Field values state
   const [nome, setNome] = useState(barber?.nome ?? '');
   const [email, setEmail] = useState(barber?.email ?? '');
@@ -879,6 +925,8 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
       chavePix: chavePix.trim(),
       tipoContrato,
       showInPortal,
+      fotoUrl: fotoUrl.trim(),
+      avatarUrl: fotoUrl.trim(),
     };
 
     if (!barber) {
@@ -968,6 +1016,69 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
             {activeTab === 'cadastro' && (
               <div className="space-y-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                  {/* Foto de Perfil do Profissional */}
+                  <div className="sm:col-span-2 flex flex-col sm:flex-row items-center gap-6 p-5 bg-slate-50 border border-slate-150 rounded-2xl">
+                    <div className="relative group w-20 h-20 rounded-full overflow-hidden bg-slate-200 border-2 border-indigo-100 flex-shrink-0 flex items-center justify-center">
+                      {fotoUrl ? (
+                        <img 
+                          src={fotoUrl} 
+                          alt="Foto de Perfil" 
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="text-slate-400 flex flex-col items-center">
+                          <Camera size={24} className="text-slate-400" />
+                          <span className="text-[8px] font-black uppercase tracking-wider mt-1 text-slate-500">Sem Foto</span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-2 flex-1 text-center sm:text-left">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-primary">Foto de Perfil do Profissional</h4>
+                      <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
+                        Envie uma foto de rosto para identificação nos portais do cliente e do barbeiro. 
+                        <span className="block mt-0.5 text-indigo-600">Apenas formato JPEG/JPG.</span>
+                      </p>
+                      
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-md shadow-indigo-100 transition active:scale-95"
+                        >
+                          Selecionar Foto
+                        </button>
+                        
+                        {fotoUrl && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleOpenCropExisting}
+                              className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-250 rounded-xl text-[10px] font-black uppercase tracking-wider transition active:scale-95"
+                            >
+                              Ajustar / Cortar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFotoUrl('')}
+                              className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-[10px] font-black uppercase tracking-wider transition active:scale-95"
+                            >
+                              Remover
+                            </button>
+                          </>
+                        )}
+                        
+                        <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          onChange={handleFotoFileSelect} 
+                          accept=".jpg,.jpeg,image/jpeg" 
+                          className="hidden" 
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-1.5 sm:col-span-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Nome Completo</label>
                     <input 
@@ -1501,6 +1612,17 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
           </div>
         </form>
       </motion.div>
+
+      <ImageCropModal
+        isOpen={isCropModalOpen}
+        imageSrc={tempImageSrc}
+        onClose={() => setIsCropModalOpen(false)}
+        onCropComplete={(croppedDataUrl) => {
+          setFotoUrl(croppedDataUrl);
+          toast.success('Foto do perfil processada e recortada em formato JPEG otimizado!');
+        }}
+        outputSize={300}
+      />
     </div>
   );
 }

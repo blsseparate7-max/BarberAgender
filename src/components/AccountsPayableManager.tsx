@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, Filter, Calendar, DollarSign, Check, Trash2, Edit3, 
   X, AlertTriangle, Printer, Download, Share2, ArrowUpRight, 
-  CreditCard, User, Tag, HelpCircle, Loader2, CheckCircle2, RefreshCw 
+  CreditCard, User, Tag, HelpCircle, Loader2, CheckCircle2, RefreshCw, ShoppingCart
 } from 'lucide-react';
 import { format, parseISO, isAfter, isBefore, startOfMonth, endOfMonth } from 'date-fns';
 import { billService } from '../services/billService';
@@ -56,7 +56,8 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
   });
 
   // States for Vale/Adiantamento Integration
-  const [isValeType, setIsValeType] = useState(false);
+  const [payableType, setPayableType] = useState<'operacional' | 'fornecedor' | 'vale'>('operacional');
+  const isValeType = payableType === 'vale';
   const [selectedBarberId, setSelectedBarberId] = useState('');
   const [valeSettleImmediately, setValeSettleImmediately] = useState(true);
 
@@ -148,7 +149,7 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
   const handleOpenCreate = () => {
     setEditingPayable(null);
-    setIsValeType(false);
+    setPayableType('operacional');
     setSelectedBarberId('');
     setValeSettleImmediately(true);
     setFormData({
@@ -164,7 +165,13 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
   const handleOpenEdit = (payable: AccountPayable) => {
     setEditingPayable(payable);
-    setIsValeType(false);
+    if (payable.profissional_id) {
+      setPayableType('vale');
+    } else if (payable.supplier) {
+      setPayableType('fornecedor');
+    } else {
+      setPayableType('operacional');
+    }
     setFormData({
       description: payable.description,
       category: payable.category,
@@ -717,39 +724,55 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
                 {!editingPayable && (
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo de Lançamento</label>
-                    <div className="grid grid-cols-2 gap-2 bg-slate-100/60 p-1.5 rounded-2xl border border-slate-200/50">
+                    <div className="grid grid-cols-3 gap-2 bg-slate-100/60 p-1.5 rounded-2xl border border-slate-200/50">
                       <button
                         type="button"
                         onClick={() => {
-                          setIsValeType(false);
-                          setFormData(prev => ({ ...prev, category: 'Aluguel' }));
+                          setPayableType('operacional');
+                          setFormData(prev => ({ ...prev, category: 'Aluguel', supplier: '' }));
                         }}
-                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                          !isValeType
+                        className={`py-2.5 px-2 text-center rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          payableType === 'operacional'
                             ? 'bg-white text-primary shadow-sm border border-slate-200/40'
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        <Tag size={13} />
-                        <span>Despesa Comum</span>
+                        <Tag size={13} className="hidden sm:block" />
+                        <span>Operacional</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => {
-                          setIsValeType(true);
-                          setFormData(prev => ({ 
-                            ...prev, 
-                            category: 'Comissões', 
-                            description: 'Vale antecipado de comissão' 
-                          }));
+                          setPayableType('fornecedor');
+                          setFormData(prev => ({ ...prev, category: 'Estoque / Produtos' }));
                         }}
-                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                          isValeType
+                        className={`py-2.5 px-2 text-center rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          payableType === 'fornecedor'
                             ? 'bg-white text-primary shadow-sm border border-slate-200/40'
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        <User size={13} />
+                        <ShoppingCart size={13} className="hidden sm:block" />
+                        <span>Fornecedor</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPayableType('vale');
+                          setFormData(prev => ({ 
+                            ...prev, 
+                            category: 'Comissões', 
+                            description: 'Vale antecipado de comissão',
+                            supplier: ''
+                          }));
+                        }}
+                        className={`py-2.5 px-2 text-center rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          payableType === 'vale'
+                            ? 'bg-white text-primary shadow-sm border border-slate-200/40'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <User size={13} className="hidden sm:block" />
                         <span>Lançar Vale</span>
                       </button>
                     </div>
@@ -858,16 +881,19 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
                     </div>
 
                     {/* Fornecedor */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fornecedor / Favorecido</label>
-                      <input 
-                        type="text"
-                        placeholder="Ex: Companhia de Energia S/A, Distribuidora XYZ, etc."
-                        value={formData.supplier}
-                        onChange={e => setFormData({ ...formData, supplier: e.target.value })}
-                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
-                      />
-                    </div>
+                    {payableType === 'fornecedor' && (
+                      <div className="space-y-1.5 animate-fadeIn">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fornecedor / Favorecido</label>
+                        <input 
+                          type="text"
+                          required
+                          placeholder="Ex: Distribuidora XYZ, Loja ABC, etc."
+                          value={formData.supplier}
+                          onChange={e => setFormData({ ...formData, supplier: e.target.value })}
+                          className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
+                        />
+                      </div>
+                    )}
                   </>
                 ) : (
                   /* Vale Only Fields: Instant Financial Settlement */

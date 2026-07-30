@@ -466,8 +466,8 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                       {Object.keys(methodBreakdown).length > 0 && (
                         <div className="pt-2 border-t border-slate-200/40 space-y-1 mt-2">
                           <p className="text-[8px] font-black text-muted uppercase tracking-widest mb-1 font-bold text-slate-400">Detalhamento por Meio</p>
-                          {Object.entries(methodBreakdown).map(([method, val]) => (
-                            <div key={method} className="flex justify-between items-center text-[10px] text-slate-600 font-semibold pl-1.5 border-l border-slate-300">
+                          {Object.entries(methodBreakdown).map(([method, val], idx) => (
+                            <div key={`${method}-${idx}`} className="flex justify-between items-center text-[10px] text-slate-600 font-semibold pl-1.5 border-l border-slate-300">
                               <span className="capitalize">{method}</span>
                               <span className="font-bold text-slate-800">R$ {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(val as number)}</span>
                             </div>
@@ -960,8 +960,8 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                     className="w-full bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm"
                   >
                     <option value="">Selecione um profissional...</option>
-                    {barbers.map(b => (
-                      <option key={b.uid} value={b.uid}>
+                    {barbers.map((b, idx) => (
+                      <option key={`${b.uid}-${idx}`} value={b.uid}>
                         {b.nome || b.displayName || 'Profissional'}
                       </option>
                     ))}

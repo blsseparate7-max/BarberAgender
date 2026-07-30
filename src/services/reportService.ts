@@ -13,7 +13,9 @@ import {
   UserProfile, 
   Comanda, 
   InventoryMovement, 
-  Product
+  Product,
+  AccountPayable,
+  AccountReceivable
 } from '../types';
 import { format } from 'date-fns';
 
@@ -262,6 +264,7 @@ export const reportService = {
     const { startDate, endDate } = filter;
     const currentTenantId = getActiveTenantId();
     
+    // 1. Transactions
     const transactionsSnap = await getDocs(
       query(collection(db, 'financial_transactions'), where('tenantId', '==', currentTenantId))
     );
@@ -278,10 +281,66 @@ export const reportService = {
       byMethod[t.paymentMethod] = (byMethod[t.paymentMethod] || 0) + t.amount;
     });
 
+    // 2. Accounts Payable (Contas a Pagar / Pagas)
+    const payablesSnap = await getDocs(
+      query(collection(db, 'accounts_payable'), where('tenantId', '==', currentTenantId))
+    );
+    const payables = payablesSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as AccountPayable))
+      .filter(p => p.dueDate >= startDate && p.dueDate <= endDate);
+
+    const totalPayablesAmount = payables.reduce((acc, p) => acc + (p.amount || 0), 0);
+    const paidPayablesAmount = payables.filter(p => p.status === 'paid').reduce((acc, p) => acc + (p.amount || 0), 0);
+    const pendingPayablesAmount = payables.filter(p => p.status === 'pending').reduce((acc, p) => acc + (p.amount || 0), 0);
+    
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const overduePayablesAmount = payables
+      .filter(p => p.status === 'pending' && p.dueDate < todayStr)
+      .reduce((acc, p) => acc + (p.amount || 0), 0);
+
+    // Grouping payables by category and supplier for spent analysis
+    const payablesByCategory: Record<string, number> = {};
+    const payablesBySupplier: Record<string, number> = {};
+
+    payables.forEach(p => {
+      const cat = p.category || 'Outros';
+      const supplier = p.supplier || 'Sem Fornecedor';
+      payablesByCategory[cat] = (payablesByCategory[cat] || 0) + (p.amount || 0);
+      payablesBySupplier[supplier] = (payablesBySupplier[supplier] || 0) + (p.amount || 0);
+    });
+
+    // 3. Accounts Receivable (Contas a Receber)
+    const receivablesSnap = await getDocs(
+      query(collection(db, 'accounts_receivable'), where('tenantId', '==', currentTenantId))
+    );
+    const receivables = receivablesSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as AccountReceivable))
+      .filter(r => r.dueDate >= startDate && r.dueDate <= endDate);
+
+    const totalReceivablesAmount = receivables.reduce((acc, r) => acc + (r.amount || 0), 0);
+    const paidReceivablesAmount = receivables.filter(r => r.status === 'paid').reduce((acc, r) => acc + (r.amount || 0), 0);
+    const pendingReceivablesAmount = receivables.filter(r => r.status === 'pending').reduce((acc, r) => acc + (r.amount || 0), 0);
+
     return {
-      stats: { income, expense, sangria, balance: income - expense - sangria },
+      stats: { 
+        income, 
+        expense, 
+        sangria, 
+        balance: income - expense - sangria,
+        totalPayablesAmount,
+        paidPayablesAmount,
+        pendingPayablesAmount,
+        overduePayablesAmount,
+        totalReceivablesAmount,
+        paidReceivablesAmount,
+        pendingReceivablesAmount
+      },
       transactions,
-      byMethod
+      byMethod,
+      payables,
+      payablesByCategory,
+      payablesBySupplier,
+      receivables
     };
   },
 

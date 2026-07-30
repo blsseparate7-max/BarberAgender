@@ -531,6 +531,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     setLoadingSlots(true);
     try {
       const duration = selectedService.duracao_minutos || selectedService.duration || 30;
+      let slots: string[] = [];
+
       if (selectedBarber.uid === 'any') {
         const realBarbers = barbers.filter(b => b.uid !== 'any');
         if (realBarbers.length > 0) {
@@ -539,19 +541,24 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           );
           const results = await Promise.all(allSlotsPromises);
           // Get the union of all available slots and sort them
-          const unionSlots = Array.from(new Set(results.flat())).sort();
-          setAvailableSlots(unionSlots);
-        } else {
-          setAvailableSlots([]);
+          slots = Array.from(new Set(results.flat() as string[])).sort();
         }
       } else {
-        const slots = await appointmentService.getAvailableSlots(
+        slots = await appointmentService.getAvailableSlots(
           selectedBarber.uid,
           selectedDate,
           duration
         );
-        setAvailableSlots(slots);
       }
+
+      // Filter out past hours if selected date is today (local time)
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      if (selectedDate === todayStr) {
+        const currentTimeStr = format(new Date(), 'HH:mm');
+        slots = slots.filter(time => time >= currentTimeStr);
+      }
+
+      setAvailableSlots(slots);
       setSelectedTime(null);
     } catch (err) {
       console.error("Error fetching available slots:", err);
@@ -1325,7 +1332,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                               </div>
                             )}
 
-                            <div className={`w-11 h-11 rounded-full flex items-center justify-center font-black text-xs transition-all flex-shrink-0 ${
+                            <div className={`w-11 h-11 rounded-full overflow-hidden flex items-center justify-center font-black text-xs transition-all flex-shrink-0 ${
                               isSelected 
                                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10' 
                                 : isVirtual 
@@ -1334,6 +1341,12 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                             }`}>
                               {isVirtual ? (
                                 <Sparkles size={16} />
+                              ) : b.fotoUrl || b.avatarUrl ? (
+                                <img 
+                                  src={b.fotoUrl || b.avatarUrl} 
+                                  alt={b.nome} 
+                                  className="w-full h-full object-cover"
+                                />
                               ) : (
                                 (b.nome || 'B').substring(0, 2).toUpperCase()
                               )}

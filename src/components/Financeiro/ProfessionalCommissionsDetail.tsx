@@ -1407,7 +1407,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                           <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhum serviço pendente.</p>
                                         ) : (
                                           pendingServicos.map((c, idx) => (
-                                            <div key={`p-serv-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div key={`p-serv-${c.id || idx}-${idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
@@ -1461,7 +1461,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                           <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhuma venda pendente.</p>
                                         ) : (
                                           pendingVendas.map((c, idx) => (
-                                            <div key={`p-vend-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div key={`p-vend-${c.id || idx}-${idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
@@ -1515,7 +1515,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                           <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhuma gorjeta recebida.</p>
                                         ) : (
                                           pendingGorjetas.map((c, idx) => (
-                                            <div key={`p-gorj-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div key={`p-gorj-${c.id || idx}-${idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block">Gorjeta de Cliente</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
@@ -1568,7 +1568,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                           <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhuma recorrência de plano/assinatura pendente.</p>
                                         ) : (
                                           pendingAssinaturas.map((c, idx) => (
-                                            <div key={`p-assin-${c.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
+                                            <div key={`p-assin-${c.id || idx}-${idx}`} className="flex justify-between items-center text-[10px] bg-white border border-slate-100 p-2 rounded-lg">
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
@@ -1618,7 +1618,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                       <p className="text-[10px] text-slate-400 font-medium italic text-center py-2">Nenhum vale descontado neste período.</p>
                                     ) : (
                                       advances.map((a, idx) => (
-                                        <div key={`p-vale-${a.id || idx}`} className="flex justify-between items-center text-[10px] bg-white border border-rose-100 p-2 rounded-lg">
+                                        <div key={`p-vale-${a.id || idx}-${idx}`} className="flex justify-between items-center text-[10px] bg-white border border-rose-100 p-2 rounded-lg">
                                           <div className="text-left">
                                             <span className="font-bold text-slate-800 block truncate max-w-[140px]">{a.description || 'Vale Avulso'}</span>
                                             <span className="text-[8px] text-slate-400 block mt-0.5">

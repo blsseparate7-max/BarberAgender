@@ -28,7 +28,12 @@ import {
   Briefcase,
   Info,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  LayoutGrid,
+  List,
+  ChevronLeft,
+  ChevronRight,
+  MessageCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -134,8 +139,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Search/Filters
+  // Search/Filters/View Mode/Pagination for Assinantes (Gestão)
   const [searchQuery, setSearchQuery] = useState('');
+  const [subViewMode, setSubViewMode] = useState<'list' | 'grid'>('list');
+  const [subStatusFilter, setSubStatusFilter] = useState<string>('all');
+  const [subPlanFilter, setSubPlanFilter] = useState<string>('all');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(25);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, subStatusFilter, subPlanFilter, itemsPerPage]);
 
   // Modals for Subscriptions
   const [showPlanModal, setShowPlanModal] = useState(false);
@@ -206,7 +220,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     }));
   };
 
+  const [commDateMode, setCommDateMode] = useState<'month' | 'range'>('month');
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const [commStartDate, setCommStartDate] = useState(format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd'));
+  const [commEndDate, setCommEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [commBarberFilter, setCommBarberFilter] = useState<string>('all');
+  const [commCycleFilter, setCommCycleFilter] = useState<string>('all');
+  const [selectedBarberDetailModal, setSelectedBarberDetailModal] = useState<any | null>(null);
+
   const [allUsages, setAllUsages] = useState<any[]>([]);
   const [barbeiros, setBarbeiros] = useState<UserProfile[]>([]);
   const [releasedRuns, setReleasedRuns] = useState<Record<string, any>>({});
@@ -628,8 +649,22 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
   // Filter lists in memory
   const filteredSubscriptions = subscriptions.filter(s => {
-    return s.cliente_name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = 
+      s.cliente_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (s.planName && s.planName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      s.id.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesStatus = subStatusFilter === 'all' || s.status === subStatusFilter;
+    const matchesPlan = subPlanFilter === 'all' || s.plano_id === subPlanFilter;
+
+    return matchesSearch && matchesStatus && matchesPlan;
   });
+
+  const totalPages = Math.ceil(filteredSubscriptions.length / itemsPerPage) || 1;
+  const paginatedSubscriptions = React.useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredSubscriptions.slice(start, start + itemsPerPage);
+  }, [filteredSubscriptions, currentPage, itemsPerPage]);
 
   // --- GESTÃO DE COMISSÕES DE ASSINATURA ---
   const isSubActiveInMonth = (sub: Subscription, monthStr: string) => {
@@ -639,100 +674,225 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     return startYm <= monthStr && endYm >= monthStr;
   };
 
-  const filteredUsages = allUsages.filter(u => u.date && u.date.startsWith(selectedMonth));
-  const activeSubsForSelectedMonth = subscriptions.filter(s => isSubActiveInMonth(s, selectedMonth));
+  const filteredUsages = React.useMemo(() => {
+    return allUsages.filter(u => {
+      if (!u.date) return false;
+      if (commDateMode === 'month') {
+        return u.date.startsWith(selectedMonth);
+      } else {
+        return u.date >= commStartDate && u.date <= commEndDate;
+      }
+    });
+  }, [allUsages, commDateMode, selectedMonth, commStartDate, commEndDate]);
+
+  const activeSubsForSelectedMonth = React.useMemo(() => {
+    return subscriptions.filter(s => {
+      if (!s.startDate) return false;
+      if (commDateMode === 'month') {
+        return isSubActiveInMonth(s, selectedMonth);
+      } else {
+        const start = s.startDate;
+        const end = s.endDate || s.startDate;
+        return start <= commEndDate && end >= commStartDate;
+      }
+    });
+  }, [subscriptions, commDateMode, selectedMonth, commStartDate, commEndDate]);
+
   const activeSubs = activeSubsForSelectedMonth;
-  const totalSubRevenue = activeSubsForSelectedMonth.reduce((acc, s) => {
-    const plan = plans.find(p => p.id === s.plano_id);
-    return acc + (plan?.price || 0);
-  }, 0);
 
-  const calculatedCommissions = barbeiros.map(barber => {
-    let barberCuts = 0;
-    let barberBeards = 0;
-    let barberOthers = 0;
-    let barberPoints = 0;
-    let barberCommission = 0;
+  const totalSubRevenue = React.useMemo(() => {
+    return activeSubsForSelectedMonth.reduce((acc, s) => {
+      const plan = plans.find(p => p.id === s.plano_id);
+      return acc + (plan?.price || 0);
+    }, 0);
+  }, [activeSubsForSelectedMonth, plans]);
 
-    const barberUsages = filteredUsages.filter(u => u.profissional_id === barber.uid);
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
 
-    barberUsages.forEach(u => {
-      if (u.type === 'haircut') barberCuts++;
-      else if (u.type === 'beard') barberBeards++;
-      else barberOthers++;
+  // Multi-cycle individual subscription calculation grouped into barber pot total
+  const calculatedCommissionsData = React.useMemo(() => {
+    const allPots = barbeiros.map(barber => {
+      let totalReleasedCommission = 0;
+      let totalInProgressCommission = 0;
+      let totalCuts = 0;
+      let totalBeards = 0;
+      let totalOthers = 0;
+      let totalPoints = 0;
+
+      const barberUsages = filteredUsages.filter(u => u.profissional_id === barber.uid);
+      barberUsages.forEach(u => {
+        if (u.type === 'haircut') totalCuts++;
+        else if (u.type === 'beard') totalBeards++;
+        else totalOthers++;
+      });
+
+      const subBreakdownList: Array<{
+        subId: string;
+        clientName: string;
+        planName: string;
+        planPrice: number;
+        cycleStart: string;
+        cycleEnd: string;
+        isCycleReleased: boolean;
+        comissaoTipo: string;
+        totalSubUsages: number;
+        barberSubUsages: number;
+        subPoolValue: number;
+        earnedCommission: number;
+      }> = [];
+
+      subscriptions.forEach(sub => {
+        const plan = plans.find(p => p.id === sub.plano_id);
+        if (!plan) return;
+
+        const planPrice = plan.price || 0;
+        const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
+        const subPoolValue = planPrice * (poolPct / 100);
+        const comissaoTipo = (plan as any).comissao_tipo || 'fixo';
+
+        const subUsages = filteredUsages.filter(u => 
+          u.plano_id === plan.id && 
+          (u.sub_id === sub.id || u.cliente_id === sub.cliente_id || u.cliente_name === sub.cliente_name)
+        );
+        const barberSubUsages = subUsages.filter(u => u.profissional_id === barber.uid);
+
+        if (subUsages.length === 0 && barberSubUsages.length === 0) return;
+
+        // Is cycle closed (endDate <= today or expired/canceled)?
+        const isCycleReleased = sub.endDate <= todayStr || sub.status === 'expired' || sub.status === 'canceled';
+
+        let earnedCommission = 0;
+
+        if (comissaoTipo === 'fixo') {
+          const fixedVal = (plan as any).comissao_fixa_valor ?? 10.00;
+          earnedCommission = barberSubUsages.length * fixedVal;
+        } else if (comissaoTipo === 'pool_atendimentos') {
+          if (subUsages.length > 0) {
+            earnedCommission = subPoolValue * (barberSubUsages.length / subUsages.length);
+          }
+        } else if (comissaoTipo === 'pool_pontos') {
+          const wCorte = (plan as any).pontos_corte ?? 1;
+          const wBarba = (plan as any).pontos_barba ?? 1;
+          const wOutro = (plan as any).pontos_outros ?? 0.5;
+
+          const getPoints = (u: any) => {
+            const customPoints = (plan as any).pontos_servicos;
+            if (customPoints && u.service_id && typeof customPoints[u.service_id] === 'number') {
+              return customPoints[u.service_id];
+            }
+            if (u.type === 'haircut') return wCorte;
+            if (u.type === 'beard') return wBarba;
+            return wOutro;
+          };
+
+          const totalSubPoints = subUsages.reduce((sum, u) => sum + getPoints(u), 0);
+          const barberSubPoints = barberSubUsages.reduce((sum, u) => sum + getPoints(u), 0);
+
+          if (totalSubPoints > 0) {
+            earnedCommission = subPoolValue * (barberSubPoints / totalSubPoints);
+            totalPoints += barberSubPoints;
+          }
+        }
+
+        if (earnedCommission > 0 || barberSubUsages.length > 0) {
+          if (isCycleReleased) {
+            totalReleasedCommission += earnedCommission;
+          } else {
+            totalInProgressCommission += earnedCommission;
+          }
+
+          subBreakdownList.push({
+            subId: sub.id,
+            clientName: sub.cliente_name,
+            planName: plan.name,
+            planPrice,
+            cycleStart: sub.startDate,
+            cycleEnd: sub.endDate,
+            isCycleReleased,
+            comissaoTipo,
+            totalSubUsages: subUsages.length,
+            barberSubUsages: barberSubUsages.length,
+            subPoolValue,
+            earnedCommission
+          });
+        }
+      });
+
+      return {
+        uid: barber.uid,
+        nome: barber.nome || barber.displayName || 'Profissional',
+        foto: barber.foto || barber.photoURL || '',
+        totalCuts,
+        totalBeards,
+        totalOthers,
+        totalServices: barberUsages.length,
+        totalPoints,
+        totalReleasedCommission,
+        totalInProgressCommission,
+        totalPot: totalReleasedCommission + totalInProgressCommission,
+        subBreakdownList
+      };
     });
 
-    plans.forEach(plan => {
-      const planActiveSubs = activeSubs.filter(s => s.plano_id === plan.id);
-      const planRevenue = planActiveSubs.length * plan.price;
-      const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
-      const planPool = planRevenue * (poolPct / 100);
-
-      const planType = (plan as any).comissao_tipo || 'fixo';
-
-      const planUsages = filteredUsages.filter(u => u.plano_id === plan.id);
-      const barberPlanUsages = planUsages.filter(u => u.profissional_id === barber.uid);
-
-      if (planType === 'fixo') {
-        const fixedVal = (plan as any).comissao_fixa_valor ?? 10.00;
-        barberCommission += barberPlanUsages.length * fixedVal;
-      } else if (planType === 'pool_atendimentos') {
-        if (planUsages.length > 0) {
-          barberCommission += planPool * (barberPlanUsages.length / planUsages.length);
-        }
-      } else if (planType === 'pool_pontos') {
-        const wCorte = (plan as any).pontos_corte ?? 1;
-        const wBarba = (plan as any).pontos_barba ?? 1;
-        const wOutro = (plan as any).pontos_outros ?? 0.5;
-
-        const getUsagePoints = (u: any) => {
-          const customPoints = (plan as any).pontos_servicos;
-          if (customPoints && u.service_id && typeof customPoints[u.service_id] === 'number') {
-            return customPoints[u.service_id];
-          }
-          if (u.type === 'haircut') return wCorte;
-          if (u.type === 'beard') return wBarba;
-          return wOutro;
-        };
-
-        const totalPlanPoints = planUsages.reduce((sum, u) => {
-          return sum + getUsagePoints(u);
-        }, 0);
-
-        const barberPlanPoints = barberPlanUsages.reduce((sum, u) => {
-          return sum + getUsagePoints(u);
-        }, 0);
-
-        if (totalPlanPoints > 0) {
-          barberCommission += planPool * (barberPlanPoints / totalPlanPoints);
-          barberPoints += barberPlanPoints;
-        }
+    const filteredBarberPots = allPots.filter(b => {
+      if (commBarberFilter !== 'all' && b.uid !== commBarberFilter) return false;
+      return true;
+    }).map(b => {
+      let breakdown = b.subBreakdownList;
+      if (commCycleFilter === 'released') {
+        breakdown = breakdown.filter(i => i.isCycleReleased);
+      } else if (commCycleFilter === 'in_progress') {
+        breakdown = breakdown.filter(i => !i.isCycleReleased);
       }
+      return {
+        ...b,
+        subBreakdownList: breakdown
+      };
     });
 
     return {
-      uid: barber.uid,
-      nome: barber.nome || barber.displayName || 'Profissional',
-      foto: barber.foto || barber.photoURL || '',
-      cuts: barberCuts,
-      beards: barberBeards,
-      others: barberOthers,
-      totalServices: barberUsages.length,
-      points: barberPoints,
-      commission: barberCommission
+      allPots,
+      barberPots: filteredBarberPots
     };
-  });
+  }, [barbeiros, subscriptions, plans, filteredUsages, todayStr, commBarberFilter, commCycleFilter]);
 
-  const totalCommissionsToRelease = calculatedCommissions.reduce((acc, c) => acc + c.commission, 0);
-  const totalProjectedCommissionPool = activeSubsForSelectedMonth.reduce((acc, s) => {
-    const plan = plans.find(p => p.id === s.plano_id);
-    if (!plan) return acc;
-    const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
-    return acc + (plan.price * (poolPct / 100));
-  }, 0);
+  const totalReleasedCommissionsPool = React.useMemo(() => {
+    return calculatedCommissionsData.allPots.reduce((acc, b) => acc + b.totalReleasedCommission, 0);
+  }, [calculatedCommissionsData]);
+
+  const totalInProgressCommissionsPool = React.useMemo(() => {
+    return calculatedCommissionsData.allPots.reduce((acc, b) => acc + b.totalInProgressCommission, 0);
+  }, [calculatedCommissionsData]);
+
+  const calculatedCommissions = React.useMemo(() => {
+    return calculatedCommissionsData.allPots.map(p => ({
+      uid: p.uid,
+      nome: p.nome,
+      foto: p.foto,
+      cuts: p.totalCuts,
+      beards: p.totalBeards,
+      others: p.totalOthers,
+      totalServices: p.totalServices,
+      points: p.totalPoints,
+      commission: p.totalPot
+    }));
+  }, [calculatedCommissionsData]);
+
+  const totalCommissionsToRelease = totalReleasedCommissionsPool;
+
+  const totalProjectedCommissionPool = React.useMemo(() => {
+    return activeSubsForSelectedMonth.reduce((acc, s) => {
+      const plan = plans.find(p => p.id === s.plano_id);
+      if (!plan) return acc;
+      const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
+      return acc + (plan.price * (poolPct / 100));
+    }, 0);
+  }, [activeSubsForSelectedMonth, plans]);
+
   const houseNetRevenue = totalSubRevenue - totalCommissionsToRelease;
-  const isMonthReleased = !!releasedRuns[selectedMonth];
-  const releasedRunInfo = releasedRuns[selectedMonth];
+  const currentRunKey = commDateMode === 'month' ? selectedMonth : `${commStartDate}_${commEndDate}`;
+  const isMonthReleased = !!releasedRuns[currentRunKey];
+  const releasedRunInfo = releasedRuns[currentRunKey];
 
   // --- RENDIMENTO & PERFORMANCE DE ASSINATURAS ---
   const totalValueIfAvulso = filteredUsages.reduce((sum, u) => sum + (u.valor_servico || (u.type === 'haircut' ? 50 : 35)), 0);
@@ -823,26 +983,31 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   }, [filteredUsages, plans]);
 
   const handleReleaseCommissions = async () => {
-    if (totalCommissionsToRelease === 0) {
-      toast.error("Nenhuma comissão calculada para lançar neste período.");
+    if (totalCommissionsToRelease <= 0) {
+      toast.error("Nenhuma comissão de ciclo liberado para lançar neste período.");
       return;
     }
     
     setPostingCommissions(true);
     try {
-      const monthLabel = format(parseISO(`${selectedMonth}-01`), 'MMMM yyyy', { locale: ptBR });
-      const monthLabelCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+      let periodLabel = '';
+      if (commDateMode === 'month') {
+        const monthLabel = format(parseISO(`${selectedMonth}-01`), 'MMMM yyyy', { locale: ptBR });
+        periodLabel = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+      } else {
+        periodLabel = `${format(parseISO(commStartDate), 'dd/MM/yyyy')} a ${format(parseISO(commEndDate), 'dd/MM/yyyy')}`;
+      }
 
-      const promises = calculatedCommissions
-        .filter(c => c.commission > 0)
-        .map(async (c) => {
+      const promises = calculatedCommissionsData.allPots
+        .filter(b => b.totalReleasedCommission > 0)
+        .map(async (b) => {
           const commData = {
-            profissional_id: c.uid,
-            profissional_name: c.nome,
-            servico_name: `Rateio Assinatura - ${monthLabelCap}`,
-            base_value: c.totalServices,
+            profissional_id: b.uid,
+            profissional_name: b.nome,
+            servico_name: `Rateio Pote Assinaturas - Liberado (${periodLabel})`,
+            base_value: b.totalServices,
             commission_percentage: 100,
-            commission_value: Number(c.commission.toFixed(2)),
+            commission_value: Number(b.totalReleasedCommission.toFixed(2)),
             status: 'pendente' as const,
             commission_type: 'assinatura' as const,
             date: format(new Date(), 'yyyy-MM-dd'),
@@ -858,19 +1023,18 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
       await Promise.all(promises);
 
-      await setDoc(doc(db, 'subscription_commission_runs', selectedMonth), {
+      await setDoc(doc(db, 'subscription_commission_runs', currentRunKey), {
         releasedAt: new Date().toISOString(),
         releasedBy: profile?.nome || 'Administrador',
         totalAmount: Number(totalCommissionsToRelease.toFixed(2)),
-        subscribersCount: activeSubs.length,
-        servicesCount: filteredUsages.length,
-        period: selectedMonth
+        period: currentRunKey,
+        periodLabel
       });
 
-      toast.success(`Comissões de ${monthLabelCap} lançadas com sucesso para os profissionais!`);
+      toast.success(`Pote de comissões liberadas (${periodLabel}) lançado com sucesso no financeiro!`);
       loadComissoesData();
     } catch (error) {
-      console.error("Erro ao lançar comissões:", error);
+      console.error("Erro ao lançar comissões do pote:", error);
       toast.error("Erro ao processar lançamento das comissões.");
     } finally {
       setPostingCommissions(false);
@@ -974,16 +1138,130 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
       {/* Advanced Filter Box for Active Tabs */}
       {['assinantes_gestao'].includes(activeTab) && (
-        <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-slate-50 p-4 border border-slate-100 rounded-3xl">
-          <div className="relative w-full sm:w-80">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-            <input 
-              type="text"
-              placeholder="Buscar assinante por nome..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white border border-slate-200 outline-none focus:ring-4 focus:ring-slate-50 focus:border-slate-400 rounded-2xl py-2.5 pl-10 pr-4 text-xs font-medium text-primary shadow-sm transition"
-            />
+        <div className="bg-slate-50 p-4 border border-slate-200/80 rounded-3xl space-y-3 shadow-sm">
+          <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+            {/* Search Input */}
+            <div className="relative flex-1 min-w-[240px]">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input 
+                type="text"
+                placeholder="Buscar por nome, plano ou ID..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-2xl py-2.5 pl-10 pr-4 text-xs font-semibold text-primary shadow-sm transition"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* Filter Dropdowns */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Status Filter */}
+              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-3 py-1.5 shadow-sm">
+                <Filter size={13} className="text-slate-400" />
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Status:</span>
+                <select
+                  value={subStatusFilter}
+                  onChange={(e) => setSubStatusFilter(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
+                >
+                  <option value="all">Todos ({subscriptions.length})</option>
+                  <option value="active">Ativas</option>
+                  <option value="pending">Aguardando Pgto</option>
+                  <option value="paused">Pausadas</option>
+                  <option value="expired">Expiradas</option>
+                  <option value="canceled">Canceladas</option>
+                </select>
+              </div>
+
+              {/* Plan Filter */}
+              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-3 py-1.5 shadow-sm">
+                <Star size={13} className="text-slate-400" />
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Plano:</span>
+                <select
+                  value={subPlanFilter}
+                  onChange={(e) => setSubPlanFilter(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
+                >
+                  <option value="all">Todos os Planos</option>
+                  {plans.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Items per page */}
+              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-3 py-1.5 shadow-sm">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Exibir:</span>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                  className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
+                >
+                  <option value={10}>10 / pág</option>
+                  <option value={25}>25 / pág</option>
+                  <option value={50}>50 / pág</option>
+                  <option value={100}>100 / pág</option>
+                </select>
+              </div>
+
+              {/* View Mode Switcher */}
+              <div className="flex items-center bg-slate-200/70 p-1 rounded-2xl gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSubViewMode('list')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    subViewMode === 'list'
+                      ? 'bg-white text-primary shadow-sm font-black'
+                      : 'text-slate-500 hover:text-primary'
+                  }`}
+                  title="Exibir em Lista (Ideal para grande volume de clientes)"
+                >
+                  <List size={15} />
+                  <span className="hidden sm:inline text-[11px] uppercase tracking-wider">Lista</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSubViewMode('grid')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    subViewMode === 'grid'
+                      ? 'bg-white text-primary shadow-sm font-black'
+                      : 'text-slate-500 hover:text-primary'
+                  }`}
+                  title="Exibir em Cards (Modo Visual Quadrado)"
+                >
+                  <LayoutGrid size={15} />
+                  <span className="hidden sm:inline text-[11px] uppercase tracking-wider">Cards</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Subheader info counter */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 font-semibold px-1 pt-1 border-t border-slate-200/60">
+            <span>
+              Mostrando <strong className="text-primary font-black">{filteredSubscriptions.length}</strong> {filteredSubscriptions.length === 1 ? 'assinante' : 'assinantes'}
+              {(subStatusFilter !== 'all' || subPlanFilter !== 'all' || searchQuery) && (
+                <button 
+                  type="button"
+                  onClick={() => { setSearchQuery(''); setSubStatusFilter('all'); setSubPlanFilter('all'); }}
+                  className="ml-2 text-indigo-600 hover:underline font-bold cursor-pointer"
+                >
+                  (limpar filtros)
+                </button>
+              )}
+            </span>
+            <span className="font-bold text-slate-600">
+              Receita deste grupo: <strong className="text-emerald-700 font-black">R$ {filteredSubscriptions.reduce((acc, s) => acc + (plans.find(p => p.id === s.plano_id)?.price || 0), 0).toFixed(2)}/mês</strong>
+            </span>
           </div>
         </div>
       )}
@@ -1014,27 +1292,126 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               <div className="w-16 h-16 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm">
                 <CreditCard size={32} className="text-slate-350" />
               </div>
-              <h3 className="text-lg font-bold text-primary mb-1">Nenhum assinante cadastrado</h3>
-              <p className="text-muted text-sm max-w-xs mx-auto font-medium">Ainda não há clientes pagando recorrência no Clube de Assinaturas.</p>
+              <h3 className="text-lg font-bold text-primary mb-1">Nenhum assinante encontrado</h3>
+              <p className="text-muted text-sm max-w-xs mx-auto font-medium">Ajuste os filtros de busca ou cadastre um novo cliente no clube.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {filteredSubscriptions.map(sub => (
-                <SubscriptionCard 
-                  key={sub.id} 
-                  sub={sub} 
-                  plan={plans.find(p => p.id === sub.plano_id)}
-                  isAdmin={canManage}
-                  onRegisterUsage={handleRegisterUsage}
-                  onRenew={handleManualRenewSubscription}
-                  onToggleAutoRenew={handleToggleAutoRenew}
-                  onStatusChange={handleUpdateSubscriptionStatus}
-                  onDelete={(id) => setDeleteSubId(id)}
-                  onConfirmAsaasPayment={handleConfirmAsaasPayment}
-                  isClient={false}
-                />
-              ))}
-            </div>
+            <>
+              {subViewMode === 'list' ? (
+                <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50/80 border-b border-slate-200 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                          <th className="p-4 pl-6">Assinante / Cliente</th>
+                          <th className="p-4">Plano Contratado</th>
+                          <th className="p-4">Status & Pgto</th>
+                          <th className="p-4">Vencimento & Renovação</th>
+                          <th className="p-4">Uso no Mês</th>
+                          <th className="p-4 pr-6 text-right">Ações Rápidas</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {paginatedSubscriptions.map(sub => {
+                          const plan = plans.find(p => p.id === sub.plano_id);
+                          const matchedClient = clients.find(c => c.uid === sub.cliente_id);
+                          const clientPhone = matchedClient?.telefone || matchedClient?.whatsapp || '';
+                          
+                          return (
+                            <SubscriptionTableRow 
+                              key={sub.id}
+                              sub={sub}
+                              plan={plan}
+                              clientPhone={clientPhone}
+                              matchedClient={matchedClient}
+                              isAdmin={canManage}
+                              onRegisterUsage={handleRegisterUsage}
+                              onRenew={handleManualRenewSubscription}
+                              onToggleAutoRenew={handleToggleAutoRenew}
+                              onStatusChange={handleUpdateSubscriptionStatus}
+                              onDelete={(id) => setDeleteSubId(id)}
+                              onConfirmAsaasPayment={handleConfirmAsaasPayment}
+                            />
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {paginatedSubscriptions.map(sub => (
+                    <SubscriptionCard 
+                      key={sub.id} 
+                      sub={sub} 
+                      plan={plans.find(p => p.id === sub.plano_id)}
+                      isAdmin={canManage}
+                      onRegisterUsage={handleRegisterUsage}
+                      onRenew={handleManualRenewSubscription}
+                      onToggleAutoRenew={handleToggleAutoRenew}
+                      onStatusChange={handleUpdateSubscriptionStatus}
+                      onDelete={(id) => setDeleteSubId(id)}
+                      onConfirmAsaasPayment={handleConfirmAsaasPayment}
+                      isClient={false}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-200/80 px-2">
+                  <div className="text-xs text-slate-500 font-semibold">
+                    Página <strong className="text-primary font-black">{currentPage}</strong> de <strong className="text-primary font-black">{totalPages}</strong> ({filteredSubscriptions.length} assinantes no total)
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="p-2 border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white cursor-pointer transition shadow-sm"
+                      title="Página Anterior"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                      .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                      .map((p, idx, arr) => {
+                        const prevP = arr[idx - 1];
+                        const showEllipsis = prevP && p - prevP > 1;
+                        return (
+                          <React.Fragment key={p}>
+                            {showEllipsis && <span className="px-1 text-slate-400 font-bold">...</span>}
+                            <button
+                              type="button"
+                              onClick={() => setCurrentPage(p)}
+                              className={`w-8 h-8 rounded-xl text-xs font-black transition cursor-pointer ${
+                                currentPage === p
+                                  ? 'bg-primary text-white shadow-sm'
+                                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          </React.Fragment>
+                        );
+                      })}
+
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="p-2 border border-slate-200 rounded-xl bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white cursor-pointer transition shadow-sm"
+                      title="Próxima Página"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -1042,116 +1419,286 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       {/* TAB 2.5: Comissões & Relatórios de Assinatura */}
       {activeTab === 'assinantes_comissoes' && (
         <div className="space-y-6 animate-fade-in">
-          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-slate-50 p-6 border border-slate-100 rounded-[2rem] shadow-sm">
+          {/* Top Control Header & Filters */}
+          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between bg-slate-50 p-6 border border-slate-100 rounded-[2rem] shadow-sm">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0">
                 <DollarSign size={20} />
               </div>
               <div>
-                <h4 className="text-sm font-black uppercase text-primary tracking-widest">Apuração de Comissões</h4>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Período mensal de fechamento e rateio</p>
+                <h4 className="text-sm font-black uppercase text-primary tracking-widest">Apuração de Comissões e Pote por Ciclo</h4>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cálculo individual por assinatura agrupado no pote do barbeiro</p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-              <select 
-                value={selectedMonth} 
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="bg-white border border-slate-200 outline-none rounded-xl py-2.5 px-3 text-xs font-black text-primary cursor-pointer font-bold"
+            <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+              {/* Date Mode Toggle */}
+              <div className="flex bg-white border border-slate-200 rounded-xl p-1 text-xs font-bold shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setCommDateMode('month')}
+                  className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${commDateMode === 'month' ? 'bg-primary text-white shadow-sm font-black' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  Mês
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCommDateMode('range')}
+                  className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${commDateMode === 'range' ? 'bg-primary text-white shadow-sm font-black' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  Período
+                </button>
+              </div>
+
+              {commDateMode === 'month' ? (
+                <select 
+                  value={selectedMonth} 
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="bg-white border border-slate-200 outline-none rounded-xl py-2 px-3 text-xs font-black text-primary cursor-pointer font-bold shadow-sm"
+                >
+                  {(() => {
+                    const list = [];
+                    const now = new Date();
+                    for (let i = 0; i < 12; i++) {
+                      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                      const year = d.getFullYear();
+                      const month = String(d.getMonth() + 1).padStart(2, '0');
+                      const label = format(d, 'MMMM yyyy', { locale: ptBR });
+                      list.push({ value: `${year}-${month}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
+                    }
+                    return list.map(m => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ));
+                  })()}
+                </select>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-2 py-1 rounded-xl shadow-sm">
+                  <input 
+                    type="date" 
+                    value={commStartDate}
+                    onChange={(e) => setCommStartDate(e.target.value)}
+                    className="text-xs font-bold text-slate-700 outline-none bg-transparent"
+                  />
+                  <span className="text-slate-300 font-bold">até</span>
+                  <input 
+                    type="date" 
+                    value={commEndDate}
+                    onChange={(e) => setCommEndDate(e.target.value)}
+                    className="text-xs font-bold text-slate-700 outline-none bg-transparent"
+                  />
+                </div>
+              )}
+
+              {/* Barber Filter */}
+              <select
+                value={commBarberFilter}
+                onChange={(e) => setCommBarberFilter(e.target.value)}
+                className="bg-white border border-slate-200 outline-none rounded-xl py-2 px-3 text-xs font-bold text-slate-700 cursor-pointer shadow-sm"
               >
-                {(() => {
-                  const list = [];
-                  const date = new Date();
-                  for (let i = 0; i < 12; i++) {
-                    const year = date.getFullYear();
-                    const month = String(date.getMonth() + 1).padStart(2, '0');
-                    const label = format(date, 'MMMM yyyy', { locale: ptBR });
-                    list.push({ value: `${year}-${month}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
-                    date.setMonth(date.getMonth() - 1);
-                  }
-                  return list.map(m => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ));
-                })()}
+                <option value="all">Todos os Barbeiros</option>
+                {barbeiros.map(b => (
+                  <option key={b.uid} value={b.uid}>{b.nome || b.displayName || 'Barbeiro'}</option>
+                ))}
+              </select>
+
+              {/* Cycle Status Filter */}
+              <select
+                value={commCycleFilter}
+                onChange={(e) => setCommCycleFilter(e.target.value)}
+                className="bg-white border border-slate-200 outline-none rounded-xl py-2 px-3 text-xs font-bold text-slate-700 cursor-pointer shadow-sm"
+              >
+                <option value="all">Todos os Ciclos</option>
+                <option value="released">🟢 Somente Liberados (Ciclos Vencidos)</option>
+                <option value="in_progress">🟡 Somente Em Andamento (Provisórios)</option>
               </select>
 
               <button
                 type="button"
                 onClick={loadComissoesData}
                 disabled={loadingUsages}
-                className="p-3 border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-100 transition flex items-center justify-center cursor-pointer"
+                className="p-2.5 border border-slate-200 text-slate-500 bg-white rounded-xl hover:bg-slate-100 transition flex items-center justify-center cursor-pointer shadow-sm"
                 title="Atualizar dados"
               >
                 <RefreshCw size={14} className={loadingUsages ? "animate-spin" : ""} />
               </button>
 
               {isMonthReleased ? (
-                <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm">
+                <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm">
                   <CheckCircle size={14} />
-                  <span>Lançado no Financeiro</span>
+                  <span>Pote Lançado no Financeiro</span>
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={handleReleaseCommissions}
                   disabled={postingCommissions || loadingUsages || totalCommissionsToRelease === 0}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider px-5 py-3 rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center gap-2 cursor-pointer"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center gap-2 cursor-pointer"
                 >
                   {postingCommissions ? <Loader2 className="animate-spin" size={14} /> : <DollarSign size={14} />}
-                  <span>Lançar Comissões</span>
+                  <span>Lançar Pote Liberado</span>
                 </button>
               )}
             </div>
           </div>
 
+          {/* Aggregate Analytical Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in">
-            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita de Assinaturas Ativas</span>
-              <span className="text-xl font-black text-slate-800">
-                R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            <div className="bg-white border border-emerald-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
+              <div className="w-1.5 h-full bg-emerald-500 absolute left-0 top-0"></div>
+              <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest block mb-1">Pote Geral Liberado (Liberado p/ Repasse)</span>
+              <span className="text-2xl font-black text-emerald-700">
+                R$ {totalReleasedCommissionsPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Soma de {activeSubs.length} planos ativos</span>
+              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos concluídos / renovados</span>
             </div>
 
-            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Fundo de Comissão Projetado</span>
-              <span className="text-xl font-black text-amber-600">
-                R$ {totalProjectedCommissionPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            <div className="bg-white border border-amber-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
+              <div className="w-1.5 h-full bg-amber-500 absolute left-0 top-0"></div>
+              <span className="text-[9px] font-black uppercase text-amber-600 tracking-widest block mb-1">Pote Em Andamento (Provisório)</span>
+              <span className="text-2xl font-black text-amber-600">
+                R$ {totalInProgressCommissionsPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Provisão teórica ({((totalSubRevenue > 0 ? (totalProjectedCommissionPool / totalSubRevenue) * 100 : 50)).toFixed(0)}% configurado)</span>
+              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos ativos até vencimento</span>
             </div>
             
             <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Comissões Reais Calculadas</span>
-              <span className="text-xl font-black text-indigo-600">
-                R$ {totalCommissionsToRelease.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Total de Assinaturas</span>
+              <span className="text-xl font-black text-slate-800">
+                R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Rateio de comissão mensal real</span>
+              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Soma de {activeSubs.length} planos no período</span>
             </div>
 
             <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Líquida da Barbearia</span>
-              <span className="text-xl font-black text-emerald-600">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Líquida Retida</span>
+              <span className="text-xl font-black text-indigo-600">
                 R$ {houseNetRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
               <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Valor retido pela casa após repasses</span>
             </div>
           </div>
 
-          {/* Card de informações explicativas */}
-          <div className="bg-gradient-to-r from-indigo-50/80 to-blue-50/40 border border-indigo-100 p-5 rounded-[2rem] shadow-sm flex gap-4 items-start">
+          {/* Explanatory Banner for Cycle Rule */}
+          <div className="bg-gradient-to-r from-indigo-50/90 via-blue-50/40 to-slate-50 border border-indigo-100 p-5 rounded-[2rem] shadow-sm flex gap-4 items-start">
             <div className="p-2.5 bg-white text-indigo-600 rounded-xl shadow-sm border border-indigo-50 shrink-0">
               <Info size={18} />
             </div>
             <div className="space-y-1">
-              <h5 className="text-xs font-black text-indigo-950 uppercase tracking-wider">Como funciona o fluxo de Comissionamento & Receitas?</h5>
+              <h5 className="text-xs font-black text-indigo-950 uppercase tracking-wider">Como funciona o cálculo do Pote de Assinaturas?</h5>
               <p className="text-slate-600 text-xs leading-relaxed font-medium">
-                As assinaturas geram uma <strong>Receita de Assinaturas Ativas</strong> para a barbearia. Cada plano tem uma porcentagem de comissão (ex: 50%), determinando o <strong>Fundo de Comissão Projetado</strong>. O repasse real (<strong>Comissões Reais Calculadas</strong>) ocorre conforme os profissionais prestam serviços para os assinantes no mês. Se nenhum atendimento for registrado pelos profissionais para os assinantes no período, o valor da comissão distribuída será de <strong className="text-amber-700">R$ 0,00</strong>, e a barbearia reterá <strong className="text-emerald-700">100% da receita</strong> (Receita Líquida). Isso garante que repasses ocorram somente mediante o serviço de fato prestado.
+                Cada cliente possui seu próprio ciclo de renovação da assinatura. O cálculo é realizado de forma <strong>individual por assinatura</strong> com base no uso de cortes do cliente. Para o barbeiro, apresentamos <strong>1 valor total do pote de assinaturas</strong> para manter o extrato limpo e objetivo.
+                As comissões de ciclos ativos pertencem ao <strong>Pote Em Andamento (Provisório)</strong>. Assim que o ciclo da assinatura se encerra ou é renovado, o valor é migrado automaticamente para o <strong>Pote Liberado</strong> para repasse financeiro!
               </p>
             </div>
           </div>
 
-          {/* Nova Seção Interativa de Rendimento de Serviços por Assinatura */}
+          {/* SEÇÃO PRINCIPAL: 1 VALOR TOTAL DO POTE POR BARBEIRO COM DETALHAMENTO EXPANDÍVEL */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                <Briefcase size={14} className="text-indigo-600" />
+                <span>Extrato do Pote de Assinaturas por Barbeiro</span>
+              </h5>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                {calculatedCommissionsData.barberPots.length} profissional(is)
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {calculatedCommissionsData.barberPots.map(barberPot => (
+                <div 
+                  key={barberPot.uid} 
+                  className="bg-white border border-slate-200/90 rounded-[2rem] p-6 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between space-y-5"
+                >
+                  <div className="space-y-4">
+                    {/* Header do Barbeiro */}
+                    <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100/80 overflow-hidden flex items-center justify-center shrink-0">
+                        {barberPot.foto ? (
+                          <img src={barberPot.foto} alt={barberPot.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <Users size={20} className="text-indigo-600" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-sm font-black text-slate-800 truncate">{barberPot.nome}</h4>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                          {barberPot.totalServices} atendimento(s) no clube
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* VALOR TODO DO POTE HIGHLIGHT */}
+                    <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 text-center space-y-1">
+                      <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">Total Acumulado do Pote</span>
+                      <span className="text-2xl font-black text-slate-900 block">
+                        R$ {barberPot.totalPot.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    {/* DESMEMBRAMENTO DE LIBERADO vs PROVISÓRIO */}
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-emerald-50/80 border border-emerald-100 rounded-xl p-3 space-y-0.5">
+                        <span className="text-[9px] font-black uppercase text-emerald-700 block tracking-wider flex items-center gap-1">
+                          <CheckCircle size={10} />
+                          <span>Pote Liberado</span>
+                        </span>
+                        <span className="text-sm font-black text-emerald-800 block">
+                          R$ {barberPot.totalReleasedCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-[8px] font-bold text-emerald-600 block uppercase">Ciclos encerrados</span>
+                      </div>
+
+                      <div className="bg-amber-50/80 border border-amber-100 rounded-xl p-3 space-y-0.5">
+                        <span className="text-[9px] font-black uppercase text-amber-700 block tracking-wider flex items-center gap-1">
+                          <Clock size={10} />
+                          <span>Em Andamento</span>
+                        </span>
+                        <span className="text-sm font-black text-amber-800 block">
+                          R$ {barberPot.totalInProgressCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-[8px] font-bold text-amber-600 block uppercase">Provisório do ciclo</span>
+                      </div>
+                    </div>
+
+                    {/* RESUMO DOS ATENDIMENTOS */}
+                    <div className="flex items-center justify-around bg-slate-50/60 rounded-xl p-2.5 text-[11px] font-bold text-slate-600">
+                      <span>✂️ {barberPot.totalCuts} cortes</span>
+                      <span>•</span>
+                      <span>💈 {barberPot.totalBeards} barbas</span>
+                      {barberPot.totalOthers > 0 && (
+                        <>
+                          <span>•</span>
+                          <span>✨ {barberPot.totalOthers} outros</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* AÇÕES: BOTÃO VER DETALHAMENTO DE ASSINATURAS */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBarberDetailModal(barberPot)}
+                      className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl text-xs font-black uppercase tracking-wider transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                    >
+                      <Eye size={14} />
+                      <span>Ver Detalhamento das Assinaturas ({barberPot.subBreakdownList.length})</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {calculatedCommissionsData.barberPots.length === 0 && (
+                <div className="col-span-full bg-white border border-slate-200 rounded-[2rem] p-12 text-center space-y-2">
+                  <p className="text-slate-500 font-bold text-sm">Nenhum valor de pote encontrado para os filtros selecionados.</p>
+                  <p className="text-slate-400 text-xs">Tente alterar o período ou o filtro de barbeiros.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Utilização de Serviços por Plano */}
           <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden animate-fade-in">
             <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="space-y-1">
@@ -1160,7 +1707,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   <span>Utilização de Serviços por Plano</span>
                 </h5>
                 <p className="text-slate-500 text-[11px] font-semibold">
-                  Acompanhe quais planos geraram atendimentos e detalhe o histórico de profissionais e clientes
+                  Acompanhe quais planos geraram atendimentos no período selecionado
                 </p>
               </div>
               <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-4 py-2 rounded-2xl shrink-0 flex items-center gap-2">
@@ -1178,7 +1725,6 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 {usagesByPlan.map((item) => {
                   const isExpanded = expandedPlanId === item.planId;
                   
-                  // Calcular atendimentos por barbeiro para este plano
                   const barberBreakdown: Record<string, number> = {};
                   item.usages.forEach(u => {
                     const bName = u.profissional_name || 'Desconhecido';
@@ -1187,7 +1733,6 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
                   return (
                     <div key={item.planId} className="transition-colors">
-                      {/* Linha do Plano */}
                       <div 
                         onClick={() => setExpandedPlanId(isExpanded ? null : item.planId)}
                         className="p-5 flex items-center justify-between hover:bg-slate-50/50 cursor-pointer transition select-none"
@@ -1210,7 +1755,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               {item.usages.length} {item.usages.length === 1 ? 'serviço' : 'serviços'}
                             </span>
                             <span className="text-[9px] font-black text-indigo-600 uppercase tracking-wider">
-                              {Math.round((item.usages.length / filteredUsages.length) * 100)}% do total
+                              {Math.round((item.usages.length / (filteredUsages.length || 1)) * 100)}% do total
                             </span>
                           </div>
                           <div className="text-slate-400">
@@ -1219,7 +1764,6 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         </div>
                       </div>
 
-                      {/* Conteúdo Expandido */}
                       <AnimatePresence initial={false}>
                         {isExpanded && (
                           <motion.div
@@ -1230,7 +1774,6 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                             className="overflow-hidden bg-slate-50/40 border-t border-slate-100"
                           >
                             <div className="p-5 space-y-5">
-                              {/* Divisão por Profissional */}
                               <div className="space-y-2">
                                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">Atendimentos por Profissional</span>
                                 <div className="flex flex-wrap gap-2">
@@ -1244,7 +1787,6 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                                 </div>
                               </div>
 
-                              {/* Histórico Detalhado */}
                               <div className="space-y-2">
                                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">Histórico de Atendimentos</span>
                                 <div className="border border-slate-200/80 rounded-2xl overflow-hidden bg-white shadow-sm">
@@ -1292,57 +1834,6 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               </div>
             )}
           </div>
-
-          <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
-                <Briefcase size={14} className="text-indigo-600" />
-                <span>Rateio por Profissional</span>
-              </h5>
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider">
-                {calculatedCommissions.length} barbeiros ativos
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-[10px] font-black text-slate-450 uppercase tracking-widest border-b">
-                    <th className="p-5">Barbeiro</th>
-                    <th className="p-5 text-center">Cortes</th>
-                    <th className="p-5 text-center">Barbas</th>
-                    <th className="p-5 text-center font-bold">Total Serviços</th>
-                    <th className="p-5 text-right font-black">Comissão Rateada</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {calculatedCommissions.map(c => (
-                    <tr key={c.uid} className="hover:bg-slate-50/50 transition">
-                      <td className="p-5 flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 border overflow-hidden flex items-center justify-center">
-                          {c.foto ? (
-                            <img src={c.foto} alt={c.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            <Users size={14} className="text-slate-400" />
-                          )}
-                        </div>
-                        <span className="font-extrabold text-slate-800">{c.nome}</span>
-                      </td>
-                      <td className="p-5 text-center text-slate-600 font-bold">{c.cuts}x</td>
-                      <td className="p-5 text-center text-slate-600 font-bold">{c.beards}x</td>
-                      <td className="p-5 text-center font-black text-indigo-600">{c.totalServices} serviços</td>
-                      <td className="p-5 text-right font-black text-emerald-600">R$ {c.commission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                    </tr>
-                  ))}
-                  {calculatedCommissions.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-10 text-center text-slate-400 italic">Nenhum profissional com dados registrados.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       )}
 
@@ -1368,13 +1859,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               >
                 {(() => {
                   const list = [];
-                  const date = new Date();
+                  const now = new Date();
                   for (let i = 0; i < 12; i++) {
-                    const year = date.getFullYear();
-                    const month = String(date.getMonth() + 1).padStart(2, '0');
-                    const label = format(date, 'MMMM yyyy', { locale: ptBR });
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const year = d.getFullYear();
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const label = format(d, 'MMMM yyyy', { locale: ptBR });
                     list.push({ value: `${year}-${month}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
-                    date.setMonth(date.getMonth() - 1);
                   }
                   return list.map(m => (
                     <option key={m.value} value={m.value}>{m.label}</option>
@@ -2176,6 +2667,140 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
           </div>
         )}
       </AnimatePresence>
+
+      {/* MODAL DETALHAMENTO DAS ASSINATURAS DO POTE DO BARBEIRO */}
+      <AnimatePresence>
+        {selectedBarberDetailModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 overflow-hidden flex items-center justify-center shrink-0">
+                    {selectedBarberDetailModal.foto ? (
+                      <img src={selectedBarberDetailModal.foto} alt={selectedBarberDetailModal.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <Users size={20} className="text-indigo-600" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800 uppercase tracking-wide">
+                      Extrato do Pote - {selectedBarberDetailModal.nome}
+                    </h3>
+                    <p className="text-[11px] font-bold text-slate-400">
+                      Acompanhamento individual de cada assinatura que compõe o pote
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedBarberDetailModal(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-200/50 transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Sub-Header Stats */}
+              <div className="p-5 bg-indigo-50/50 border-b border-indigo-100/60 grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <span className="text-[9px] font-black uppercase text-slate-400 block tracking-wider">Total do Pote</span>
+                  <span className="text-lg font-black text-slate-900">
+                    R$ {selectedBarberDetailModal.totalPot.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] font-black uppercase text-emerald-600 block tracking-wider">Pote Liberado</span>
+                  <span className="text-lg font-black text-emerald-700">
+                    R$ {selectedBarberDetailModal.totalReleasedCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] font-black uppercase text-amber-600 block tracking-wider">Em Andamento</span>
+                  <span className="text-lg font-black text-amber-600">
+                    R$ {selectedBarberDetailModal.totalInProgressCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Modal Table Content */}
+              <div className="p-6 overflow-y-auto space-y-4">
+                {selectedBarberDetailModal.subBreakdownList.length === 0 ? (
+                  <p className="text-center text-slate-400 py-8 text-xs font-bold">Nenhuma assinatura registrada para este barbeiro no período.</p>
+                ) : (
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-[10px] font-black text-slate-450 uppercase tracking-widest border-b">
+                          <th className="p-3.5">Assinante / Cliente</th>
+                          <th className="p-3.5">Plano Contratado</th>
+                          <th className="p-3.5 text-center">Vigência do Ciclo</th>
+                          <th className="p-3.5 text-center">Atendimentos</th>
+                          <th className="p-3.5 text-center">Status do Ciclo</th>
+                          <th className="p-3.5 text-right font-black">Comissão</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                        {selectedBarberDetailModal.subBreakdownList.map((item: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50/60 transition">
+                            <td className="p-3.5 font-bold text-slate-900">
+                              {item.clientName || 'Cliente Assinante'}
+                            </td>
+                            <td className="p-3.5 text-slate-600">
+                              <div>{item.planName}</div>
+                              <span className="text-[9px] text-slate-400 font-bold">R$ {item.planPrice.toFixed(2)}/mês</span>
+                            </td>
+                            <td className="p-3.5 text-center text-slate-500 font-mono text-[11px]">
+                              {format(parseISO(item.cycleStart), 'dd/MM')} a {format(parseISO(item.cycleEnd), 'dd/MM')}
+                            </td>
+                            <td className="p-3.5 text-center font-bold">
+                              <span className="text-indigo-600 font-black">{item.barberSubUsages}</span>
+                              <span className="text-slate-400 font-medium"> de {item.totalSubUsages} total</span>
+                            </td>
+                            <td className="p-3.5 text-center">
+                              {item.isCycleReleased ? (
+                                <span className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1">
+                                  <CheckCircle size={10} />
+                                  <span>Liberado</span>
+                                </span>
+                              ) : (
+                                <span className="bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1">
+                                  <Clock size={10} />
+                                  <span>Em Andamento</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3.5 text-right font-black text-indigo-700 text-sm">
+                              R$ {item.earnedCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-5 border-t border-slate-100 bg-slate-50 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelectedBarberDetailModal(null)}
+                  className="px-6 py-2.5 bg-primary text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-slate-800 transition cursor-pointer"
+                >
+                  Fechar Extrato
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2538,5 +3163,284 @@ function UsageIndicator({ label, used, total, onAdd }: any) {
         </button>
       )}
     </div>
+  );
+}
+
+interface SubscriptionTableRowProps {
+  key?: string;
+  sub: Subscription;
+  plan?: SubscriptionPlan;
+  clientPhone?: string;
+  matchedClient?: UserProfile;
+  isAdmin: boolean;
+  onRegisterUsage: (id: string, type: string, serviceId?: string) => void;
+  onRenew?: (id: string) => void;
+  onToggleAutoRenew?: (id: string, autoRenew: boolean) => void;
+  onStatusChange?: (id: string, status: SubscriptionStatus) => void;
+  onDelete?: (id: string) => void;
+  onConfirmAsaasPayment?: (id: string) => void;
+}
+
+function SubscriptionTableRow({
+  sub,
+  plan,
+  clientPhone,
+  matchedClient,
+  isAdmin,
+  onRegisterUsage,
+  onRenew,
+  onToggleAutoRenew,
+  onStatusChange,
+  onDelete,
+  onConfirmAsaasPayment
+}: SubscriptionTableRowProps) {
+  if (!plan) return null;
+
+  const statusColors: Record<SubscriptionStatus, { bg: string; text: string; border: string; label: string }> = {
+    active: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', label: 'Ativa' },
+    expired: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', label: 'Expirada' },
+    canceled: { bg: 'bg-slate-100', text: 'text-slate-600', border: 'border-slate-200', label: 'Cancelada' },
+    paused: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', label: 'Pausada' },
+    pending: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', label: 'Aguardando Pgto' }
+  };
+
+  const currentStatus = statusColors[sub.status] || statusColors.active;
+
+  // Calculate days remaining or overdue
+  const endDateObj = parseISO(sub.endDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffTime = endDateObj.getTime() - today.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+  let daysBadgeText = '';
+  let daysBadgeClass = 'bg-slate-100 text-slate-600 border-slate-200';
+
+  if (diffDays > 0) {
+    daysBadgeText = `Vence em ${diffDays}d`;
+    daysBadgeClass = diffDays <= 5 ? 'bg-amber-50 text-amber-700 border-amber-200 font-bold' : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  } else if (diffDays === 0) {
+    daysBadgeText = 'Vence Hoje!';
+    daysBadgeClass = 'bg-red-100 text-red-800 border-red-300 font-black animate-pulse';
+  } else {
+    daysBadgeText = `Atrasado ${Math.abs(diffDays)}d`;
+    daysBadgeClass = 'bg-red-50 text-red-700 border-red-200 font-bold';
+  }
+
+  // Format WhatsApp Link
+  const rawPhone = clientPhone?.replace(/\D/g, '') || '';
+  const formattedPhone = rawPhone.length >= 10 && !rawPhone.startsWith('55') ? `55${rawPhone}` : rawPhone;
+  const whatsappMsg = encodeURIComponent(
+    `Olá, ${sub.cliente_name}! 👋 Tudo bem?\nPassando para lembrar que sua assinatura do plano *${plan.name}* está com vencimento para *${format(parseISO(sub.endDate), 'dd/MM/yyyy')}*.\nCaso queira renovar ou tirar dúvidas, estamos à disposição!`
+  );
+  const whatsappUrl = formattedPhone ? `https://wa.me/${formattedPhone}?text=${whatsappMsg}` : null;
+
+  return (
+    <tr className="hover:bg-slate-50/70 transition border-b border-slate-100">
+      {/* Assinante / Cliente */}
+      <td className="p-4 pl-6">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
+            {(matchedClient as any)?.foto || (matchedClient as any)?.photoURL ? (
+              <img src={(matchedClient as any)?.foto || (matchedClient as any)?.photoURL} alt={sub.cliente_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <Users size={16} className="text-slate-400" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <span className="font-extrabold text-slate-800 text-xs block truncate">{sub.cliente_name}</span>
+            {clientPhone ? (
+              <span className="text-[10px] text-slate-400 font-medium block truncate">{clientPhone}</span>
+            ) : (
+              <span className="text-[10px] text-slate-350 italic block">Sem telefone</span>
+            )}
+          </div>
+        </div>
+      </td>
+
+      {/* Plano & Valor */}
+      <td className="p-4">
+        <div>
+          <span className="font-black text-slate-800 text-xs block">{plan.name}</span>
+          <span className="text-[11px] font-bold text-emerald-600 block">R$ {plan.price.toFixed(2)}/mês</span>
+        </div>
+      </td>
+
+      {/* Status & Canal */}
+      <td className="p-4">
+        <div className="flex flex-col items-start gap-1">
+          <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${currentStatus.bg} ${currentStatus.text} ${currentStatus.border}`}>
+            {currentStatus.label}
+          </span>
+          {sub.activationType === 'asaas' && (
+            <span className="text-[8px] font-extrabold uppercase bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.2 rounded tracking-widest">
+              Asaas
+            </span>
+          )}
+          {sub.status === 'pending' && sub.activationType === 'asaas' && isAdmin && onConfirmAsaasPayment && (
+            <button
+              type="button"
+              onClick={() => onConfirmAsaasPayment(sub.id)}
+              className="mt-1 text-[9px] font-bold text-purple-700 hover:underline flex items-center gap-1 cursor-pointer"
+              title="Simular Webhook: Confirmar Pix"
+            >
+              <RefreshCw size={10} className="animate-spin" />
+              <span>Confirmar Pix</span>
+            </button>
+          )}
+        </div>
+      </td>
+
+      {/* Vencimento & Renovação */}
+      <td className="p-4">
+        <div>
+          <span className="font-extrabold text-slate-700 text-xs block">{format(parseISO(sub.endDate), 'dd/MM/yyyy')}</span>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className={`text-[9px] px-1.5 py-0.5 rounded border ${daysBadgeClass}`}>
+              {daysBadgeText}
+            </span>
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${sub.autoRenew ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+              {sub.autoRenew ? 'Auto' : 'Manual'}
+            </span>
+          </div>
+        </div>
+      </td>
+
+      {/* Uso no Mês */}
+      <td className="p-4">
+        <div className="space-y-1 max-w-[160px]">
+          {plan.services && plan.services.length > 0 ? (
+            plan.services.map((ps) => {
+              const used = (sub.serviceUsages && sub.serviceUsages[ps.serviceId]) || 0;
+              const typeLabel = ps.name.toLowerCase().includes('corte') || ps.name.toLowerCase().includes('cabelo') || ps.name.toLowerCase().includes('hair') ? 'haircut' : (ps.name.toLowerCase().includes('barba') || ps.name.toLowerCase().includes('beard') ? 'beard' : 'other');
+              return (
+                <div key={ps.serviceId} className="flex items-center justify-between text-[10px] font-bold bg-slate-50 border border-slate-100 rounded px-1.5 py-0.5">
+                  <span className="truncate text-slate-600 max-w-[80px]">{ps.name}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-800 font-black">{used}/{ps.isUnlimited ? '∞' : ps.limit}</span>
+                    {isAdmin && sub.status === 'active' && (
+                      <button
+                        type="button"
+                        onClick={() => onRegisterUsage(sub.id, typeLabel, ps.serviceId)}
+                        className="p-0.5 text-indigo-600 hover:bg-indigo-100 rounded cursor-pointer transition"
+                        title={`Registrar ${ps.name}`}
+                      >
+                        <Plus size={10} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="flex items-center gap-2 text-[10px] font-bold">
+              <span className="bg-slate-50 border px-1.5 py-0.5 rounded">Cortes: {sub.haircutsUsed}/{plan.haircutsPerMonth >= 999 ? '∞' : plan.haircutsPerMonth}</span>
+              {plan.beardsPerMonth > 0 && (
+                <span className="bg-slate-50 border px-1.5 py-0.5 rounded">Barbas: {sub.beardsUsed}/{plan.beardsPerMonth >= 999 ? '∞' : plan.beardsPerMonth}</span>
+              )}
+            </div>
+          )}
+        </div>
+      </td>
+
+      {/* Ações Rápidas */}
+      <td className="p-4 pr-6 text-right">
+        <div className="flex items-center justify-end gap-1">
+          {/* WhatsApp Link */}
+          {whatsappUrl ? (
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-600 hover:text-white rounded-xl transition cursor-pointer"
+              title="Mandar mensagem WhatsApp de renovação/cobrança"
+            >
+              <MessageCircle size={14} />
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="p-2 bg-slate-50 border border-slate-100 text-slate-300 rounded-xl cursor-not-allowed"
+              title="Sem telefone cadastrado"
+            >
+              <MessageCircle size={14} />
+            </button>
+          )}
+
+          {/* Renovar */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => onRenew?.(sub.id)}
+              className="p-2 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-xl transition cursor-pointer"
+              title="Renovar por +1 mês"
+            >
+              <RefreshCw size={14} />
+            </button>
+          )}
+
+          {/* Toggle Auto Renew */}
+          <button
+            type="button"
+            onClick={() => onToggleAutoRenew?.(sub.id, !sub.autoRenew)}
+            className={`p-2 border rounded-xl transition cursor-pointer ${
+              sub.autoRenew
+                ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+            }`}
+            title={sub.autoRenew ? "Desativar renovação automática" : "Ativar renovação automática"}
+          >
+            <Zap size={14} />
+          </button>
+
+          {/* Pausar / Ativar */}
+          {isAdmin && sub.status === 'active' && (
+            <button
+              type="button"
+              onClick={() => onStatusChange?.(sub.id, 'paused')}
+              className="px-2 py-1 bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer"
+              title="Pausar benefícios"
+            >
+              Pausar
+            </button>
+          )}
+          {isAdmin && sub.status === 'paused' && (
+            <button
+              type="button"
+              onClick={() => onStatusChange?.(sub.id, 'active')}
+              className="px-2 py-1 bg-emerald-600 border border-emerald-700 text-white hover:bg-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer"
+              title="Ativar benefícios"
+            >
+              Ativar
+            </button>
+          )}
+
+          {/* Cancelar */}
+          {sub.status !== 'canceled' && (
+            <button
+              type="button"
+              onClick={() => onStatusChange?.(sub.id, 'canceled')}
+              className="p-2 bg-red-50 border border-red-200 text-red-600 hover:bg-red-600 hover:text-white rounded-xl transition cursor-pointer"
+              title="Cancelar plano"
+            >
+              <XCircle size={14} />
+            </button>
+          )}
+
+          {/* Excluir */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => onDelete?.(sub.id)}
+              className="p-2 bg-slate-50 border border-slate-200 text-slate-400 hover:bg-red-50 hover:text-red-600 hover:border-red-200 rounded-xl transition cursor-pointer"
+              title="Excluir do banco"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }

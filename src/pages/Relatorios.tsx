@@ -158,10 +158,19 @@ export function Relatorios({ activeSubTab }: { activeSubTab?: string }) {
           csvContent += `"${p.nome}",${p.atendimentos},${p.producao},${p.comissao},${p.comissaoPendente},${tkt}\r\n`;
         });
       } else if (activeReport === 'financeiro' && data.transactions) {
+        csvContent += "--- MOVIMENTACOES DE FLUXO DE CAIXA ---\r\n";
         csvContent += "Data,Descricao,Metodo,Tipo,Valor\r\n";
         data.transactions.forEach((t: any) => {
-          csvContent += `"${t.date}","${t.description}","${t.paymentMethod}","${t.type}",${t.amount}\r\n`;
+          csvContent += `"${t.date || ''}","${(t.description || '').replace(/"/g, '""')}","${t.paymentMethod || ''}","${t.type || ''}",${t.amount || 0}\r\n`;
         });
+        
+        if (data.payables && data.payables.length > 0) {
+          csvContent += "\r\n--- CONTAS E DESPESAS OPERACIONAIS ---\r\n";
+          csvContent += "Descricao,Categoria,Fornecedor/Credor,Vencimento,Status,Valor\r\n";
+          data.payables.forEach((p: any) => {
+            csvContent += `"${(p.description || '').replace(/"/g, '""')}","${p.category || ''}","${(p.supplier || '').replace(/"/g, '""')}","${p.dueDate || ''}","${p.status || ''}",${p.amount || 0}\r\n`;
+          });
+        }
       } else if (activeReport === 'comissoes' && data.data) {
         csvContent += "Data,Profissional,Servico,Base,Status,Comissao\r\n";
         data.data.forEach((c: any) => {
@@ -1027,7 +1036,7 @@ function ReportAppointments({ data, filters }: { data: any, filters: ReportFilte
                   const pct = Math.round((d.count / maxDayCount) * 100);
                   const medals = ['🥇', '🥈', '🥉'];
                   return (
-                    <div className="space-y-2.5" key={`rank-day-${d.name}`}>
+                    <div className="space-y-2.5" key={`rank-day-${d.name}-${idx}`}>
                       <div className="flex justify-between items-center text-xs font-bold">
                         <span className="text-primary flex items-center gap-2 font-black uppercase text-[10px]">
                           <span className="text-slate-400 w-6 font-mono text-center">{idx < 3 ? medals[idx] : `${idx + 1}º`}</span>
@@ -1093,7 +1102,7 @@ function ReportAppointments({ data, filters }: { data: any, filters: ReportFilte
                 {rankedHours.map((h, idx) => {
                   const pct = Math.round((h.count / maxHourCount) * 100);
                   return (
-                    <div className="space-y-2" key={`hour-${h.time}`}>
+                    <div className="space-y-2" key={`hour-${h.time}-${idx}`}>
                       <div className="flex justify-between items-center text-xs">
                         <span className="font-bold text-primary font-mono bg-sky-50 text-sky-600 px-2 py-0.5 rounded-lg text-[11px]">{h.time}h</span>
                         <span className="font-black text-slate-800">{h.count} reservas</span>
@@ -1130,7 +1139,7 @@ function ReportAppointments({ data, filters }: { data: any, filters: ReportFilte
                   const pct = Math.round((s.qty / maxServiceQty) * 100);
                   const medals = ['🥇', '🥈', '🥉'];
                   return (
-                    <div className="space-y-2" key={`serv-${s.name}`}>
+                    <div className="space-y-2" key={`serv-${s.name}-${idx}`}>
                       <div className="flex justify-between items-center text-xs">
                         <span className="font-black text-primary uppercase text-[10px] flex items-center gap-2">
                           <span className="text-slate-400 w-5 font-mono">{idx < 3 ? medals[idx] : `${idx + 1}º`}</span>
@@ -1696,8 +1705,14 @@ function ReportProfessionals({ data, filters }: { data: any, filters: ReportFilt
 // 5. REPORT FINANCEIRO (MÉTODOS DE PAGAMENTO E FLUXO)
 // ==========================================
 function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter }) {
+  const [payableSearch, setPayableSearch] = useState('');
+  const [payableFilter, setPayableFilter] = useState<'all' | 'paid' | 'pending' | 'overdue'>('all');
+
   if (!data || !data.stats || !data.transactions) return null;
   const { stats, transactions, byMethod } = data;
+  const payables = data.payables || [];
+  const payablesByCategory = data.payablesByCategory || {};
+  const payablesBySupplier = data.payablesBySupplier || {};
 
   // Calculando comissão e faturamento por métodos de pagamento para Ranking
   const methodList = Object.entries(byMethod || {})
@@ -1769,7 +1784,7 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
             {methodList.map((m, idx) => {
               const pct = Math.round((m.amount / totalBilling) * 100);
               return (
-                <div className="space-y-2.5" key={`method-rank-${m.method}`}>
+                <div className="space-y-2.5" key={`method-rank-${m.method}-${idx}`}>
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
                       <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
@@ -1866,7 +1881,7 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
             {incomeCategoryList.map((c, idx) => {
               const pct = stats.income > 0 ? Math.round((c.amount / stats.income) * 100) : 0;
               return (
-                <div className="space-y-2.5" key={`income-cat-${c.name}`}>
+                <div className="space-y-2.5" key={`income-cat-${c.name}-${idx}`}>
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
                       <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
@@ -1906,7 +1921,7 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
             {expenseCategoryList.map((c, idx) => {
               const pct = stats.expense > 0 ? Math.round((c.amount / stats.expense) * 100) : 0;
               return (
-                <div className="space-y-2.5" key={`expense-cat-${c.name}`}>
+                <div className="space-y-2.5" key={`expense-cat-${c.name}-${idx}`}>
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
                       <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
@@ -1930,6 +1945,271 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
             {expenseCategoryList.length === 0 && (
               <p className="text-center italic text-xs text-slate-500 py-12">Nenhuma categoria de saída registrada no período.</p>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION: GESTÃO E RELATÓRIO DE CONTAS (BILLS & EXPENSES) */}
+      <div className="border-t border-slate-200/85 pt-10 animate-fade-in" id="bills-analytics-segment">
+        <div className="mb-6">
+          <span className="text-[10px] uppercase font-black tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full">Painel Avançado</span>
+          <h3 className="font-black text-2xl text-primary tracking-tighter mt-2 flex items-center gap-2">
+            <FileText className="text-indigo-600" size={24} />
+            Relatório de Contas & Despesas Operacionais
+          </h3>
+          <p className="text-muted text-sm font-medium mt-1">
+            Análise detalhada do fluxo de contas a pagar, aluguel, insumos, fornecedores e adimplência da empresa.
+          </p>
+        </div>
+
+        {/* 1. Payable KPIs */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8" id="payables-kpi-grid">
+          <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
+            <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Total de Contas</span>
+            <p className="text-2xl font-black text-slate-800 mt-1">
+              R$ {(stats.totalPayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-[10px] text-muted font-semibold mt-1">Compromissos agendados no período</p>
+          </div>
+          <div className="bg-surface border border-emerald-100 rounded-2xl p-6 shadow-sm bg-emerald-50/5">
+            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Contas Pagas (Custos)</span>
+            <p className="text-2xl font-black text-emerald-600 mt-1">
+              R$ {(stats.paidPayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-[10px] text-emerald-600 font-semibold mt-1">Despesas quitadas no período</p>
+          </div>
+          <div className="bg-surface border border-amber-100 rounded-2xl p-6 shadow-sm bg-amber-50/5">
+            <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Contas Pendentes</span>
+            <p className="text-2xl font-black text-amber-600 mt-1">
+              R$ {(stats.pendingPayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-[10px] text-amber-600 font-semibold mt-1">A vencer no período</p>
+          </div>
+          <div className="bg-surface border border-red-100 rounded-2xl p-6 shadow-sm bg-red-50/5">
+            <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Contas em Atraso</span>
+            <p className="text-2xl font-black text-red-500 mt-1">
+              R$ {(stats.overduePayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-[10px] text-red-500 font-semibold mt-1">Vencidas e não pagas</p>
+          </div>
+        </div>
+
+        {/* Adimplência (Paid commitment health index) */}
+        {stats.totalPayablesAmount > 0 && (
+          <div className="bg-surface border border-border rounded-2xl p-6 mb-8 shadow-sm">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <CheckCircle2 className="text-emerald-500" size={16} />
+                Índice de Adimplência Operacional
+              </span>
+              <span className="text-xs font-black text-primary">
+                {Math.round((stats.paidPayablesAmount / stats.totalPayablesAmount) * 100)}% das contas pagas
+              </span>
+            </div>
+            <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-emerald-500 rounded-full transition-all duration-1000" 
+                style={{ width: `${(stats.paidPayablesAmount / stats.totalPayablesAmount) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 2. Bill Distributions (Category & Supplier) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8" id="bills-distribution-grid">
+          {/* Bills by Category */}
+          <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm">
+            <h4 className="font-black text-lg text-primary tracking-tighter mb-1 flex items-center gap-2">
+              <TrendingDown className="text-indigo-600" size={20} />
+              Quais categorias gastaram mais?
+            </h4>
+            <p className="text-muted text-[11px] font-bold uppercase tracking-wider mb-6">Valores totais de contas por categoria de gasto</p>
+            <div className="space-y-5">
+              {Object.entries(payablesByCategory || {})
+                .sort((a, b) => (b[1] as number) - (a[1] as number))
+                .map(([category, amount]: [string, any], idx) => {
+                  const pct = stats.totalPayablesAmount > 0 ? Math.round((amount / stats.totalPayablesAmount) * 100) : 0;
+                  return (
+                    <div className="space-y-2" key={`payable-cat-${category}-${idx}`}>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-slate-800 capitalize flex items-center gap-2">
+                          <span className="text-zinc-400 font-mono text-[10px]">#{idx + 1}</span>
+                          {category}
+                        </span>
+                        <span className="font-black text-slate-600">
+                          R$ {amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} <span className="text-zinc-400 font-semibold">({pct}%)</span>
+                        </span>
+                      </div>
+                      <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-indigo-600 rounded-full transition-all duration-1000"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              {Object.keys(payablesByCategory || {}).length === 0 && (
+                <p className="text-center italic text-xs text-slate-500 py-12">Nenhuma conta/gasto provisionado no período.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Bills by Supplier / Creditor */}
+          <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm">
+            <h4 className="font-black text-lg text-primary tracking-tighter mb-1 flex items-center gap-2">
+              <Users className="text-slate-500" size={20} />
+              Maiores Credores & Fornecedores
+            </h4>
+            <p className="text-muted text-[11px] font-bold uppercase tracking-wider mb-6">Valores totais destinados a cada fornecedor/parceiro</p>
+            <div className="space-y-5">
+              {Object.entries(payablesBySupplier || {})
+                .sort((a, b) => (b[1] as number) - (a[1] as number))
+                .slice(0, 5) // Top 5
+                .map(([supplier, amount]: [string, any], idx) => {
+                  const pct = stats.totalPayablesAmount > 0 ? Math.round((amount / stats.totalPayablesAmount) * 100) : 0;
+                  return (
+                    <div className="space-y-2" key={`payable-sup-${supplier}-${idx}`}>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-slate-800 truncate max-w-[200px] flex items-center gap-2">
+                          <span className="text-zinc-400 font-mono text-[10px]">#{idx + 1}</span>
+                          {supplier}
+                        </span>
+                        <span className="font-black text-slate-600">
+                          R$ {amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} <span className="text-zinc-400 font-semibold">({pct}%)</span>
+                        </span>
+                      </div>
+                      <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-slate-500 rounded-full transition-all duration-1000"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              {Object.keys(payablesBySupplier || {}).length === 0 && (
+                <p className="text-center italic text-xs text-slate-500 py-12">Nenhum credor/fornecedor listado no período.</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Bills List with Filters & Search */}
+        <div className="bg-surface border border-border rounded-[2.5rem] overflow-hidden shadow-sm flex flex-col justify-between">
+          <div className="p-8 border-b border-border bg-slate-50/30 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h4 className="font-black text-lg text-primary tracking-tighter">Histórico Consolidado de Contas do Período</h4>
+                <p className="text-xs text-muted font-medium uppercase tracking-wider mt-0.5">Listagem analítica e detalhada das provisões financeiras</p>
+              </div>
+              
+              {/* Filter Tabs */}
+              <div className="flex gap-1.5 p-1 bg-slate-100 rounded-xl" id="bill-filter-tabs">
+                {(['all', 'paid', 'pending', 'overdue'] as const).map((filterOpt) => (
+                  <button
+                    key={`opt-${filterOpt}`}
+                    onClick={() => setPayableFilter(filterOpt)}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                      payableFilter === filterOpt
+                        ? 'bg-white text-primary shadow-sm'
+                        : 'text-zinc-500 hover:text-primary'
+                    }`}
+                  >
+                    {filterOpt === 'all' && 'Todas'}
+                    {filterOpt === 'paid' && 'Pagas'}
+                    {filterOpt === 'pending' && 'A vencer'}
+                    {filterOpt === 'overdue' && 'Atrasadas'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                <input
+                  type="text"
+                  placeholder="Buscar conta por descrição ou fornecedor..."
+                  value={payableSearch}
+                  onChange={(e) => setPayableSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-100 focus:bg-white border-none rounded-xl text-xs font-semibold placeholder:text-zinc-400 focus:ring-2 focus:ring-indigo-600/20 transition-all outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-slate-50 border-b border-border">
+                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Descrição</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Categoria</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Credor / Fornecedor</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center bg-slate-50">Vencimento</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center bg-slate-50">Status</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right bg-slate-50">Valor</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {(() => {
+                  const todayStr = format(new Date(), 'yyyy-MM-dd');
+                  const filteredPayables = (payables || [])
+                    .filter((p: any) => {
+                      const matchesSearch = 
+                        (p.description || '').toLowerCase().includes(payableSearch.toLowerCase()) ||
+                        (p.supplier || '').toLowerCase().includes(payableSearch.toLowerCase());
+                      
+                      if (!matchesSearch) return false;
+
+                      if (payableFilter === 'paid') return p.status === 'paid';
+                      if (payableFilter === 'pending') return p.status === 'pending' && p.dueDate >= todayStr;
+                      if (payableFilter === 'overdue') return p.status === 'pending' && p.dueDate < todayStr;
+                      return true;
+                    });
+
+                  if (filteredPayables.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={6} className="px-8 py-16 text-center text-muted italic text-xs font-bold uppercase tracking-widest">Nenhuma conta cadastrada ou provisionada no período com esses filtros.</td>
+                      </tr>
+                    );
+                  }
+
+                  return filteredPayables.map((p: any, idx: number) => {
+                    const isOverdue = p.status === 'pending' && p.dueDate < todayStr;
+                    return (
+                      <tr key={`payable-row-${p.id || idx}-${idx}`} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-8 py-4">
+                          <span className="text-xs font-bold text-slate-800">{p.description}</span>
+                        </td>
+                        <td className="px-8 py-4">
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg capitalize">{p.category}</span>
+                        </td>
+                        <td className="px-8 py-4 text-xs font-medium text-slate-600">{p.supplier || '-'}</td>
+                        <td className="px-8 py-4 text-center">
+                          <span className="text-xs font-bold text-slate-600">{format(parseISO(p.dueDate), 'dd/MM/yyyy')}</span>
+                        </td>
+                        <td className="px-8 py-4 text-center">
+                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
+                            p.status === 'paid'
+                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                              : isOverdue
+                              ? 'bg-red-50 text-red-600 border border-red-100'
+                              : 'bg-amber-50 text-amber-600 border border-amber-100'
+                          }`}>
+                            {p.status === 'paid' ? 'Paga' : isOverdue ? 'Atrasada' : 'A vencer'}
+                          </span>
+                        </td>
+                        <td className="px-8 py-4 text-right font-black text-xs text-slate-800">
+                          R$ {(p.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -1989,7 +2269,7 @@ function ReportComissoes({ data, filters }: { data: any, filters: ReportFilter }
               const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
               const percentPago = bArr.total > 0 ? Math.round((bArr.pago / bArr.total) * 100) : 0;
               return (
-                <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl space-y-3 hover:border-slate-200 transition-all" key={`comm-rank-${bArr.name}`}>
+                <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl space-y-3 hover:border-slate-200 transition-all" key={`comm-rank-${bArr.name}-${idx}`}>
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-extrabold text-primary flex items-center gap-2 uppercase text-[10px]">
                       <span className="text-center font-mono text-[10.5px] w-6">{medal ? medal : `${idx + 1}º`}</span>
@@ -2189,7 +2469,7 @@ function ReportInventory({ data, filters, plans, subscriptions }: { data: any, f
                   const pct = Math.round((p.qty / maxProductQty) * 100);
                   const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
                   return (
-                    <div className="space-y-2" key={`prod-row-${p.name}`}>
+                    <div className="space-y-2" key={`prod-row-${p.name}-${idx}`}>
                       <div className="flex justify-between items-center text-xs">
                         <span className="font-extrabold text-primary flex items-center gap-2 text-[10.5px]">
                           <span className="text-center font-mono text-[10.5px] w-6 bg-slate-100 p-0.5 rounded-md">{medal ? medal : `#${idx + 1}`}</span>
@@ -2271,7 +2551,7 @@ function ReportInventory({ data, filters, plans, subscriptions }: { data: any, f
                   const pct = Math.round((pl.count / maxPlanCount) * 100);
                   const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
                   return (
-                    <div className="space-y-3" key={`plan-row-${pl.name}`}>
+                    <div className="space-y-3" key={`plan-row-${pl.name}-${idx}`}>
                       <div className="flex justify-between items-center text-xs">
                         <span className="font-extrabold text-primary flex items-center gap-2 text-[10.5px]">
                           <span className="text-center font-mono text-[10px] w-6 bg-slate-100 p-0.5 rounded-md">{medal ? medal : `#${idx + 1}`}</span>

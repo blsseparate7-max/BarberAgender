@@ -25,14 +25,10 @@ const RECEIVABLES_COLLECTION = 'accounts_receivable';
 export const billService = {
   // --- Accounts Payable (Contas a Pagar) ---
   async getPayables(startDate?: string, endDate?: string) {
-    let q = query(collection(db, PAYABLES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
-    
-    if (startDate && endDate) {
-      q = query(q, where('dueDate', '>=', startDate), where('dueDate', '<=', endDate));
-    }
+    const q = query(collection(db, PAYABLES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     
     const querySnapshot = await getDocs(q);
-    const payables = querySnapshot.docs.map(doc => {
+    let payables = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,
@@ -46,6 +42,10 @@ export const billService = {
         description: data.description || ''
       } as AccountPayable;
     });
+
+    if (startDate && endDate) {
+      payables = payables.filter(p => p.dueDate >= startDate && p.dueDate <= endDate);
+    }
 
     return payables.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
   },
@@ -159,14 +159,10 @@ export const billService = {
 
   // --- Accounts Receivable (Contas a Receber) ---
   async getReceivables(startDate?: string, endDate?: string) {
-    let q = query(collection(db, RECEIVABLES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
-    
-    if (startDate && endDate) {
-      q = query(q, where('dueDate', '>=', startDate), where('dueDate', '<=', endDate));
-    }
+    const q = query(collection(db, RECEIVABLES_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     
     const querySnapshot = await getDocs(q);
-    const receivables = querySnapshot.docs.map(doc => {
+    let receivables = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,
@@ -180,6 +176,10 @@ export const billService = {
         description: data.description || ''
       } as AccountReceivable;
     });
+
+    if (startDate && endDate) {
+      receivables = receivables.filter(r => r.dueDate >= startDate && r.dueDate <= endDate);
+    }
 
     return receivables.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
   },

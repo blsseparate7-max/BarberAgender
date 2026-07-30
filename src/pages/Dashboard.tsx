@@ -1198,7 +1198,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                           'em_atendimento': 'bg-amber-50 text-amber-700 border-amber-100',
                         };
                         return (
-                          <tr key={`today-agenda-table-${a.id || idx}`} className="hover:bg-slate-50/50 transition-colors">
+                          <tr key={`today-agenda-table-${a.id || idx}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-4 px-4 font-black text-primary">{a.startTime}</td>
                             <td className="py-4 px-4 font-bold text-primary">{a.cliente_name}</td>
                             <td className="py-4 px-4 font-semibold text-slate-500">{a.profissional_name}</td>
@@ -1373,7 +1373,7 @@ function BarberDashboard({ data, refresh, setActiveTab, activeTab = 'overview' }
                         'em_atendimento': 'bg-amber-50 text-amber-700 border-amber-100',
                       };
                       return (
-                        <tr key={`barber-agenda-${a.id || idx}`} className="hover:bg-slate-50/50 transition-colors">
+                        <tr key={`barber-agenda-${a.id || idx}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                           <td className="py-4 px-4 font-black text-primary">{a.startTime}</td>
                           <td className="py-4 px-4 font-semibold text-primary">{a.cliente_name}</td>
                           <td className="py-4 px-4">

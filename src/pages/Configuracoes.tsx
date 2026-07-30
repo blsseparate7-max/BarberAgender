@@ -31,17 +31,21 @@ import {
   Send,
   Trash2,
   Sparkles,
+  Upload,
+  Crop,
   HelpCircle as QuestionIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
+import { ImageCropModal } from '../components/ImageCropModal';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { settingsService, BarbershopProfile } from '../services/settingsService';
 import { userService } from '../services/userService';
 import { resetService } from '../services/resetService';
 import { loyaltyService } from '../services/loyaltyService';
 import { saasGatewayService, SaaSChargeResponse } from '../services/saasGatewayService';
+import { tenantService, SaaSPlan } from '../services/tenantService';
 import { toast } from 'sonner';
 
 export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
@@ -50,6 +54,41 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [activeSection, setActiveSection] = useState(activeSubTab === 'configuracoes-perfil' ? 'user-profile' : 'profile');
   const [accentColor, setAccentColor] = useState(tenant?.accentColor || '#6366F1');
   const [logoUrl, setLogoUrl] = useState(tenant?.logoUrl || '');
+
+  // Modal e Upload de Logo JPEG
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [tempImageSrc, setTempImageSrc] = useState<string>('');
+  const [isCropModalOpen, setIsCropModalOpen] = useState<boolean>(false);
+
+  const handleLogoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validação estrita para JPEG
+    const isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+    if (!isJpeg) {
+      toast.error('Formato não suportado. Por favor, selecione apenas arquivos de imagem no formato JPEG/JPG.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setTempImageSrc(event.target.result as string);
+        setIsCropModalOpen(true);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleOpenCropExisting = () => {
+    if (logoUrl) {
+      setTempImageSrc(logoUrl);
+      setIsCropModalOpen(true);
+    }
+  };
 
   // Controlled address states
   const [street, setStreet] = useState(tenant?.address?.street || '');
@@ -79,8 +118,31 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       setCity(tenant.address?.city || '');
       setState(tenant.address?.state || '');
       setZipCode(tenant.address?.zipCode || '');
+
+      const tPlan = (tenant as any).plan || tenant.planName || tenant.planId;
+      if (tPlan) {
+        setSelectedPlan(tenant.planId || tPlan.toLowerCase());
+      }
     }
   }, [tenant]);
+
+  const [plans, setPlans] = useState<SaaSPlan[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+
+  useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        const dbPlans = await tenantService.listPlans();
+        // Filtrar apenas planos ativos
+        setPlans(dbPlans.filter(p => p.active !== false));
+      } catch (err) {
+        console.error('Erro ao buscar planos SaaS do admin:', err);
+      } finally {
+        setLoadingPlans(false);
+      }
+    };
+    fetchPlans();
+  }, []);
 
   // New modules states
   const [notifWeb, setNotifWeb] = useState(true);
@@ -561,26 +623,70 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             {activeSection === 'profile' && (
               <form onSubmit={handleSaveProfile} className="space-y-8">
                 <section className="space-y-8">
-                  <div className="flex flex-col sm:flex-row items-center gap-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
-                    <div className="relative">
-                      <div className="w-24 h-24 bg-white rounded-[2rem] border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-300 overflow-hidden shadow-inner">
+                  <div className="flex flex-col md:flex-row items-center gap-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                    <div className="relative group shrink-0">
+                      <div className="w-28 h-28 bg-white rounded-3xl border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-300 overflow-hidden shadow-sm relative">
                         {logoUrl ? (
                           <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
-                          <Camera size={32} />
+                          <div className="flex flex-col items-center gap-1 text-slate-400">
+                            <Camera size={28} />
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sem Logo</span>
+                          </div>
                         )}
                       </div>
                     </div>
-                    <div className="space-y-2 flex-1 w-full">
-                      <h3 className="text-xl font-black text-primary tracking-tight">Logo da Unidade</h3>
-                      <p className="text-xs text-muted font-medium mb-3 max-w-xs leading-relaxed">Insira a URL da logo de sua marca ou utilize um link de imagem quadrada.</p>
+                    <div className="space-y-3 flex-1 w-full text-center md:text-left">
+                      <div>
+                        <h3 className="text-xl font-black text-primary tracking-tight">Logo da Unidade (Foto JPEG)</h3>
+                        <p className="text-xs text-muted font-medium mt-1 max-w-lg leading-relaxed">
+                          Selecione a foto da logo de sua barbearia no formato <strong>JPEG (.jpg)</strong>. O sistema permite recortar, girar e redimensionar no tamanho essencial (300x300px), exibindo-a instantaneamente no topo do menu lateral e na landing page.
+                        </p>
+                      </div>
+
                       <input 
-                        type="text"
-                        value={logoUrl}
-                        onChange={(e) => setLogoUrl(e.target.value)}
-                        placeholder="https://exemplo.com/sua-logo.png"
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-4 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-sm"
+                        type="file"
+                        ref={fileInputRef}
+                        accept="image/jpeg,image/jpg,.jpg,.jpeg"
+                        onChange={handleLogoFileSelect}
+                        className="hidden"
                       />
+
+                      <div className="flex flex-wrap items-center gap-3 pt-1 justify-center md:justify-start">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-5 py-2.5 bg-primary hover:bg-slate-800 text-white rounded-2xl text-xs font-black shadow-md shadow-primary/10 flex items-center gap-2 transition active:scale-95"
+                        >
+                          <Upload size={16} className="text-amber-400" />
+                          {logoUrl ? 'Trocar Foto JPEG' : 'Enviar Foto JPEG'}
+                        </button>
+
+                        {logoUrl && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleOpenCropExisting}
+                              className="px-4 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-2xl text-xs font-bold shadow-sm flex items-center gap-2 transition active:scale-95"
+                            >
+                              <Crop size={16} className="text-amber-500" />
+                              Ajustar/Recortar Foto
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLogoUrl('');
+                                toast.info('Foto da logo removida.');
+                              }}
+                              className="px-3.5 py-2.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-2xl text-xs font-bold transition flex items-center gap-1.5 active:scale-95"
+                            >
+                              <Trash2 size={15} />
+                              Remover
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -1176,73 +1282,196 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             )}
 
             {/* Plano e Faturamento */}
-            {activeSection === 'billing' && (
-              <div className="space-y-8">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xl font-black text-primary tracking-tight">Plano & Assinatura</h3>
-                    <p className="text-xs text-muted font-semibold mt-1">Acompanhe seu ciclo de cobrança e faturamento BarberElite SaaS.</p>
-                  </div>
-                  <span className="bg-amber-500 text-white text-[10px] font-black tracking-widest uppercase px-4 py-2 rounded-2xl shadow-lg shadow-amber-500/20 animate-pulse">
-                    Elite Premium
-                  </span>
-                </div>
+            {activeSection === 'billing' && (() => {
+              const currentPlanName = tenant?.plan || tenant?.planName || 'Elite Premium';
+              const currentPlanStatus = tenant?.planStatus || 'active';
+              
+              const activePlanObj = plans.find(p => 
+                p.name.toLowerCase() === currentPlanName.toLowerCase() || 
+                p.id === tenant?.planId
+              );
 
-                {/* Sub Card */}
-                <div className="p-8 bg-gradient-to-r from-primary to-slate-800 rounded-[2rem] text-white space-y-6 shadow-xl shadow-primary/10">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-[10px] font-black uppercase text-slate-300 tracking-widest">Seu pacote atual</p>
-                      <h4 className="text-3xl font-black mt-1">BarberElite SaaS Unlimited</h4>
-                    </div>
-                    <CreditCard size={32} className="text-accent" />
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-white/10 text-xs">
-                    <div>
-                      <p className="font-semibold text-slate-400">Próxima Remessa</p>
-                      <p className="font-extrabold text-base mt-1 text-white">20 de Junho, 2026</p>
-                    </div>
-                    <div>
-                      <p className="font-semibold text-slate-400">Investimento Mensal</p>
-                      <p className="font-extrabold text-base mt-1 text-white">R$ 149,90</p>
-                    </div>
-                    <div>
-                      <p className="font-semibold text-slate-400">Cartão Cadastrado</p>
-                      <p className="font-extrabold text-base mt-1 text-white">Visa final 4812</p>
-                    </div>
-                  </div>
-                </div>
+              // 1. Utilidade do plano
+              const utilidade = activePlanObj 
+                ? `Suporta até ${activePlanObj.maxBarbers} profissionais ativos na plataforma simultaneamente. Recursos incluídos: ${activePlanObj.features.join(', ')}.`
+                : tenant?.maxProfessionals 
+                  ? `Suporta até ${tenant.maxProfessionals} profissionais ativos simultaneamente com recursos do painel BarberElite.`
+                  : "Acesso total aos recursos de agendamentos, comissões, relatórios e controle de comandas sem restrições.";
 
-                {/* Plan cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
-                  <PlanSelectorCard 
-                    title="Bronze" 
-                    price="R$ 49,90/mês" 
-                    desc="Expedientes de até 3 profissionais" 
-                    features={['Até 3 Barbeiros', 'Relatórios Básicos', 'Programa de Cashback']}
-                    active={selectedPlan === 'bronze'}
-                    onClick={() => setSelectedPlan('bronze')}
-                  />
-                  <PlanSelectorCard 
-                    title="Silver" 
-                    price="R$ 99,90/mês" 
-                    desc="Expedientes de até 8 profissionais" 
-                    features={['Até 8 Barbeiros', 'Relatórios Financeiros', 'WhatsApp API integrado']}
-                    active={selectedPlan === 'silver'}
-                    onClick={() => setSelectedPlan('silver')}
-                  />
-                  <PlanSelectorCard 
-                    title="Elite" 
-                    price="R$ 149,90/mês" 
-                    desc="Tudo liberado para crescer sem travas" 
-                    features={['Profissionais Ilimitados', 'IA de Insights Integrada', 'Backup Automático']}
-                    active={selectedPlan === 'elite'}
-                    onClick={() => setSelectedPlan('elite')}
-                  />
+              // 2. Ciclo de ativação
+              const statusLabelMap: Record<string, string> = {
+                trial: 'Período de Testes (Trial)',
+                active: 'Assinatura Ativa',
+                suspended: 'Assinatura Suspensa',
+                canceled: 'Assinatura Cancelada',
+                pending: 'Aguardando Pagamento'
+              };
+              const statusLabel = statusLabelMap[currentPlanStatus] || 'Ativa';
+
+              // 3. Data de início
+              let dataInicio = 'Não informado';
+              if (tenant?.trialStartDate) {
+                try {
+                  dataInicio = new Date(tenant.trialStartDate).toLocaleDateString('pt-BR');
+                } catch (e) {
+                  console.error(e);
+                }
+              } else if (tenant?.createdAt) {
+                try {
+                  const dateVal = tenant.createdAt;
+                  if (dateVal.seconds) {
+                    dataInicio = new Date(dateVal.seconds * 1000).toLocaleDateString('pt-BR');
+                  } else {
+                    dataInicio = new Date(dateVal).toLocaleDateString('pt-BR');
+                  }
+                } catch (e) {
+                  console.error(e);
+                }
+              }
+
+              // 4. Vencimento
+              let dataVencimento = '';
+              if (tenant?.planExpiresAt) {
+                try {
+                  dataVencimento = new Date(tenant.planExpiresAt).toLocaleDateString('pt-BR');
+                } catch (e) {
+                  dataVencimento = tenant.planExpiresAt;
+                }
+              } else if (tenant?.trialEndDate) {
+                try {
+                  dataVencimento = new Date(tenant.trialEndDate).toLocaleDateString('pt-BR');
+                } catch (e) {
+                  dataVencimento = tenant.trialEndDate;
+                }
+              } else {
+                dataVencimento = `Todo dia ${tenant?.dueDateDay || 10} de cada mês`;
+              }
+
+              return (
+                <div className="space-y-8">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-black text-primary tracking-tight">Plano & Assinatura</h3>
+                      <p className="text-xs text-muted font-semibold mt-1">Acompanhe seu ciclo de cobrança e faturamento BarberElite SaaS.</p>
+                    </div>
+                    <span className="bg-amber-500 text-white text-[10px] font-black tracking-widest uppercase px-4 py-2 rounded-2xl shadow-lg shadow-amber-500/20 animate-pulse">
+                      {currentPlanName}
+                    </span>
+                  </div>
+
+                  {/* Sub Card */}
+                  <div className="p-8 bg-gradient-to-r from-primary to-slate-800 rounded-[2rem] text-white space-y-6 shadow-xl shadow-primary/10">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-slate-300 tracking-widest">Seu pacote atual</p>
+                        <h4 className="text-3xl font-black mt-1">BarberElite {currentPlanName}</h4>
+                        <div className="mt-3 flex items-center gap-2">
+                          <span className="bg-white/20 text-white text-[10px] font-bold px-3 py-1 rounded-full backdrop-blur-sm">
+                            Ciclo de Ativação: {statusLabel}
+                          </span>
+                        </div>
+                      </div>
+                      <CreditCard size={32} className="text-amber-400" />
+                    </div>
+
+                    <div className="border-t border-white/10 pt-4 space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-300">Utilidade & Recursos do Plano</p>
+                      <p className="text-xs text-slate-200 font-medium leading-relaxed">{utilidade}</p>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-6 border-t border-white/10 text-xs">
+                      <div>
+                        <p className="font-semibold text-slate-400">Início da Ativação</p>
+                        <p className="font-extrabold text-base mt-1 text-white">{dataInicio}</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-400">Tipo de Ciclo</p>
+                        <p className="font-extrabold text-base mt-1 text-white uppercase">{currentPlanStatus === 'trial' ? 'Grátis (Trial)' : 'Mensal'}</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-400">Data de Vencimento</p>
+                        <p className="font-extrabold text-base mt-1 text-white">{dataVencimento}</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-400">Investimento Mensal</p>
+                        <p className="font-extrabold text-base mt-1 text-amber-300">
+                          R$ {(tenant?.monthlyFeeOverride || activePlanObj?.priceMonthly || (currentPlanName.toLowerCase() === 'bronze' ? 49.90 : currentPlanName.toLowerCase() === 'silver' ? 99.90 : 149.90)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Plans Title */}
+                  <div className="pt-4 border-t border-slate-100">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-muted">Planos Oficiais no Admin SaaS</p>
+                    <p className="text-xs text-slate-500 font-semibold mt-1">Veja abaixo os planos cadastrados e escolha um para assinar ou alterar sua assinatura:</p>
+                  </div>
+
+                  {/* Plan cards */}
+                  {loadingPlans ? (
+                    <div className="flex flex-col items-center justify-center p-12 space-y-3 bg-slate-50 rounded-3xl">
+                      <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+                      <p className="text-xs font-bold text-slate-400">Carregando planos do SaaS...</p>
+                    </div>
+                  ) : plans.length === 0 ? (
+                    <div className="bg-slate-50 border border-dashed border-slate-200 p-8 rounded-[2rem] text-center">
+                      <p className="text-sm font-bold text-slate-500">Nenhum plano cadastrado no Admin SaaS.</p>
+                      <p className="text-xs text-slate-400 mt-1 font-semibold">Fale com o administrador para configurar planos na plataforma.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {plans.map((p, idx) => (
+                          <PlanSelectorCard 
+                            key={`${p.id || p.name}-${idx}`}
+                            title={p.name} 
+                            price={`R$ ${p.priceMonthly.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês`} 
+                            desc={`Até ${p.maxBarbers} profissionais ativos`} 
+                            features={p.features || []}
+                            active={selectedPlan === p.id || selectedPlan === p.name.toLowerCase()}
+                            onClick={() => {
+                              setSelectedPlan(p.id);
+                              setSelectedPlanName(p.name);
+                              setSelectedPlanPrice(p.priceMonthly);
+                            }}
+                          />
+                        ))}
+                      </div>
+
+                      {/* Action Button to trigger the checkout modal */}
+                      {selectedPlan && (
+                        <div className="flex justify-end pt-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const selectedPlanObj = plans.find(p => p.id === selectedPlan || p.name.toLowerCase() === selectedPlan);
+                              if (selectedPlanObj) {
+                                handleGenerateSaaSCharge(selectedPlanObj.name, selectedPlanObj.priceMonthly);
+                              } else {
+                                // Fallback
+                                const planMap: Record<string, {name: string, price: number}> = {
+                                  bronze: { name: 'Bronze', price: 49.90 },
+                                  silver: { name: 'Silver', price: 99.90 },
+                                  elite: { name: 'Elite', price: 149.90 }
+                                };
+                                const fallback = planMap[selectedPlan];
+                                if (fallback) {
+                                  handleGenerateSaaSCharge(fallback.name, fallback.price);
+                                }
+                              }
+                            }}
+                            className="px-6 py-3 bg-primary hover:bg-slate-800 text-white rounded-2xl text-xs font-black shadow-lg shadow-primary/10 flex items-center gap-2 transition active:scale-95"
+                          >
+                            <CreditCard size={16} className="text-amber-400" />
+                            Contratar / Atualizar Plano Selecionado
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Suporte e Ajuda */}
             {activeSection === 'support' && (
@@ -1342,6 +1571,17 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
           </motion.div>
         </div>
       </div>
+
+      <ImageCropModal
+        isOpen={isCropModalOpen}
+        imageSrc={tempImageSrc}
+        onClose={() => setIsCropModalOpen(false)}
+        onCropComplete={(croppedDataUrl) => {
+          setLogoUrl(croppedDataUrl);
+          toast.success('Foto da logo processada e recortada em formato JPEG otimizado!');
+        }}
+        outputSize={300}
+      />
     </div>
   );
 }
@@ -1385,7 +1625,7 @@ function NotificationToggle({ title, desc, checked, onChange }: { title: string,
   );
 }
 
-function PlanSelectorCard({ title, price, desc, features, active, onClick }: { title: string, price: string, desc: string, features: string[], active: boolean, onClick: () => void }) {
+function PlanSelectorCard({ title, price, desc, features, active, onClick }: { title: string, price: string, desc: string, features: string[], active: boolean, onClick: () => void, key?: React.Key }) {
   return (
     <button 
       onClick={onClick} 
@@ -1399,8 +1639,8 @@ function PlanSelectorCard({ title, price, desc, features, active, onClick }: { t
         <h5 className="text-lg font-black text-primary">{price}</h5>
         <p className="text-[10px] text-muted font-bold mt-1 mb-4 leading-relaxed">{desc}</p>
         <div className="space-y-1">
-          {features.map((f) => (
-            <div key={f} className="flex items-center gap-1.5 text-[9px] font-semibold text-slate-500">
+          {features.map((f, idx) => (
+            <div key={`${f}-${idx}`} className="flex items-center gap-1.5 text-[9px] font-semibold text-slate-500">
               <span className="w-1.5 h-1.5 rounded-full bg-accent" />
               <span>{f}</span>
             </div>

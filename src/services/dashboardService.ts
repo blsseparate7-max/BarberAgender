@@ -233,25 +233,23 @@ export const dashboardService = {
     const appointmentsQuery = query(
       collection(db, 'appointments'),
       where('tenantId', '==', activeTenantId),
-      where('profissional_id', '==', profissional_id),
-      where('date', '>=', startStr),
-      where('date', '<=', endStr)
+      where('profissional_id', '==', profissional_id)
     );
     const appointmentsSnap = await getDocs(appointmentsQuery);
     const appointments = appointmentsSnap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
+      .filter(a => a.date >= startStr && a.date <= endStr);
     const completed = appointments.filter(a => a.status === 'concluído');
 
     const commissionsQuery = query(
       collection(db, 'commissions'),
       where('tenantId', '==', activeTenantId),
-      where('profissional_id', '==', profissional_id),
-      where('date', '>=', startStr),
-      where('date', '<=', endStr)
+      where('profissional_id', '==', profissional_id)
     );
     const commissionsSnap = await getDocs(commissionsQuery);
     const commissions = commissionsSnap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+      .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
+      .filter(c => c.date >= startStr && c.date <= endStr);
 
     const production = completed.reduce((acc, a) => acc + a.price, 0);
     const commissionTotal = commissions.reduce((acc, c) => acc + c.commission_value, 0);

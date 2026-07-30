@@ -78,6 +78,8 @@ export interface UserProfile {
   conta?: string;
   chavePix?: string;
   tipoContrato?: string;
+  fotoUrl?: string;
+  avatarUrl?: string;
   showInPortal?: boolean;
   bloqueadoParaAgendar?: boolean;
   

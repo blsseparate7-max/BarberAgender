@@ -140,6 +140,33 @@ export function Comissoes() {
     }
   });
 
+  // Calculate global stats dynamically in-memory to incorporate vales (advances) for 100% mathematical precision
+  const calculatedStats = React.useMemo(() => {
+    const pendingComms = commissions
+      .filter(c => c.status === 'pendente')
+      .reduce((acc, c) => acc + (c.commission_value || 0), 0);
+    
+    const pendingAdvs = advances
+      .filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'))
+      .reduce((acc, a) => acc + (a.amount || 0), 0);
+
+    const pending = Math.max(0, pendingComms - pendingAdvs);
+    
+    const paid = commissions
+      .filter(c => c.status === 'pago')
+      .reduce((acc, c) => acc + (c.commission_value || 0), 0);
+
+    const totalBase = commissions
+      .reduce((acc, c) => acc + (c.base_value || 0), 0);
+
+    return {
+      pending,
+      paid,
+      totalBase,
+      count: commissions.length
+    };
+  }, [commissions, advances]);
+
   // If barber logged in, redirect directly to their own detail
   if (profile?.tipo === 'barbeiro' && user) {
     return (
@@ -179,33 +206,6 @@ export function Comissoes() {
       </div>
     );
   }
-
-  // Calculate global stats dynamically in-memory to incorporate vales (advances) for 100% mathematical precision
-  const calculatedStats = React.useMemo(() => {
-    const pendingComms = commissions
-      .filter(c => c.status === 'pendente')
-      .reduce((acc, c) => acc + (c.commission_value || 0), 0);
-    
-    const pendingAdvs = advances
-      .filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'))
-      .reduce((acc, a) => acc + (a.amount || 0), 0);
-
-    const pending = Math.max(0, pendingComms - pendingAdvs);
-    
-    const paid = commissions
-      .filter(c => c.status === 'pago')
-      .reduce((acc, c) => acc + (c.commission_value || 0), 0);
-
-    const totalBase = commissions
-      .reduce((acc, c) => acc + (c.base_value || 0), 0);
-
-    return {
-      pending,
-      paid,
-      totalBase,
-      count: commissions.length
-    };
-  }, [commissions, advances]);
 
   // Calculate roster summary dynamically in memory based on loaded data for perfect real-time feedback
   const teamRoster = barbers.map(barber => {

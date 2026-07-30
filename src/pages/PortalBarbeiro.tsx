@@ -550,8 +550,16 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
         <div className="max-w-md mx-auto flex items-center justify-between relative z-10">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner uppercase">
-              {profile.nome.substring(0, 2)}
+            <div className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner uppercase overflow-hidden">
+              {profile.fotoUrl || profile.avatarUrl ? (
+                <img 
+                  src={profile.fotoUrl || profile.avatarUrl} 
+                  alt={profile.nome} 
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                profile.nome.substring(0, 2)
+              )}
             </div>
             <div>
               <p className="text-[10px] uppercase font-black tracking-widest text-indigo-300">Painel do Barbeiro</p>
@@ -1412,8 +1420,16 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
             {/* Detailed Professional Card */}
             <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm space-y-4">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center text-3xl font-black uppercase shadow-inner">
-                  {profile.nome.substring(0, 2)}
+                <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center text-3xl font-black uppercase shadow-inner overflow-hidden">
+                  {profile.fotoUrl || profile.avatarUrl ? (
+                    <img 
+                      src={profile.fotoUrl || profile.avatarUrl} 
+                      alt={profile.nome} 
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    profile.nome.substring(0, 2)
+                  )}
                 </div>
                 <div>
                   <h3 className="text-base font-black text-slate-800 leading-tight">{profile.nome}</h3>

@@ -224,13 +224,12 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     // Real-time transactions for the current period
     const q = query(
       collection(db, 'financial_transactions'),
-      where('tenantId', '==', getActiveTenantId()),
-      where('date', '>=', dateRange.start),
-      where('date', '<=', dateRange.end)
+      where('tenantId', '==', getActiveTenantId())
     );
 
     const unsubscribeTransactions = onSnapshot(q, (snapshot) => {
-      const txs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+      const allTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+      const txs = allTxs.filter(t => (!dateRange.start || t.date >= dateRange.start) && (!dateRange.end || t.date <= dateRange.end));
       
       // Sort in memory by date desc, then by createdAt seconds desc
       txs.sort((a, b) => {

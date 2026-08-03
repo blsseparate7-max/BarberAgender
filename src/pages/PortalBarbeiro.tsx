@@ -429,8 +429,16 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
   // Filtered commissions and advances based on the selected date range and status/type filters
   const filteredCommissions = React.useMemo(() => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
     return commissions.filter(c => {
       const cDate = (c.date || '').split('T')[0];
+      
+      // Rule: Subscription commissions only enter the active extract and count when they have matured (cDate <= todayStr)
+      const isSubscriptionComm = c.commission_type === 'assinatura' || c.servico_name?.toLowerCase().includes('assinatura') || c.servico_name?.toLowerCase().includes('pote') || c.servico_name?.toLowerCase().includes('rateio assinatura');
+      if (isSubscriptionComm && cDate > todayStr) {
+        return false;
+      }
+
       // Date filter
       if (startDate && cDate < startDate) return false;
       if (endDate && cDate > endDate) return false;
@@ -460,7 +468,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     > = [];
 
     if (typeFilter === 'todos' || typeFilter === 'comissao') {
-      filteredCommissions.forEach(c => {
+      const regularComms = filteredCommissions.filter(c => c.commission_type !== 'assinatura' && !c.servico_name?.toLowerCase().includes('assinatura') && !c.servico_name?.toLowerCase().includes('pote'));
+      const subscriptionComms = filteredCommissions.filter(c => c.commission_type === 'assinatura' || c.servico_name?.toLowerCase().includes('assinatura') || c.servico_name?.toLowerCase().includes('pote'));
+
+      regularComms.forEach(c => {
         list.push({
           type: 'comissao',
           id: c.id,
@@ -470,6 +481,28 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           value: c.commission_value || c.amount || 0,
           status: c.status || 'pendente',
           commissionType: c.commission_type
+        });
+      });
+
+      const subCommsByDate: Record<string, typeof subscriptionComms> = {};
+      subscriptionComms.forEach(c => {
+        const d = c.date || format(new Date(), 'yyyy-MM-dd');
+        if (!subCommsByDate[d]) subCommsByDate[d] = [];
+        subCommsByDate[d].push(c);
+      });
+
+      Object.entries(subCommsByDate).forEach(([date, comms]) => {
+        const totalVal = comms.reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
+        const hasPending = comms.some(c => c.status === 'pendente');
+        list.push({
+          type: 'comissao',
+          id: `sub_group_${date}`,
+          date: date,
+          title: 'Comissão do Pote de Assinaturas',
+          clientName: `${comms.length} assinatura(s) agrupada(s)`,
+          value: totalVal,
+          status: hasPending ? 'pendente' : 'pago',
+          commissionType: 'assinatura'
         });
       });
     }

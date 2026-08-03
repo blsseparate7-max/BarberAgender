@@ -43,8 +43,9 @@ import { reportService, ReportFilter } from '../services/reportService';
 import { userService } from '../services/userService';
 import { subscriptionService } from '../services/subscriptionService';
 import { toast } from 'sonner';
+import { FechamentoMes } from '../components/Relatorios/FechamentoMes';
 
-type ReportType = 'geral' | 'agendamentos' | 'clientes' | 'profissionais' | 'financeiro' | 'comissoes' | 'estoque';
+type ReportType = 'geral' | 'agendamentos' | 'clientes' | 'profissionais' | 'financeiro' | 'comissoes' | 'estoque' | 'fechamento_mes';
 
 export function Relatorios({ activeSubTab }: { activeSubTab?: string }) {
   const [activeReport, setActiveReport] = useState<ReportType>('geral');
@@ -278,6 +279,7 @@ export function Relatorios({ activeSubTab }: { activeSubTab?: string }) {
           { id: 'financeiro', label: 'Finanças & Métodos', icon: <DollarSign size={16} /> },
           { id: 'comissoes', label: 'Comissões de Equipe', icon: <TrendingUp size={16} /> },
           { id: 'estoque', label: 'Produtos & Assinaturas', icon: <Package size={16} /> },
+          { id: 'fechamento_mes', label: 'Fechamento do Mês', icon: <CheckCircle2 size={16} /> },
         ].map((tab) => (
           <button
             id={`tab-relatorio-${tab.id}`}
@@ -360,6 +362,9 @@ export function Relatorios({ activeSubTab }: { activeSubTab?: string }) {
                 plans={plans} 
                 subscriptions={subscriptions} 
               />
+            )}
+            {activeReport === 'fechamento_mes' && (
+              <FechamentoMes />
             )}
           </motion.div>
         )}

@@ -98,6 +98,14 @@ export const subscriptionService = {
 
       transaction.set(subscriptionRef, subscriptionData);
 
+      // Also update client in usuarios collection to associate them with this tenant and activate their account
+      const clientRef = doc(db, 'usuarios', data.cliente_id);
+      transaction.set(clientRef, {
+        tenantId: activeTenantId,
+        ativo: true,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
       // Create financial transaction
       const financialRef = doc(collection(db, 'financial_transactions'));
       transaction.set(financialRef, {
@@ -159,6 +167,15 @@ export const subscriptionService = {
       };
 
       transaction.set(subscriptionRef, subscriptionData);
+
+      // Also update client in usuarios collection to associate them with this tenant and activate their account
+      const clientRef = doc(db, 'usuarios', data.cliente_id);
+      transaction.set(clientRef, {
+        tenantId: activeTenantId,
+        ativo: true,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
       return subscriptionRef.id;
     });
   },
@@ -167,6 +184,15 @@ export const subscriptionService = {
     const docRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
     await updateDoc(docRef, {
       status,
+      updatedAt: serverTimestamp()
+    });
+  },
+
+  async updateSubscriptionDates(id: string, startDate: string, endDate: string) {
+    const docRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
+    await updateDoc(docRef, {
+      startDate,
+      endDate,
       updatedAt: serverTimestamp()
     });
   },
@@ -461,7 +487,7 @@ export const subscriptionService = {
           commission_value: comm.commission_value,
           status: 'pendente',
           commission_type: 'assinatura',
-          date: todayStr,
+          date: sub.endDate,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -524,10 +550,28 @@ export const subscriptionService = {
     if (!targetPlanDoc) throw new Error("Plano não encontrado");
     const plan = targetPlanDoc.data() as SubscriptionPlan;
 
+    const today = new Date();
+    const todayStr = format(today, 'yyyy-MM-dd');
+    const currentEndDate = sub.endDate ? new Date(sub.endDate + 'T12:00:00') : today;
+    
+    let newStartDateStr = sub.endDate || todayStr;
+    if (!sub.endDate || currentEndDate < today) {
+      newStartDateStr = todayStr;
+    }
+    const newStartDate = new Date(newStartDateStr + 'T12:00:00');
+    const newEndDate = addMonths(newStartDate, 1);
+    const newEndDateStr = format(newEndDate, 'yyyy-MM-dd');
+
     return await runTransaction(db, async (transaction) => {
       transaction.update(subRef, {
         status: 'active',
         asaasPaymentStatus: 'received',
+        startDate: newStartDateStr,
+        endDate: newEndDateStr,
+        haircutsUsed: 0,
+        beardsUsed: 0,
+        serviceUsages: {},
+        lastRenewalDate: todayStr,
         updatedAt: serverTimestamp()
       });
 

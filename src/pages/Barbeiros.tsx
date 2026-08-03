@@ -168,7 +168,7 @@ export function Barbeiros() {
               })
             });
             const resData = await response.json();
-            if (!response.ok) {
+            if (!response.ok || resData.success === false) {
               throw new Error(resData.error || "Erro ao atualizar os dados de autenticação no servidor.");
             }
             if (passwordChanged) {
@@ -860,7 +860,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
           body: JSON.stringify({ email: email.trim() })
         });
         const resData = await response.json();
-        if (!response.ok) {
+        if (!response.ok || resData.success === false) {
           throw new Error(resData.error || "Erro ao gerar link no servidor.");
         }
         

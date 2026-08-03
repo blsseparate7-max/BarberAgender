@@ -173,6 +173,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [assignActivationType, setAssignActivationType] = useState<'manual' | 'asaas'>('manual');
 
   const [planShowInPortal, setPlanShowInPortal] = useState(true);
+
+  // States for viewing subscriber details & updating dates
+  const [selectedSubDetail, setSelectedSubDetail] = useState<Subscription | null>(null);
+  const [subUsages, setSubUsages] = useState<any[]>([]);
+  const [loadingSubUsages, setLoadingSubUsages] = useState(false);
+  const [newSubStartDate, setNewSubStartDate] = useState('');
+  const [newSubEndDate, setNewSubEndDate] = useState('');
+  const [isSavingSubDates, setIsSavingSubDates] = useState(false);
   const [planComissaoTipo, setPlanComissaoTipo] = useState<'fixo' | 'pool_atendimentos' | 'pool_pontos'>('fixo');
   const [planComissaoPoolPorcentagem, setPlanComissaoPoolPorcentagem] = useState(50);
   const [planComissaoFixaValor, setPlanComissaoFixaValor] = useState(10.00);
@@ -195,15 +203,19 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const service = services.find(s => s.id === selectedPlanServiceId);
     if (!service) return;
 
+    const defaultPoints = service.nome.toLowerCase().includes('sobrancelha') ? 0.5 : 1;
+
     setPlanServices([
       ...planServices,
       {
         serviceId: service.id,
         name: service.nome,
         limit: 4,
-        isUnlimited: false
+        isUnlimited: false,
+        points: defaultPoints
       }
     ]);
+    setPlanPontosServicos(prev => ({ ...prev, [service.id]: defaultPoints }));
     setSelectedPlanServiceId('');
   };
 
@@ -234,6 +246,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [loadingUsages, setLoadingUsages] = useState(false);
   const [postingCommissions, setPostingCommissions] = useState(false);
   const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
+  const [historyBarberFilter, setHistoryBarberFilter] = useState<string>('all');
 
   const handleAddDiscount = () => {
     if (!discountItemId) {
@@ -293,7 +306,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     try {
       const [usages, b, runsSnap] = await Promise.all([
         subscriptionService.getAllUsageHistory(),
-        userService.getUsersByRole('barbeiro'),
+        userService.getAllBarbers(),
         getDocs(collection(db, 'subscription_commission_runs'))
       ]);
       setAllUsages(usages);
@@ -344,7 +357,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         subscriptionService.getSubscriptions(profile?.tipo === 'cliente' ? user?.uid : undefined),
         canManage ? userService.getAllClients() : Promise.resolve([]),
         canManage ? subscriptionService.getAllUsageHistory() : Promise.resolve([]),
-        canManage ? userService.getUsersByRole('barbeiro') : Promise.resolve([]),
+        canManage ? userService.getAllBarbers() : Promise.resolve([]),
         canManage ? getDocs(collection(db, 'subscription_commission_runs')) : Promise.resolve({ forEach: () => {} } as any)
       ]);
       setPlans(p);
@@ -422,6 +435,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setPlanPontosServicos((editingPlan as any).pontos_servicos || {});
         
         let initialServices = editingPlan.services || [];
+        const ptsMap = (editingPlan as any).pontos_servicos || {};
         if (initialServices.length === 0) {
           const loadedServices: any[] = [];
           if (editingPlan.haircutsPerMonth && editingPlan.haircutsPerMonth > 0) {
@@ -431,7 +445,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 serviceId: corteService.id,
                 name: corteService.nome,
                 limit: editingPlan.haircutsPerMonth,
-                isUnlimited: editingPlan.haircutsPerMonth >= 999
+                isUnlimited: editingPlan.haircutsPerMonth >= 999,
+                points: ptsMap[corteService.id] !== undefined ? ptsMap[corteService.id] : 1
               });
             }
           }
@@ -442,11 +457,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 serviceId: barbaService.id,
                 name: barbaService.nome,
                 limit: editingPlan.beardsPerMonth,
-                isUnlimited: editingPlan.beardsPerMonth >= 999
+                isUnlimited: editingPlan.beardsPerMonth >= 999,
+                points: ptsMap[barbaService.id] !== undefined ? ptsMap[barbaService.id] : 1
               });
             }
           }
           initialServices = loadedServices;
+        } else {
+          initialServices = initialServices.map((ps: any) => ({
+            ...ps,
+            points: ps.points !== undefined ? ps.points : (ptsMap[ps.serviceId] !== undefined ? ptsMap[ps.serviceId] : (ps.name?.toLowerCase().includes('sobrancelha') ? 0.5 : 1))
+          }));
         }
         setPlanServices(initialServices);
 
@@ -495,18 +516,64 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       setSelectedPlan(null);
       loadData();
     } else {
-      await subscriptionService.createSubscription({
+      setComandaInitialData({
         cliente_id: client.uid,
         cliente_name: client.nome,
-        plano_id: selectedPlan.id,
-        autoRenew
+        origin: 'balcao' as const,
+        items: [
+          {
+            id: `assinatura-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            type: 'assinatura' as const,
+            referencia_id: selectedPlan.id,
+            name: `Assinatura: ${selectedPlan.name}`,
+            quantity: 1,
+            unitPrice: selectedPlan.price,
+            totalPrice: selectedPlan.price,
+            isCortesia: false,
+            generateCommission: true,
+            metadata: {
+              autoRenew
+            }
+          }
+        ]
       });
-      toast.success(`Assinatura ativa vinculada com sucesso para ${client.nome}!`);
       setShowAssignModal(false);
       setSelectedPlan(null);
-      loadData();
+      setShowComandaModal(true);
     }
   });
+
+  const handleViewSubDetail = async (sub: Subscription) => {
+    setSelectedSubDetail(sub);
+    setNewSubStartDate(sub.startDate);
+    setNewSubEndDate(sub.endDate);
+    setLoadingSubUsages(true);
+    try {
+      const history = await subscriptionService.getUsageHistory(sub.id);
+      setSubUsages(history);
+    } catch (err) {
+      console.error("Erro ao carregar histórico de uso da assinatura:", err);
+      toast.error("Não foi possível carregar o histórico de atendimentos.");
+    } finally {
+      setLoadingSubUsages(false);
+    }
+  };
+
+  const handleSaveSubDates = async () => {
+    if (!selectedSubDetail) return;
+    setIsSavingSubDates(true);
+    try {
+      await subscriptionService.updateSubscriptionDates(selectedSubDetail.id, newSubStartDate, newSubEndDate);
+      toast.success("Datas da assinatura atualizadas com sucesso!");
+      await loadData();
+      setSelectedSubDetail(prev => prev ? { ...prev, startDate: newSubStartDate, endDate: newSubEndDate } : null);
+    } catch (err) {
+      console.error("Erro ao atualizar datas da assinatura:", err);
+      toast.error("Erro ao salvar novas datas da assinatura.");
+    } finally {
+      setIsSavingSubDates(false);
+    }
+  };
 
   // Action to confirm Asaas payment (simulate webhook)
   const handleConfirmAsaasPayment = async (subId: string) => {
@@ -544,14 +611,37 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
   // Action to manually renew subscription
   const handleManualRenewSubscription = async (subId: string) => {
-    try {
-      const newEndDate = await subscriptionService.renewSubscription(subId);
-      toast.success(`Assinatura renovada com sucesso! Nova vigência até: ${format(parseISO(newEndDate), 'dd/MM/yyyy')}`);
-      loadData();
-    } catch (error: any) {
-      console.error("Erro ao renovar assinatura:", error);
-      toast.error(error.message || "Não foi possível renovar a assinatura.");
+    const sub = subscriptions.find(s => s.id === subId);
+    if (!sub) {
+      toast.error("Assinatura não encontrada.");
+      return;
     }
+    const plan = plans.find(p => p.id === sub.plano_id);
+    const planPrice = plan?.price || 0;
+
+    setComandaInitialData({
+      cliente_id: sub.cliente_id,
+      cliente_name: sub.cliente_name,
+      origin: 'balcao' as const,
+      items: [
+        {
+          id: `assinatura-renovacao-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          type: 'assinatura' as const,
+          referencia_id: sub.plano_id,
+          name: `Renovação de Assinatura: ${sub.planName || plan?.name || 'Plano'}`,
+          quantity: 1,
+          unitPrice: planPrice,
+          totalPrice: planPrice,
+          isCortesia: false,
+          generateCommission: true,
+          metadata: {
+            subscriptionId: sub.id,
+            isRenewal: true
+          }
+        }
+      ]
+    });
+    setShowComandaModal(true);
   };
 
   // Action to toggle autoRenew
@@ -610,6 +700,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const haircutsPerMonth = corteItem ? (corteItem.isUnlimited ? 999 : corteItem.limit) : 0;
     const beardsPerMonth = barbaItem ? (barbaItem.isUnlimited ? 999 : barbaItem.limit) : 0;
 
+    const pontosServicosObj: Record<string, number> = { ...planPontosServicos };
+    planServices.forEach(ps => {
+      if (ps.points !== undefined) {
+        pontosServicosObj[ps.serviceId] = ps.points;
+      }
+    });
+
     const planData = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
@@ -626,7 +723,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       pontos_corte: planPontosCorte,
       pontos_barba: planPontosBarba,
       pontos_outros: planPontosOutros,
-      pontos_servicos: planPontosServicos,
+      pontos_servicos: pontosServicosObj,
       discounts: planDiscounts,
     };
 
@@ -711,6 +808,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
   // Multi-cycle individual subscription calculation grouped into barber pot total
   const calculatedCommissionsData = React.useMemo(() => {
+    const currentRunKeyLocal = commDateMode === 'month' ? selectedMonth : `${commStartDate}_${commEndDate}`;
+    const isMonthReleasedLocal = !!releasedRuns[currentRunKeyLocal];
+
     const allPots = barbeiros.map(barber => {
       let totalReleasedCommission = 0;
       let totalInProgressCommission = 0;
@@ -745,21 +845,47 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         const plan = plans.find(p => p.id === sub.plano_id);
         if (!plan) return;
 
+        // Is cycle closed (endDate <= today or expired/canceled)?
+        const isCycleReleased = sub.endDate <= todayStr || sub.status === 'expired' || sub.status === 'canceled';
+
+        // Check if this subscription cycle is relevant to the selected period
+        let isRelevant = false;
+        if (commDateMode === 'month') {
+          if (isCycleReleased) {
+            // For released cycles, we account for them in the month of their endDate
+            isRelevant = !!(sub.endDate && sub.endDate.startsWith(selectedMonth));
+          } else {
+            // For in-progress cycles, we show them if they are active/overlapping in that month
+            isRelevant = isSubActiveInMonth(sub, selectedMonth);
+          }
+        } else {
+          // Range mode
+          if (isCycleReleased) {
+            isRelevant = sub.endDate >= commStartDate && sub.endDate <= commEndDate;
+          } else {
+            const start = sub.startDate;
+            const end = sub.endDate || sub.startDate;
+            isRelevant = start <= commEndDate && end >= commStartDate;
+          }
+        }
+
+        if (!isRelevant) return;
+
         const planPrice = plan.price || 0;
         const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
         const subPoolValue = planPrice * (poolPct / 100);
         const comissaoTipo = (plan as any).comissao_tipo || 'fixo';
 
-        const subUsages = filteredUsages.filter(u => 
+        // Fetch ALL usages within the entire cycle duration of this subscription (unfiltered by selectedMonth!)
+        const subUsages = allUsages.filter(u => 
           u.plano_id === plan.id && 
-          (u.sub_id === sub.id || u.cliente_id === sub.cliente_id || u.cliente_name === sub.cliente_name)
+          (u.assinatura_id === sub.id || u.sub_id === sub.id || u.cliente_id === sub.cliente_id || u.cliente_name === sub.cliente_name) &&
+          u.date >= sub.startDate &&
+          u.date <= sub.endDate
         );
         const barberSubUsages = subUsages.filter(u => u.profissional_id === barber.uid);
 
         if (subUsages.length === 0 && barberSubUsages.length === 0) return;
-
-        // Is cycle closed (endDate <= today or expired/canceled)?
-        const isCycleReleased = sub.endDate <= todayStr || sub.status === 'expired' || sub.status === 'canceled';
 
         let earnedCommission = 0;
 
@@ -796,7 +922,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
         if (earnedCommission > 0 || barberSubUsages.length > 0) {
           if (isCycleReleased) {
-            totalReleasedCommission += earnedCommission;
+            totalReleasedCommission += isMonthReleasedLocal ? 0 : earnedCommission;
           } else {
             totalInProgressCommission += earnedCommission;
           }
@@ -854,15 +980,25 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       allPots,
       barberPots: filteredBarberPots
     };
-  }, [barbeiros, subscriptions, plans, filteredUsages, todayStr, commBarberFilter, commCycleFilter]);
+  }, [barbeiros, subscriptions, plans, filteredUsages, todayStr, commBarberFilter, commCycleFilter, releasedRuns, commDateMode, selectedMonth, commStartDate, commEndDate]);
 
   const totalReleasedCommissionsPool = React.useMemo(() => {
+    const currentRunKeyLocal = commDateMode === 'month' ? selectedMonth : `${commStartDate}_${commEndDate}`;
+    const isMonthReleasedLocal = !!releasedRuns[currentRunKeyLocal];
+    if (isMonthReleasedLocal) return 0;
     return calculatedCommissionsData.allPots.reduce((acc, b) => acc + b.totalReleasedCommission, 0);
-  }, [calculatedCommissionsData]);
+  }, [calculatedCommissionsData, releasedRuns, commDateMode, selectedMonth, commStartDate, commEndDate]);
 
   const totalInProgressCommissionsPool = React.useMemo(() => {
-    return calculatedCommissionsData.allPots.reduce((acc, b) => acc + b.totalInProgressCommission, 0);
-  }, [calculatedCommissionsData]);
+    return activeSubsForSelectedMonth.reduce((acc, s) => {
+      const isCycleReleased = s.endDate <= todayStr || s.status === 'expired' || s.status === 'canceled';
+      if (isCycleReleased) return acc;
+      const plan = plans.find(p => p.id === s.plano_id);
+      if (!plan) return acc;
+      const poolPct = (plan as any).comissao_pool_porcentagem ?? 50;
+      return acc + (plan.price * (poolPct / 100));
+    }, 0);
+  }, [activeSubsForSelectedMonth, plans, todayStr]);
 
   const calculatedCommissions = React.useMemo(() => {
     return calculatedCommissionsData.allPots.map(p => ({
@@ -1023,12 +1159,22 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
       await Promise.all(promises);
 
+      const barbersBreakdown = calculatedCommissionsData.allPots
+        .filter(b => b.totalReleasedCommission > 0)
+        .map(b => ({
+          profissional_id: b.uid,
+          profissional_name: b.nome,
+          commission_value: Number(b.totalReleasedCommission.toFixed(2)),
+          totalServices: b.totalServices
+        }));
+
       await setDoc(doc(db, 'subscription_commission_runs', currentRunKey), {
         releasedAt: new Date().toISOString(),
         releasedBy: profile?.nome || 'Administrador',
         totalAmount: Number(totalCommissionsToRelease.toFixed(2)),
         period: currentRunKey,
-        periodLabel
+        periodLabel,
+        barbersBreakdown
       });
 
       toast.success(`Pote de comissões liberadas (${periodLabel}) lançado com sucesso no financeiro!`);
@@ -1331,6 +1477,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               onStatusChange={handleUpdateSubscriptionStatus}
                               onDelete={(id) => setDeleteSubId(id)}
                               onConfirmAsaasPayment={handleConfirmAsaasPayment}
+                              onViewDetail={handleViewSubDetail}
                             />
                           );
                         })}
@@ -1352,6 +1499,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       onStatusChange={handleUpdateSubscriptionStatus}
                       onDelete={(id) => setDeleteSubId(id)}
                       onConfirmAsaasPayment={handleConfirmAsaasPayment}
+                      onViewDetail={handleViewSubDetail}
                       isClient={false}
                     />
                   ))}
@@ -1834,6 +1982,127 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               </div>
             )}
           </div>
+
+          {/* Histórico de Repasses de Potes Lançados */}
+          <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden animate-fade-in mt-6" id="comission_history_panel">
+            <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="space-y-1">
+                <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                  <History size={14} className="text-indigo-600" />
+                  <span>Histórico de Repasses de Potes Lançados</span>
+                </h5>
+                <p className="text-slate-500 text-[11px] font-semibold">
+                  Relatório gerencial de comissões pagas de assinaturas, detalhado profissional por profissional
+                </p>
+              </div>
+
+              {/* Select Professional Filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Filtrar Profissional:</span>
+                <select
+                  value={historyBarberFilter}
+                  onChange={(e) => setHistoryBarberFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 outline-none rounded-xl py-2 px-3 text-xs font-bold text-slate-700 cursor-pointer shadow-sm focus:border-indigo-500 focus:bg-white transition"
+                  id="history_barber_filter"
+                >
+                  <option value="all">Todos os Profissionais</option>
+                  {barbeiros.map(b => (
+                    <option key={b.uid} value={b.uid}>{b.nome || b.displayName || 'Barbeiro'}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {Object.keys(releasedRuns).length === 0 ? (
+              <div className="p-12 text-center space-y-2">
+                <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 mx-auto border border-slate-100 shadow-sm">
+                  <History size={20} />
+                </div>
+                <p className="text-slate-500 font-bold text-sm">Nenhum pote de comissões de assinatura lançado ainda.</p>
+                <p className="text-slate-400 text-xs">Os lançamentos efetuados no financeiro aparecerão aqui para acompanhamento histórico.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse border-spacing-0">
+                  <thead>
+                    <tr className="bg-slate-50 text-[9px] font-black text-slate-450 uppercase tracking-widest border-b font-mono">
+                      <th className="p-4 text-slate-450 font-black">Período / Referência</th>
+                      <th className="p-4 text-slate-450 font-black">Data do Lançamento</th>
+                      <th className="p-4 text-slate-450 font-black">Autorizado por</th>
+                      <th className="p-4 text-right text-slate-450 font-black">Valor Total do Pote</th>
+                      <th className="p-4 text-right text-slate-450 font-black">Comissão do Profissional</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-[11px] font-semibold text-slate-600">
+                    {Object.values(releasedRuns)
+                      .sort((a: any, b: any) => {
+                        return b.period.localeCompare(a.period);
+                      })
+                      .map((run: any) => {
+                        let barberCommValue = 0;
+                        let foundBarber = false;
+
+                        if (run.barbersBreakdown && Array.isArray(run.barbersBreakdown)) {
+                          const matching = run.barbersBreakdown.find((item: any) => item.profissional_id === historyBarberFilter);
+                          if (matching) {
+                            barberCommValue = matching.commission_value;
+                            foundBarber = true;
+                          }
+                        }
+
+                        if (historyBarberFilter !== 'all' && !foundBarber) {
+                          return null;
+                        }
+
+                        return (
+                          <tr key={run.period} className="hover:bg-slate-50/50 transition duration-150">
+                            <td className="p-4 whitespace-nowrap">
+                              <span className="font-black text-slate-800 uppercase bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] tracking-wider">
+                                {run.periodLabel || run.period}
+                              </span>
+                            </td>
+                            <td className="p-4 whitespace-nowrap text-slate-500 font-medium">
+                              {run.releasedAt ? format(parseISO(run.releasedAt), 'dd/MM/yyyy HH:mm') : 'N/A'}
+                            </td>
+                            <td className="p-4 whitespace-nowrap text-slate-500 font-medium">
+                              {run.releasedBy || 'Administrador'}
+                            </td>
+                            <td className="p-4 text-right font-black text-slate-900 whitespace-nowrap">
+                              R$ {run.totalAmount?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
+                            </td>
+                            <td className="p-4 text-right whitespace-nowrap">
+                              {historyBarberFilter === 'all' ? (
+                                <div className="flex flex-col items-end gap-1">
+                                  {run.barbersBreakdown && Array.isArray(run.barbersBreakdown) && run.barbersBreakdown.length > 0 ? (
+                                    <div className="flex flex-wrap justify-end gap-1 max-w-[300px]">
+                                      {run.barbersBreakdown.map((item: any) => (
+                                        <span 
+                                          key={item.profissional_id} 
+                                          className="bg-indigo-50 border border-indigo-100/60 text-indigo-700 text-[9px] font-bold px-2 py-0.5 rounded-md uppercase"
+                                          title={item.profissional_name}
+                                        >
+                                          {item.profissional_name?.split(' ')[0]}: <strong className="font-black">R$ {item.commission_value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-400 italic text-[10px]">Detalhamento indisponível</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-emerald-700 font-black text-xs bg-emerald-50 border border-emerald-150 px-2.5 py-1 rounded-lg">
+                                  R$ {barberCommValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -2227,6 +2496,237 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         />
       )}
 
+      {/* MODAL: DETALHES DA ASSINATURA & HISTÓRICO DE ATENDIMENTOS */}
+      <AnimatePresence>
+        {selectedSubDetail && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white border border-slate-200 rounded-[2rem] w-full max-w-3xl overflow-hidden shadow-2xl my-8 text-primary outline-none flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
+                <div>
+                  <h2 className="text-xl font-black text-slate-800">
+                    Detalhes do Assinante
+                  </h2>
+                  <p className="text-muted text-xs font-bold uppercase tracking-widest mt-1">
+                    Histórico de atendimentos e ajuste de vencimento
+                  </p>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setSelectedSubDetail(null);
+                    setSubUsages([]);
+                  }} 
+                  className="p-2 text-slate-400 hover:text-primary transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-8 overflow-y-auto">
+                {/* Subscriber Profile & Subscription Summary */}
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center overflow-hidden shrink-0 shadow-md">
+                      {(() => {
+                        const matched = clients.find(c => c.uid === selectedSubDetail.cliente_id);
+                        return (matched as any)?.foto || (matched as any)?.photoURL ? (
+                          <img 
+                            src={(matched as any)?.foto || (matched as any)?.photoURL} 
+                            alt={selectedSubDetail.cliente_name} 
+                            className="w-full h-full object-cover" 
+                            referrerPolicy="no-referrer" 
+                          />
+                        ) : (
+                          <Users size={24} className="text-slate-400" />
+                        );
+                      })()}
+                    </div>
+                    <div>
+                      <h3 className="font-black text-slate-800 text-lg leading-tight">{selectedSubDetail.cliente_name}</h3>
+                      <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                        <span className="text-[10px] font-black text-accent uppercase tracking-widest">{selectedSubDetail.planName}</span>
+                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border ${
+                          selectedSubDetail.status === 'active' 
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                            : 'bg-red-50 text-red-700 border-red-200'
+                        }`}>
+                          {selectedSubDetail.status === 'active' ? 'Ativa' : selectedSubDetail.status}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="w-full md:w-auto flex flex-row md:flex-col justify-between md:items-end gap-1.5 pt-4 md:pt-0 border-t md:border-t-0 border-slate-200/50">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Mensalidade</span>
+                    <span className="text-xl font-black text-emerald-600 block">
+                      R$ {(plans.find(p => p.id === selectedSubDetail.plano_id)?.price || 0).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Main Content Layout Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                  
+                  {/* Left Column: Manage Dates & Plan Info */}
+                  <div className="lg:col-span-5 space-y-6">
+                    {/* Alterar Data de Vencimento Form */}
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-sm">
+                      <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                        <Calendar size={16} className="text-accent" />
+                        <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider">Ajustar Datas do Ciclo</h4>
+                      </div>
+
+                      <div className="space-y-3.5">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Data de Início</label>
+                          <input 
+                            type="date" 
+                            value={newSubStartDate}
+                            onChange={(e) => setNewSubStartDate(e.target.value)}
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-accent focus:bg-white transition-all"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Data de Vencimento</label>
+                          <input 
+                            type="date" 
+                            value={newSubEndDate}
+                            onChange={(e) => setNewSubEndDate(e.target.value)}
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-accent focus:bg-white transition-all"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleSaveSubDates}
+                          disabled={isSavingSubDates || (newSubStartDate === selectedSubDetail.startDate && newSubEndDate === selectedSubDetail.endDate)}
+                          className="w-full py-3 bg-accent hover:bg-accent-hover disabled:bg-slate-100 disabled:text-slate-400 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          {isSavingSubDates ? (
+                            <>
+                              <Loader2 size={14} className="animate-spin" />
+                              <span>Salvando...</span>
+                            </>
+                          ) : (
+                            <span>Salvar Novas Datas</span>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Subscription Rules summary */}
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-3">
+                      <h4 className="font-bold text-slate-700 text-[10px] uppercase tracking-wider font-black">Informações de Renovação</h4>
+                      <div className="text-[11px] font-medium text-slate-500 leading-relaxed space-y-2">
+                        <div className="flex justify-between">
+                          <span>Renovação:</span>
+                          <strong className="text-slate-700 font-extrabold">{selectedSubDetail.autoRenew ? 'Automática' : 'Manual'}</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Assinatura desde:</span>
+                          <strong className="text-slate-700 font-extrabold">
+                            {selectedSubDetail.startDate ? format(parseISO(selectedSubDetail.startDate), 'dd/MM/yyyy') : '-'}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Vencimento atual:</span>
+                          <strong className="text-slate-700 font-extrabold">
+                            {selectedSubDetail.endDate ? format(parseISO(selectedSubDetail.endDate), 'dd/MM/yyyy') : '-'}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Right Column: History of Usages */}
+                  <div className="lg:col-span-7 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <History size={16} className="text-accent" />
+                        <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider">Histórico de Atendimentos no Ciclo</h4>
+                      </div>
+                      <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-150 font-black px-2 py-0.5 rounded-lg uppercase tracking-wider">
+                        {subUsages.length} {subUsages.length === 1 ? 'Uso' : 'Usos'}
+                      </span>
+                    </div>
+
+                    {loadingSubUsages ? (
+                      <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-2">
+                        <Loader2 size={24} className="animate-spin text-accent" />
+                        <span className="text-xs font-bold text-slate-500">Buscando atendimentos...</span>
+                      </div>
+                    ) : subUsages.length === 0 ? (
+                      <div className="bg-slate-50 border-2 border-dashed border-slate-100 rounded-2xl p-10 text-center">
+                        <AlertCircle size={28} className="text-slate-300 mx-auto mb-2.5" />
+                        <p className="text-xs font-extrabold text-slate-600 mb-0.5">Nenhum atendimento realizado</p>
+                        <p className="text-[11px] text-slate-400 font-medium">Este assinante ainda não utilizou os benefícios neste ciclo.</p>
+                      </div>
+                    ) : (
+                      <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm bg-white">
+                        <div className="overflow-x-auto max-h-[280px]">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-slate-200 text-[9px] font-black text-slate-500 uppercase tracking-wider">
+                                <th className="p-3 pl-4">Serviço</th>
+                                <th className="p-3">Data</th>
+                                <th className="p-3">Profissional</th>
+                                <th className="p-3 pr-4 text-right">Valor</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 text-[11px] font-medium text-slate-600">
+                              {subUsages.map((usage) => (
+                                <tr key={usage.id} className="hover:bg-slate-50/50 transition">
+                                  <td className="p-3 pl-4 font-extrabold text-slate-800">
+                                    {usage.service_name || (usage.type === 'haircut' ? 'Corte de Cabelo' : 'Barba')}
+                                  </td>
+                                  <td className="p-3">
+                                    {usage.date ? format(parseISO(usage.date), 'dd/MM/yyyy') : '-'}
+                                  </td>
+                                  <td className="p-3 font-semibold text-slate-700 font-bold">
+                                    {usage.profissional_name || '-'}
+                                  </td>
+                                  <td className="p-3 pr-4 text-right font-extrabold text-emerald-600">
+                                    {usage.valor_servico ? `R$ ${usage.valor_servico.toFixed(2)}` : 'Incluso'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedSubDetail(null);
+                    setSubUsages([]);
+                  }}
+                  className="px-6 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-widest transition-all cursor-pointer"
+                >
+                  Fechar Detalhes
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* MODAL: CADASTRO / EDIÇÃO DE PLANO */}
       <AnimatePresence>
         {showPlanModal && (
@@ -2335,6 +2835,23 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                                     <span className="text-[9px] font-semibold text-slate-400">/mês</span>
                                   </div>
                                 )}
+
+                                <div className="flex items-center gap-1" title="Pontos / Peso do serviço (ex: 1 ou 0.5)">
+                                  <input
+                                    type="text"
+                                    placeholder="1"
+                                    value={ps.points !== undefined ? ps.points : 1}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(',', '.');
+                                      const num = val === '' ? 1 : Number(val);
+                                      const finalNum = isNaN(num) ? 1 : num;
+                                      handleUpdatePlanService(ps.serviceId, { points: finalNum });
+                                      setPlanPontosServicos(prev => ({ ...prev, [ps.serviceId]: finalNum }));
+                                    }}
+                                    className="w-14 bg-slate-50 border border-slate-150 rounded-lg py-1 px-1.5 text-xs text-center font-bold text-primary outline-none"
+                                  />
+                                  <span className="text-[9px] font-semibold text-slate-400">pts</span>
+                                </div>
 
                                 <button
                                   type="button"
@@ -2712,13 +3229,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 <div>
                   <span className="text-[9px] font-black uppercase text-slate-400 block tracking-wider">Total do Pote</span>
                   <span className="text-lg font-black text-slate-900">
-                    R$ {selectedBarberDetailModal.totalPot.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(isMonthReleased ? selectedBarberDetailModal.totalInProgressCommission : selectedBarberDetailModal.totalPot).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div>
                   <span className="text-[9px] font-black uppercase text-emerald-600 block tracking-wider">Pote Liberado</span>
                   <span className="text-lg font-black text-emerald-700">
-                    R$ {selectedBarberDetailModal.totalReleasedCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(isMonthReleased ? 0 : selectedBarberDetailModal.totalReleasedCommission).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div>
@@ -2767,7 +3284,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               {item.isCycleReleased ? (
                                 <span className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1">
                                   <CheckCircle size={10} />
-                                  <span>Liberado</span>
+                                  <span>{isMonthReleased ? 'Lançado' : 'Liberado'}</span>
                                 </span>
                               ) : (
                                 <span className="bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1">
@@ -2945,6 +3462,7 @@ interface SubscriptionCardProps {
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
   onConfirmAsaasPayment?: (id: string) => void;
+  onViewDetail?: (sub: Subscription) => void;
   isClient?: boolean;
 }
 
@@ -2958,6 +3476,7 @@ function SubscriptionCard({
   onStatusChange, 
   onDelete,
   onConfirmAsaasPayment,
+  onViewDetail,
   isClient 
 }: SubscriptionCardProps) {
   if (!plan) return null;
@@ -2978,8 +3497,15 @@ function SubscriptionCard({
             <div className="w-12 h-12 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center shadow-sm">
               <ShieldCheck className="text-accent" size={24} />
             </div>
-            <div>
-              <h4 className="font-bold text-primary group-hover:text-accent transition-colors font-black">{sub.cliente_name}</h4>
+            <div 
+              className="cursor-pointer group/clientName select-none"
+              onClick={() => onViewDetail?.(sub)}
+              title="Clique para ver detalhes e atendimentos"
+            >
+              <h4 className="font-bold text-primary hover:text-accent transition-colors font-black flex items-center gap-1.5">
+                {sub.cliente_name}
+                <Eye size={12} className="text-slate-400 opacity-0 group-hover/clientName:opacity-100 transition-opacity" />
+              </h4>
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 <span className="text-[10px] font-bold text-muted uppercase tracking-widest font-black">{plan.name}</span>
                 <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-lg border ${statusColors[sub.status]} font-black`}>
@@ -3065,6 +3591,16 @@ function SubscriptionCard({
 
       {(isAdmin || isClient) && (
         <div className="pt-4 border-t border-slate-100 flex flex-wrap gap-2 justify-end mt-4">
+          <button
+            type="button"
+            onClick={() => onViewDetail?.(sub)}
+            className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-150 transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
+            title="Ver histórico de uso, atendimentos e gerenciar datas"
+          >
+            <Eye size={11} />
+            <span>Detalhes</span>
+          </button>
+
           {isAdmin && (
             <button
               type="button"
@@ -3179,6 +3715,7 @@ interface SubscriptionTableRowProps {
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
   onConfirmAsaasPayment?: (id: string) => void;
+  onViewDetail?: (sub: Subscription) => void;
 }
 
 function SubscriptionTableRow({
@@ -3192,7 +3729,8 @@ function SubscriptionTableRow({
   onToggleAutoRenew,
   onStatusChange,
   onDelete,
-  onConfirmAsaasPayment
+  onConfirmAsaasPayment,
+  onViewDetail
 }: SubscriptionTableRowProps) {
   if (!plan) return null;
 
@@ -3239,8 +3777,12 @@ function SubscriptionTableRow({
     <tr className="hover:bg-slate-50/70 transition border-b border-slate-100">
       {/* Assinante / Cliente */}
       <td className="p-4 pl-6">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
+        <div 
+          className="flex items-center gap-3 cursor-pointer group/client select-none"
+          onClick={() => onViewDetail?.(sub)}
+          title="Clique para ver detalhes e atendimentos"
+        >
+          <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 shadow-sm group-hover/client:border-accent transition-colors">
             {(matchedClient as any)?.foto || (matchedClient as any)?.photoURL ? (
               <img src={(matchedClient as any)?.foto || (matchedClient as any)?.photoURL} alt={sub.cliente_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             ) : (
@@ -3248,7 +3790,10 @@ function SubscriptionTableRow({
             )}
           </div>
           <div className="min-w-0">
-            <span className="font-extrabold text-slate-800 text-xs block truncate">{sub.cliente_name}</span>
+            <span className="font-extrabold text-slate-800 text-xs block truncate group-hover/client:text-accent transition-colors flex items-center gap-1">
+              {sub.cliente_name}
+              <Eye size={11} className="text-slate-400 opacity-0 group-hover/client:opacity-100 transition-opacity" />
+            </span>
             {clientPhone ? (
               <span className="text-[10px] text-slate-400 font-medium block truncate">{clientPhone}</span>
             ) : (
@@ -3346,6 +3891,16 @@ function SubscriptionTableRow({
       {/* Ações Rápidas */}
       <td className="p-4 pr-6 text-right">
         <div className="flex items-center justify-end gap-1">
+          {/* Ver Detalhes */}
+          <button
+            type="button"
+            onClick={() => onViewDetail?.(sub)}
+            className="p-2 bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+            title="Ver histórico de uso, atendimentos e gerenciar datas"
+          >
+            <Eye size={14} />
+          </button>
+
           {/* WhatsApp Link */}
           {whatsappUrl ? (
             <a

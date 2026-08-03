@@ -31,6 +31,7 @@ import {
   Send,
   Trash2,
   Sparkles,
+  Percent,
   Upload,
   Crop,
   HelpCircle as QuestionIcon
@@ -46,6 +47,7 @@ import { resetService } from '../services/resetService';
 import { loyaltyService } from '../services/loyaltyService';
 import { saasGatewayService, SaaSChargeResponse } from '../services/saasGatewayService';
 import { tenantService, SaaSPlan } from '../services/tenantService';
+import { permissionService, TenantPermissions, FunctionPermissions } from '../services/permissionService';
 import { toast } from 'sonner';
 
 export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
@@ -235,6 +237,57 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [userSearchTerm, setUserSearchTerm] = useState('');
 
+  // Permissions state
+  const [securitySubTab, setSecuritySubTab] = useState<'members' | 'permissions'>('members');
+  const [tenantPermissions, setTenantPermissions] = useState<TenantPermissions | null>(null);
+  const [loadingPermissions, setLoadingPermissions] = useState(false);
+  const [savingPermissions, setSavingPermissions] = useState(false);
+
+  const fetchPermissions = async () => {
+    setLoadingPermissions(true);
+    try {
+      const perms = await permissionService.getPermissions();
+      setTenantPermissions(perms);
+    } catch (err) {
+      console.error("Erro ao carregar permissões:", err);
+      toast.error("Erro ao carregar permissões por cargo.");
+    } finally {
+      setLoadingPermissions(false);
+    }
+  };
+
+  const handleTogglePermission = (role: 'gerente' | 'barbeiro', key: keyof FunctionPermissions) => {
+    if (!tenantPermissions) return;
+    setTenantPermissions(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        [role]: {
+          ...prev[role],
+          [key]: !prev[role][key]
+        }
+      };
+    });
+  };
+
+  const handleSavePermissions = async () => {
+    if (!tenantPermissions) return;
+    setSavingPermissions(true);
+    try {
+      await permissionService.savePermissions({
+        tenantId: tenantPermissions.tenantId,
+        gerente: tenantPermissions.gerente,
+        barbeiro: tenantPermissions.barbeiro
+      });
+      toast.success("Permissões de cargos salvas com sucesso!");
+    } catch (err) {
+      console.error("Erro ao salvar permissões:", err);
+      toast.error("Erro ao salvar configurações de permissões.");
+    } finally {
+      setSavingPermissions(false);
+    }
+  };
+
   useEffect(() => {
     if (activeSubTab) {
       if (activeSubTab === 'configuracoes-parametros') setActiveSection('business');
@@ -256,6 +309,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   useEffect(() => {
     if (activeSection === 'security') {
       fetchUsers();
+      fetchPermissions();
     }
   }, [activeSection]);
 
@@ -1175,111 +1229,330 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             )}
 
             {/* Segurança e Acesso / Usuários do Sistema */}
-            {activeSection === 'security' && (
-              <div className="space-y-8">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-xl font-black text-primary tracking-tight">Usuários do Sistema</h3>
-                    <p className="text-xs text-muted font-semibold mt-1">Altere níveis de permissões, privilegios e controle de suspensão de contas.</p>
-                  </div>
-                  <button 
-                    onClick={fetchUsers}
-                    className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all active:scale-95"
-                  >
-                    <RefreshCw size={14} className={loadingUsers ? 'animate-spin' : ''} />
-                    Atualizar Base
-                  </button>
-                </div>
+            {activeSection === 'security' && (() => {
+              const PERMISSION_METADATA = [
+                {
+                  key: 'reopen_comanda' as keyof FunctionPermissions,
+                  title: 'Reabrir Comandas Finalizadas',
+                  description: 'Permite reabrir comandas fechadas para ajuste de serviços, produtos ou pagamentos.',
+                  icon: <RefreshCw size={16} className="text-amber-500" />
+                },
+                {
+                  key: 'apply_discount' as keyof FunctionPermissions,
+                  title: 'Aplicar Descontos em Vendas',
+                  description: 'Permite conceder descontos em serviços ou produtos durante o fechamento de comandas.',
+                  icon: <Percent size={16} className="text-emerald-500" />
+                },
+                {
+                  key: 'add_cortesia' as keyof FunctionPermissions,
+                  title: 'Lançar Serviços como Cortesia',
+                  description: 'Permite zerar o valor de itens, registrando-os como cortesia (100% de desconto).',
+                  icon: <Sparkles size={16} className="text-purple-500" />
+                },
+                {
+                  key: 'edit_price' as keyof FunctionPermissions,
+                  title: 'Alterar Preço Unitário de Itens',
+                  description: 'Permite editar manualmente o preço de serviços ou produtos diretamente na comanda.',
+                  icon: <Sliders size={16} className="text-indigo-500" />
+                },
+                {
+                  key: 'reset_payments' as keyof FunctionPermissions,
+                  title: 'Zerar Lançamentos de Pagamento',
+                  description: 'Permite remover pagamentos parciais já inseridos em comandas ainda não finalizadas.',
+                  icon: <Trash2 size={16} className="text-rose-500" />
+                },
+                {
+                  key: 'sell_subscription' as keyof FunctionPermissions,
+                  title: 'Vender Assinaturas & Clubes',
+                  description: 'Permite cadastrar e vender planos recorrentes de clubes de benefícios para os clientes.',
+                  icon: <CreditCard size={16} className="text-blue-500" />
+                },
+                {
+                  key: 'delete_subscription' as keyof FunctionPermissions,
+                  title: 'Cancelar Assinaturas de Clientes',
+                  description: 'Permite revogar benefícios, suspender ou excluir assinaturas ativas de clientes.',
+                  icon: <X size={16} className="text-rose-600" />
+                },
+                {
+                  key: 'view_financial' as keyof FunctionPermissions,
+                  title: 'Visualizar Painel e Relatórios Financeiros',
+                  description: 'Permite acessar gráficos, faturamento bruto, DRE e relatórios de fechamento contábil.',
+                  icon: <Settings size={16} className="text-slate-500" />
+                },
+                {
+                  key: 'manage_cash' as keyof FunctionPermissions,
+                  title: 'Controle e Movimentação de Caixa Diário',
+                  description: 'Permite abrir, fechar, reabrir caixas diários e realizar lançamentos de sangrias ou suprimentos.',
+                  icon: <Database size={16} className="text-sky-500" />
+                },
+                {
+                  key: 'edit_clients' as keyof FunctionPermissions,
+                  title: 'Cadastrar e Editar Clientes',
+                  description: 'Permite cadastrar novos clientes, gerenciar saldos de fiado e visualizar históricos.',
+                  icon: <Users size={16} className="text-teal-500" />
+                }
+              ];
 
-                <div className="relative">
-                  <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Filtrar profissionais ou clientes pelo nome ou e-mail..." 
-                    value={userSearchTerm}
-                    onChange={(e) => setUserSearchTerm(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 pl-12 pr-5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                  />
-                </div>
-
-                {loadingUsers ? (
-                  <div className="flex flex-col items-center justify-center py-16 gap-3">
-                    <Loader2 className="animate-spin text-accent" size={32} />
-                    <p className="text-[10px] text-muted font-black uppercase tracking-widest">Sincronizando banco de acessos...</p>
-                  </div>
-                ) : (
-                  <div className="border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50/75 border-b border-slate-100">
-                            <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest">Nome / Cadastro</th>
-                            <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest">Função / Cargo</th>
-                            <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest">Status de Acesso</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50">
-                          {filteredUsers.map((u, index) => {
-                            const userEmail = u.email || '—';
-                            const userName = u.nome || u.name || 'Identificado';
-                            const userRole = u.tipo || 'cliente';
-                            const isActive = u.ativo !== false;
-
-                            return (
-                              <tr key={`config-user-${u.uid || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-5">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-9 h-9 bg-primary/5 border border-primary/10 rounded-xl flex items-center justify-center font-bold text-xs text-primary uppercase shadow-sm">
-                                      {userName.substring(0, 2)}
-                                    </div>
-                                    <div>
-                                      <h5 className="font-bold text-xs text-primary">{userName}</h5>
-                                      <p className="text-[10px] text-slate-400 font-semibold">{userEmail}</p>
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="p-5">
-                                  <select 
-                                    value={userRole}
-                                    onChange={(e) => handleChangeUserRole(u.uid, e.target.value as any)}
-                                    className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-primary focus:outline-none focus:border-accent cursor-pointer"
-                                  >
-                                    <option value="admin">Administrador</option>
-                                    <option value="gerente">Gerente</option>
-                                    <option value="barbeiro">Barbeiro</option>
-                                  </select>
-                                </td>
-                                <td className="p-5">
-                                  <div className="flex items-center gap-4">
-                                    <button 
-                                      onClick={() => handleToggleUserActive(u.uid, isActive)}
-                                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${isActive ? 'bg-emerald-500' : 'bg-slate-200'}`}
-                                    >
-                                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${isActive ? 'translate-x-4' : 'translate-x-0'}`} />
-                                    </button>
-                                    <span className={`text-[9px] font-black uppercase tracking-wider ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>
-                                      {isActive ? 'Ativo' : 'Suspenso'}
-                                    </span>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          
-                          {filteredUsers.length === 0 && (
-                            <tr>
-                              <td colSpan={3} className="text-center py-12 text-slate-400 text-xs font-semibold">
-                                Nenhum usuário coincide com a busca.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+              return (
+                <div className="space-y-8">
+                  {/* Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-6">
+                    <div>
+                      <h3 className="text-xl font-black text-primary tracking-tight">Usuários e Permissões</h3>
+                      <p className="text-xs text-muted font-semibold mt-1">Gerencie a equipe de colaboradores e controle rigidamente os privilégios operacionais por cargo.</p>
                     </div>
                   </div>
-                )}
-              </div>
-            )}
+
+                  {/* Sub-tab Switcher */}
+                  <div className="flex bg-slate-100 p-1 rounded-2xl w-full sm:w-fit" id="security-subtabs-switcher">
+                    <button 
+                      type="button"
+                      id="security-subtab-members-btn"
+                      onClick={() => setSecuritySubTab('members')}
+                      className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-xs font-black transition-all ${
+                        securitySubTab === 'members' 
+                          ? 'bg-white text-primary shadow-sm' 
+                          : 'text-muted hover:text-primary'
+                      }`}
+                    >
+                      <Users size={14} />
+                      <span>Membros Ativos</span>
+                    </button>
+                    <button 
+                      type="button"
+                      id="security-subtab-permissions-btn"
+                      onClick={() => setSecuritySubTab('permissions')}
+                      className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-xs font-black transition-all ${
+                        securitySubTab === 'permissions' 
+                          ? 'bg-white text-primary shadow-sm' 
+                          : 'text-muted hover:text-primary'
+                      }`}
+                    >
+                      <Lock size={14} />
+                      <span>Controle por Cargo (Gerente / Barbeiro)</span>
+                    </button>
+                  </div>
+
+                  {/* SUB-TAB 1: MEMBERS */}
+                  {securitySubTab === 'members' && (
+                    <div className="space-y-6" id="security-members-tab-content">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="relative flex-1">
+                          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input 
+                            type="text" 
+                            placeholder="Filtrar profissionais ou clientes pelo nome ou e-mail..." 
+                            value={userSearchTerm}
+                            onChange={(e) => setUserSearchTerm(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 pl-12 pr-5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                          />
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={fetchUsers}
+                          className="flex items-center justify-center gap-2 px-5 py-4 border border-slate-200 text-slate-600 rounded-2xl text-xs font-bold hover:bg-slate-50 transition-all active:scale-95"
+                        >
+                          <RefreshCw size={14} className={loadingUsers ? 'animate-spin' : ''} />
+                          <span>Atualizar Lista</span>
+                        </button>
+                      </div>
+
+                      {loadingUsers ? (
+                        <div className="flex flex-col items-center justify-center py-16 gap-3">
+                          <Loader2 className="animate-spin text-accent" size={32} />
+                          <p className="text-[10px] text-muted font-black uppercase tracking-widest">Sincronizando banco de acessos...</p>
+                        </div>
+                      ) : (
+                        <div className="border border-slate-100 rounded-3xl overflow-hidden shadow-sm bg-white">
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                              <thead>
+                                <tr className="bg-slate-50/75 border-b border-slate-100">
+                                  <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest">Nome / Cadastro</th>
+                                  <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest">Função / Cargo</th>
+                                  <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest">Status de Acesso</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {filteredUsers.map((u, index) => {
+                                  const userEmail = u.email || '—';
+                                  const userName = u.nome || u.name || 'Identificado';
+                                  const userRole = u.tipo || 'cliente';
+                                  const isActive = u.ativo !== false;
+
+                                  return (
+                                    <tr key={`config-user-${u.uid || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
+                                      <td className="p-5">
+                                        <div className="flex items-center gap-3">
+                                          <div className="w-9 h-9 bg-primary/5 border border-primary/10 rounded-xl flex items-center justify-center font-bold text-xs text-primary uppercase shadow-sm">
+                                            {userName.substring(0, 2)}
+                                          </div>
+                                          <div>
+                                            <h5 className="font-bold text-xs text-primary">{userName}</h5>
+                                            <p className="text-[10px] text-slate-400 font-semibold">{userEmail}</p>
+                                          </div>
+                                        </div>
+                                      </td>
+                                      <td className="p-5">
+                                        <select 
+                                          value={userRole}
+                                          onChange={(e) => handleChangeUserRole(u.uid, e.target.value as any)}
+                                          className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-primary focus:outline-none focus:border-accent cursor-pointer"
+                                        >
+                                          <option value="admin">Administrador</option>
+                                          <option value="gerente">Gerente</option>
+                                          <option value="barbeiro">Barbeiro</option>
+                                        </select>
+                                      </td>
+                                      <td className="p-5">
+                                        <div className="flex items-center gap-4">
+                                          <button 
+                                            type="button"
+                                            onClick={() => handleToggleUserActive(u.uid, isActive)}
+                                            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${isActive ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                                          >
+                                            <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${isActive ? 'translate-x-4' : 'translate-x-0'}`} />
+                                          </button>
+                                          <span className={`text-[9px] font-black uppercase tracking-wider ${isActive ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                            {isActive ? 'Ativo' : 'Suspenso'}
+                                          </span>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                                
+                                {filteredUsers.length === 0 && (
+                                  <tr>
+                                    <td colSpan={3} className="text-center py-12 text-slate-400 text-xs font-semibold">
+                                      Nenhum usuário coincide com a busca.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* SUB-TAB 2: PERMISSIONS */}
+                  {securitySubTab === 'permissions' && (
+                    <div className="space-y-6" id="security-permissions-tab-content">
+                      {loadingPermissions ? (
+                        <div className="flex flex-col items-center justify-center py-16 gap-3">
+                          <Loader2 className="animate-spin text-accent" size={32} />
+                          <p className="text-[10px] text-muted font-black uppercase tracking-widest">Carregando matriz de permissões...</p>
+                        </div>
+                      ) : !tenantPermissions ? (
+                        <div className="text-center py-12 text-slate-400 text-xs font-semibold bg-slate-50 rounded-2xl border border-slate-100 p-6">
+                          Não foi possível carregar a matriz de permissões do estabelecimento.
+                          <button 
+                            type="button"
+                            onClick={fetchPermissions} 
+                            className="block mx-auto mt-4 px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl active:scale-95 transition"
+                          >
+                            Tentar Novamente
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-6">
+                          {/* Info Banner */}
+                          <div className="bg-slate-50 border border-slate-100 p-5 rounded-2xl space-y-2">
+                            <h4 className="text-xs font-black text-primary uppercase tracking-wider">Configuração de Alçada Operacional</h4>
+                            <p className="text-[11px] text-muted leading-relaxed">
+                              Configure exatamente o que cada cargo pode ou não fazer nas telas de comandas, finanças, caixas e clientes. Usuários com cargo <strong>Administrador</strong> sempre têm alçada irrestrita e não são afetados pelas limitações abaixo.
+                            </p>
+                          </div>
+
+                          {/* Permissions Matrix Table */}
+                          <div className="border border-slate-100 rounded-3xl overflow-hidden shadow-sm bg-white">
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-50/75 border-b border-slate-100">
+                                    <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest">Ação / Funcionalidade</th>
+                                    <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest text-center w-36">Cargo: Gerente</th>
+                                    <th className="p-5 text-[10px] font-black text-muted uppercase tracking-widest text-center w-36">Cargo: Barbeiro</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                  {PERMISSION_METADATA.map((perm) => {
+                                    const isGerenteActive = tenantPermissions.gerente?.[perm.key] ?? false;
+                                    const isBarbeiroActive = tenantPermissions.barbeiro?.[perm.key] ?? false;
+
+                                    return (
+                                      <tr key={`perm-row-${perm.key}`} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="p-5">
+                                          <div className="flex items-start gap-3">
+                                            <div className="p-2 rounded-xl bg-slate-100/70 text-slate-500 mt-0.5">
+                                              {perm.icon}
+                                            </div>
+                                            <div>
+                                              <h5 className="font-bold text-xs text-primary">{perm.title}</h5>
+                                              <p className="text-[10px] text-muted font-medium leading-relaxed mt-0.5">{perm.description}</p>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="p-5 text-center">
+                                          <div className="flex items-center justify-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleTogglePermission('gerente', perm.key)}
+                                              className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${isGerenteActive ? 'bg-primary' : 'bg-slate-200'}`}
+                                            >
+                                              <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${isGerenteActive ? 'translate-x-4' : 'translate-x-0'}`} />
+                                            </button>
+                                          </div>
+                                        </td>
+                                        <td className="p-5 text-center">
+                                          <div className="flex items-center justify-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleTogglePermission('barbeiro', perm.key)}
+                                              className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${isBarbeiroActive ? 'bg-primary' : 'bg-slate-200'}`}
+                                            >
+                                              <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${isBarbeiroActive ? 'translate-x-4' : 'translate-x-0'}`} />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          {/* Save Panel Button */}
+                          <div className="flex justify-end pt-4">
+                            <button
+                              type="button"
+                              onClick={handleSavePermissions}
+                              disabled={savingPermissions}
+                              className="bg-primary text-white px-8 py-3.5 rounded-2xl font-black text-xs hover:bg-slate-800 transition-all shadow-lg active:scale-95 uppercase tracking-widest flex items-center gap-2.5 disabled:opacity-50"
+                            >
+                              {savingPermissions ? (
+                                <>
+                                  <Loader2 className="animate-spin" size={16} />
+                                  <span>Salvando Matriz...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Save size={16} />
+                                  <span>Salvar Matriz de Permissões</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Plano e Faturamento */}
             {activeSection === 'billing' && (() => {

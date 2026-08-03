@@ -38,6 +38,7 @@ service cloud.firestore {
           request.auth.token.email == "blsseparate7@gmail.com" ||
           request.auth.token.email == "admin@admin.com" ||
           request.auth.token.email == "barbeariagbcortes7@gmail.com" ||
+          request.auth.token.email == "gabriel.alexandre@gbcortes7.com" ||
           request.auth.token.email == "temp-diagnose-client@example.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin')
@@ -64,6 +65,30 @@ service cloud.firestore {
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro')
         );
+    }
+
+    function hasRolePermission(permKey) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && (
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin' ||
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'saas_admin' ||
+        isAdmin() ||
+        (
+          exists(/databases/$(database)/documents/tenant_permissions/$(
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == null || 
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == "" ? 
+            "gbcortes7" : get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId
+          )) ? 
+          (get(/databases/$(database)/documents/tenant_permissions/$(
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == null || 
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == "" ? 
+            "gbcortes7" : get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId
+          )).data[get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo][permKey] == true) :
+          (
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'gerente' ||
+            (get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro' && (permKey == 'sell_subscription' || permKey == 'edit_clients'))
+          )
+        )
+      );
     }
 
     function isTestEmail(email) {
@@ -161,20 +186,20 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     // --- Financeiro ---
     match /financial_transactions/{transactionId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
     
     match /cash_sessions/{sessionId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("manage_cash");
     }
 
     match /professional_advances/{advanceId} {
@@ -184,7 +209,7 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     match /professional_payments/{paymentId} {
@@ -194,7 +219,7 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     match /inconsistency_logs/{logId} {
@@ -206,7 +231,7 @@ service cloud.firestore {
     match /cash_movements/{movementId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     match /professional_schedules/{barberId} {
@@ -226,7 +251,7 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     match /commission_payouts/{payoutId} {
@@ -235,7 +260,7 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     // --- Estoque ---
@@ -274,7 +299,7 @@ service cloud.firestore {
         resource.data.cliente_id == request.auth.uid && 
         request.resource.data.cliente_id == resource.data.cliente_id
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("delete_subscription");
     }
     
     match /subscription_usage/{usageId} {
@@ -370,7 +395,7 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     match /debt_payments/{paymentId} {
@@ -380,7 +405,7 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
 
     // --- Novos Recursos de Relacionamento e Lembretes (Reminders) ---
@@ -497,7 +522,13 @@ service cloud.firestore {
         resource != null && 
         (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid)
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || hasRolePermission("delete_subscription");
+    }
+
+    // --- Tenant Permissions ---
+    match /tenant_permissions/{tenantId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
     // --- SaaS Plans ---

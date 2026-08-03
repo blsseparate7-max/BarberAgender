@@ -3,9 +3,8 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
-import { initializeApp, getApps, App } from "firebase-admin/app";
+import { initializeApp, getApps, App, cert, applicationDefault } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import admin from "firebase-admin";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,14 +18,14 @@ function getFirebaseAdmin() {
       if (apps.length === 0) {
         // Try applicationDefault first for standard GCP/Cloud Run context
         adminApp = initializeApp({
-          credential: (admin as any).credential.applicationDefault(),
+          credential: applicationDefault(),
           projectId: "gbagender"
         });
       } else {
         adminApp = apps[0];
       }
-    } catch (err) {
-      console.error("Error initializing Firebase Admin SDK with applicationDefault:", err);
+    } catch (err: any) {
+      console.warn("Could not initialize Firebase Admin SDK with applicationDefault, attempting fallback (this is normal in development/test environments):", err.message || err);
       // Fallback try without applicationDefault
       try {
         const apps = getApps();
@@ -87,6 +86,20 @@ async function startServer() {
       await getAuth(fbAdmin).updateUser(uid, { password });
       res.json({ success: true, message: "Senha alterada com sucesso!" });
     } catch (error: any) {
+      const isConfigError = error.message?.includes("identitytoolkit") || 
+                            error.message?.includes("credential") || 
+                            error.code === "auth/internal-error" || 
+                            error.status === 403;
+
+      if (isConfigError) {
+        console.warn("Firebase Admin: Permissões insuficientes ou API desativada ao alterar senha.");
+        return res.status(200).json({ 
+          success: false, 
+          fallback: true,
+          error: "O Firebase Admin está indisponível no servidor de testes. Por favor, envie um e-mail de redefinição de senha para o usuário."
+        });
+      }
+
       console.error("Erro ao alterar senha do barbeiro no servidor:", error);
       res.status(500).json({ 
         error: error.message || "Erro desconhecido ao alterar a senha.",
@@ -121,6 +134,20 @@ async function startServer() {
 
       res.json({ success: true, uid: userRecord.uid });
     } catch (error: any) {
+      const isConfigError = error.message?.includes("identitytoolkit") || 
+                            error.message?.includes("credential") || 
+                            error.code === "auth/internal-error" || 
+                            error.status === 403;
+
+      if (isConfigError) {
+        console.warn("Firebase Admin: Permissões insuficientes ou API desativada. Permitindo fallback silencioso para o cliente.");
+        return res.status(200).json({ 
+          success: false, 
+          fallback: true,
+          error: "Firebase Admin indisponível no servidor de testes. O cliente usará o fallback automático."
+        });
+      }
+
       console.error("Erro ao criar usuário no servidor:", error);
       let clientError = "Erro ao criar credenciais de acesso.";
       if (error.code === 'auth/email-already-exists') {
@@ -172,6 +199,20 @@ async function startServer() {
       await getAuth(fbAdmin).updateUser(uid, updateParams);
       res.json({ success: true, message: "Autenticação atualizada com sucesso!" });
     } catch (error: any) {
+      const isConfigError = error.message?.includes("identitytoolkit") || 
+                            error.message?.includes("credential") || 
+                            error.code === "auth/internal-error" || 
+                            error.status === 403;
+
+      if (isConfigError) {
+        console.warn("Firebase Admin: Permissões insuficientes ou API desativada ao atualizar usuário.");
+        return res.status(200).json({ 
+          success: false, 
+          fallback: true,
+          error: "O Firebase Admin está temporariamente indisponível no servidor de testes. Por favor, envie um e-mail de redefinição de senha para o usuário."
+        });
+      }
+
       console.error("Erro ao atualizar autenticação do barbeiro no servidor:", error);
       
       let clientError = "Erro ao atualizar dados de acesso.";
@@ -210,6 +251,20 @@ async function startServer() {
       const link = await getAuth(fbAdmin).generatePasswordResetLink(email.trim());
       res.json({ success: true, link });
     } catch (error: any) {
+      const isConfigError = error.message?.includes("identitytoolkit") || 
+                            error.message?.includes("credential") || 
+                            error.code === "auth/internal-error" || 
+                            error.status === 403;
+
+      if (isConfigError) {
+        console.warn("Firebase Admin: Permissões insuficientes ou API desativada ao gerar link de redefinição.");
+        return res.status(200).json({ 
+          success: false, 
+          fallback: true,
+          error: "O Firebase Admin está indisponível no servidor de testes. O envio de e-mail de redefinição padrão do cliente foi acionado com sucesso."
+        });
+      }
+
       console.error("Erro ao gerar link de redefinição no servidor:", error);
       res.status(500).json({ 
         error: error.message || "Erro ao gerar link de redefinição de senha.",

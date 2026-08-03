@@ -18,6 +18,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Comanda, ComandaItem, ComandaPayment, ComandaLog, ComandaStatus, ClientDebt, FinancialTransaction, CashMovement, PaymentMethod, PaymentMethodConfig } from '../types';
+import { format, addMonths } from 'date-fns';
 import { paymentMethodService } from './paymentMethodService';
 import { cashService } from './cashService';
 import { commissionService } from './commissionService';
@@ -359,6 +360,7 @@ export const comandaService = {
       const barberDataMap: Record<string, any> = {};
       const servicesMap: Record<string, any> = {};
       const productsMap: Record<string, any> = {};
+      const plansMap: Record<string, any> = {};
       if (willBeClosed) {
         const barberIds = Array.from(new Set(comanda.items.map(i => i.profissional_id || comanda.profissional_id).filter(Boolean)));
         for (const bId of barberIds) {
@@ -385,6 +387,13 @@ export const comandaService = {
             if (pSnap.exists()) {
               productsMap[pId] = pSnap.data();
             }
+          }
+        }
+        const planItems = comanda.items.filter(i => i.type === 'assinatura' && i.referencia_id);
+        for (const pItem of planItems) {
+          const pSnap = await transaction.get(doc(db, 'subscription_plans', pItem.referencia_id));
+          if (pSnap.exists()) {
+            plansMap[pItem.referencia_id] = pSnap.data();
           }
         }
       }
@@ -561,7 +570,8 @@ export const comandaService = {
           appSnap?.exists() || false,
           productExistsMap,
           servicesMap,
-          productsMap
+          productsMap,
+          plansMap
         );
       }
     });
@@ -759,7 +769,9 @@ export const comandaService = {
     appointmentExists: boolean = false,
     productExistsMap: Record<string, boolean> = {},
     servicesMap: Record<string, any> = {},
-    productsMap: Record<string, any> = {}
+    productsMap: Record<string, any> = {},
+    plansMap: Record<string, any> = {},
+    subscriptionsMap: Record<string, any> = {}
   ) {
     // 1. Update Appointment if exists
     const apptId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
@@ -775,6 +787,8 @@ export const comandaService = {
     if (comanda.cliente_id && clientExists) {
       const clientRef = doc(db, 'usuarios', comanda.cliente_id);
       transaction.update(clientRef, {
+        tenantId: comanda.tenantId || getActiveTenantId(),
+        ativo: true,
         total_gasto: increment(comanda.totalAmount),
         totalSpent: increment(comanda.totalAmount), // Legacy
         saldo_atual: increment(-comanda.totalAmount),
@@ -868,6 +882,12 @@ export const comandaService = {
         }
 
         if (commission_value > 0) {
+          const isAssinatura = item.type === 'assinatura' || item.name?.toLowerCase().includes('assinatura') || item.name?.toLowerCase().includes('plano') || item.name?.toLowerCase().includes('pacote');
+          let commDate = new Date().toISOString().split('T')[0];
+          if (isAssinatura && item.metadata?.subscriptionId && subscriptionsMap[item.metadata.subscriptionId]?.endDate) {
+            commDate = subscriptionsMap[item.metadata.subscriptionId].endDate;
+          }
+
           const commissionRef = doc(collection(db, 'commissions'));
           transaction.set(commissionRef, {
             id: commissionRef.id,
@@ -883,9 +903,9 @@ export const comandaService = {
             commission_percentage,
             commission_value,
             status: 'pendente',
-            commission_type: (item.type === 'produto' || item.type === 'product') ? 'venda' : (item.name?.toLowerCase().includes('assinatura') || item.name?.toLowerCase().includes('plano') || item.name?.toLowerCase().includes('pacote') ? 'assinatura' : 'servico'),
+            commission_type: isAssinatura ? 'assinatura' : ((item.type === 'produto' || item.type === 'product') ? 'venda' : 'servico'),
             tenantId: comanda.tenantId || '',
-            date: new Date().toISOString().split('T')[0],
+            date: commDate,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
@@ -954,6 +974,81 @@ export const comandaService = {
         updatedAt: serverTimestamp()
       });
     }
+
+    // 3.4 Active Subscription creation or renewal (if any item is of type 'assinatura')
+    const activeTenantId = comanda.tenantId || getActiveTenantId();
+    for (const item of comanda.items) {
+      if (item.type === 'assinatura') {
+        const plan = plansMap?.[item.referencia_id];
+        if (plan && comanda.cliente_id) {
+          const subscriptionIdToRenew = item.metadata?.subscriptionId;
+          const today = new Date();
+          const todayStr = format(today, 'yyyy-MM-dd');
+
+          if (subscriptionIdToRenew) {
+            // Update existing subscription for renewal
+            const subRef = doc(db, 'subscriptions', subscriptionIdToRenew);
+            const assinaturasRef = doc(db, 'assinaturas', subscriptionIdToRenew);
+            
+            const existingSub = subscriptionsMap[subscriptionIdToRenew];
+            const currentEndDateStr = existingSub?.endDate || todayStr;
+            const currentEndDate = new Date(currentEndDateStr + 'T12:00:00');
+            
+            let newStartDateStr = currentEndDateStr;
+            if (currentEndDate < today) {
+              newStartDateStr = todayStr;
+            }
+            const newStartDate = new Date(newStartDateStr + 'T12:00:00');
+            const newEndDate = addMonths(newStartDate, 1);
+            const newEndDateStr = format(newEndDate, 'yyyy-MM-dd');
+
+            const renewalData = {
+              startDate: newStartDateStr,
+              endDate: newEndDateStr,
+              status: 'active',
+              haircutsUsed: 0,
+              beardsUsed: 0,
+              serviceUsages: {},
+              lastRenewalDate: todayStr,
+              updatedAt: serverTimestamp()
+            };
+
+            transaction.update(subRef, renewalData);
+            transaction.update(assinaturasRef, renewalData);
+          } else {
+            const startDate = new Date();
+            const endDate = addMonths(startDate, 1);
+            
+            const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            
+            const subscriptionData = {
+              id: subId,
+              tenantId: activeTenantId,
+              cliente_id: comanda.cliente_id,
+              cliente_name: comanda.cliente_name,
+              plano_id: item.referencia_id,
+              planName: plan.name || item.name || 'Assinatura',
+              startDate: format(startDate, 'yyyy-MM-dd'),
+              endDate: format(endDate, 'yyyy-MM-dd'),
+              status: 'active',
+              autoRenew: item.metadata?.autoRenew ?? true,
+              haircutsUsed: 0,
+              beardsUsed: 0,
+              services: plan.services || [],
+              serviceUsages: {},
+              lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
+              discounts: plan.discounts || [],
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            };
+            
+            // Write to both 'subscriptions' and 'assinaturas' collections for maximum compatibility
+            transaction.set(doc(db, 'subscriptions', subId), subscriptionData);
+            transaction.set(doc(db, 'assinaturas', subId), subscriptionData);
+          }
+        }
+      }
+    }
   },
 
   async closeComanda(id: string, userId: string, userName: string, status: ComandaStatus = 'fechada', dueDate?: string) {
@@ -1002,6 +1097,8 @@ export const comandaService = {
       const barberDataMap: Record<string, any> = {};
       const servicesMap: Record<string, any> = {};
       const productsMap: Record<string, any> = {};
+      const plansMap: Record<string, any> = {};
+      const subscriptionsMap: Record<string, any> = {};
       if (isClosing) {
         const barberIds = Array.from(new Set(comanda.items.filter(i => i.generateCommission).map(i => i.profissional_id || comanda.profissional_id).filter(Boolean)));
         for (const bId of barberIds) {
@@ -1027,6 +1124,20 @@ export const comandaService = {
             const pSnap = await transaction.get(doc(db, 'products', pId));
             if (pSnap.exists()) {
               productsMap[pId] = pSnap.data();
+            }
+          }
+        }
+        const planItems = comanda.items.filter(i => i.type === 'assinatura' && i.referencia_id);
+        for (const pItem of planItems) {
+          const pSnap = await transaction.get(doc(db, 'subscription_plans', pItem.referencia_id));
+          if (pSnap.exists()) {
+            plansMap[pItem.referencia_id] = pSnap.data();
+          }
+          if (pItem.metadata?.subscriptionId) {
+            const subId = pItem.metadata.subscriptionId;
+            const subSnap = await transaction.get(doc(db, 'subscriptions', subId));
+            if (subSnap.exists()) {
+              subscriptionsMap[subId] = subSnap.data();
             }
           }
         }
@@ -1083,7 +1194,9 @@ export const comandaService = {
           appSnap?.exists() || false,
           productExistsMap,
           servicesMap,
-          productsMap
+          productsMap,
+          plansMap,
+          subscriptionsMap
         );
       } else if (finalStatus === 'cancelada' || finalStatus === 'ausente') {
         const linkedAppId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;

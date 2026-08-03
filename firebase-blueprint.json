@@ -188,12 +188,28 @@
         "status": { "type": "string" },
         "tenantId": { "type": "string" }
       }
+    },
+    "TenantPermissions": {
+      "title": "TenantPermissions",
+      "description": "Configurações de permissões por função do inquilino",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "gerente": { "type": "object" },
+        "barbeiro": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenantId"]
     }
   },
   "firestore": {
     "/tenants/{tenantId}": {
       "schema": "Tenant",
       "description": "Unidades / Barbearias Multitenant"
+    },
+    "/tenant_permissions/{tenantId}": {
+      "schema": "TenantPermissions",
+      "description": "Configurações de Permissões de Operadores"
     },
     "/users/{userId}": {
       "schema": "UserProfile",

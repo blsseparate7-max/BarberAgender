@@ -620,7 +620,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     const cliente_id = formData.cliente_id || initialData?.cliente_id;
     const profissional_id = formData.profissional_id || initialData?.profissional_id;
 
-    if (!cliente_id || !profissional_id || !user) {
+    if (!cliente_id || !user) {
       return; // Wait for selection and auth if not provided
     }
 
@@ -630,14 +630,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     setLoading(true);
     try {
       const client = clients.find(c => c.uid === cliente_id);
-      const barber = barbers.find(b => b.uid === profissional_id);
+      const barber = barbers.find(b => b.uid === (profissional_id || ''));
 
       const newComanda = await comandaService.openComanda({
         ...formData,
         cliente_id,
-        profissional_id,
+        profissional_id: profissional_id || '',
         cliente_name: client?.nome || initialData?.cliente_name || '',
-        profissional_name: barber?.nome || initialData?.profissional_name || '',
+        profissional_name: barber?.nome || initialData?.profissional_name || 'Sem Profissional',
         origin: initialData?.origin || 'balcao',
         agendamento_id: initialData?.agendamento_id,
         status: 'aberta',
@@ -1125,8 +1125,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             item.subscriptionId, 
             typeLabel, 
             comanda.agendamento_id,
-            item.profissional_id,
-            item.profissional_name,
+            item.profissional_id || comanda.profissional_id || null,
+            item.profissional_name || comanda.profissional_name || null,
             item.unitPrice || item.totalPrice || 0,
             item.referencia_id || item.id,
             item.name
@@ -1167,14 +1167,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           });
           console.log(`Created new Package Sale for Client ${comanda.cliente_name} with ${cutsUsedCount} immediate usages.`);
         } else if (item.type === 'assinatura') {
-          // New Subscription sold! Create subscription doc without duplicating financial logs
-          await subscriptionService.createSubscriptionWithoutFinancial({
-            cliente_id: comanda.cliente_id,
-            cliente_name: comanda.cliente_name,
-            plano_id: item.referencia_id,
-            autoRenew: item.metadata?.autoRenew || false
-          });
-          console.log(`Created new Subscription for Client ${comanda.cliente_name}`);
+          // Handled atomicly in comanda closure transaction
+          console.log(`Subscription sale detected. Will be created inside closeComanda transaction.`);
         }
       }
 
@@ -1230,8 +1224,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             item.subscriptionId, 
             typeLabel, 
             comanda.agendamento_id,
-            item.profissional_id,
-            item.profissional_name,
+            item.profissional_id || comanda.profissional_id || null,
+            item.profissional_name || comanda.profissional_name || null,
             item.unitPrice || item.totalPrice || 0,
             item.referencia_id || item.id,
             item.name
@@ -1272,14 +1266,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           });
           console.log(`Created new Package Sale for Client ${comanda.cliente_name} with ${cutsUsedCount} immediate usages.`);
         } else if (item.type === 'assinatura') {
-          // New Subscription sold! Create subscription doc without duplicating financial logs
-          await subscriptionService.createSubscriptionWithoutFinancial({
-            cliente_id: comanda.cliente_id,
-            cliente_name: comanda.cliente_name,
-            plano_id: item.referencia_id,
-            autoRenew: item.metadata?.autoRenew || false
-          });
-          console.log(`Created new Subscription for Client ${comanda.cliente_name}`);
+          // Handled atomicly in comanda closure transaction
+          console.log(`Subscription sale detected. Will be created inside closeComanda transaction.`);
         }
       }
 

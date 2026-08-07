@@ -11,6 +11,7 @@ import {
   ArrowDownLeft,
   Clock, 
   CreditCard, 
+  ShoppingCart,
   Wallet, 
   Search,
   MoreVertical,
@@ -282,6 +283,112 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       unsubscribeTransactions();
     };
   }, [dateRange.start, dateRange.end]);
+
+  // Calculations for Fluxo de Caixa Breakdowns (AppBarber style)
+  const overviewBreakdowns = React.useMemo(() => {
+    const defaultMethods: Record<string, { label: string; amount: number; net: number }> = {
+      dinheiro: { label: 'Dinheiro', amount: 0, net: 0 },
+      debito: { label: 'Cartão de Débito', amount: 0, net: 0 },
+      pix: { label: 'PIX', amount: 0, net: 0 },
+      credito: { label: 'Cartão de Crédito', amount: 0, net: 0 },
+      online: { label: 'PAGAMENTO ONLINE', amount: 0, net: 0 },
+    };
+
+    const itemMap = {
+      servicos: { label: 'Serviços', pgto: 0, total: 0 },
+      pacotes: { label: 'Pacotes', pgto: 0, total: 0 },
+      assinaturas: { label: 'Assinaturas', pgto: 0, total: 0 },
+      produtos: { label: 'Produtos', pgto: 0, total: 0 },
+    };
+
+    let totalMovimentadoBruto = 0;
+    let totalMovimentadoLiquido = 0;
+
+    let totalDisponivelBruto = 0;
+    let totalDisponivelLiquido = 0;
+
+    let totalAReceberBruto = 0;
+    let totalAReceberLiquido = 0;
+
+    transactions.forEach(t => {
+      if (t.type !== 'income') return;
+
+      const amount = t.amount || 0;
+      const netAmount = t.net_amount ?? amount;
+      const isPaid = t.status === 'pago';
+
+      // Total Movimentado (Entradas)
+      if (isPaid) {
+        totalMovimentadoBruto += amount;
+        totalMovimentadoLiquido += netAmount;
+      }
+
+      // Payment method grouping
+      const pmKey = (t.paymentMethod || 'outros').toLowerCase();
+      if (isPaid) {
+        if (!defaultMethods[pmKey]) {
+          let labelName = t.paymentMethod || 'Outros';
+          if (pmKey === 'dinheiro') labelName = 'Dinheiro';
+          else if (pmKey === 'debito') labelName = 'Cartão de Débito';
+          else if (pmKey === 'pix') labelName = 'PIX';
+          else if (pmKey === 'credito') labelName = 'Cartão de Crédito';
+          else if (pmKey === 'online') labelName = 'PAGAMENTO ONLINE';
+          else if (pmKey === 'fiado') labelName = 'Conta Cliente (Fiado)';
+          else if (pmKey === 'assinatura') labelName = 'Assinatura';
+
+          defaultMethods[pmKey] = { label: labelName, amount: 0, net: 0 };
+        }
+        defaultMethods[pmKey].amount += amount;
+        defaultMethods[pmKey].net += netAmount;
+      }
+
+      // Item type grouping
+      const cat = (t.category || '').toLowerCase();
+      const desc = (t.description || '').toLowerCase();
+
+      let itemKey: 'servicos' | 'pacotes' | 'assinaturas' | 'produtos' = 'servicos';
+
+      if (cat.includes('assinat') || desc.includes('assinat') || desc.includes('plano') || pmKey === 'assinatura') {
+        itemKey = 'assinaturas';
+      } else if (cat.includes('pacote') || desc.includes('pacote')) {
+        itemKey = 'pacotes';
+      } else if (cat.includes('produt') || cat.includes('estoque') || desc.includes('produto') || desc.includes('venda de produto')) {
+        itemKey = 'produtos';
+      } else {
+        itemKey = 'servicos';
+      }
+
+      itemMap[itemKey].total += amount;
+      if (isPaid) {
+        itemMap[itemKey].pgto += amount;
+      }
+
+      // Classification for Disponível vs A Receber
+      if (isPaid) {
+        if (t.is_settled !== false && pmKey !== 'credito' && pmKey !== 'fiado') {
+          totalDisponivelBruto += amount;
+          totalDisponivelLiquido += netAmount;
+        } else {
+          totalAReceberBruto += amount;
+          totalAReceberLiquido += netAmount;
+        }
+      } else if (t.status === 'pendente' && pmKey === 'fiado') {
+        totalAReceberBruto += amount;
+        totalAReceberLiquido += netAmount;
+      }
+    });
+
+    return {
+      methods: Object.values(defaultMethods),
+      items: Object.values(itemMap),
+      totalMovimentadoBruto,
+      totalMovimentadoLiquido,
+      totalDisponivelBruto,
+      totalDisponivelLiquido,
+      totalAReceberBruto,
+      totalAReceberLiquido,
+    };
+  }, [transactions]);
 
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [pendingDebts, setPendingDebts] = useState<ClientDebt[]>([]);
@@ -714,6 +821,120 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
+                {/* Banner Cards (AppBarber Style) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Card 1: Total Movimentado */}
+                  <div className="bg-sky-500 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[140px] hover:shadow-xl transition-all">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h2 className="text-3xl font-black tracking-tight drop-shadow-sm">
+                          R$ {overviewBreakdowns.totalMovimentadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </h2>
+                        <p className="text-xs font-extrabold text-sky-100 mt-1">
+                          Líquido: R$ {overviewBreakdowns.totalMovimentadoLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl">
+                        <ArrowRightLeft size={28} className="text-white" />
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs font-black uppercase tracking-wider text-sky-100">
+                      <span>Total Movimentado</span>
+                      <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Bruto | Líquido</span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Total Disponível */}
+                  <div className="bg-emerald-600 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[140px] hover:shadow-xl transition-all">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h2 className="text-3xl font-black tracking-tight drop-shadow-sm">
+                          R$ {overviewBreakdowns.totalDisponivelBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </h2>
+                        <p className="text-xs font-extrabold text-emerald-100 mt-1">
+                          Líquido: R$ {overviewBreakdowns.totalDisponivelLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl">
+                        <Wallet size={28} className="text-white" />
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs font-black uppercase tracking-wider text-emerald-100">
+                      <span>Total Disponível</span>
+                      <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Caixa / PIX</span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Total a Receber */}
+                  <div className="bg-amber-500 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[140px] hover:shadow-xl transition-all">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h2 className="text-3xl font-black tracking-tight drop-shadow-sm">
+                          R$ {overviewBreakdowns.totalAReceberBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </h2>
+                        <p className="text-xs font-extrabold text-amber-100 mt-1">
+                          Líquido: R$ {overviewBreakdowns.totalAReceberLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl">
+                        <ShoppingCart size={28} className="text-white" />
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs font-black uppercase tracking-wider text-amber-100">
+                      <span>Total a Receber</span>
+                      <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Cartões / Fiados</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Breakdown Tables (AppBarber Style) */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Box 1: Movimentações por tipo de pagamento */}
+                  <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col justify-between">
+                    <div>
+                      <div className="bg-sky-600 text-white px-6 py-3.5 font-black text-sm tracking-wide text-center uppercase">
+                        Movimentações por tipo de pagamento
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {overviewBreakdowns.methods.map((m, idx) => (
+                          <div key={idx} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
+                            <span className="font-bold text-xs text-slate-700">{m.label}:</span>
+                            <span className="font-black text-xs text-slate-900">
+                              R$ {m.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 border-t border-slate-100 px-6 py-2.5 text-right">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Faturado no Período</span>
+                    </div>
+                  </div>
+
+                  {/* Box 2: Movimentações por Item */}
+                  <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col justify-between">
+                    <div>
+                      <div className="bg-sky-600 text-white px-6 py-3.5 text-center uppercase">
+                        <p className="font-black text-sm tracking-wide">Movimentações por Item</p>
+                        <p className="text-[10px] font-extrabold text-sky-100 tracking-widest mt-0.5">Valor Pgto | Valor Total</p>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {overviewBreakdowns.items.map((it, idx) => (
+                          <div key={idx} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
+                            <span className="font-bold text-xs text-slate-700">{it.label}:</span>
+                            <span className="font-black text-xs text-slate-900">
+                              {it.pgto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | {it.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 border-t border-slate-100 px-6 py-2.5 text-right">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pago | Faturamento Total</span>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Visual Cash Flow Chart & Trend */}
                 <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">

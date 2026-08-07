@@ -3,6 +3,7 @@ import {
   query, 
   where, 
   getDocs, 
+  getDoc,
   addDoc, 
   updateDoc, 
   deleteDoc,
@@ -10,12 +11,14 @@ import {
   increment,
   runTransaction,
   serverTimestamp,
-  setDoc
+  setDoc,
+  onSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { SubscriptionPlan, Subscription, SubscriptionUsage, SubscriptionStatus } from '../types';
 import { format, addMonths } from 'date-fns';
 import { getActiveTenantId } from './tenantService';
+import { cashService } from './cashService';
 
 const PLANS_COLLECTION = 'subscription_plans';
 const SUBSCRIPTIONS_COLLECTION = 'subscriptions';
@@ -52,14 +55,40 @@ export const subscriptionService = {
   async getSubscriptions(cliente_id?: string) {
     let q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (cliente_id) {
-      q = query(q, where('cliente_id', '==', cliente_id));
+      q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('cliente_id', '==', cliente_id));
     }
     const querySnapshot = await getDocs(q);
-    const subscriptions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+    let subscriptions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+    if (cliente_id) {
+      const activeTenantId = getActiveTenantId();
+      subscriptions = subscriptions.filter(s => !s.tenantId || s.tenantId === activeTenantId);
+    }
     return subscriptions.sort((a, b) => {
       const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
       const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
       return bTime - aTime;
+    });
+  },
+
+  subscribeToSubscriptions(cliente_id: string, callback: (subs: Subscription[]) => void) {
+    let q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('tenantId', '==', getActiveTenantId()));
+    if (cliente_id) {
+      q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('cliente_id', '==', cliente_id));
+    }
+    return onSnapshot(q, (querySnapshot) => {
+      let subscriptions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+      if (cliente_id) {
+        const activeTenantId = getActiveTenantId();
+        subscriptions = subscriptions.filter(s => !s.tenantId || s.tenantId === activeTenantId);
+      }
+      subscriptions.sort((a, b) => {
+        const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+        const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+        return bTime - aTime;
+      });
+      callback(subscriptions);
+    }, (error) => {
+      console.error("Erro no onSnapshot de subscriptions:", error);
     });
   },
 
@@ -216,6 +245,10 @@ export const subscriptionService = {
       if (!subSnap.exists()) throw new Error("Assinatura não encontrada");
       const sub = subSnap.data() as Subscription;
 
+      if (sub.status !== 'active') {
+        throw new Error("Assinatura aguardando pagamento ou inativa. O clube de benefícios somente pode ser utilizado após a confirmação do pagamento (Pix/Boleto).");
+      }
+
       const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
       const planSnap = await transaction.get(planRef);
       if (!planSnap.exists()) throw new Error("Plano não encontrado");
@@ -322,16 +355,14 @@ export const subscriptionService = {
     
     // Fetch subscription first
     const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
-    const subSnap = await getDocs(query(collection(db, SUBSCRIPTIONS_COLLECTION)));
-    const targetDoc = subSnap.docs.find(d => d.id === id);
-    if (!targetDoc) throw new Error("Assinatura não encontrada");
-    const sub = targetDoc.data() as Subscription;
+    const subSnap = await getDoc(subRef);
+    if (!subSnap.exists()) throw new Error("Assinatura não encontrada");
+    const sub = subSnap.data() as Subscription;
 
     const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
-    const planSnap = await getDocs(query(collection(db, PLANS_COLLECTION)));
-    const targetPlanDoc = planSnap.docs.find(d => d.id === sub.plano_id);
-    if (!targetPlanDoc) throw new Error("Plano do assinante não encontrado");
-    const plan = targetPlanDoc.data() as SubscriptionPlan;
+    const planSnap = await getDoc(planRef);
+    if (!planSnap.exists()) throw new Error("Plano do assinante não encontrado");
+    const plan = planSnap.data() as SubscriptionPlan;
 
     // Fetch usages
     const usagesQuery = query(
@@ -497,19 +528,63 @@ export const subscriptionService = {
     });
   },
 
-  async createAsaasSubscription(data: { cliente_id: string; cliente_name: string; plano_id: string }) {
+  async createAsaasSubscription(data: { 
+    cliente_id: string; 
+    cliente_name: string; 
+    plano_id: string;
+    ownerEmail?: string;
+    ownerCpfCnpj?: string;
+    billingType?: 'PIX' | 'CREDIT_CARD';
+  }) {
     const activeTenantId = getActiveTenantId();
     
     const planRef = doc(db, PLANS_COLLECTION, data.plano_id);
-    const planSnap = await getDocs(query(collection(db, PLANS_COLLECTION)));
-    const targetPlanDoc = planSnap.docs.find(d => d.id === data.plano_id);
-    if (!targetPlanDoc) throw new Error("Plano não encontrado");
-    const plan = targetPlanDoc.data() as SubscriptionPlan;
+    const planSnap = await getDoc(planRef);
+    if (!planSnap.exists()) throw new Error("Plano não encontrado");
+    const plan = planSnap.data() as SubscriptionPlan;
 
     const startDate = new Date();
     const endDate = addMonths(startDate, 1);
 
     const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
+    const subId = subscriptionRef.id;
+
+    let asaasInvoiceId = 'pay_' + Math.random().toString(36).substring(2, 9);
+    let paymentUrl = '';
+    let pixCopiaECola = '';
+    let pixQrCodeUrl = '';
+
+    // Try creating real Asaas charge/subscription
+    try {
+      const chargeRes = await fetch('/api/saas/payment/create-charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: activeTenantId,
+          tenantName: data.cliente_name,
+          ownerEmail: data.ownerEmail || `${data.cliente_id}@barbearia.com`,
+          ownerCpfCnpj: data.ownerCpfCnpj || '12345678909',
+          planId: data.plano_id,
+          planName: plan.name,
+          amount: plan.price,
+          billingType: data.billingType || 'PIX',
+          isSubscription: true,
+          externalReference: subId
+        })
+      });
+      const chargeData = await chargeRes.json();
+      if (chargeData.success) {
+        if (chargeData.chargeId) asaasInvoiceId = chargeData.chargeId;
+        paymentUrl = chargeData.paymentUrl || '';
+        pixCopiaECola = chargeData.pixCopiaECola || '';
+        pixQrCodeUrl = chargeData.pixQrCodeUrl || '';
+      } else if (chargeData.error) {
+        console.warn("Aviso ao criar cobrança Asaas:", chargeData.error);
+      }
+    } catch (e: any) {
+      console.warn("Erro de conexão ao gerar cobrança Asaas:", e);
+    }
+
     const subscriptionData = {
       tenantId: activeTenantId,
       cliente_id: data.cliente_id,
@@ -526,29 +601,31 @@ export const subscriptionService = {
       discounts: plan.discounts || [],
       activationType: 'asaas',
       asaasPaymentStatus: 'pending',
-      asaasInvoiceId: 'pay_' + Math.random().toString(36).substring(2, 9),
+      asaasInvoiceId,
+      paymentUrl,
+      pixCopiaECola,
+      pixQrCodeUrl,
+      billingType: data.billingType || 'PIX',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
 
     await setDoc(subscriptionRef, subscriptionData);
-    return subscriptionRef.id;
+    return { id: subId, paymentUrl, pixCopiaECola, pixQrCodeUrl };
   },
 
   async confirmAsaasSubscriptionPayment(id: string) {
     const activeTenantId = getActiveTenantId();
     
     const subRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
-    const subSnap = await getDocs(query(collection(db, SUBSCRIPTIONS_COLLECTION)));
-    const targetDoc = subSnap.docs.find(d => d.id === id);
-    if (!targetDoc) throw new Error("Assinatura não encontrada");
-    const sub = targetDoc.data() as Subscription;
+    const subSnap = await getDoc(subRef);
+    if (!subSnap.exists()) throw new Error("Assinatura não encontrada");
+    const sub = subSnap.data() as Subscription;
 
     const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
-    const planSnap = await getDocs(query(collection(db, PLANS_COLLECTION)));
-    const targetPlanDoc = planSnap.docs.find(d => d.id === sub.plano_id);
-    if (!targetPlanDoc) throw new Error("Plano não encontrado");
-    const plan = targetPlanDoc.data() as SubscriptionPlan;
+    const planSnap = await getDoc(planRef);
+    if (!planSnap.exists()) throw new Error("Plano não encontrado");
+    const plan = planSnap.data() as SubscriptionPlan;
 
     const today = new Date();
     const todayStr = format(today, 'yyyy-MM-dd');
@@ -583,7 +660,7 @@ export const subscriptionService = {
         amount: plan.price,
         date: format(new Date(), 'yyyy-MM-dd'),
         category: 'Assinaturas',
-        description: `Assinatura Asaas Confirmada: ${plan.name} - ${sub.cliente_name}`,
+        description: `Assinatura Rull Confirmada: ${plan.name} - ${sub.cliente_name}`,
         paymentMethod: 'pix',
         status: 'pago',
         cliente_id: sub.cliente_id,
@@ -597,6 +674,27 @@ export const subscriptionService = {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
+    }).then(async () => {
+      // Check if open cash session exists and record cash movement
+      try {
+        const activeCash = await cashService.getCurrentCash();
+        if (activeCash && activeCash.id) {
+          await cashService.addMovement({
+            caixa_id: activeCash.id,
+            type: 'income',
+            category: 'Assinaturas',
+            description: `Assinatura Rull: ${plan.name} - ${sub.cliente_name}`,
+            amount: plan.price,
+            paymentMethod: 'pix',
+            is_receivable: false,
+            usuario_id: 'system',
+            usuario_name: 'Webhook Asaas',
+            date: todayStr
+          });
+        }
+      } catch (cashErr) {
+        console.warn("Nenhum caixa aberto para registrar o movimento de assinatura, ignorando:", cashErr);
+      }
     });
   },
 
@@ -655,5 +753,47 @@ export const subscriptionService = {
       autoRenew,
       updatedAt: serverTimestamp()
     });
+  },
+
+  async checkAsaasPaymentStatus(paymentId: string) {
+    try {
+      const res = await fetch('/api/saas/payment/check-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paymentId })
+      });
+      return await res.json();
+    } catch (e) {
+      console.error("Erro ao verificar status do pagamento Asaas:", e);
+      return { success: false, error: 'Falha na comunicação' };
+    }
+  },
+
+  async updateCreditCard(subscriptionId: string, creditCard: any, creditCardHolderInfo: any) {
+    try {
+      const res = await fetch('/api/saas/payment/update-credit-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId, creditCard, creditCardHolderInfo })
+      });
+      return await res.json();
+    } catch (e) {
+      console.error("Erro ao atualizar cartão de crédito:", e);
+      return { success: false, error: 'Falha na comunicação' };
+    }
+  },
+
+  async generatePix(subscriptionId: string) {
+    try {
+      const res = await fetch('/api/saas/payment/generate-pix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId })
+      });
+      return await res.json();
+    } catch (e) {
+      console.error("Erro ao gerar PIX alternativo:", e);
+      return { success: false, error: 'Falha na comunicação' };
+    }
   }
 };

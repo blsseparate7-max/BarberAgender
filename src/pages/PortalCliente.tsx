@@ -27,7 +27,12 @@ import {
   UserX,
   Coins,
   TrendingUp,
-  Zap
+  Zap,
+  CreditCard,
+  QrCode,
+  RefreshCw,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
@@ -162,6 +167,133 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [reviewComment, setReviewComment] = useState<string>('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
+  // Subscription Card management states for Client
+  const [clientCardModalSub, setClientCardModalSub] = useState<Subscription | null>(null);
+  const [clientPixModalData, setClientPixModalData] = useState<any | null>(null);
+  const [ccNumber, setCcNumber] = useState('');
+  const [ccHolderName, setCcHolderName] = useState('');
+  const [ccExpiryMonth, setCcExpiryMonth] = useState('');
+  const [ccExpiryYear, setCcExpiryYear] = useState('');
+  const [ccCcv, setCcCcv] = useState('');
+  const [isUpdatingCard, setIsUpdatingCard] = useState(false);
+  const [isGeneratingPix, setIsGeneratingPix] = useState(false);
+  const [checkingStatusSubId, setCheckingStatusSubId] = useState<string | null>(null);
+  const [selectedPlanForCheckout, setSelectedPlanForCheckout] = useState<any | null>(null);
+  const [isSubscribingPlan, setIsSubscribingPlan] = useState(false);
+  const [clientCreatedChargeData, setClientCreatedChargeData] = useState<any | null>(null);
+  const [showClientChargeModal, setShowClientChargeModal] = useState(false);
+
+  const handleClientSubscribePlan = async (plan: any, billingType: 'PIX' | 'CREDIT_CARD') => {
+    if (!profile) {
+      toast.error("Você precisa estar logado para assinar.");
+      return;
+    }
+    setIsSubscribingPlan(true);
+    try {
+      const res = await subscriptionService.createAsaasSubscription({
+        cliente_id: profile.uid,
+        cliente_name: profile.nome || 'Cliente',
+        plano_id: plan.id,
+        ownerEmail: profile.email || '',
+        ownerCpfCnpj: profile.cpf || '12345678909',
+        billingType
+      });
+
+      toast.success(`Assinatura do plano ${plan.name} gerada com sucesso!`);
+      setSelectedPlanForCheckout(null);
+
+      if (res) {
+        setClientCreatedChargeData({
+          id: res.id,
+          paymentUrl: res.paymentUrl,
+          pixCopiaECola: res.pixCopiaECola,
+          pixQrCodeUrl: res.pixQrCodeUrl,
+          planName: plan.name,
+          price: plan.price,
+          clientName: profile.nome || 'Cliente',
+          status: 'pending',
+          billingType
+        });
+        setShowClientChargeModal(true);
+      }
+
+      const updatedSubs = await subscriptionService.getSubscriptions(profile.uid);
+      setSubscriptions(updatedSubs);
+    } catch (err: any) {
+      console.error("Erro ao criar assinatura via Asaas:", err);
+      toast.error(err.message || "Erro ao gerar cobrança de assinatura.");
+    } finally {
+      setIsSubscribingPlan(false);
+    }
+  };
+
+  const handleCheckAsaasStatus = async (sub: Subscription) => {
+    if (!sub.asaasInvoiceId && !sub.id) return;
+    setCheckingStatusSubId(sub.id);
+    try {
+      const res = await subscriptionService.checkAsaasPaymentStatus(sub.asaasInvoiceId || sub.id);
+      if (res.success || res.received) {
+        toast.success("Pagamento confirmado e assinatura ativada com sucesso!");
+        if (profile?.uid) {
+          const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
+          setSubscriptions(clientSubs);
+        }
+      } else {
+        toast.info(res.error || "O pagamento ainda consta como pendente no Asaas.");
+      }
+    } catch (err: any) {
+      toast.error("Erro ao verificar status no Asaas.");
+    } finally {
+      setCheckingStatusSubId(null);
+    }
+  };
+
+  const handleClientUpdateCardSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clientCardModalSub) return;
+    setIsUpdatingCard(true);
+    try {
+      const res = await subscriptionService.updateCreditCard(clientCardModalSub.id, {
+        holderName: ccHolderName,
+        number: ccNumber.replace(/\D/g, ''),
+        expiryMonth: ccExpiryMonth,
+        expiryYear: ccExpiryYear,
+        ccv: ccCcv
+      }, {
+        name: clientCardModalSub.cliente_name,
+        email: profile.email || 'cliente@rull.com',
+        cpfCnpj: (profile as any).cpfCnpj || '12345678909'
+      });
+      if (res.success) {
+        toast.success("Cartão de crédito atualizado com sucesso!");
+        setClientCardModalSub(null);
+        setCcNumber(''); setCcHolderName(''); setCcExpiryMonth(''); setCcExpiryYear(''); setCcCcv('');
+      } else {
+        toast.error(res.error || "Erro ao atualizar cartão.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao atualizar cartão.");
+    } finally {
+      setIsUpdatingCard(false);
+    }
+  };
+
+  const handleClientPayPix = async (sub: Subscription) => {
+    setIsGeneratingPix(true);
+    try {
+      const res = await subscriptionService.generatePix(sub.id);
+      if (res.success) {
+        setClientPixModalData(res);
+      } else {
+        toast.error(res.error || "Erro ao gerar PIX.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao gerar PIX.");
+    } finally {
+      setIsGeneratingPix(false);
+    }
+  };
+
   // Sync profile edits
   useEffect(() => {
     if (profile) {
@@ -183,6 +315,38 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     });
     return () => unsubscribe();
   }, [profile?.uid]);
+
+  // Real-time subscription listener for instant Asaas updates
+  useEffect(() => {
+    if (!profile?.uid) return;
+    const unsubscribe = subscriptionService.subscribeToSubscriptions(profile.uid, (subs) => {
+      setSubscriptions(subs);
+    });
+    return () => unsubscribe();
+  }, [profile?.uid]);
+
+  // Auto-poll subscription status while charge modal is open
+  useEffect(() => {
+    if (!showClientChargeModal || !clientCreatedChargeData?.id) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await subscriptionService.checkAsaasPaymentStatus(clientCreatedChargeData.id);
+        if (res.success || res.received) {
+          toast.success("Pagamento confirmado e assinatura ativada com sucesso!");
+          setShowClientChargeModal(false);
+          setClientCreatedChargeData(null);
+          if (profile?.uid) {
+            const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
+            setSubscriptions(clientSubs);
+          }
+          clearInterval(interval);
+        }
+      } catch (err) {
+        // silent catch during polling
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [showClientChargeModal, clientCreatedChargeData?.id, profile?.uid]);
 
   const [portfolioBarbers, setPortfolioBarbers] = useState<any[]>([]);
   const [loadingPortfolioBarbers, setLoadingPortfolioBarbers] = useState(false);
@@ -2090,46 +2254,75 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   </div>
                 )}
 
-                {subscriptions.filter(s => s.status === 'active').length > 0 ? (
+                {subscriptions.length > 0 ? (
                   <div className="space-y-4">
-                    {subscriptions.filter(s => s.status === 'active').map(sub => (
-                      <div key={sub.id} className="bg-gradient-to-br from-emerald-50/50 to-emerald-100/20 border border-emerald-100/80 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/50 pb-4">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="text-base font-black text-emerald-950">{sub.planName}</h4>
-                              <span className="bg-emerald-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Assinante Premium</span>
+                    {subscriptions.map(sub => {
+                      const isActive = sub.status === 'active';
+                      const isPending = sub.status === 'pending';
+                      const statusColor = isPending ? 'bg-amber-500 text-white' : (isActive ? 'bg-emerald-600 text-white' : 'bg-red-500 text-white');
+                      const statusLabel = isPending ? 'Aguardando Pagamento' : (isActive ? 'Plano Ativo' : 'Expirado / Pendente');
+
+                      return (
+                        <div key={sub.id} className="bg-gradient-to-br from-slate-50 to-indigo-50/20 border border-slate-200 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/50 pb-4">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-base font-black text-slate-900">{sub.planName}</h4>
+                                <span className="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Clube de Assinatura</span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 font-bold mt-1">
+                                Início: {sub.startDate ? format(parse(sub.startDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''} • Próxima Cobrança: <span className="text-slate-800 font-black">{sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</span>
+                              </p>
+                              <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                                Método de Pagamento: <span className="text-slate-800 font-black">{sub.paymentMethod === 'pix' ? 'PIX' : 'Cartão de Crédito Recorrente (Asaas)'}</span>
+                              </p>
                             </div>
-                            <p className="text-[10px] text-slate-500 font-bold mt-1">Início: {sub.startDate ? format(parse(sub.startDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''} • Próxima Renovação: {sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</p>
+                            <span className={`${statusColor} font-black text-xs px-3 py-1.5 rounded-xl shadow-sm`}>{statusLabel}</span>
                           </div>
-                          <span className="text-emerald-700 font-black text-sm self-start sm:self-center bg-emerald-100/60 px-3 py-1.5 rounded-xl border border-emerald-200/50">Plano Ativo</span>
-                        </div>
 
-                        {/* Consumption counters */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
-                          <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-1">
-                            <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Cortes Utilizados no Mês</p>
-                            <p className="text-lg font-black text-slate-800">{sub.haircutsUsed} Utilizados</p>
-                            <p className="text-[10px] text-emerald-600 font-semibold">Aproveite sua assinatura à vontade!</p>
+                          {/* Consumption counters */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-1">
+                              <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Cortes Utilizados no Mês</p>
+                              <p className="text-lg font-black text-slate-800">{sub.haircutsUsed} Utilizados</p>
+                            </div>
+                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-1">
+                              <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Barbas Utilizadas no Mês</p>
+                              <p className="text-lg font-black text-slate-800">{sub.beardsUsed} Utilizadas</p>
+                            </div>
                           </div>
-                          <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-1">
-                            <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Barbas Utilizadas no Mês</p>
-                            <p className="text-lg font-black text-slate-800">{sub.beardsUsed} Utilizadas</p>
-                            <p className="text-[10px] text-emerald-600 font-semibold">Deixe a sua barba sempre alinhada!</p>
-                          </div>
-                        </div>
 
-                        <div className="pt-4 border-t border-slate-200/50 flex items-center justify-between text-[10px] font-black text-emerald-800 uppercase tracking-wider">
-                          <span>Renovação Automática: {sub.autoRenew ? 'Ativada' : 'Desativada'}</span>
-                          <button 
-                            onClick={() => setActiveTab('schedule')}
-                            className="hover:underline flex items-center gap-0.5"
-                          >
-                            Agendar Atendimento <ChevronRight size={12} />
-                          </button>
+                          {/* Action Buttons for Update Card and Pay via PIX */}
+                          <div className="pt-3 border-t border-slate-200/50 flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => setClientCardModalSub(sub)}
+                                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <CreditCard size={13} />
+                                <span>Atualizar Cartão</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleClientPayPix(sub)}
+                                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <QrCode size={13} />
+                                <span>Pagar via PIX</span>
+                              </button>
+                            </div>
+
+                            <button 
+                              onClick={() => setActiveTab('schedule')}
+                              className="text-indigo-600 hover:underline flex items-center gap-0.5 text-[10px] font-black uppercase tracking-wider"
+                            >
+                              Agendar Atendimento <ChevronRight size={12} />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="py-8 px-4 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 space-y-4">
@@ -2200,14 +2393,22 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                             </div>
                           </div>
 
-                          <div className="mt-6 pt-4 border-t border-slate-100">
+                          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPlanForCheckout(plan)}
+                              className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer"
+                            >
+                              <CreditCard size={14} /> Assinar Online (Checkout)
+                            </button>
                             <a 
                               href={waUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95"
+                              title="Falar via WhatsApp"
+                              className="p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 rounded-xl transition-all flex items-center justify-center shadow-sm active:scale-95"
                             >
-                              <Phone size={12} /> Assinar Plano de Clube
+                              <Phone size={14} />
                             </a>
                           </div>
                         </div>
@@ -2836,6 +3037,390 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Update Credit Card Modal */}
+      <AnimatePresence>
+        {clientCardModalSub && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl p-6 md:p-8 space-y-6 relative border border-slate-100"
+            >
+              <button
+                onClick={() => setClientCardModalSub(null)}
+                className="absolute top-4 right-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full p-2 transition-all active:scale-95 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="text-center space-y-2">
+                <div className="w-16 h-16 bg-indigo-50 rounded-full border border-indigo-100 flex items-center justify-center mx-auto text-indigo-600">
+                  <CreditCard size={32} />
+                </div>
+                <h3 className="text-lg font-black tracking-tight text-slate-800">Atualizar Cartão de Crédito</h3>
+                <p className="text-xs text-slate-500 font-semibold max-w-xs mx-auto">
+                  Insira os novos dados do seu cartão para cobrança recorrente automática mensal no Asaas.
+                </p>
+              </div>
+
+              <form onSubmit={handleClientUpdateCardSubmit} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-black uppercase text-slate-400 tracking-wider">Número do Cartão</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="0000 0000 0000 0000"
+                    value={ccNumber}
+                    onChange={(e) => setCcNumber(e.target.value)}
+                    className="w-full text-xs font-semibold text-slate-700 bg-slate-50 rounded-2xl p-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-black uppercase text-slate-400 tracking-wider">Nome no Cartão</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="NOME COMO NO CARTÃO"
+                    value={ccHolderName}
+                    onChange={(e) => setCcHolderName(e.target.value)}
+                    className="w-full text-xs font-semibold text-slate-700 bg-slate-50 rounded-2xl p-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all uppercase"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-black uppercase text-slate-400 tracking-wider">Mês (MM)</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="MM"
+                      maxLength={2}
+                      value={ccExpiryMonth}
+                      onChange={(e) => setCcExpiryMonth(e.target.value)}
+                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 rounded-2xl p-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all text-center"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-black uppercase text-slate-400 tracking-wider">Ano (AAAA)</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="AAAA"
+                      maxLength={4}
+                      value={ccExpiryYear}
+                      onChange={(e) => setCcExpiryYear(e.target.value)}
+                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 rounded-2xl p-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all text-center"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-black uppercase text-slate-400 tracking-wider">CCV</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="123"
+                      maxLength={4}
+                      value={ccCcv}
+                      onChange={(e) => setCcCcv(e.target.value)}
+                      className="w-full text-xs font-semibold text-slate-700 bg-slate-50 rounded-2xl p-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all text-center"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setClientCardModalSub(null)}
+                    className="flex-1 py-4 text-xs font-black text-slate-500 hover:text-slate-700 uppercase tracking-widest transition-all bg-slate-100 rounded-2xl border border-slate-200/50 hover:bg-slate-200 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUpdatingCard}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg shadow-indigo-600/15 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {isUpdatingCard ? 'Salvando...' : 'Salvar Cartão'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* View PIX Modal */}
+      <AnimatePresence>
+        {clientPixModalData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl p-6 md:p-8 space-y-6 relative border border-slate-100 text-center"
+            >
+              <button
+                onClick={() => setClientPixModalData(null)}
+                className="absolute top-4 right-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full p-2 transition-all active:scale-95 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2">
+                <div className="w-16 h-16 bg-emerald-50 rounded-full border border-emerald-100 flex items-center justify-center mx-auto text-emerald-600">
+                  <QrCode size={32} />
+                </div>
+                <h3 className="text-lg font-black tracking-tight text-slate-800">Pagamento via PIX (Alternativo)</h3>
+                <p className="text-xs text-slate-500 font-semibold max-w-xs mx-auto">
+                  Utilize o QR Code abaixo ou o código Copia e Cola para regularizar sua assinatura ou pagamento em atraso.
+                </p>
+              </div>
+
+              {clientPixModalData.pixQrCodeUrl && (
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 inline-block mx-auto">
+                  <img src={clientPixModalData.pixQrCodeUrl} alt="QR Code PIX" className="w-48 h-48 mx-auto rounded-xl object-contain" />
+                </div>
+              )}
+
+              {clientPixModalData.pixCopiaECola && (
+                <div className="space-y-2 text-left">
+                  <label className="text-xs font-black uppercase text-slate-400 tracking-wider">PIX Copia e Cola</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={clientPixModalData.pixCopiaECola}
+                      className="w-full text-[11px] font-mono text-slate-600 bg-slate-50 rounded-xl p-3 border border-slate-200 truncate select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(clientPixModalData.pixCopiaECola);
+                        toast.success("Código PIX copiado com sucesso!");
+                      }}
+                      className="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shrink-0 transition cursor-pointer"
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setClientPixModalData(null)}
+                className="w-full py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-widest transition cursor-pointer"
+              >
+                Fechar
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Escolher Forma de Pagamento para Assinatura */}
+      <AnimatePresence>
+        {selectedPlanForCheckout && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden flex flex-col p-6 space-y-6 text-center relative"
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedPlanForCheckout(null)}
+                className="absolute top-4 right-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full p-2 transition-all active:scale-95 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2">
+                <div className="w-16 h-16 bg-emerald-50 rounded-full border border-emerald-100 flex items-center justify-center mx-auto text-emerald-600">
+                  <Star size={32} />
+                </div>
+                <h3 className="text-lg font-black tracking-tight text-slate-800">Assinar {selectedPlanForCheckout.name}</h3>
+                <p className="text-xs text-slate-500 font-semibold max-w-xs mx-auto">
+                  Escolha como deseja realizar o pagamento da sua assinatura mensal de <span className="font-black text-slate-800">R$ {selectedPlanForCheckout.price.toFixed(2)}</span>.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                <button
+                  type="button"
+                  disabled={isSubscribingPlan}
+                  onClick={() => handleClientSubscribePlan(selectedPlanForCheckout, 'PIX')}
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  <QrCode size={16} />
+                  <span>{isSubscribingPlan ? 'Gerando...' : 'Pagar via PIX (Instantâneo)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSubscribingPlan}
+                  onClick={() => handleClientSubscribePlan(selectedPlanForCheckout, 'CREDIT_CARD')}
+                  className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  <CreditCard size={16} />
+                  <span>{isSubscribingPlan ? 'Gerando...' : 'Cartão de Crédito Recorrente'}</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedPlanForCheckout(null)}
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Cobrança Asaas Gerada para Cliente */}
+      <AnimatePresence>
+        {showClientChargeModal && clientCreatedChargeData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center font-black">
+                    <QrCode size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">Checkout de Assinatura</h3>
+                    <p className="text-xs font-bold text-slate-500">
+                      {clientCreatedChargeData.planName} • R$ {(clientCreatedChargeData.price || 0).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowClientChargeModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6 overflow-y-auto max-h-[75vh]">
+                {clientCreatedChargeData.billingType === 'CREDIT_CARD' ? (
+                  <div className="space-y-4 bg-blue-50/60 border border-blue-200/60 p-5 rounded-2xl text-center">
+                    <div className="w-12 h-12 bg-blue-100 border border-blue-300 text-blue-700 rounded-full flex items-center justify-center mx-auto shadow-sm">
+                      <CreditCard size={24} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-black text-slate-800 uppercase tracking-wide">Checkout de Cartão Asaas</p>
+                      <p className="text-xs text-slate-600 font-bold leading-relaxed">
+                        Para concluir a assinatura recorrente com total segurança, acesse o link de checkout homologado abaixo.
+                      </p>
+                    </div>
+                    {clientCreatedChargeData.paymentUrl && (
+                      <div className="pt-2">
+                        <a
+                          href={clientCreatedChargeData.paymentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
+                        >
+                          <CreditCard size={14} />
+                          <span>Abrir Checkout de Cartão Asaas</span>
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {clientCreatedChargeData.pixQrCodeUrl ? (
+                      <div className="text-center space-y-3 bg-slate-50 p-5 rounded-2xl border border-slate-200/80">
+                        <p className="text-xs font-black text-slate-700 uppercase tracking-wide">Escaneie o QR Code Pix abaixo:</p>
+                        <div className="p-3 bg-white rounded-2xl inline-block border shadow-sm">
+                          <img 
+                            src={clientCreatedChargeData.pixQrCodeUrl} 
+                            alt="QR Code Pix" 
+                            className="w-48 h-48 mx-auto object-contain rounded-xl"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                        <p className="text-xs text-slate-500 font-bold">Cobrança Pix gerada com sucesso.</p>
+                      </div>
+                    )}
+
+                    {clientCreatedChargeData.pixCopiaECola && (
+                      <div className="space-y-2">
+                        <label className="text-xs font-black text-slate-700 uppercase tracking-wider block">Pix Copia e Cola:</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            readOnly
+                            value={clientCreatedChargeData.pixCopiaECola}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-mono font-bold text-slate-700 truncate"
+                          />
+                          <button
+                            onClick={() => {
+                              if (clientCreatedChargeData.pixCopiaECola) {
+                                navigator.clipboard.writeText(clientCreatedChargeData.pixCopiaECola);
+                                toast.success("Código Pix copiado!");
+                              }
+                            }}
+                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shrink-0 flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm"
+                          >
+                            <Copy size={14} />
+                            <span>Copiar</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {clientCreatedChargeData.paymentUrl && (
+                      <div className="pt-2">
+                        <a
+                          href={clientCreatedChargeData.paymentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
+                        >
+                          <ExternalLink size={16} />
+                          <span>Abrir Fatura Completa no Asaas</span>
+                        </a>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="pt-4 border-t border-slate-100 flex justify-end items-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowClientChargeModal(false)}
+                    className="px-6 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

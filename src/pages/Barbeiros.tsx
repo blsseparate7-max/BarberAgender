@@ -396,7 +396,7 @@ function BarberCard({ barber, commissions, onEdit, onToggleAtivo, onDelete, canE
   const currentMonthYear = new Date().toISOString().substring(0, 7); // "YYYY-MM"
   const barberCommissions = commissions.filter(c => c.profissional_id === barber.uid && c.date && c.date.startsWith(currentMonthYear));
   
-  const totalFaturamento = barberCommissions.reduce((acc, curr) => acc + (curr.base_value || 0), 0);
+  const totalFaturamento = barberCommissions.filter(c => c.commission_type !== 'assinatura').reduce((acc, curr) => acc + (curr.base_value || 0), 0);
   const totalComissaoGanho = barberCommissions.reduce((acc, curr) => acc + (curr.commission_value || 0), 0);
   const totalAtendimentos = barberCommissions.length;
 

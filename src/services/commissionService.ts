@@ -361,7 +361,7 @@ export const commissionService = {
       const proComms = commissions.filter(c => c.profissional_id === barber.uid);
       const proAdvances = advances.filter(a => a.profissional_id === barber.uid);
 
-      const production = proComms.reduce((acc, c) => acc + (c.base_value || 0), 0);
+      const production = proComms.filter(c => c.commission_type !== 'assinatura').reduce((acc, c) => acc + (c.base_value || 0), 0);
       const commissionGenerated = proComms.reduce((acc, c) => acc + (c.commission_value || 0), 0);
       const vales = proAdvances.reduce((acc, a) => acc + (a.amount || 0), 0);
 
@@ -434,6 +434,7 @@ export const commissionService = {
       .reduce((acc, c) => acc + c.commission_value, 0);
       
     const totalBase = commissions
+      .filter(c => c.commission_type !== 'assinatura')
       .reduce((acc, c) => acc + c.base_value, 0);
 
     return {

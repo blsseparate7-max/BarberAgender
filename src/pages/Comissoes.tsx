@@ -157,6 +157,7 @@ export function Comissoes() {
       .reduce((acc, c) => acc + (c.commission_value || 0), 0);
 
     const totalBase = commissions
+      .filter(c => c.commission_type !== 'assinatura')
       .reduce((acc, c) => acc + (c.base_value || 0), 0);
 
     return {
@@ -217,7 +218,9 @@ export function Comissoes() {
     const pending = grossPending - pendingAdvances;
 
     const paid = barberComms.filter(c => c.status === 'pago').reduce((acc, c) => acc + (c.commission_value || 0), 0);
-    const totalBase = barberComms.reduce((acc, c) => acc + (c.base_value || 0), 0);
+    const totalBase = barberComms
+      .filter(c => c.commission_type !== 'assinatura')
+      .reduce((acc, c) => acc + (c.base_value || 0), 0);
     const count = barberComms.length;
 
     return {

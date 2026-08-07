@@ -5,6 +5,9 @@ import {
   Calendar, 
   Users, 
   Scissors, 
+  Dog,
+  Stethoscope,
+  Sparkles,
   DollarSign, 
   TrendingUp, 
   Package, 
@@ -229,9 +232,20 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
     }
   ];
 
-  const filteredMenu = MENU_STRUCTURE.filter(item => 
-    profile && item.roles.includes(profile.tipo)
-  );
+  const filteredMenu = MENU_STRUCTURE.map(item => {
+    if (item.subItems) {
+      const filteredSubs = item.subItems.filter(sub => {
+        if (!profile) return false;
+        if (!sub.roles.includes(profile.tipo)) return false;
+        if (sub.id === 'cadastros-assinantes' && tenant?.subscriptions_enabled !== true) {
+          return false;
+        }
+        return true;
+      });
+      return { ...item, subItems: filteredSubs };
+    }
+    return item;
+  }).filter(item => profile && item.roles.includes(profile.tipo) && (!item.subItems || item.subItems.length > 0));
 
   return (
     <aside className={`
@@ -247,11 +261,14 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
               <img src={tenant.logoUrl} alt={tenant.name} className="w-12 h-12 rounded-2xl object-cover shadow-xl shadow-primary/10" referrerPolicy="no-referrer" />
             ) : (
               <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/20">
-                <Scissors className="text-white w-6 h-6" />
+                {tenant?.niche === 'petshop' ? <Dog className="text-white w-6 h-6" /> :
+                 tenant?.niche === 'clinica' ? <Stethoscope className="text-white w-6 h-6" /> :
+                 tenant?.niche === 'manicure' ? <Sparkles className="text-white w-6 h-6" /> :
+                 <Scissors className="text-white w-6 h-6" />}
               </div>
             )}
-            <h1 className="text-2xl font-black tracking-tight text-primary leading-tight truncate max-w-[140px]" title={tenant?.name || "BarberElite"}>
-              {tenant?.name || "BarberElite"}
+            <h1 className="text-2xl font-black tracking-tight text-primary leading-tight truncate max-w-[140px]" title={tenant?.name || "Rull"}>
+              {tenant?.name || "Rull"}
             </h1>
           </div>
           <button onClick={() => setIsOpen(false)} className="md:hidden p-2.5 text-slate-400 hover:text-primary bg-slate-50 rounded-xl border border-slate-100">

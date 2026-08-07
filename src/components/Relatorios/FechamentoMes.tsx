@@ -272,7 +272,9 @@ export function FechamentoMes() {
           };
         }
         metrics.barberStats[barberId].commission += val;
-        metrics.barberStats[barberId].production += Number(c.base_value || 0);
+        if (c.commission_type !== 'assinatura') {
+          metrics.barberStats[barberId].production += Number(c.base_value || 0);
+        }
         if (c.status === 'pago') {
           metrics.barberStats[barberId].payouts += val;
         } else {

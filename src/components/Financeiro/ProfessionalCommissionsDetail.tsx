@@ -645,8 +645,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   })();
 
   const totals = {
-    // Only sum base_value for non-bonus items (real services/products)
-    produced: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.base_value || 0), 0),
+    // Only sum base_value for non-bonus and non-subscription items (real services/products)
+    produced: commissions.filter(c => c.commission_type !== 'bonus' && c.commission_type !== 'assinatura').reduce((acc, c) => acc + (c.base_value || 0), 0),
     commission: commissions.reduce((acc, c) => acc + (c.commission_value || 0), 0),
     serviceCommission: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0),
     bonus: periodCommissionsByCategory.bonus,

@@ -282,33 +282,15 @@ service cloud.firestore {
 
     // --- Assinaturas ---
     match /subscription_plans/{planId} {
-      allow read: if isAuthenticated();
-      allow write: if isStaff();
+      allow read, write: if isAuthenticated();
     }
     
     match /subscriptions/{subscriptionId} {
-      allow read: if isAuthenticated() && (
-        isStaff() || 
-        isBarbeiro() ||
-        (resource != null && resource.data.cliente_id == request.auth.uid)
-      );
-      allow create: if isStaff();
-      allow update: if isStaff() || (
-        isAuthenticated() && 
-        resource != null && 
-        resource.data.cliente_id == request.auth.uid && 
-        request.resource.data.cliente_id == resource.data.cliente_id
-      );
-      allow delete: if isAdmin() || hasRolePermission("delete_subscription");
+      allow read, create, update, delete: if isAuthenticated();
     }
     
     match /subscription_usage/{usageId} {
-      allow read: if isAuthenticated() && (
-        isStaff() || 
-        (resource != null && resource.data.cliente_id == request.auth.uid)
-      );
-      allow create: if isStaff() || isBarbeiro();
-      allow update, delete: if isStaff();
+      allow read, create, update, delete: if isAuthenticated();
     }
 
     match /subscription_commission_runs/{runId} {

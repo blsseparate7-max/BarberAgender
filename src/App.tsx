@@ -224,10 +224,30 @@ function MainApp() {
     if (activeTab === 'cadastros-servicos') return <Servicos />;
     if (activeTab === 'cadastros-pacotes') return <Pacotes />;
     if (activeTab === 'cadastros-pacotes-meus') return <Pacotes defaultTab="meus_pacotes" />;
-    if (activeTab === 'cadastros-assinantes') return <Assinaturas defaultTab="assinantes" />;
-    if (activeTab === 'cadastros-planos') return <Assinaturas defaultTab="planos" />;
-    if (activeTab === 'cadastros-consumo') return <Pacotes defaultTab="pacotes_consumo" />;
-    if (activeTab === 'cadastros-assinaturas') return <Assinaturas />;
+    if (activeTab === 'cadastros-assinantes') {
+      if (tenant?.subscriptions_enabled !== true) {
+        return (
+          <div className="p-8 max-w-xl mx-auto text-center space-y-4 bg-white border border-slate-200 rounded-[2rem] shadow-sm my-12">
+            <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+              <Lock size={32} />
+            </div>
+            <h3 className="text-xl font-black text-slate-900 tracking-tight">Módulo de Assinaturas Desativado</h3>
+            <p className="text-sm text-slate-600 font-medium">
+              O Clube de Assinaturas e planos VIP não estão ativos no momento para esta barbearia. Solicite a ativação ao administrador do sistema SaaS.
+            </p>
+          </div>
+        );
+      }
+      return <Assinaturas defaultTab="assinantes" />;
+    }
+    if (activeTab === 'cadastros-planos') {
+      if (tenant?.subscriptions_enabled !== true) return null;
+      return <Assinaturas defaultTab="planos" />;
+    }
+    if (activeTab === 'cadastros-assinaturas') {
+      if (tenant?.subscriptions_enabled !== true) return null;
+      return <Assinaturas />;
+    }
     if (activeTab === 'cadastros-tipos') return <Tipos />;
     if (activeTab === 'cadastros-mensagens') return <MensagensUsuarios />;
     if (activeTab === 'cadastros-noticias') return <NoticiasPromocoes />;

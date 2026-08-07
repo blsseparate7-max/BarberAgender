@@ -51,6 +51,7 @@ import { resetService } from '../services/resetService';
 import { tenantService, TenantProfile, SaaSPlan } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Subscription, UserRole } from '../types';
+import { SaaSPaymentModal } from '../components/SaaSPaymentModal';
 
 const formatToBRDate = (isoString?: string) => {
   if (!isoString) return '-';
@@ -186,11 +187,13 @@ export default function PortalSaaSAdmin() {
   const [planFeatures, setPlanFeatures] = useState('');
   const [planPopular, setPlanPopular] = useState(false);
   const [planActive, setPlanActive] = useState(true);
+  const [planHasSubscriptionsModule, setPlanHasSubscriptionsModule] = useState(true);
 
   // Tenant Association Plan & Trial States
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [isTrial, setIsTrial] = useState(true);
   const [trialDaysInput, setTrialDaysInput] = useState('30');
+  const [newTenantSubscriptionsEnabled, setNewTenantSubscriptionsEnabled] = useState(false);
 
   // Platform Pix Settings States
   const [pixKey, setPixKey] = useState('43999227226');
@@ -205,6 +208,12 @@ export default function PortalSaaSAdmin() {
   const [editTenantTrialDays, setEditTenantTrialDays] = useState('');
   const [editTenantTrialStartDate, setEditTenantTrialStartDate] = useState('');
   const [editTenantTrialEndDate, setEditTenantTrialEndDate] = useState('');
+  const [editTenantSubscriptionsEnabled, setEditTenantSubscriptionsEnabled] = useState(false);
+
+  // Admin Asaas Payment Modal State
+  const [showAdminChargeModal, setShowAdminChargeModal] = useState(false);
+  const [adminChargePlanName, setAdminChargePlanName] = useState('Elite');
+  const [adminChargePrice, setAdminChargePrice] = useState(149.90);
 
   useEffect(() => {
     loadData();
@@ -325,6 +334,24 @@ export default function PortalSaaSAdmin() {
     setEditTenantTrialDays(tenant.trialDays ? String(tenant.trialDays) : '');
     setEditTenantTrialStartDate(tenant.trialStartDate ? tenant.trialStartDate.substring(0, 10) : '');
     setEditTenantTrialEndDate(tenant.trialEndDate ? tenant.trialEndDate.substring(0, 10) : '');
+    setEditTenantSubscriptionsEnabled(tenant.subscriptions_enabled ?? false);
+  };
+
+  // Toggle Subscriptions Module Quick Action
+  const handleToggleSubscriptionsModule = async (tenant: TenantProfile) => {
+    const nextState = !tenant.subscriptions_enabled;
+    const toastId = toast.loading(`${nextState ? 'Ativando' : 'Desativando'} módulo de assinaturas para ${tenant.name}...`);
+    try {
+      await tenantService.updateTenant(tenant.id, {
+        subscriptions_enabled: nextState
+      });
+      toast.dismiss(toastId);
+      toast.success(`Módulo de assinaturas ${nextState ? 'ativado' : 'desativado'} para ${tenant.name}!`);
+      loadData();
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Erro ao atualizar módulo de assinaturas: ${err.message || err}`);
+    }
   };
 
   // Save Tenant Configuration
@@ -362,6 +389,7 @@ export default function PortalSaaSAdmin() {
         trialStartDate: isCurrentlyTrial && editTenantTrialStartDate ? new Date(editTenantTrialStartDate).toISOString() : (isCurrentlyTrial ? new Date().toISOString() : undefined),
         trialEndDate: isCurrentlyTrial && editTenantTrialEndDate ? new Date(editTenantTrialEndDate).toISOString() : (isCurrentlyTrial ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() : undefined),
         isActive: editTenantPlanStatus === 'active' || editTenantPlanStatus === 'trial',
+        subscriptions_enabled: editTenantSubscriptionsEnabled,
         ownerName: editTenantOwnerName,
         ownerEmail: editTenantOwnerEmail,
         ownerPhone: editTenantOwnerPhone,
@@ -447,6 +475,7 @@ export default function PortalSaaSAdmin() {
         trialEndDate: trialEndDateISO,
         dueDateDay: Number(newDueDateDay),
         isActive: isTrial || newPlanStatus === 'active',
+        subscriptions_enabled: newTenantSubscriptionsEnabled,
         notes: newTenantNotes
       });
 
@@ -529,7 +558,8 @@ export default function PortalSaaSAdmin() {
           description: planDescription,
           features: featuresArr,
           popular: planPopular,
-          active: planActive
+          active: planActive,
+          hasSubscriptionsModule: planHasSubscriptionsModule
         });
         toast.success('Plano atualizado com sucesso!');
       } else {
@@ -540,7 +570,8 @@ export default function PortalSaaSAdmin() {
           description: planDescription,
           features: featuresArr,
           popular: planPopular,
-          active: planActive
+          active: planActive,
+          hasSubscriptionsModule: planHasSubscriptionsModule
         });
         toast.success('Plano criado com sucesso!');
       }
@@ -554,6 +585,7 @@ export default function PortalSaaSAdmin() {
       setPlanFeatures('');
       setPlanPopular(false);
       setPlanActive(true);
+      setPlanHasSubscriptionsModule(true);
       loadData();
     } catch (err: any) {
       toast.error(`Erro ao salvar plano: ${err.message || err}`);
@@ -571,6 +603,7 @@ export default function PortalSaaSAdmin() {
     setPlanFeatures((plan.features || []).join('\n'));
     setPlanPopular(!!plan.popular);
     setPlanActive(plan.active !== false);
+    setPlanHasSubscriptionsModule(plan.hasSubscriptionsModule !== false);
     setIsCreatePlanOpen(true);
   };
 
@@ -729,7 +762,7 @@ export default function PortalSaaSAdmin() {
           </div>
           <div>
             <h1 className="text-lg font-black tracking-tight flex items-center gap-2">
-              BarberElite <span className="text-[10px] bg-amber-500 text-slate-950 font-black tracking-widest px-2 py-0.5 rounded uppercase">SaaS ROOT</span>
+              Rull <span className="text-[10px] bg-amber-500 text-slate-950 font-black tracking-widest px-2 py-0.5 rounded uppercase">SaaS ROOT</span>
             </h1>
             <p className="text-[11px] text-emerald-400 font-semibold tracking-wider uppercase">Painel de Superadministração do Sistema</p>
           </div>
@@ -982,7 +1015,14 @@ export default function PortalSaaSAdmin() {
                                   {tenant.name.substring(0, 2).toUpperCase()}
                                 </div>
                                 <div>
-                                  <p className="font-extrabold text-slate-900 text-sm">{tenant.name}</p>
+                                  <p className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
+                                    {tenant.name}
+                                    {tenant.subscriptions_enabled && (
+                                      <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200/60 text-[9px] font-black tracking-wider uppercase shrink-0" title="Módulo de Clubes / Assinaturas de Clientes Ativo">
+                                        💳 Clube
+                                      </span>
+                                    )}
+                                  </p>
                                   <p className="text-[10px] text-slate-400 font-mono font-bold">slug: {tenant.id}</p>
                                 </div>
                               </div>
@@ -1043,7 +1083,19 @@ export default function PortalSaaSAdmin() {
                             </td>
 
                             <td className="py-4 px-6 text-right">
-                              <div className="flex items-center justify-end gap-2">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => handleToggleSubscriptionsModule(tenant)}
+                                  title={tenant.subscriptions_enabled ? "Desativar Módulo de Assinaturas/Clubes para esta Barbearia" : "Ativar Módulo de Assinaturas/Clubes para esta Barbearia"}
+                                  className={`p-2 rounded-xl transition border flex items-center gap-1 font-bold text-xs ${
+                                    tenant.subscriptions_enabled
+                                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                                      : 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+                                  }`}
+                                >
+                                  <CreditCard size={15} />
+                                  <span className="hidden xl:inline">{tenant.subscriptions_enabled ? 'Clube On' : 'Ativar Clube'}</span>
+                                </button>
                                 <button
                                   onClick={() => {
                                     setSharePasswordInput('Barber123@');
@@ -1811,7 +1863,7 @@ export default function PortalSaaSAdmin() {
 
       {/* FOOTER */}
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-[10px] font-black uppercase text-slate-400 tracking-widest mt-auto">
-        BarberElite SaaS Admin Cockpit v2.1.0 • Todos os Direitos Reservados
+        Rull SaaS Admin Cockpit v2.1.0 • Todos os Direitos Reservados
       </footer>
 
       {/* MODAL 1: CHANGE PERMISSIONS / USER ROLE */}
@@ -2243,6 +2295,9 @@ export default function PortalSaaSAdmin() {
                             setEditTenantMaxProfs(plan.maxBarbers);
                             setEditTenantFeeOverride(String(plan.priceMonthly));
                             setEditTenantPlanName(plan.name);
+                            if (plan.hasSubscriptionsModule !== undefined) {
+                              setEditTenantSubscriptionsEnabled(plan.hasSubscriptionsModule);
+                            }
                           } else {
                             setEditTenantPlanName('');
                           }
@@ -2363,6 +2418,32 @@ export default function PortalSaaSAdmin() {
                       </div>
                     )}
 
+                    {/* Subscription Module Toggle */}
+                    <div className="p-4 bg-indigo-50/60 border border-indigo-150 rounded-2xl space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-sm">
+                            <CreditCard size={18} />
+                          </div>
+                          <div>
+                            <h5 className="text-xs font-black text-indigo-950">Módulo de Clubes / Assinaturas</h5>
+                            <p className="text-[10px] text-indigo-700 font-semibold leading-tight">
+                              Libera a criação e venda de planos de assinatura recorrentes para os clientes da barbearia.
+                            </p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox"
+                            checked={editTenantSubscriptionsEnabled}
+                            onChange={(e) => setEditTenantSubscriptionsEnabled(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
+                    </div>
+
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Notas Internas</label>
                       <textarea
@@ -2372,6 +2453,22 @@ export default function PortalSaaSAdmin() {
                         placeholder="Observações administrativas..."
                         className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 px-4 text-xs font-medium text-slate-800"
                       />
+                    </div>
+
+                    {/* Button to generate Asaas Payment Link */}
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdminChargePlanName(editTenantPlanName || 'Personalizado');
+                          setAdminChargePrice(Number(editTenantFeeOverride) || 149.90);
+                          setShowAdminChargeModal(true);
+                        }}
+                        className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black shadow-lg shadow-emerald-600/10 flex items-center justify-center gap-2 transition active:scale-95"
+                      >
+                        <CreditCard size={16} />
+                        <span>Gerar Fatura / Link de Cobrança Asaas (Pix ou Cartão)</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -2798,6 +2895,9 @@ export default function PortalSaaSAdmin() {
                           if (plan) {
                             setNewMaxProfs(plan.maxBarbers);
                             setNewMonthlyFeeOverride(String(plan.priceMonthly));
+                            if (plan.hasSubscriptionsModule !== undefined) {
+                              setNewTenantSubscriptionsEnabled(plan.hasSubscriptionsModule);
+                            }
                           }
                         }}
                         className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
@@ -2902,6 +3002,32 @@ export default function PortalSaaSAdmin() {
                         <option value="pending">Pendente de Pagamento Inicial</option>
                         <option value="suspended">Suspenso / Bloqueado</option>
                       </select>
+                    </div>
+
+                    {/* Subscription Module Toggle */}
+                    <div className="p-4 bg-indigo-50/60 border border-indigo-150 rounded-2xl space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-sm">
+                            <CreditCard size={18} />
+                          </div>
+                          <div>
+                            <h5 className="text-xs font-black text-indigo-950">Módulo de Clubes / Assinaturas</h5>
+                            <p className="text-[10px] text-indigo-700 font-semibold leading-tight">
+                              Libera a criação e venda de planos de assinatura recorrentes para os clientes desta barbearia.
+                            </p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox"
+                            checked={newTenantSubscriptionsEnabled}
+                            onChange={(e) => setNewTenantSubscriptionsEnabled(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
                     </div>
 
                     <div className="space-y-1">
@@ -3145,26 +3271,48 @@ export default function PortalSaaSAdmin() {
                   />
                 </div>
 
-                <div className="flex gap-4 items-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input 
-                      type="checkbox"
-                      checked={planPopular}
-                      onChange={(e) => setPlanPopular(e.target.checked)}
-                      className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
-                    />
-                    <span className="text-xs font-bold text-slate-700">Destaque na Landing Page (Popular)</span>
-                  </label>
+                <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <div className="flex flex-wrap gap-4 items-center">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={planPopular}
+                        onChange={(e) => setPlanPopular(e.target.checked)}
+                        className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-700">Destaque na Landing Page (Popular)</span>
+                    </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input 
-                      type="checkbox"
-                      checked={planActive}
-                      onChange={(e) => setPlanActive(e.target.checked)}
-                      className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
-                    />
-                    <span className="text-xs font-bold text-slate-700">Plano Ativo para Adesão</span>
-                  </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={planActive}
+                        onChange={(e) => setPlanActive(e.target.checked)}
+                        className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-700">Plano Ativo para Adesão</span>
+                    </label>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200/60">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={planHasSubscriptionsModule}
+                        onChange={(e) => setPlanHasSubscriptionsModule(e.target.checked)}
+                        className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <CreditCard size={14} className="text-indigo-600" />
+                        <span className="text-xs font-extrabold text-indigo-950">
+                          Incluir Módulo de Clubes / Assinaturas de Clientes neste Plano
+                        </span>
+                      </div>
+                    </label>
+                    <p className="text-[10px] text-slate-500 font-semibold ml-6 mt-0.5">
+                      Se marcado, barbearias assinantes deste plano terão o módulo de fidelidade e clubes de assinatura ativado automaticamente.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="flex gap-3 justify-end pt-4 border-t border-slate-100">
@@ -3187,6 +3335,28 @@ export default function PortalSaaSAdmin() {
           </div>
         )}
       </AnimatePresence>
+
+      <SaaSPaymentModal
+        isOpen={showAdminChargeModal}
+        onClose={() => setShowAdminChargeModal(false)}
+        tenantId={editingTenant?.id || 'barbearia'}
+        defaultTenantName={editingTenant?.name || ''}
+        defaultOwnerEmail={editingTenant?.ownerEmail || ''}
+        defaultOwnerCpfCnpj={editingTenant?.cnpjCpf || (editingTenant as any)?.cnpj || ''}
+        planName={adminChargePlanName}
+        price={adminChargePrice}
+        isAdminLinkGenerator={true}
+        onSuccessConfirm={async () => {
+          if (editingTenant) {
+            await tenantService.updateTenant(editingTenant.id, {
+              planStatus: 'active',
+              lastPaymentDate: new Date().toISOString()
+            });
+            toast.success(`Pagamento confirmado! Barbearia ${editingTenant.name} ativada com sucesso.`);
+            loadData();
+          }
+        }}
+      />
 
     </div>
   );

@@ -260,7 +260,7 @@ export function ProfessionalCommissions({
       const proCommsPeriod = proCommsAll.filter(c => c.date >= dateRange.start && c.date <= dateRange.end);
       const proAdvancesPeriod = proAdvancesAll.filter(a => a.date >= dateRange.start && a.date <= dateRange.end);
 
-      const production = proCommsPeriod.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.base_value || 0), 0);
+      const production = proCommsPeriod.filter(c => c.commission_type !== 'bonus' && c.commission_type !== 'assinatura').reduce((acc, c) => acc + (c.base_value || 0), 0);
       const bonus = proCommsPeriod.filter(c => c.commission_type === 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0);
       const commissionGenerated = proCommsPeriod.reduce((acc, c) => acc + (c.commission_value || 0), 0);
       const vales = proAdvancesPeriod.reduce((acc, a) => acc + (a.amount || 0), 0);

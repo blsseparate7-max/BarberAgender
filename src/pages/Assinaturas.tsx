@@ -33,7 +33,10 @@ import {
   List,
   ChevronLeft,
   ChevronRight,
-  MessageCircle
+  MessageCircle,
+  QrCode,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -171,6 +174,19 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
   const [deleteSubId, setDeleteSubId] = useState<string | null>(null);
   const [assignActivationType, setAssignActivationType] = useState<'manual' | 'asaas'>('manual');
+  
+  // State for Asaas Charge Result Modal (Pix QR Code, Copy/Paste, Payment Link)
+  const [createdChargeData, setCreatedChargeData] = useState<{
+    id: string;
+    paymentUrl?: string;
+    pixCopiaECola?: string;
+    pixQrCodeUrl?: string;
+    planName?: string;
+    price?: number;
+    clientName?: string;
+    status?: string;
+  } | null>(null);
+  const [showCreatedChargeModal, setShowCreatedChargeModal] = useState(false);
 
   const [planShowInPortal, setPlanShowInPortal] = useState(true);
 
@@ -506,15 +522,37 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const autoRenew = formData.get('autoRenew') === 'on';
 
     if (activationType === 'asaas') {
-      await subscriptionService.createAsaasSubscription({
+      const clientCpf = formData.get('clientCpf') as string;
+      const billingType = (formData.get('billingType') as 'PIX' | 'CREDIT_CARD') || 'PIX';
+
+      const res = await subscriptionService.createAsaasSubscription({
         cliente_id: client.uid,
         cliente_name: client.nome,
         plano_id: selectedPlan.id,
+        ownerEmail: client.email || '',
+        ownerCpfCnpj: clientCpf || client.cpf || '',
+        billingType
       });
-      toast.success(`Assinatura via Asaas criada como pendente para ${client.nome}!`);
+
+      toast.success(`Assinatura via Asaas gerada como pendente para ${client.nome}!`);
       setShowAssignModal(false);
-      setSelectedPlan(null);
       loadData();
+
+      if (res) {
+        setCreatedChargeData({
+          id: res.id,
+          paymentUrl: res.paymentUrl,
+          pixCopiaECola: res.pixCopiaECola,
+          pixQrCodeUrl: res.pixQrCodeUrl,
+          planName: selectedPlan.name,
+          price: selectedPlan.price,
+          clientName: client.nome,
+          status: 'pending',
+          billingType: billingType
+        });
+        setShowCreatedChargeModal(true);
+      }
+      setSelectedPlan(null);
     } else {
       setComandaInitialData({
         cliente_id: client.uid,
@@ -578,13 +616,46 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   // Action to confirm Asaas payment (simulate webhook)
   const handleConfirmAsaasPayment = async (subId: string) => {
     try {
+      // 1. Confirm local Firestore subscription
       await subscriptionService.confirmAsaasSubscriptionPayment(subId);
-      toast.success("Pagamento confirmado via webhook! Assinatura ativada com sucesso.");
+      
+      // 2. Try to simulate sandbox payment confirmation on Asaas
+      const sub = subscriptions.find(s => s.id === subId);
+      if (sub && sub.asaasInvoiceId) {
+        try {
+          await fetch('/api/saas/payment/simulate-receive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentId: sub.asaasInvoiceId })
+          });
+          console.log("[Asaas] Simulação de recebimento disparada com sucesso.");
+        } catch (simErr) {
+          console.warn("[Asaas] Falha ao disparar simulação de recebimento no Asaas (comum se produção ou off-line):", simErr);
+        }
+      }
+
+      toast.success("Pagamento confirmado! Assinatura ativada e sincronizada com sucesso.");
       loadData();
     } catch (error: any) {
       console.error("Erro ao confirmar pagamento Asaas:", error);
       toast.error(error.message || "Erro ao confirmar pagamento.");
     }
+  };
+
+  const handleOpenChargeModal = (sub: Subscription) => {
+    const plan = plans.find(p => p.id === sub.plano_id);
+    setCreatedChargeData({
+      id: sub.id,
+      paymentUrl: sub.paymentUrl,
+      pixCopiaECola: sub.pixCopiaECola,
+      pixQrCodeUrl: sub.pixQrCodeUrl,
+      planName: plan?.name || 'Assinatura',
+      price: plan?.price || 0,
+      clientName: sub.cliente_name,
+      status: sub.status,
+      billingType: sub.billingType || (sub.pixQrCodeUrl ? 'PIX' : 'CREDIT_CARD')
+    });
+    setShowCreatedChargeModal(true);
   };
 
   // Action to register subscriber benefit usage
@@ -616,6 +687,24 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       toast.error("Assinatura não encontrada.");
       return;
     }
+
+    // Check if subscription is active and not yet due for renewal
+    if (sub.status === 'active' && sub.endDate) {
+      const endDate = new Date(sub.endDate + 'T23:59:59');
+      const today = new Date();
+      const diffTime = endDate.getTime() - today.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays > 0) {
+        const formattedExp = format(parseISO(sub.endDate), 'dd/MM/yyyy');
+        toast.info(
+          `A assinatura de ${sub.cliente_name} ainda está ativa até ${formattedExp} (${diffDays} dia${diffDays > 1 ? 's' : ''} restante${diffDays > 1 ? 's' : ''}). A renovação/cobrança estará disponível no dia do vencimento!`,
+          { duration: 5000 }
+        );
+        return;
+      }
+    }
+
     const plan = plans.find(p => p.id === sub.plano_id);
     const planPrice = plan?.price || 0;
 
@@ -751,7 +840,19 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       (s.planName && s.planName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       s.id.toLowerCase().includes(searchQuery.toLowerCase());
     
-    const matchesStatus = subStatusFilter === 'all' || s.status === subStatusFilter;
+    let matchesStatus = false;
+    if (subStatusFilter === 'all') {
+      matchesStatus = true;
+    } else if (subStatusFilter === 'active') {
+      matchesStatus = s.status === 'active';
+    } else if (subStatusFilter === 'pending') {
+      matchesStatus = s.status === 'pending';
+    } else if (subStatusFilter === 'expired') {
+      matchesStatus = s.status === 'expired' || s.status === 'canceled' || s.status === 'overdue' || s.status === 'paused';
+    } else {
+      matchesStatus = s.status === subStatusFilter;
+    }
+
     const matchesPlan = subPlanFilter === 'all' || s.plano_id === subPlanFilter;
 
     return matchesSearch && matchesStatus && matchesPlan;
@@ -1284,48 +1385,140 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
       {/* Advanced Filter Box for Active Tabs */}
       {['assinantes_gestao'].includes(activeTab) && (
-        <div className="bg-slate-50 p-4 border border-slate-200/80 rounded-3xl space-y-3 shadow-sm">
-          <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
-            {/* Search Input */}
-            <div className="relative flex-1 min-w-[240px]">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input 
-                type="text"
-                placeholder="Buscar por nome, plano ou ID..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-2xl py-2.5 pl-10 pr-4 text-xs font-semibold text-primary shadow-sm transition"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-
-            {/* Filter Dropdowns */}
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Status Filter */}
-              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-3 py-1.5 shadow-sm">
-                <Filter size={13} className="text-slate-400" />
-                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Status:</span>
-                <select
-                  value={subStatusFilter}
-                  onChange={(e) => setSubStatusFilter(e.target.value)}
-                  className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
-                >
-                  <option value="all">Todos ({subscriptions.length})</option>
-                  <option value="active">Ativas</option>
-                  <option value="pending">Aguardando Pgto</option>
-                  <option value="paused">Pausadas</option>
-                  <option value="expired">Expiradas</option>
-                  <option value="canceled">Canceladas</option>
-                </select>
+        <div className="space-y-4">
+          {/* Quick Status Category Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {/* Card 1: Ativos */}
+            <button
+              type="button"
+              onClick={() => setSubStatusFilter('active')}
+              className={`p-4 rounded-3xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                subStatusFilter === 'active'
+                  ? 'bg-emerald-500/10 border-emerald-500/40 ring-2 ring-emerald-500/20 shadow-md scale-[1.01]'
+                  : 'bg-white border-slate-200/80 hover:border-emerald-300 hover:bg-emerald-50/30 shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Ativas
+                </span>
+                <span className="text-sm font-black text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
+                  {subscriptions.filter(s => s.status === 'active').length}
+                </span>
               </div>
+              <p className="text-[10px] text-slate-500 font-bold leading-tight">Clube de benefícios ativado e pronto para uso</p>
+            </button>
+
+            {/* Card 2: Aguardando Pagamento (Asaas) */}
+            <button
+              type="button"
+              onClick={() => setSubStatusFilter('pending')}
+              className={`p-4 rounded-3xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                subStatusFilter === 'pending'
+                  ? 'bg-amber-500/10 border-amber-500/40 ring-2 ring-amber-500/20 shadow-md scale-[1.01]'
+                  : 'bg-white border-slate-200/80 hover:border-amber-300 hover:bg-amber-50/30 shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                  Aguardando Pgto
+                </span>
+                <span className="text-sm font-black text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full">
+                  {subscriptions.filter(s => s.status === 'pending').length}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 font-bold leading-tight">Exclusivo Asaas (Aguardando Pix/Boleto ou Webhook)</p>
+            </button>
+
+            {/* Card 3: Atrasados e Expirados */}
+            <button
+              type="button"
+              onClick={() => setSubStatusFilter('expired')}
+              className={`p-4 rounded-3xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                subStatusFilter === 'expired'
+                  ? 'bg-rose-500/10 border-rose-500/40 ring-2 ring-rose-500/20 shadow-md scale-[1.01]'
+                  : 'bg-white border-slate-200/80 hover:border-rose-300 hover:bg-rose-50/30 shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-rose-800 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                  Atrasadas / Expiradas
+                </span>
+                <span className="text-sm font-black text-rose-800 bg-rose-100 px-2.5 py-0.5 rounded-full">
+                  {subscriptions.filter(s => s.status === 'expired' || s.status === 'canceled' || s.status === 'overdue' || s.status === 'paused').length}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 font-bold leading-tight">Assinaturas vencidas, pausadas ou canceladas</p>
+            </button>
+
+            {/* Card 4: Todos os Assinantes */}
+            <button
+              type="button"
+              onClick={() => setSubStatusFilter('all')}
+              className={`p-4 rounded-3xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                subStatusFilter === 'all'
+                  ? 'bg-indigo-500/10 border-indigo-500/40 ring-2 ring-indigo-500/20 shadow-md scale-[1.01]'
+                  : 'bg-white border-slate-200/80 hover:border-indigo-300 hover:bg-indigo-50/30 shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+                  <Users size={13} className="text-indigo-600" />
+                  Todos os Assinantes
+                </span>
+                <span className="text-sm font-black text-indigo-900 bg-indigo-100 px-2.5 py-0.5 rounded-full">
+                  {subscriptions.length}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 font-bold leading-tight">Visão geral unificada de toda a carteira</p>
+            </button>
+          </div>
+
+          <div className="bg-slate-50 p-4 border border-slate-200/80 rounded-3xl space-y-3 shadow-sm">
+            <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+              {/* Search Input */}
+              <div className="relative flex-1 min-w-[240px]">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <input 
+                  type="text"
+                  placeholder="Buscar por nome, plano ou ID..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-white border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-2xl py-2.5 pl-10 pr-4 text-xs font-semibold text-primary shadow-sm transition"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+
+              {/* Filter Dropdowns */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Status Filter */}
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-3 py-1.5 shadow-sm">
+                  <Filter size={13} className="text-slate-400" />
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Status:</span>
+                  <select
+                    value={subStatusFilter}
+                    onChange={(e) => setSubStatusFilter(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
+                  >
+                    <option value="all">Todos ({subscriptions.length})</option>
+                    <option value="active">🟢 Ativas ({subscriptions.filter(s => s.status === 'active').length})</option>
+                    <option value="pending">⏳ Aguardando Pgto - Asaas ({subscriptions.filter(s => s.status === 'pending').length})</option>
+                    <option value="expired">🔴 Atrasados / Expirados ({subscriptions.filter(s => s.status === 'expired' || s.status === 'canceled' || s.status === 'overdue' || s.status === 'paused').length})</option>
+                    <option value="paused">⏸️ Pausadas</option>
+                    <option value="canceled">❌ Canceladas</option>
+                  </select>
+                </div>
 
               {/* Plan Filter */}
               <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-3 py-1.5 shadow-sm">
@@ -1410,6 +1603,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
             </span>
           </div>
         </div>
+      </div>
       )}
 
       {/* TAB 1: Planos de Assinatura (Cadastro e Venda) */}
@@ -1477,6 +1671,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               onStatusChange={handleUpdateSubscriptionStatus}
                               onDelete={(id) => setDeleteSubId(id)}
                               onConfirmAsaasPayment={handleConfirmAsaasPayment}
+                              onShowChargeModal={handleOpenChargeModal}
                               onViewDetail={handleViewSubDetail}
                             />
                           );
@@ -1499,6 +1694,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       onStatusChange={handleUpdateSubscriptionStatus}
                       onDelete={(id) => setDeleteSubId(id)}
                       onConfirmAsaasPayment={handleConfirmAsaasPayment}
+                      onShowChargeModal={handleOpenChargeModal}
                       onViewDetail={handleViewSubDetail}
                       isClient={false}
                     />
@@ -2446,6 +2642,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   onRegisterUsage={() => {}}
                   onToggleAutoRenew={handleToggleAutoRenew}
                   onStatusChange={handleUpdateSubscriptionStatus}
+                  onShowChargeModal={handleOpenChargeModal}
                   isClient={true}
                 />
               ))}
@@ -2555,9 +2752,23 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border ${
                           selectedSubDetail.status === 'active' 
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                            : selectedSubDetail.status === 'pending'
+                            ? 'bg-purple-50 text-purple-700 border-purple-200'
+                            : selectedSubDetail.status === 'paused'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : selectedSubDetail.status === 'canceled'
+                            ? 'bg-slate-100 text-slate-600 border-slate-200'
                             : 'bg-red-50 text-red-700 border-red-200'
                         }`}>
-                          {selectedSubDetail.status === 'active' ? 'Ativa' : selectedSubDetail.status}
+                          {selectedSubDetail.status === 'active' 
+                            ? 'Ativa' 
+                            : selectedSubDetail.status === 'pending'
+                            ? 'Aguardando Pagamento'
+                            : selectedSubDetail.status === 'paused'
+                            ? 'Pausada'
+                            : selectedSubDetail.status === 'canceled'
+                            ? 'Cancelada'
+                            : 'Expirada'}
                         </span>
                       </div>
                     </div>
@@ -3160,9 +3371,46 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     <p>O cliente assina na hora. O sistema irá abrir o Caixa/PDV para você lançar o recebimento no dinheiro, cartão ou fiado.</p>
                   </div>
                 ) : (
-                  <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl text-xs text-purple-800 space-y-1">
-                    <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Webhook):</p>
-                    <p>A assinatura é criada com o status <strong className="text-purple-900 font-extrabold">pendente</strong>. Só será liberada quando o cliente efetuar o pagamento (simulado por você ou via integração webhook).</p>
+                  <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl text-xs text-purple-800 space-y-4">
+                    <div>
+                      <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Cobrança Online):</p>
+                      <p className="text-[11px] mt-0.5">A assinatura é criada como <strong className="text-purple-900 font-extrabold">pendente</strong> e é liberada quando o cliente conclui o Pix ou Cartão de Crédito.</p>
+                    </div>
+
+                    <div className="space-y-1 text-left">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">CPF do Cliente (Obrigatório Asaas)</label>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            const input = e.currentTarget.parentElement?.parentElement?.querySelector('input[name="clientCpf"]') as HTMLInputElement;
+                            if (input) input.value = "123.456.789-09";
+                          }}
+                          className="text-[9px] font-black text-purple-700 bg-purple-100 hover:bg-purple-200 px-2 py-0.5 rounded cursor-pointer transition-all"
+                        >
+                          Usar CPF de Teste
+                        </button>
+                      </div>
+                      <input 
+                        type="text" 
+                        name="clientCpf" 
+                        defaultValue="123.456.789-09"
+                        placeholder="000.000.000-00" 
+                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1 text-left">
+                      <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">Forma de Pagamento</label>
+                      <select 
+                        name="billingType"
+                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 cursor-pointer"
+                      >
+                        <option value="PIX">⚡ Pix Instantâneo (QR Code + Copia e Cola)</option>
+                        <option value="CREDIT_CARD">💳 Cartão de Crédito Recorrente (Cobrança Mensal)</option>
+                      </select>
+                    </div>
                   </div>
                 )}
 
@@ -3185,7 +3433,173 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         )}
       </AnimatePresence>
 
-      {/* MODAL DETALHAMENTO DAS ASSINATURAS DO POTE DO BARBEIRO */}
+      {/* Modal Cobrança Asaas Criada (Pix QR Code e Link Fatura) */}
+      <AnimatePresence>
+        {showCreatedChargeModal && createdChargeData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-purple-50 border border-purple-200 text-purple-700 flex items-center justify-center font-black">
+                    <QrCode size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">Cobrança Asaas</h3>
+                    <p className="text-xs font-bold text-slate-500">
+                      {createdChargeData.clientName} • {createdChargeData.planName}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowCreatedChargeModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6 overflow-y-auto max-h-[75vh]">
+                <div className="p-4 bg-purple-50/60 border border-purple-200/60 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-purple-600 tracking-wider">Valor do Plano</p>
+                    <p className="text-2xl font-black text-purple-950">
+                      R$ {(createdChargeData.price || 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 bg-purple-100 text-purple-800 border border-purple-300 rounded-full text-xs font-extrabold uppercase tracking-wide">
+                    {createdChargeData.status === 'active' || createdChargeData.status === 'received' ? '✅ Pago' : '⏳ Aguardando Pagamento'}
+                  </span>
+                </div>
+
+                {/* Method-specific content */}
+                {createdChargeData.billingType === 'CREDIT_CARD' ? (
+                  <div className="space-y-4 bg-blue-50/60 border border-blue-200/60 p-5 rounded-2xl text-center">
+                    <div className="w-12 h-12 bg-blue-100 border border-blue-300 text-blue-700 rounded-full flex items-center justify-center mx-auto shadow-sm">
+                      <CreditCard size={24} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-black text-slate-800 uppercase tracking-wide">Cadastro de Cartão de Crédito</p>
+                      <p className="text-xs text-slate-600 font-bold leading-relaxed">
+                        Para ativar a assinatura recorrente, o cliente deve cadastrar o cartão de crédito com total segurança no ambiente de checkout homologado do Asaas.
+                      </p>
+                    </div>
+                    {createdChargeData.paymentUrl && (
+                      <div className="pt-2">
+                        <a
+                          href={createdChargeData.paymentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
+                        >
+                          <ExternalLink size={14} />
+                          <span>Ir para Checkout de Cartão Asaas</span>
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {/* QR Code Section */}
+                    {createdChargeData.pixQrCodeUrl ? (
+                      <div className="text-center space-y-3 bg-slate-50 p-5 rounded-2xl border border-slate-200/80">
+                        <p className="text-xs font-black text-slate-700 uppercase tracking-wide">Escaneie o QR Code Pix abaixo:</p>
+                        <div className="p-3 bg-white rounded-2xl inline-block border shadow-sm">
+                          <img 
+                            src={createdChargeData.pixQrCodeUrl} 
+                            alt="QR Code Pix" 
+                            className="w-48 h-48 mx-auto object-contain rounded-xl"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                        <p className="text-xs text-slate-500 font-bold">Cobrança registrada com sucesso no Asaas.</p>
+                      </div>
+                    )}
+
+                    {/* Pix Copia e Cola */}
+                    {createdChargeData.pixCopiaECola && (
+                      <div className="space-y-2">
+                        <label className="text-xs font-black text-slate-700 uppercase tracking-wider block">Pix Copia e Cola:</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            readOnly
+                            value={createdChargeData.pixCopiaECola}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-mono font-bold text-slate-700 truncate"
+                          />
+                          <button
+                            onClick={() => {
+                              if (createdChargeData.pixCopiaECola) {
+                                navigator.clipboard.writeText(createdChargeData.pixCopiaECola);
+                                toast.success("Código Pix copiado!");
+                              }
+                            }}
+                            className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shrink-0 flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm"
+                          >
+                            <Copy size={14} />
+                            <span>Copiar</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fatura Link */}
+                    {createdChargeData.paymentUrl && (
+                      <div className="pt-2">
+                        <a
+                          href={createdChargeData.paymentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
+                        >
+                          <ExternalLink size={16} />
+                          <span>Abrir Link de Pagamento no Asaas</span>
+                        </a>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Confirm Action for Admin */}
+                {canManage && createdChargeData.status !== 'active' && (
+                  <div className="pt-4 border-t border-slate-100 space-y-2 text-center">
+                    <p className="text-[11px] text-slate-500 font-bold">
+                      O pagamento é identificado automaticamente via Webhook. Você também pode ativar manualmente se desejar:
+                    </p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await handleConfirmAsaasPayment(createdChargeData.id);
+                        setShowCreatedChargeModal(false);
+                      }}
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer"
+                    >
+                      <CheckCircle size={16} />
+                      <span>Confirmar Pagamento e Ativar Assinatura</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowCreatedChargeModal(false)}
+                  className="px-6 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {selectedBarberDetailModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
@@ -3462,6 +3876,7 @@ interface SubscriptionCardProps {
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
   onConfirmAsaasPayment?: (id: string) => void;
+  onShowChargeModal?: (sub: Subscription) => void;
   onViewDetail?: (sub: Subscription) => void;
   isClient?: boolean;
 }
@@ -3476,6 +3891,7 @@ function SubscriptionCard({
   onStatusChange, 
   onDelete,
   onConfirmAsaasPayment,
+  onShowChargeModal,
   onViewDetail,
   isClient 
 }: SubscriptionCardProps) {
@@ -3486,7 +3902,7 @@ function SubscriptionCard({
     expired: 'bg-red-50 text-red-600 border-red-100',
     canceled: 'bg-slate-50 text-slate-600 border-slate-100',
     paused: 'bg-amber-50 text-amber-600 border-amber-100',
-    pending: 'bg-blue-50 text-blue-600 border-blue-100'
+    pending: 'bg-purple-50 text-purple-600 border-purple-100'
   };
 
   return (
@@ -3527,20 +3943,36 @@ function SubscriptionCard({
 
         {sub.status === 'pending' && sub.activationType === 'asaas' && (
           <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl flex flex-col gap-3">
-            <div className="flex items-start gap-2 text-purple-900 font-bold text-xs">
-              <div className="w-2 h-2 bg-purple-500 rounded-full animate-ping mt-1.5 shrink-0" />
-              <span>Aguardando Pix de R$ {plan.price.toFixed(2)} (Asaas)</span>
+            <div className="flex items-start justify-between gap-2 text-purple-900 font-bold text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-purple-500 rounded-full animate-ping shrink-0" />
+                <span>Aguardando Pix de R$ {plan.price.toFixed(2)} (Asaas)</span>
+              </div>
             </div>
-            {isAdmin && onConfirmAsaasPayment && (
-              <button
-                type="button"
-                onClick={() => onConfirmAsaasPayment(sub.id)}
-                className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <RefreshCw size={12} className="animate-spin" />
-                <span>Simular Webhook: Confirmar Pix</span>
-              </button>
-            )}
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              {onShowChargeModal && (sub.paymentUrl || sub.pixCopiaECola || sub.pixQrCodeUrl) && (
+                <button
+                  type="button"
+                  onClick={() => onShowChargeModal(sub)}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <QrCode size={13} />
+                  <span>Ver Fatura / Pix QR Code</span>
+                </button>
+              )}
+
+              {isAdmin && onConfirmAsaasPayment && (
+                <button
+                  type="button"
+                  onClick={() => onConfirmAsaasPayment(sub.id)}
+                  className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <RefreshCw size={13} className="animate-spin" />
+                  <span>Confirmar Pix</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -3715,6 +4147,7 @@ interface SubscriptionTableRowProps {
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
   onConfirmAsaasPayment?: (id: string) => void;
+  onShowChargeModal?: (sub: Subscription) => void;
   onViewDetail?: (sub: Subscription) => void;
 }
 
@@ -3730,6 +4163,7 @@ function SubscriptionTableRow({
   onStatusChange,
   onDelete,
   onConfirmAsaasPayment,
+  onShowChargeModal,
   onViewDetail
 }: SubscriptionTableRowProps) {
   if (!plan) return null;
@@ -3754,7 +4188,16 @@ function SubscriptionTableRow({
   let daysBadgeText = '';
   let daysBadgeClass = 'bg-slate-100 text-slate-600 border-slate-200';
 
-  if (diffDays > 0) {
+  if (sub.status === 'pending') {
+    if (diffDays > 0) {
+      daysBadgeText = `Aguardando Pgto (${diffDays}d restantes)`;
+    } else if (diffDays === 0) {
+      daysBadgeText = 'Aguardando Pgto (Vence Hoje)';
+    } else {
+      daysBadgeText = `Aguardando Pgto (Atrasado ${Math.abs(diffDays)}d)`;
+    }
+    daysBadgeClass = 'bg-purple-50 text-purple-700 border-purple-200 font-bold';
+  } else if (diffDays > 0) {
     daysBadgeText = `Vence em ${diffDays}d`;
     daysBadgeClass = diffDays <= 5 ? 'bg-amber-50 text-amber-700 border-amber-200 font-bold' : 'bg-emerald-50 text-emerald-700 border-emerald-200';
   } else if (diffDays === 0) {
@@ -3821,6 +4264,17 @@ function SubscriptionTableRow({
             <span className="text-[8px] font-extrabold uppercase bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.2 rounded tracking-widest">
               Asaas
             </span>
+          )}
+          {sub.activationType === 'asaas' && (sub.paymentUrl || sub.pixCopiaECola || sub.pixQrCodeUrl) && (
+            <button
+              type="button"
+              onClick={() => onShowChargeModal?.(sub)}
+              className="mt-1 text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer transition-all"
+              title="Ver QR Code Pix e Link de Pagamento Asaas"
+            >
+              <QrCode size={10} />
+              <span>Ver Fatura / Pix</span>
+            </button>
           )}
           {sub.status === 'pending' && sub.activationType === 'asaas' && isAdmin && onConfirmAsaasPayment && (
             <button

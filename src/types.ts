@@ -645,6 +645,7 @@ export interface SubscriptionPlan {
 
 export interface Subscription {
   id: string;
+  tenantId?: string;
   cliente_id: string;
   cliente_name: string;
   plano_id: string;
@@ -661,6 +662,10 @@ export interface Subscription {
   activationType?: 'manual' | 'asaas';
   asaasPaymentStatus?: string;
   asaasInvoiceId?: string;
+  paymentUrl?: string;
+  pixCopiaECola?: string;
+  pixQrCodeUrl?: string;
+  billingType?: 'PIX' | 'CREDIT_CARD';
   createdAt: any;
   updatedAt: any;
 }

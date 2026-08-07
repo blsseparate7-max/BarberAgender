@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Scissors, Calendar, Shield, Sparkles, TrendingUp, Search, User, Users, Briefcase, ArrowRight, Star, Clock, MapPin, ChevronRight, Phone, Mail, CheckCircle2, Sliders, Check } from 'lucide-react';
+import { Scissors, Dog, Stethoscope, Calendar, Shield, Sparkles, TrendingUp, Search, User, Users, Briefcase, ArrowRight, Star, Clock, MapPin, ChevronRight, Phone, Mail, CheckCircle2, Sliders, Check } from 'lucide-react';
 import { tenantService, TenantProfile, SaaSPlan } from '../services/tenantService';
+import { SaaSPaymentModal } from '../components/SaaSPaymentModal';
 
 interface LandingPageProps {
   onSelectRole: (role: 'cliente' | 'profissional' | 'dono-registro' | 'cliente-registro') => void;
   activeTenant: TenantProfile | null;
 }
 
-const WHATSAPP_SYSTEM_URL = 'https://wa.me/5543999227226?text=Ol%C3%A1!%20Gostaria%20de%20saber%20mais%20sobre%20o%20sistema%20BarberElite%20para%20minha%20barbearia.';
+const WHATSAPP_SYSTEM_URL = 'https://wa.me/5543999227226?text=Ol%C3%A1!%20Gostaria%20de%20saber%20mais%20sobre%20o%20sistema%20Rull%20para%20minha%20barbearia.';
 
 export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   const [tenants, setTenants] = useState<TenantProfile[]>([]);
@@ -16,6 +17,10 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingTenants, setLoadingTenants] = useState(true);
   const [activeTab, setActiveTab] = useState<'inicio' | 'barbearias'>('inicio');
+
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedPlanName, setSelectedPlanName] = useState('Elite');
+  const [selectedPlanPrice, setSelectedPlanPrice] = useState(149.90);
 
   const isSpecificTenant = Boolean(activeTenant);
 
@@ -72,12 +77,15 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
               {isSpecificTenant && activeTenant.logoUrl ? (
                 <img src={activeTenant.logoUrl} alt={activeTenant.name} className="w-full h-full object-cover rounded-xl" referrerPolicy="no-referrer" />
               ) : (
+                activeTenant?.niche === 'petshop' ? <Dog className="w-5 h-5 text-zinc-950" /> :
+                activeTenant?.niche === 'clinica' ? <Stethoscope className="w-5 h-5 text-zinc-950" /> :
+                activeTenant?.niche === 'manicure' ? <Sparkles className="w-5 h-5 text-zinc-950" /> :
                 <Scissors className="w-5 h-5 text-zinc-950" />
               )}
             </div>
             <div>
               <span className="font-extrabold text-xl tracking-tight bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent block">
-                {isSpecificTenant ? activeTenant.name : 'BarberElite'}
+                {isSpecificTenant ? activeTenant.name : 'Rull'}
               </span>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="text-[10px] block text-emerald-500 font-bold tracking-widest uppercase">
@@ -498,18 +506,21 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
                     </div>
 
                     <div className="pt-8">
-                      <a 
-                        href={`https://wa.me/5543999227226?text=${encodeURIComponent(`Olá! Quero contratar o plano "${p.name}" (até ${p.maxBarbers} barbeiros) por R$ ${p.priceMonthly}/mês do BarberElite!`)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`w-full block py-3.5 px-4 rounded-xl font-black text-xs text-center uppercase tracking-widest transition-all ${
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setSelectedPlanName(p.name);
+                          setSelectedPlanPrice(p.priceMonthly);
+                          setShowPaymentModal(true);
+                        }}
+                        className={`w-full block py-3.5 px-4 rounded-xl font-black text-xs text-center uppercase tracking-widest transition-all cursor-pointer ${
                           p.popular
                             ? 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-lg shadow-emerald-500/10 hover:scale-[1.02]'
                             : 'bg-zinc-800 hover:bg-zinc-700 text-white'
                         }`}
                       >
-                        Contratar Plano
-                      </a>
+                        Contratar / Assinar Plano
+                      </button>
                     </div>
                   </div>
                 ))
@@ -768,13 +779,24 @@ export function LandingPage({ onSelectRole, activeTenant }: LandingPageProps) {
       {/* Footer */}
       <footer className="relative z-10 border-t border-zinc-900 bg-zinc-950 py-12 text-center text-zinc-600 text-xs">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          <p>© 2026 BarberElite. Desenvolvido para Barbearias de Alta Performance.</p>
+          <p>© 2026 Rull. Sistema de Gestão e Agendamentos de Alta Performance.</p>
           <div className="flex gap-4">
             <a href="#" className="hover:text-white transition-colors">Termos de Uso</a>
             <a href="#" className="hover:text-white transition-colors">Privacidade</a>
           </div>
         </div>
       </footer>
+
+      <SaaSPaymentModal
+        isOpen={showPaymentModal}
+        onClose={() => setShowPaymentModal(false)}
+        planName={selectedPlanName}
+        price={selectedPlanPrice}
+        onSuccessConfirm={() => {
+          setShowPaymentModal(false);
+          onSelectRole('dono-registro');
+        }}
+      />
     </div>
   );
 }

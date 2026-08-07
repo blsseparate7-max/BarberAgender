@@ -21,6 +21,7 @@ export interface SaaSPlan {
   features: string[];
   popular?: boolean;
   active: boolean;
+  hasSubscriptionsModule?: boolean; // Se este plano SaaS inclui o módulo de Clubes/Assinaturas de Clientes
   createdAt?: any;
 }
 
@@ -65,6 +66,9 @@ export interface TenantProfile {
   ownerPhone?: string;
   dueDateDay?: number; // Dia de vencimento da fatura mensal (1 a 31)
   notes?: string;
+  lastPaymentDate?: string;
+  subscriptions_enabled?: boolean; // Módulo de assinaturas ativado ou não
+  niche?: 'barbearia' | 'petshop' | 'clinica' | 'manicure'; // Ramo / Niche of the establishment
 }
 
 export function getActiveTenantId(): string {
@@ -83,8 +87,8 @@ export function getActiveTenantId(): string {
   const saved = localStorage.getItem('barberelite_tenant_id');
   if (saved) return saved.trim().toLowerCase();
 
-  // 3. Default fallback
-  return 'gbcortes7';
+  // 3. Default fallback (Return empty string so root domain visitors see SaaS landing page)
+  return '';
 }
 
 export const tenantService = {
@@ -189,6 +193,7 @@ export const tenantService = {
         cnpjCpf: tenantData.cnpjCpf || '',
         address: tenantData.address || undefined,
         notes: tenantData.notes || '',
+        subscriptions_enabled: tenantData.subscriptions_enabled ?? false,
         createdAt: new Date(),
         updatedAt: new Date()
       };
@@ -248,6 +253,7 @@ export const tenantService = {
         features: plan.features || [],
         popular: !!plan.popular,
         active: plan.active !== false,
+        hasSubscriptionsModule: !!plan.hasSubscriptionsModule,
         createdAt: new Date()
       };
       await setDoc(docRef, {

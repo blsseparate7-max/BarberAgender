@@ -40,6 +40,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { ImageCropModal } from '../components/ImageCropModal';
+import { SaaSPaymentModal } from '../components/SaaSPaymentModal';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { settingsService, BarbershopProfile } from '../services/settingsService';
 import { userService } from '../services/userService';
@@ -162,29 +163,28 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [selectedPlanName, setSelectedPlanName] = useState('Elite');
   const [selectedPlanPrice, setSelectedPlanPrice] = useState(149.90);
 
-  const handleGenerateSaaSCharge = async (planName: string, price: number) => {
-    try {
-      setSelectedPlanName(planName);
-      setSelectedPlanPrice(price);
-      setGeneratingSaaSCharge(true);
-      setShowSaaSPaymentModal(true);
-      setSaasChargeData(null);
-
-      const charge = await saasGatewayService.createSaaSCharge({
-        tenantId: tenant?.id || 'barbearia',
-        tenantName: tenant?.name || 'Barbearia',
-        ownerEmail: profile?.email || tenant?.ownerEmail || '',
-        planId: planName.toLowerCase(),
-        planName,
-        amount: price,
-        billingType: 'PIX'
-      });
-      setSaasChargeData(charge);
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao gerar fatura do plano SaaS');
-    } finally {
-      setGeneratingSaaSCharge(false);
+  const handleGenerateSaaSCharge = (planName: string, price: number) => {
+    // Check if tenant plan is active and not yet due for renewal
+    const expirationDateStr = tenant?.planExpiresAt || tenant?.planValidUntil;
+    if (tenant?.planStatus === 'active' && expirationDateStr) {
+      const expDate = new Date(expirationDateStr + 'T23:59:59');
+      const today = new Date();
+      const diffTime = expDate.getTime() - today.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays > 0) {
+        const formattedExp = expirationDateStr.split('-').reverse().join('/');
+        toast.info(
+          `Sua assinatura Rull está ativa até ${formattedExp} (${diffDays} dia${diffDays > 1 ? 's' : ''} restante${diffDays > 1 ? 's' : ''}). A renovação estará disponível no dia do vencimento!`,
+          { duration: 5000 }
+        );
+        return;
+      }
     }
+
+    setSelectedPlanName(planName);
+    setSelectedPlanPrice(price);
+    setShowSaaSPaymentModal(true);
   };
 
   const handleConfirmSaaSPayment = async () => {
@@ -1854,6 +1854,18 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
           toast.success('Foto da logo processada e recortada em formato JPEG otimizado!');
         }}
         outputSize={300}
+      />
+
+      <SaaSPaymentModal
+        isOpen={showSaaSPaymentModal}
+        onClose={() => setShowSaaSPaymentModal(false)}
+        tenantId={tenant?.id || 'barbearia'}
+        defaultTenantName={tenant?.name || 'Barbearia'}
+        defaultOwnerEmail={profile?.email || tenant?.ownerEmail || ''}
+        defaultOwnerCpfCnpj={tenant?.cnpjCpf || (tenant as any)?.cnpj || ''}
+        planName={selectedPlanName}
+        price={selectedPlanPrice}
+        onSuccessConfirm={handleConfirmSaaSPayment}
       />
     </div>
   );

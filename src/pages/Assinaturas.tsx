@@ -189,6 +189,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [showCreatedChargeModal, setShowCreatedChargeModal] = useState(false);
 
   const [planShowInPortal, setPlanShowInPortal] = useState(true);
+  const [planAllowedPaymentMethods, setPlanAllowedPaymentMethods] = useState<('PIX' | 'CREDIT_CARD')[]>(['PIX', 'CREDIT_CARD']);
+  const [planAllowClientCancel, setPlanAllowClientCancel] = useState(true);
 
   // States for viewing subscriber details & updating dates
   const [selectedSubDetail, setSelectedSubDetail] = useState<Subscription | null>(null);
@@ -442,6 +444,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     if (showPlanModal) {
       if (editingPlan) {
         setPlanShowInPortal(editingPlan.showInPortal ?? true);
+        setPlanAllowedPaymentMethods(editingPlan.allowedPaymentMethods || ['PIX', 'CREDIT_CARD']);
+        setPlanAllowClientCancel(editingPlan.allowClientCancel ?? true);
         setPlanComissaoTipo((editingPlan as any).comissao_tipo || 'fixo');
         setPlanComissaoPoolPorcentagem((editingPlan as any).comissao_pool_porcentagem ?? 50);
         setPlanComissaoFixaValor((editingPlan as any).comissao_fixa_valor ?? 10.00);
@@ -492,6 +496,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setDiscountPercentage(10);
       } else {
         setPlanShowInPortal(true);
+        setPlanAllowedPaymentMethods(['PIX', 'CREDIT_CARD']);
+        setPlanAllowClientCancel(true);
         setPlanComissaoTipo('fixo');
         setPlanComissaoPoolPorcentagem(50);
         setPlanComissaoFixaValor(10.00);
@@ -806,6 +812,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       extraBenefits: (formData.get('extraBenefits') as string).split(',').map(s => s.trim()).filter(Boolean),
       status: formData.get('status') as 'active' | 'inactive',
       showInPortal: planShowInPortal,
+      allowedPaymentMethods: planAllowedPaymentMethods,
+      allowClientCancel: planAllowClientCancel,
       comissao_tipo: planComissaoTipo,
       comissao_pool_porcentagem: planComissaoPoolPorcentagem,
       comissao_fixa_valor: planComissaoFixaValor,
@@ -3292,6 +3300,69 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       )}
                     </div>
 
+                    {/* Formas de Pagamento Aceitas */}
+                    <div className="bg-slate-50 border border-slate-150 p-4 rounded-xl space-y-3 shadow-sm">
+                      <div>
+                        <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Formas de Pagamento Permitidas</h5>
+                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Selecione as opções de pagamento disponíveis para este plano</p>
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-xs font-extrabold text-slate-700">
+                        <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 px-3 py-2 rounded-xl flex-1 hover:border-slate-300 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={planAllowedPaymentMethods.includes('PIX')}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setPlanAllowedPaymentMethods(prev => [...prev, 'PIX']);
+                              } else {
+                                if (planAllowedPaymentMethods.length <= 1) {
+                                  toast.error('Pelo menos uma forma de pagamento deve permanecer selecionada.');
+                                  return;
+                                }
+                                setPlanAllowedPaymentMethods(prev => prev.filter(m => m !== 'PIX'));
+                              }
+                            }}
+                            className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                          />
+                          <span>⚡ PIX (Instantâneo)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 px-3 py-2 rounded-xl flex-1 hover:border-slate-300 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={planAllowedPaymentMethods.includes('CREDIT_CARD')}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setPlanAllowedPaymentMethods(prev => [...prev, 'CREDIT_CARD']);
+                              } else {
+                                if (planAllowedPaymentMethods.length <= 1) {
+                                  toast.error('Pelo menos uma forma de pagamento deve permanecer selecionada.');
+                                  return;
+                                }
+                                setPlanAllowedPaymentMethods(prev => prev.filter(m => m !== 'CREDIT_CARD'));
+                              }
+                            }}
+                            className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                          />
+                          <span>💳 Cartão de Crédito Recorrente</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Permitir Cancelamento pelo Cliente */}
+                    <div className="bg-slate-50 border border-slate-150 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                      <div>
+                        <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Permitir Exclusão/Cancelamento pelo Cliente</h5>
+                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Exibir botão para o cliente cancelar/excluir a assinatura no Portal do Cliente</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPlanAllowClientCancel(!planAllowClientCancel)}
+                        className={`w-12 h-6 rounded-full transition relative shrink-0 cursor-pointer ${planAllowClientCancel ? 'bg-emerald-600' : 'bg-slate-350'}`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${planAllowClientCancel ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+
                     <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
                       <div>
                         <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Disponível no Portal do Cliente</h5>
@@ -3407,8 +3478,12 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         name="billingType"
                         className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 cursor-pointer"
                       >
-                        <option value="PIX">⚡ Pix Instantâneo (QR Code + Copia e Cola)</option>
-                        <option value="CREDIT_CARD">💳 Cartão de Crédito Recorrente (Cobrança Mensal)</option>
+                        {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('PIX')) && (
+                          <option value="PIX">⚡ Pix Instantâneo (QR Code + Copia e Cola)</option>
+                        )}
+                        {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('CREDIT_CARD')) && (
+                          <option value="CREDIT_CARD">💳 Cartão de Crédito Recorrente (Cobrança Mensal)</option>
+                        )}
                       </select>
                     </div>
                   </div>

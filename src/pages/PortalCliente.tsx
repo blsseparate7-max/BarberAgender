@@ -32,7 +32,8 @@ import {
   QrCode,
   RefreshCw,
   Copy,
-  ExternalLink
+  ExternalLink,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
@@ -182,6 +183,27 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [isSubscribingPlan, setIsSubscribingPlan] = useState(false);
   const [clientCreatedChargeData, setClientCreatedChargeData] = useState<any | null>(null);
   const [showClientChargeModal, setShowClientChargeModal] = useState(false);
+  const [subToCancel, setSubToCancel] = useState<any | null>(null);
+  const [isCancelingSub, setIsCancelingSub] = useState(false);
+
+  const handleCancelSubscriptionByClient = async () => {
+    if (!subToCancel) return;
+    setIsCancelingSub(true);
+    try {
+      await subscriptionService.updateSubscriptionStatus(subToCancel.id, 'canceled');
+      toast.success("Sua assinatura foi cancelada com sucesso.");
+      setSubToCancel(null);
+      if (profile?.uid) {
+        const updated = await subscriptionService.getSubscriptions(profile.uid);
+        setSubscriptions(updated);
+      }
+    } catch (err: any) {
+      console.error("Erro ao cancelar assinatura:", err);
+      toast.error("Erro ao cancelar assinatura.");
+    } finally {
+      setIsCancelingSub(false);
+    }
+  };
 
   const handleClientSubscribePlan = async (plan: any, billingType: 'PIX' | 'CREDIT_CARD') => {
     if (!profile) {
@@ -2323,6 +2345,21 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                 <QrCode size={13} />
                                 <span>Pagar via PIX</span>
                               </button>
+                              {(() => {
+                                const planObj = availablePlans.find(p => p.id === sub.plano_id);
+                                const canCancel = (sub as any).allowClientCancel !== false && (planObj?.allowClientCancel !== false);
+                                if (!canCancel) return null;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSubToCancel(sub)}
+                                    className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <Trash2 size={13} />
+                                    <span>Cancelar Assinatura</span>
+                                  </button>
+                                );
+                              })()}
                             </div>
 
                             <button 
@@ -3268,25 +3305,29 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               </div>
 
               <div className="grid grid-cols-1 gap-3">
-                <button
-                  type="button"
-                  disabled={isSubscribingPlan}
-                  onClick={() => handleClientSubscribePlan(selectedPlanForCheckout, 'PIX')}
-                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
-                >
-                  <QrCode size={16} />
-                  <span>{isSubscribingPlan ? 'Gerando...' : 'Pagar via PIX (Instantâneo)'}</span>
-                </button>
+                {(!selectedPlanForCheckout.allowedPaymentMethods || selectedPlanForCheckout.allowedPaymentMethods.includes('PIX')) && (
+                  <button
+                    type="button"
+                    disabled={isSubscribingPlan}
+                    onClick={() => handleClientSubscribePlan(selectedPlanForCheckout, 'PIX')}
+                    className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    <QrCode size={16} />
+                    <span>{isSubscribingPlan ? 'Gerando...' : 'Pagar via PIX (Instantâneo)'}</span>
+                  </button>
+                )}
 
-                <button
-                  type="button"
-                  disabled={isSubscribingPlan}
-                  onClick={() => handleClientSubscribePlan(selectedPlanForCheckout, 'CREDIT_CARD')}
-                  className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
-                >
-                  <CreditCard size={16} />
-                  <span>{isSubscribingPlan ? 'Gerando...' : 'Cartão de Crédito Recorrente'}</span>
-                </button>
+                {(!selectedPlanForCheckout.allowedPaymentMethods || selectedPlanForCheckout.allowedPaymentMethods.includes('CREDIT_CARD')) && (
+                  <button
+                    type="button"
+                    disabled={isSubscribingPlan}
+                    onClick={() => handleClientSubscribePlan(selectedPlanForCheckout, 'CREDIT_CARD')}
+                    className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    <CreditCard size={16} />
+                    <span>{isSubscribingPlan ? 'Gerando...' : 'Cartão de Crédito Recorrente'}</span>
+                  </button>
+                )}
               </div>
 
               <button
@@ -3296,6 +3337,60 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               >
                 Cancelar
               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Confirmar Cancelamento pelo Cliente */}
+      <AnimatePresence>
+        {subToCancel && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-md p-6 space-y-6 text-center relative"
+            >
+              <button
+                type="button"
+                onClick={() => setSubToCancel(null)}
+                className="absolute top-4 right-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full p-2 transition-all cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="w-16 h-16 bg-rose-50 rounded-full border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
+                <Trash2 size={32} />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-lg font-black tracking-tight text-slate-800">Cancelar Assinatura</h3>
+                <p className="text-xs text-slate-500 font-semibold">
+                  Tem certeza que deseja cancelar a assinatura do plano <strong className="text-slate-800">{subToCancel.planName}</strong>?
+                </p>
+                <p className="text-[11px] text-amber-700 font-bold bg-amber-50 border border-amber-100 p-3 rounded-xl mt-2">
+                  ⚠️ Ao cancelar, você perderá o acesso aos benefícios inclusos no clube de assinatura.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSubToCancel(null)}
+                  className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  disabled={isCancelingSub}
+                  onClick={handleCancelSubscriptionByClient}
+                  className="flex-1 py-3.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  {isCancelingSub ? 'Cancelando...' : 'Confirmar Cancelamento'}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

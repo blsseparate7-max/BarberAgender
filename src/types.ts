@@ -639,6 +639,8 @@ export interface SubscriptionPlan {
   status: 'active' | 'inactive';
   showInPortal?: boolean;
   discounts?: SubscriptionDiscount[];
+  allowedPaymentMethods?: ('PIX' | 'CREDIT_CARD')[];
+  allowClientCancel?: boolean;
   createdAt: any;
   updatedAt: any;
 }
@@ -666,6 +668,8 @@ export interface Subscription {
   pixCopiaECola?: string;
   pixQrCodeUrl?: string;
   billingType?: 'PIX' | 'CREDIT_CARD';
+  allowedPaymentMethods?: ('PIX' | 'CREDIT_CARD')[];
+  allowClientCancel?: boolean;
   createdAt: any;
   updatedAt: any;
 }

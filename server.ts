@@ -121,11 +121,8 @@ function isValidCpfCnpj(val: string): boolean {
 
 export const app = express();
 
-async function startServer() {
-  const PORT = 3000;
-
-  // Middleware para JSON
-  app.use(express.json());
+// Middleware para JSON
+app.use(express.json({ limit: '10mb' }));
 
   // API Route to reset another user's password (e.g. barber) using Firebase Admin
   app.post("/api/admin/reset-password", async (req, res) => {
@@ -1257,13 +1254,13 @@ Instruções:
 
   // Webhook Receiver for Asaas / Mercado Pago / Stripe
   // 1. Endpoint GET para validação/teste de conectividade da URL pelo Asaas
-  app.get("/api/saas/payment/webhook", (req, res) => {
+  app.get(["/api/saas/payment/webhook", "/saas/payment/webhook"], (req, res) => {
     console.log("🌐 [ASAAS WEBHOOK] Validação GET / Ping de conectividade recebido do Asaas.");
     return res.status(200).json({ status: "ok", message: "Webhook Asaas ativo e pronto para receber notificações." });
   });
 
   // 2. Endpoint POST para processamento dos eventos de pagamento do Asaas
-  app.post("/api/saas/payment/webhook", async (req, res) => {
+  app.post(["/api/saas/payment/webhook", "/saas/payment/webhook"], async (req, res) => {
     const timestamp = new Date().toISOString();
     const event = req.body || {};
     const payment = event.payment || event;
@@ -1492,28 +1489,30 @@ Instruções:
     });
   });
 
-  // Configuração do Vite como Middleware
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+  // Configuração do Vite como Middleware (somente em dev/prod container)
+  async function startServer() {
+    const PORT = 3000;
+    if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else if (!process.env.VERCEL) {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
+
+    if (!process.env.VERCEL) {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`BarberElite Server running on http://localhost:${PORT}`);
+      });
+    }
   }
 
-  if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`BarberElite Server running on http://localhost:${PORT}`);
-    });
-  }
-}
-
-startServer();
+  startServer();
 
 export default app;

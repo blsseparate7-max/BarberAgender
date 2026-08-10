@@ -706,24 +706,47 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         
         {/* Filtro Global de Período para abas temporais */}
         {['overview', 'dre', 'cash-history', 'entries-exits', 'commissions', 'professional-accounts'].includes(activeTab) && (
-          <div className="flex items-center bg-white border border-slate-200 rounded-[1.25rem] px-4 py-2.5 shadow-sm self-start lg:self-auto">
-            <div className="flex items-center gap-2">
-              <Calendar className="text-slate-400" size={16} />
-              <div className="flex items-center gap-1.5">
-                <input 
-                  type="date" 
-                  value={dateRange.start}
-                  onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
-                  className="bg-transparent text-xs font-extrabold text-primary focus:outline-none cursor-pointer"
-                />
-                <span className="text-xs text-slate-300 font-bold">|</span>
-                <input 
-                  type="date" 
-                  value={dateRange.end}
-                  onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
-                  className="bg-transparent text-xs font-extrabold text-primary focus:outline-none cursor-pointer"
-                />
+          <div className="flex flex-col sm:flex-row items-center gap-2 self-start lg:self-auto">
+            <div className="flex items-center bg-white border border-slate-200 rounded-[1.25rem] px-4 py-2.5 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Calendar className="text-slate-400" size={16} />
+                <div className="flex items-center gap-1.5">
+                  <input 
+                    type="date" 
+                    value={dateRange.start}
+                    onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
+                    className="bg-transparent text-xs font-extrabold text-primary focus:outline-none cursor-pointer"
+                  />
+                  <span className="text-xs text-slate-300 font-bold">|</span>
+                  <input 
+                    type="date" 
+                    value={dateRange.end}
+                    onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
+                    className="bg-transparent text-xs font-extrabold text-primary focus:outline-none cursor-pointer"
+                  />
+                </div>
               </div>
+            </div>
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+              <button
+                onClick={() => {
+                  const todayStr = format(new Date(), 'yyyy-MM-dd');
+                  setDateRange({ start: todayStr, end: todayStr });
+                }}
+                className="px-2.5 py-1 text-[10px] font-black uppercase text-slate-600 hover:bg-white rounded-lg transition-all shadow-2xs cursor-pointer"
+              >
+                Hoje
+              </button>
+              <button
+                onClick={() => {
+                  const now = new Date();
+                  const startMonth = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
+                  setDateRange({ start: startMonth, end: format(now, 'yyyy-MM-dd') });
+                }}
+                className="px-2.5 py-1 text-[10px] font-black uppercase text-slate-600 hover:bg-white rounded-lg transition-all shadow-2xs cursor-pointer"
+              >
+                Este Mês
+              </button>
             </div>
           </div>
         )}

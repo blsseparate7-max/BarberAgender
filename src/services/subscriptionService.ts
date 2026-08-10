@@ -550,6 +550,8 @@ export const subscriptionService = {
     const subId = subscriptionRef.id;
 
     let asaasInvoiceId = 'pay_' + Math.random().toString(36).substring(2, 9);
+    let asaasSubscriptionId: string | null = null;
+    let asaasCustomerId: string | null = null;
     let paymentUrl = '';
     let pixCopiaECola = '';
     let pixQrCodeUrl = '';
@@ -574,12 +576,20 @@ export const subscriptionService = {
       });
       const chargeData = await chargeRes.json();
       if (chargeData.success) {
-        if (chargeData.chargeId) asaasInvoiceId = chargeData.chargeId;
+        if (chargeData.paymentId) asaasInvoiceId = chargeData.paymentId;
+        else if (chargeData.chargeId) asaasInvoiceId = chargeData.chargeId;
+        if (chargeData.chargeId && chargeData.chargeId.startsWith('sub_')) {
+          asaasSubscriptionId = chargeData.chargeId;
+        }
+        if (chargeData.customerId) {
+          asaasCustomerId = chargeData.customerId;
+        }
         paymentUrl = chargeData.paymentUrl || '';
         pixCopiaECola = chargeData.pixCopiaECola || '';
         pixQrCodeUrl = chargeData.pixQrCodeUrl || '';
       } else if (chargeData.error) {
-        console.warn("Aviso ao criar cobrança Asaas:", chargeData.error);
+        console.error("Erro ao criar cobrança Asaas:", chargeData.error);
+        throw new Error(chargeData.error);
       }
     } catch (e: any) {
       console.warn("Erro de conexão ao gerar cobrança Asaas:", e);
@@ -601,7 +611,10 @@ export const subscriptionService = {
       discounts: plan.discounts || [],
       activationType: 'asaas',
       asaasPaymentStatus: 'pending',
-      asaasInvoiceId,
+      asaasInvoiceId: asaasInvoiceId || null,
+      asaasSubscriptionId: asaasSubscriptionId || null,
+      asaasCustomerId: asaasCustomerId || null,
+      externalReference: subId,
       paymentUrl,
       pixCopiaECola,
       pixQrCodeUrl,

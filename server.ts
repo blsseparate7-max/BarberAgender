@@ -378,7 +378,8 @@ Instruções:
         return res.status(400).json({ error: "Parâmetros obrigatórios incompletos (tenantId e amount)." });
       }
 
-      const asaasApiKey = process.env.ASAAS_API_KEY;
+      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
       const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
       const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
@@ -458,11 +459,14 @@ Instruções:
           }
 
           if (newCust.errors) {
-            if (isSandboxMode) {
+            const hasInvalidToken = newCust.errors.some((e: any) => e.code === 'invalid_access_token');
+            if (isSandboxMode || hasInvalidToken) {
+              console.warn("[Asaas Sandbox] Token inválido ou erro no Asaas Sandbox, utilizando fallback para testes local:", newCust.errors);
               customerId = 'cus_sandbox_' + Date.now();
             } else {
-              const errMsg = newCust.errors[0]?.description || "O CPF/CNPJ informado é inválido.";
-              return res.status(400).json({ error: errMsg });
+              const errMsg = newCust.errors[0]?.description || "O CPF/CNPJ ou dados informados são inválidos no Asaas.";
+              console.error("[Asaas Error] Falha ao criar cliente:", newCust.errors);
+              return res.status(400).json({ error: errMsg, details: newCust.errors });
             }
           } else {
             customerId = newCust.id;
@@ -477,7 +481,7 @@ Instruções:
         let payData: any = null;
 
         const ensureCustomerCpfCnpjValid = async (useCnpj = false) => {
-          if (isSandboxMode && customerId) {
+          if (isSandboxMode && customerId && !customerId.startsWith('cus_sandbox_')) {
             cleanCpfCnpj = useCnpj ? validSandboxCnpj : validSandboxCpf;
             await fetch(`${baseUrl}/customers/${customerId}`, {
               method: 'PUT',
@@ -491,7 +495,7 @@ Instruções:
         };
 
         // If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
-        if (billingType === 'CREDIT_CARD' || req.body.isSubscription) {
+        if ((billingType === 'CREDIT_CARD' || req.body.isSubscription) && !customerId.startsWith('cus_sandbox_')) {
           try {
             const createSub = async () => fetch(`${baseUrl}/subscriptions`, {
               method: 'POST',
@@ -521,6 +525,9 @@ Instruções:
 
             if (!subData.errors && subData.id) {
               payData = subData;
+            } else if (subData.errors) {
+              console.warn("Retorno de erro ao criar assinatura no Asaas:", subData.errors);
+              payData = subData;
             }
           } catch (subErr) {
             console.warn("Falha ao criar assinatura em /subscriptions, tentando /payments:", subErr);
@@ -528,7 +535,7 @@ Instruções:
         }
 
         // Fallback to single payment charge if subscription was not created or billingType is PIX
-        if (!payData) {
+        if ((!payData || payData.errors) && !customerId.startsWith('cus_sandbox_')) {
           const createPayment = async () => fetch(`${baseUrl}/payments`, {
             method: 'POST',
             headers: {
@@ -557,14 +564,20 @@ Instruções:
 
         if (!payData || payData.errors) {
           if (isSandboxMode) {
+            console.warn("[Asaas Sandbox] Utilizando cobrança simulada para testes no Sandbox.");
             payData = {
               id: 'pay_sandbox_' + Date.now(),
               invoiceUrl: `https://sandbox.asaas.com/i/${Date.now()}`,
               status: 'PENDING'
             };
           } else {
-            const errMsg = payData?.errors?.[0]?.description || "O CPF/CNPJ informado é inválido.";
-            return res.status(400).json({ error: errMsg });
+            const hasInvalidToken = payData?.errors?.some((e: any) => e.code === 'invalid_access_token');
+            let errMsg = payData?.errors?.[0]?.description || "Erro ao gerar cobrança no Asaas. Verifique os dados fornecidos.";
+            if (hasInvalidToken) {
+              errMsg = "A chave de API do Asaas é inválida ou você inseriu o Token de Webhook. No painel do Asaas, acesse Configurações -> Integrações -> Chaves de API para copiar a Chave de API correta.";
+            }
+            console.error("[Asaas Error] Falha ao criar cobrança/assinatura:", payData?.errors);
+            return res.status(400).json({ error: errMsg, details: payData?.errors });
           }
         }
 
@@ -609,6 +622,7 @@ Instruções:
           success: true,
           chargeId: payData.id,
           paymentId: paymentIdForPixOrLink,
+          customerId: customerId,
           paymentUrl: bankSlipUrl || invoiceUrl || payData.bankSlipUrl || payData.invoiceUrl,
           pixCopiaECola: pixCopiaECola || invoiceUrl || payData.invoiceUrl,
           pixQrCodeUrl: pixQrCodeUrl,
@@ -861,6 +875,65 @@ Instruções:
     }
   });
 
+  // Helper to find subscription in Firestore by any available Asaas identifier or docId
+  async function findSubscriptionInFirestore(dbAdmin: any, params: {
+    paymentId?: string;
+    subscriptionId?: string;
+    customerId?: string;
+    externalReference?: string;
+    docId?: string;
+  }) {
+    const { paymentId, subscriptionId, customerId, externalReference, docId } = params;
+
+    // 1. Direct document ID lookup
+    const directDocIds = Array.from(new Set([docId, externalReference].filter(Boolean))) as string[];
+    for (const id of directDocIds) {
+      if (id && !id.startsWith('sub_') && !id.startsWith('pay_') && !id.startsWith('cus_')) {
+        try {
+          const docSnap = await dbAdmin.collection('subscriptions').doc(id).get();
+          if (docSnap.exists) {
+            return { ref: docSnap.ref, snap: docSnap, data: docSnap.data(), id: docSnap.id };
+          }
+        } catch (e) {
+          // ignore doc ID syntax issues
+        }
+      }
+    }
+
+    // 2. Search by asaasInvoiceId, asaasSubscriptionId, externalReference
+    const searchIds = Array.from(new Set([paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
+    if (searchIds.length > 0) {
+      let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds).limit(1).get();
+      if (!q.empty) {
+        const snap = q.docs[0];
+        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+      }
+
+      q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds).limit(1).get();
+      if (!q.empty) {
+        const snap = q.docs[0];
+        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+      }
+
+      q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds).limit(1).get();
+      if (!q.empty) {
+        const snap = q.docs[0];
+        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+      }
+    }
+
+    // 3. Search by asaasCustomerId
+    if (customerId) {
+      const q = await dbAdmin.collection('subscriptions').where('asaasCustomerId', '==', customerId).limit(1).get();
+      if (!q.empty) {
+        const snap = q.docs[0];
+        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+      }
+    }
+
+    return null;
+  }
+
   // Active Payment Status Check endpoint (to sync automatically without relying solely on webhooks)
   app.post("/api/saas/payment/check-status", async (req, res) => {
     try {
@@ -880,10 +953,28 @@ Instruções:
         ? 'https://www.asaas.com/api/v3' 
         : 'https://sandbox.asaas.com/api/v3';
 
-      let targetPaymentId = paymentId;
+      const dbAdmin = getAdminDb();
+      let realAsaasPaymentId = paymentId;
+      let existingSub: any = null;
 
-      if (paymentId.startsWith('sub_')) {
-        const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${paymentId}/payments`, {
+      if (dbAdmin) {
+        existingSub = await findSubscriptionInFirestore(dbAdmin, {
+          docId: paymentId,
+          externalReference: paymentId,
+          paymentId,
+          subscriptionId: paymentId
+        });
+
+        if (existingSub) {
+          const sData = existingSub.data;
+          realAsaasPaymentId = sData.asaasInvoiceId || sData.asaasSubscriptionId || paymentId;
+        }
+      }
+
+      let targetPaymentId = realAsaasPaymentId;
+
+      if (targetPaymentId.startsWith('sub_')) {
+        const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${targetPaymentId}/payments`, {
           headers: { 'access_token': asaasApiKey }
         });
         const subPaymentsData = await subPaymentsRes.json();
@@ -894,6 +985,7 @@ Instruções:
           } else {
             const pendingPayment = subPaymentsData.data.find((p: any) => p.status === 'PENDING');
             if (pendingPayment) targetPaymentId = pendingPayment.id;
+            else targetPaymentId = subPaymentsData.data[0].id;
           }
         }
       }
@@ -909,101 +1001,100 @@ Instruções:
 
       const isPaid = paymentData.status === 'RECEIVED' || paymentData.status === 'CONFIRMED';
 
-      if (isPaid) {
-        const dbAdmin = getAdminDb();
-        if (dbAdmin) {
-          const possibleInvoiceIds = [paymentData.subscription, paymentData.id, paymentId].filter(Boolean);
-          if (possibleInvoiceIds.length > 0) {
-            const subQuery = await dbAdmin.collection('subscriptions')
-              .where('asaasInvoiceId', 'in', possibleInvoiceIds)
-              .limit(1)
+      if (isPaid && dbAdmin) {
+        let subMatch = existingSub;
+        if (!subMatch) {
+          subMatch = await findSubscriptionInFirestore(dbAdmin, {
+            paymentId: paymentData.id,
+            subscriptionId: paymentData.subscription,
+            customerId: paymentData.customer,
+            externalReference: paymentData.externalReference || paymentId,
+            docId: paymentId
+          });
+        }
+
+        if (subMatch) {
+          const subRef = subMatch.ref;
+          const subData = subMatch.data;
+
+          if (subData.asaasPaymentStatus !== 'received' || subData.status !== 'active') {
+            const tenantId = subData.tenantId;
+            const todayStr = new Date().toISOString().split('T')[0];
+
+            let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
+            let newStartStr = subData.endDate || todayStr;
+            if (!subData.endDate || currentEnd < new Date()) {
+              newStartStr = todayStr;
+            }
+            const newStart = new Date(newStartStr + 'T12:00:00');
+            const newEnd = new Date(newStart);
+            newEnd.setMonth(newEnd.getMonth() + 1);
+            const newEndStr = newEnd.toISOString().split('T')[0];
+
+            await subRef.update({
+              status: 'active',
+              asaasPaymentStatus: 'received',
+              startDate: newStartStr,
+              endDate: newEndStr,
+              haircutsUsed: 0,
+              beardsUsed: 0,
+              lastRenewalDate: todayStr,
+              updatedAt: new Date()
+            });
+
+            // Add to financial_transactions
+            await dbAdmin.collection('financial_transactions').add({
+              tenantId,
+              type: 'income',
+              amount: Number(paymentData.value) || subData.amount || 0,
+              date: todayStr,
+              category: 'Assinaturas',
+              description: `Assinatura Rull Confirmada (Sync Ativo): ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+              paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+              status: 'pago',
+              cliente_id: subData.cliente_id,
+              cliente_name: subData.cliente_name,
+              responsavel_id: subData.cliente_id,
+              responsavel_name: subData.cliente_name,
+              net_amount: Number(paymentData.value) || subData.amount || 0,
+              settlement_date: todayStr,
+              is_settled: true,
+              createdAt: new Date()
+            });
+
+            // Check cash sessions
+            const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
+              .where('tenantId', '==', tenantId)
               .get();
 
-          if (!subQuery.empty) {
-            const docSnap = subQuery.docs[0];
-            const subRef = docSnap.ref;
-            const subData = docSnap.data();
+            const openCashDoc = cashSessionsQuery.docs.find(doc => {
+              const s = doc.data().status;
+              return s === 'open' || s === 'reopened';
+            });
 
-            if (subData.asaasPaymentStatus !== 'received' && subData.status !== 'active') {
-              const tenantId = subData.tenantId;
-              const todayStr = new Date().toISOString().split('T')[0];
-
-              let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
-              let newStartStr = subData.endDate || todayStr;
-              if (!subData.endDate || currentEnd < new Date()) {
-                newStartStr = todayStr;
-              }
-              const newStart = new Date(newStartStr + 'T12:00:00');
-              const newEnd = new Date(newStart);
-              newEnd.setMonth(newEnd.getMonth() + 1);
-              const newEndStr = newEnd.toISOString().split('T')[0];
-
-              await subRef.update({
-                status: 'active',
-                asaasPaymentStatus: 'received',
-                startDate: newStartStr,
-                endDate: newEndStr,
-                haircutsUsed: 0,
-                beardsUsed: 0,
-                lastRenewalDate: todayStr,
-                updatedAt: new Date()
-              });
-
-              // Add to financial_transactions
-              await dbAdmin.collection('financial_transactions').add({
+            if (openCashDoc) {
+              const cashId = openCashDoc.id;
+              await dbAdmin.collection('cash_movements').add({
                 tenantId,
+                caixa_id: cashId,
                 type: 'income',
-                amount: Number(paymentData.value) || subData.amount || 0,
-                date: todayStr,
                 category: 'Assinaturas',
-                description: `Assinatura Rull Confirmada (Sync Ativo): ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-                paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
-                status: 'pago',
-                cliente_id: subData.cliente_id,
-                cliente_name: subData.cliente_name,
-                responsavel_id: subData.cliente_id,
-                responsavel_name: subData.cliente_name,
-                net_amount: Number(paymentData.value) || subData.amount || 0,
-                settlement_date: todayStr,
-                is_settled: true,
+                description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                amount: Number(paymentData.value) || subData.amount || 0,
+                payment_method: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
+                paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
+                date: todayStr,
                 createdAt: new Date()
               });
 
-              // Check cash sessions
-              const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
-                .where('tenantId', '==', tenantId)
-                .get();
-
-              const openCashDoc = cashSessionsQuery.docs.find(doc => {
-                const s = doc.data().status;
-                return s === 'open' || s === 'reopened';
+              await openCashDoc.ref.update({
+                total_income: (openCashDoc.data().total_income || 0) + (Number(paymentData.value) || subData.amount || 0),
+                expected_balance: (openCashDoc.data().expected_balance || 0) + (Number(paymentData.value) || subData.amount || 0),
+                updatedAt: new Date()
               });
-
-              if (openCashDoc) {
-                const cashId = openCashDoc.id;
-                await dbAdmin.collection('cash_movements').add({
-                  tenantId,
-                  caixa_id: cashId,
-                  type: 'income',
-                  category: 'Assinaturas',
-                  description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-                  amount: Number(paymentData.value) || subData.amount || 0,
-                  payment_method: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                  paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                  date: todayStr,
-                  createdAt: new Date()
-                });
-
-                await openCashDoc.ref.update({
-                  total_income: (openCashDoc.data().total_income || 0) + (Number(paymentData.value) || subData.amount || 0),
-                  expected_balance: (openCashDoc.data().expected_balance || 0) + (Number(paymentData.value) || subData.amount || 0),
-                  updatedAt: new Date()
-                });
-              }
-              console.log(`[Sync Ativo] Assinatura ativada com sucesso via verificação de status!`);
             }
+            console.log(`[Sync Ativo] Assinatura ${subMatch.id} ativada com sucesso via check-status!`);
           }
-         }
         }
       }
 
@@ -1220,45 +1311,23 @@ Instruções:
           }
         }
 
-        // 2. If not found, search subscriptions by asaasInvoiceId or customer
+        // 2. If not found, search subscriptions using findSubscriptionInFirestore
         if (!tenantSnap?.exists && !subData) {
-          const possibleInvoiceIds = [];
-          if (payment?.subscription) possibleInvoiceIds.push(payment.subscription);
-          if (payment?.id) possibleInvoiceIds.push(payment.id);
-          if (refId) possibleInvoiceIds.push(refId);
+          const subMatch = await findSubscriptionInFirestore(dbAdmin, {
+            paymentId: payment?.id,
+            subscriptionId: payment?.subscription,
+            customerId: payment?.customer,
+            externalReference: refId,
+            docId: refId
+          });
 
-          if (possibleInvoiceIds.length > 0) {
-            console.log(`🔍 [ASAAS AUDIT] Buscando subscrição por asaasInvoiceId/paymentId nos IDs:`, possibleInvoiceIds);
-            const subQuery = await dbAdmin.collection('subscriptions')
-              .where('asaasInvoiceId', 'in', possibleInvoiceIds)
-              .limit(1)
-              .get();
-            
-            if (!subQuery.empty) {
-              const docSnap = subQuery.docs[0];
-              subRef = docSnap.ref;
-              subSnap = docSnap;
-              subData = docSnap.data();
-              refId = docSnap.id;
-              console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada por asaasInvoiceId: ${refId} (Cliente: ${subData.cliente_name})`);
-              console.log(`👤 [ASAAS AUDIT] 4. Usuário / Cliente localizado: ${subData.cliente_id} (${subData.cliente_name})`);
-            } else if (payment?.customer) {
-              // Fallback: search subscription by cliente_id
-              console.log(`🔍 [ASAAS AUDIT] Buscando subscrição por cliente_id: ${payment.customer}`);
-              const custQuery = await dbAdmin.collection('subscriptions')
-                .where('cliente_id', '==', payment.customer)
-                .limit(1)
-                .get();
-              if (!custQuery.empty) {
-                const docSnap = custQuery.docs[0];
-                subRef = docSnap.ref;
-                subSnap = docSnap;
-                subData = docSnap.data();
-                refId = docSnap.id;
-                console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada por cliente_id (${payment.customer}): ${refId}`);
-                console.log(`👤 [ASAAS AUDIT] 4. Usuário / Cliente localizado via customer ID: ${payment.customer}`);
-              }
-            }
+          if (subMatch) {
+            subRef = subMatch.ref;
+            subSnap = subMatch.snap;
+            subData = subMatch.data;
+            refId = subMatch.id;
+            console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada via findSubscriptionInFirestore: ${refId} (Cliente: ${subData.cliente_name})`);
+            console.log(`👤 [ASAAS AUDIT] 4. Usuário / Cliente localizado: ${subData.cliente_id} (${subData.cliente_name})`);
           }
         }
 

@@ -232,7 +232,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     setCheckingStatusSubId(sub.id);
     try {
       const res = await subscriptionService.checkAsaasPaymentStatus(sub.asaasInvoiceId || sub.id);
-      if (res.success || res.received) {
+      const isConfirmed = res.isPaid || res.status === 'RECEIVED' || res.status === 'CONFIRMED' || res.received;
+      if (isConfirmed) {
         toast.success("Pagamento confirmado e assinatura ativada com sucesso!");
         if (profile?.uid) {
           const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
@@ -331,7 +332,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     const interval = setInterval(async () => {
       try {
         const res = await subscriptionService.checkAsaasPaymentStatus(clientCreatedChargeData.id);
-        if (res.success || res.received) {
+        const isConfirmed = res.isPaid || res.status === 'RECEIVED' || res.status === 'CONFIRMED' || res.received;
+        if (isConfirmed) {
           toast.success("Pagamento confirmado e assinatura ativada com sucesso!");
           setShowClientChargeModal(false);
           setClientCreatedChargeData(null);
@@ -468,7 +470,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     loadData();
 
     // Sincronização em tempo real entre os painéis (Dono, Barbeiro e Cliente)
-    const unsubscribe = appointmentService.subscribeToAppointments(
+    const unsubscribeAppointments = appointmentService.subscribeToAppointments(
       { cliente_id: profile.uid },
       (updatedApps) => {
         setAppointments(updatedApps);
@@ -476,7 +478,17 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       }
     );
 
-    return () => unsubscribe();
+    const unsubscribeSubscriptions = subscriptionService.subscribeToSubscriptions(
+      profile.uid,
+      (updatedSubs) => {
+        setSubscriptions(updatedSubs);
+      }
+    );
+
+    return () => {
+      unsubscribeAppointments();
+      unsubscribeSubscriptions();
+    };
   }, [profile.uid, profile?.tenantId]);
 
   // Load available time slots when scheduling inputs change

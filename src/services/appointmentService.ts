@@ -51,23 +51,37 @@ function removeUndefinedFields<T>(obj: T): T {
 
 export const appointmentService = {
   async createAppointment(data: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>) {
-    // 1. Check for availability (bypass for encaixes to allow squeeze-ins/overbooking)
+    const tenantId = (data as any).tenantId || getActiveTenantId();
+
+    // 1. Validate Date Tampering (Prevent booking in past)
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    if (data.date < todayStr) {
+      throw new Error('Não é permitido realizar agendamentos para datas no passado.');
+    }
+
+    // 2. Check for availability (bypass for encaixes to allow squeeze-ins/overbooking)
     if (data.origin !== 'encaixe') {
       const result = await this.checkAvailability(data.profissional_id, data.date, data.startTime, data.endTime);
       if (!result.available) {
         throw new Error(result.reason || 'O profissional não está disponível neste horário.');
       }
+
+      // Re-verify conflict right before write to minimize race condition window
+      const hasConflict = await this.checkConflict(data.profissional_id, data.date, data.startTime, data.endTime);
+      if (hasConflict) {
+        throw new Error('Este horário acabou de ser reservado por outro cliente. Por favor, escolha outro horário.');
+      }
     }
 
     const payload = removeUndefinedFields({
       ...data,
-      tenantId: (data as any).tenantId || getActiveTenantId(),
+      tenantId,
       origin: data.origin || 'agenda',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
 
-    // 2. Add to Firestore
+    // 3. Add to Firestore
     const docRef = await addDoc(collection(db, COLLECTION), payload);
 
     return docRef.id;
@@ -208,25 +222,26 @@ export const appointmentService = {
   },
 
   async getAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }) {
+    const activeTenantId = getActiveTenantId();
     let q;
     if (filters.date) {
-      q = query(collection(db, COLLECTION), where('date', '==', filters.date));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('date', '==', filters.date));
     } else if (filters.startDate && filters.endDate) {
       q = query(collection(db, COLLECTION), 
+        where('tenantId', '==', activeTenantId),
         where('date', '>=', filters.startDate), 
         where('date', '<=', filters.endDate)
       );
     } else if (filters.cliente_id) {
-      q = query(collection(db, COLLECTION), where('cliente_id', '==', filters.cliente_id));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('cliente_id', '==', filters.cliente_id));
     } else if (filters.profissional_id) {
-      q = query(collection(db, COLLECTION), where('profissional_id', '==', filters.profissional_id));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('profissional_id', '==', filters.profissional_id));
     } else {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
     }
 
     const querySnapshot = await getDocs(q);
     const rawAppointments = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
-    const activeTenantId = getActiveTenantId();
     
     const appointments = rawAppointments.filter(app => {
       if (app.tenantId !== activeTenantId) return false;
@@ -247,20 +262,22 @@ export const appointmentService = {
   },
 
   subscribeToAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }, callback: (appointments: Appointment[]) => void) {
+    const activeTenantId = getActiveTenantId();
     let q;
     if (filters.date) {
-      q = query(collection(db, COLLECTION), where('date', '==', filters.date));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('date', '==', filters.date));
     } else if (filters.startDate && filters.endDate) {
       q = query(collection(db, COLLECTION), 
+        where('tenantId', '==', activeTenantId),
         where('date', '>=', filters.startDate), 
         where('date', '<=', filters.endDate)
       );
     } else if (filters.cliente_id) {
-      q = query(collection(db, COLLECTION), where('cliente_id', '==', filters.cliente_id));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('cliente_id', '==', filters.cliente_id));
     } else if (filters.profissional_id) {
-      q = query(collection(db, COLLECTION), where('profissional_id', '==', filters.profissional_id));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('profissional_id', '==', filters.profissional_id));
     } else {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
+      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
     }
 
     return onSnapshot(q, (snapshot) => {

@@ -44,6 +44,8 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
 import { ImageCropModal } from '../components/ImageCropModal';
+import { appointmentService } from '../services/appointmentService';
+import { format } from 'date-fns';
 
 // Default weekdays list for schedule configuring
 const DAYS_OF_WEEK = [
@@ -140,6 +142,20 @@ export function Barbeiros() {
   const handleToggleAtivo = async (uid: string, currentAtivo: boolean) => {
     if (!isAdmin && !isGerente) return;
     try {
+      if (currentAtivo) {
+        // Checking if professional has future active appointments
+        const todayStr = format(new Date(), 'yyyy-MM-dd');
+        const futureApps = await appointmentService.getAppointments({
+          profissional_id: uid,
+          startDate: todayStr
+        });
+        const activeFuture = futureApps.filter(app => ['agendado', 'confirmado', 'em_atendimento'].includes(app.status));
+        if (activeFuture.length > 0) {
+          toast.error(`Não é possível desativar: este profissional possui ${activeFuture.length} agendamento(s) ativo(s) futuro(s). Realoque ou cancele os horários primeiro.`);
+          return;
+        }
+      }
+
       await userService.updateUserProfile(uid, { ativo: !currentAtivo });
       toast.success(`Profissional marcado como ${!currentAtivo ? 'Ativo' : 'Inativo'} com sucesso!`);
     } catch (error) {

@@ -119,8 +119,9 @@ function isValidCpfCnpj(val: string): boolean {
   return false;
 }
 
+export const app = express();
+
 async function startServer() {
-  const app = express();
   const PORT = 3000;
 
   // Middleware para JSON
@@ -1506,9 +1507,13 @@ Instruções:
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`BarberElite Server running on http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`BarberElite Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
 startServer();
+
+export default app;

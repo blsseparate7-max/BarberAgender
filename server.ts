@@ -1255,6 +1255,13 @@ Instruções:
   });
 
   // Webhook Receiver for Asaas / Mercado Pago / Stripe
+  // 1. Endpoint GET para validação/teste de conectividade da URL pelo Asaas
+  app.get("/api/saas/payment/webhook", (req, res) => {
+    console.log("🌐 [ASAAS WEBHOOK] Validação GET / Ping de conectividade recebido do Asaas.");
+    return res.status(200).json({ status: "ok", message: "Webhook Asaas ativo e pronto para receber notificações." });
+  });
+
+  // 2. Endpoint POST para processamento dos eventos de pagamento do Asaas
   app.post("/api/saas/payment/webhook", async (req, res) => {
     const timestamp = new Date().toISOString();
     const event = req.body || {};

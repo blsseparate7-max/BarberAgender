@@ -17,17 +17,60 @@ function getFirebaseAdmin() {
     try {
       const apps = getApps();
       if (apps.length === 0) {
-        // Try applicationDefault first for standard GCP/Cloud Run context
-        adminApp = initializeApp({
-          credential: applicationDefault(),
-          projectId: "gbagender"
-        });
+        // 1. Check if service account JSON string is provided in env
+        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+          try {
+            const serviceAccount = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+              ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+              : process.env.FIREBASE_SERVICE_ACCOUNT;
+            adminApp = initializeApp({
+              credential: cert(serviceAccount),
+              projectId: serviceAccount.project_id || "gbagender"
+            });
+            console.log("✅ Firebase Admin initialized with FIREBASE_SERVICE_ACCOUNT JSON credentials.");
+          } catch (jsonErr) {
+            console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT env var:", jsonErr);
+          }
+        }
+        // 2. Check if individual credentials are provided
+        else if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+          const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
+          adminApp = initializeApp({
+            credential: cert({
+              projectId: process.env.FIREBASE_PROJECT_ID || "gbagender",
+              clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+              privateKey: privateKey
+            }),
+            projectId: process.env.FIREBASE_PROJECT_ID || "gbagender"
+          });
+          console.log("✅ Firebase Admin initialized with FIREBASE_PRIVATE_KEY & CLIENT_EMAIL.");
+        }
+
+        // 3. Try applicationDefault first for standard GCP/Cloud Run context
+        if (!adminApp) {
+          try {
+            adminApp = initializeApp({
+              credential: applicationDefault(),
+              projectId: "gbagender"
+            });
+            console.log("✅ Firebase Admin initialized with applicationDefault.");
+          } catch (adcErr: any) {
+            console.warn("Could not initialize with applicationDefault:", adcErr.message || adcErr);
+          }
+        }
+
+        // 4. Fallback try basic initialization
+        if (!adminApp) {
+          adminApp = initializeApp({
+            projectId: "gbagender"
+          });
+          console.log("⚠️ Firebase Admin initialized with basic projectId fallback.");
+        }
       } else {
         adminApp = apps[0];
       }
     } catch (err: any) {
-      console.warn("Could not initialize Firebase Admin SDK with applicationDefault, attempting fallback (this is normal in development/test environments):", err.message || err);
-      // Fallback try without applicationDefault
+      console.warn("Could not initialize Firebase Admin SDK, attempting fallback:", err.message || err);
       try {
         const apps = getApps();
         if (apps.length === 0) {
@@ -1261,28 +1304,38 @@ Instruções:
 
   // 2. Endpoint POST para processamento dos eventos de pagamento do Asaas
   app.post(["/api/saas/payment/webhook", "/saas/payment/webhook"], async (req, res) => {
-    const timestamp = new Date().toISOString();
-    const event = req.body || {};
-    const payment = event.payment || event;
-    const eventType = event?.event || event?.status || 'UNKNOWN_EVENT';
-
-    console.log("\n==================================================");
-    console.log("WEBHOOK ASAAS RECEBIDO");
-    console.log(`📅 Data/Hora: ${timestamp}`);
-    console.log(`📋 Headers recebidos:`, JSON.stringify(req.headers, null, 2));
-    console.log(`⚡ 1. webhook recebido & 2. evento identificado: ${eventType}`);
-    console.log(`🆔 Payment ID: ${payment?.id || 'N/A'}`);
-    console.log(`📊 Payment Status: ${payment?.status || event?.status || 'N/A'}`);
-    console.log(`👤 Payment Customer: ${payment?.customer || 'N/A'}`);
-    console.log(`📋 Payment Subscription: ${payment?.subscription || 'N/A'}`);
-    console.log(`🔗 Payment ExternalReference: ${payment?.externalReference || event?.external_reference || 'N/A'}`);
-    console.log("📦 Payload Completo:", JSON.stringify(event, null, 2));
-    console.log("==================================================");
-
     try {
+      const timestamp = new Date().toISOString();
+      const event = req.body || {};
+      const payment = event.payment || event;
+      const eventType = event?.event || event?.status || 'UNKNOWN_EVENT';
+
+      console.log("\n==================================================");
+      console.log("WEBHOOK ASAAS RECEBIDO");
+      console.log(`📅 Data/Hora: ${timestamp}`);
+      console.log(`📋 Headers recebidos:`, JSON.stringify(req.headers || {}, null, 2));
+      console.log(`⚡ 1. webhook recebido & 2. evento identificado: ${eventType}`);
+      console.log(`🆔 Payment ID: ${payment?.id || 'N/A'}`);
+      console.log(`📊 Payment Status: ${payment?.status || event?.status || 'N/A'}`);
+      console.log(`👤 Payment Customer: ${payment?.customer || 'N/A'}`);
+      console.log(`📋 Payment Subscription: ${payment?.subscription || 'N/A'}`);
+      console.log(`🔗 Payment ExternalReference: ${payment?.externalReference || event?.external_reference || 'N/A'}`);
+      console.log("📦 Payload Completo:", JSON.stringify(event, null, 2));
+      console.log("==================================================");
+
       // Handle Asaas payment received or confirmed
       if (event?.event === 'PAYMENT_RECEIVED' || event?.event === 'PAYMENT_CONFIRMED' || event?.status === 'approved' || event?.event === 'PAYMENT_CREATED' || event?.event === 'PAYMENT_UPDATED') {
         let refId = payment?.externalReference || event.external_reference;
+        
+        // Fallback: extract tenantId from description if present, e.g., "... (gbcortes7)"
+        if (!refId && payment?.description && typeof payment.description === 'string') {
+          const match = payment.description.match(/\(([^)]+)\)/);
+          if (match && match[1]) {
+            refId = match[1].trim();
+            console.log(`🔍 [ASAAS AUDIT] Tenant ID extraído da descrição: ${refId}`);
+          }
+        }
+
         const value = Number(payment?.value || payment?.transaction_amount || 0);
 
         console.log(`🔍 [ASAAS AUDIT] 3. Pagamento localizado / processando -> ID: ${payment?.id}, Subscription: ${payment?.subscription}, externalReference: ${refId}, Valor: ${value}, Customer: ${payment?.customer}`);
@@ -1301,38 +1354,50 @@ Instruções:
 
         // 1. If we have a refId, check Tenant or Subscription directly
         if (refId) {
-          tenantRef = dbAdmin.collection('tenants').doc(refId);
-          tenantSnap = await tenantRef.get();
+          try {
+            tenantRef = dbAdmin.collection('tenants').doc(refId);
+            tenantSnap = await tenantRef.get();
+          } catch (tErr) {
+            console.warn("Could not query tenant doc:", tErr);
+          }
 
-          if (tenantSnap.exists) {
+          if (tenantSnap && tenantSnap.exists) {
             console.log(`👤 [ASAAS AUDIT] 4. Usuário / Tenant localizado via externalReference: ${refId}`);
           } else {
-            subRef = dbAdmin.collection('subscriptions').doc(refId);
-            subSnap = await subRef.get();
-            if (subSnap.exists) {
-              subData = subSnap.data();
-              console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada diretamente via ID (${refId})`);
+            try {
+              subRef = dbAdmin.collection('subscriptions').doc(refId);
+              subSnap = await subRef.get();
+              if (subSnap && subSnap.exists) {
+                subData = subSnap.data();
+                console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada diretamente via ID (${refId})`);
+              }
+            } catch (sErr) {
+              console.warn("Could not query subscription doc:", sErr);
             }
           }
         }
 
         // 2. If not found, search subscriptions using findSubscriptionInFirestore
         if (!tenantSnap?.exists && !subData) {
-          const subMatch = await findSubscriptionInFirestore(dbAdmin, {
-            paymentId: payment?.id,
-            subscriptionId: payment?.subscription,
-            customerId: payment?.customer,
-            externalReference: refId,
-            docId: refId
-          });
+          try {
+            const subMatch = await findSubscriptionInFirestore(dbAdmin, {
+              paymentId: payment?.id,
+              subscriptionId: payment?.subscription,
+              customerId: payment?.customer,
+              externalReference: refId,
+              docId: refId
+            });
 
-          if (subMatch) {
-            subRef = subMatch.ref;
-            subSnap = subMatch.snap;
-            subData = subMatch.data;
-            refId = subMatch.id;
-            console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada via findSubscriptionInFirestore: ${refId} (Cliente: ${subData.cliente_name})`);
-            console.log(`👤 [ASAAS AUDIT] 4. Usuário / Cliente localizado: ${subData.cliente_id} (${subData.cliente_name})`);
+            if (subMatch) {
+              subRef = subMatch.ref;
+              subSnap = subMatch.snap;
+              subData = subMatch.data;
+              refId = subMatch.id;
+              console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada via findSubscriptionInFirestore: ${refId} (Cliente: ${subData.cliente_name})`);
+              console.log(`👤 [ASAAS AUDIT] 4. Usuário / Cliente localizado: ${subData.cliente_id} (${subData.cliente_name})`);
+            }
+          } catch (fErr) {
+            console.warn("Error finding subscription in firestore:", fErr);
           }
         }
 
@@ -1468,8 +1533,8 @@ Instruções:
     } catch (error: any) {
       console.error("❌ [ASAAS AUDIT] ERRO CRÍTICO no processamento do Webhook (try/catch):", error);
       console.error(error.stack || error);
-      // Return HTTP 200 to Asaas to prevent spam retries, but error is fully logged in server logs
-      return res.status(200).json({ received: true, error: error.message });
+      // Always return HTTP 200 to Asaas to prevent spam retries / penalization
+      return res.status(200).json({ received: true, error: error?.message || 'Processed with error' });
     }
   });
 
@@ -1487,6 +1552,15 @@ Instruções:
         { nome: "Felipe Costa", atendimentos: 85, faturamento: 5400 }
       ]
     });
+  });
+
+  // Global Express Error Middleware (captures JSON parse errors or internal route crashes)
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("🔥 Global Express Error Handler caught an error:", err);
+    if (req.path.includes('/webhook')) {
+      return res.status(200).json({ received: true, error: err?.message || 'Handled webhook exception' });
+    }
+    return res.status(err?.status || 500).json({ error: err?.message || 'Internal Server Error' });
   });
 
   // Configuração do Vite como Middleware (somente em dev/prod container)

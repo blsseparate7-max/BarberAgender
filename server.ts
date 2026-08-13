@@ -163,11 +163,23 @@ function isValidCpfCnpj(val: string): boolean {
 
 export const app = express();
 
-// Middleware para JSON
+// Middlewares essenciais
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Middleware de CORS para permitir chamadas seguras da Vercel e navegadores
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, access_token");
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  next();
+});
 
   // API Route to reset another user's password (e.g. barber) using Firebase Admin
-  app.post("/api/admin/reset-password", async (req, res) => {
+  app.post(["/api/admin/reset-password", "/admin/reset-password"], async (req, res) => {
     try {
       const { uid, password } = req.body;
       if (!uid || !password) {
@@ -211,7 +223,7 @@ app.use(express.json({ limit: '10mb' }));
   });
 
   // API Route to create another user's auth (email and password) using Firebase Admin
-  app.post("/api/admin/create-user-auth", async (req, res) => {
+  app.post(["/api/admin/create-user-auth", "/admin/create-user-auth"], async (req, res) => {
     try {
       const { email, password, displayName } = req.body;
       if (!email || !password) {
@@ -269,7 +281,7 @@ app.use(express.json({ limit: '10mb' }));
   });
 
   // API Route to update another user's auth (email and/or password) using Firebase Admin
-  app.post("/api/admin/update-user-auth", async (req, res) => {
+  app.post(["/api/admin/update-user-auth", "/admin/update-user-auth"], async (req, res) => {
     try {
       const { uid, email, password } = req.body;
       if (!uid) {
@@ -336,7 +348,7 @@ app.use(express.json({ limit: '10mb' }));
   });
 
   // API Route to generate a password reset link using Firebase Admin
-  app.post("/api/admin/generate-reset-link", async (req, res) => {
+  app.post(["/api/admin/generate-reset-link", "/admin/generate-reset-link"], async (req, res) => {
     try {
       const { email } = req.body;
       if (!email) {
@@ -376,7 +388,7 @@ app.use(express.json({ limit: '10mb' }));
   });
 
   // API Route para o SaaS AI Co-Pilot Insights
-  app.post("/api/saas/insights", async (req, res) => {
+  app.post(["/api/saas/insights", "/saas/insights"], async (req, res) => {
     try {
       const { systemData, prompt } = req.body;
       const aiClient = getGeminiClient();
@@ -418,7 +430,7 @@ function getAsaasBaseUrl(env?: string): string {
   // ==========================================
 
   // Endpoint to create a SaaS Subscription/Payment Charge
-  app.post("/api/saas/payment/create-charge", async (req, res) => {
+  app.post(["/api/saas/payment/create-charge", "/saas/payment/create-charge", "/payment/create-charge", "/create-charge"], async (req, res) => {
     try {
       const { tenantId, tenantName, ownerEmail, ownerCpfCnpj, planName, amount, billingType, externalReference } = req.body;
 
@@ -741,7 +753,7 @@ function getAsaasBaseUrl(env?: string): string {
   });
 
   // Endpoint to simulate sandbox payment confirmation (useful for Pix / Subscription testing in Sandbox)
-  app.post("/api/saas/payment/simulate-receive", async (req, res) => {
+  app.post(["/api/saas/payment/simulate-receive", "/saas/payment/simulate-receive", "/payment/simulate-receive", "/simulate-receive"], async (req, res) => {
     try {
       const { paymentId } = req.body;
       if (!paymentId) {
@@ -1058,7 +1070,7 @@ function getAsaasBaseUrl(env?: string): string {
   }
 
   // Active Payment Status Check endpoint (to sync automatically without relying solely on webhooks)
-  app.post("/api/saas/payment/check-status", async (req, res) => {
+  app.post(["/api/saas/payment/check-status", "/saas/payment/check-status", "/payment/check-status", "/check-status"], async (req, res) => {
     try {
       const { paymentId } = req.body;
       if (!paymentId) {
@@ -1233,7 +1245,7 @@ function getAsaasBaseUrl(env?: string): string {
   });
 
   // Update Credit Card endpoint for Asaas Subscription
-  app.post("/api/saas/payment/update-credit-card", async (req, res) => {
+  app.post(["/api/saas/payment/update-credit-card", "/saas/payment/update-credit-card", "/payment/update-credit-card", "/update-credit-card"], async (req, res) => {
     try {
       const { subscriptionId, creditCard, creditCardHolderInfo } = req.body;
       if (!subscriptionId || !creditCard) {
@@ -1282,7 +1294,7 @@ function getAsaasBaseUrl(env?: string): string {
   });
 
   // Generate PIX alternative payment for subscription
-  app.post("/api/saas/payment/generate-pix", async (req, res) => {
+  app.post(["/api/saas/payment/generate-pix", "/saas/payment/generate-pix", "/payment/generate-pix", "/generate-pix"], async (req, res) => {
     try {
       const { subscriptionId } = req.body;
       if (!subscriptionId) {
@@ -1649,7 +1661,7 @@ function getAsaasBaseUrl(env?: string): string {
   });
 
   // API Routes (Exemplos iniciais para o Dashboard)
-  app.get("/api/stats", (req, res) => {
+  app.get(["/api/stats", "/stats"], (req, res) => {
     res.json({
       faturamentoDia: 1250.00,
       faturamentoMes: 32400.00,
@@ -1662,6 +1674,14 @@ function getAsaasBaseUrl(env?: string): string {
         { nome: "Felipe Costa", atendimentos: 85, faturamento: 5400 }
       ]
     });
+  });
+
+  // Fallback para rotas de API não encontradas
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/saas') || req.path.startsWith('/admin') || req.path.startsWith('/payment')) {
+      return res.status(404).json({ error: "Endpoint da API não encontrado.", path: req.path, method: req.method });
+    }
+    next();
   });
 
   // Global Express Error Middleware (captures JSON parse errors or internal route crashes)

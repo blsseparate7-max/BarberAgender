@@ -916,6 +916,54 @@ Instruções:
     }
   });
 
+  // Helper to find Tenant in Firestore by ID, slug, subdomain, or email
+  async function findTenantInFirestore(dbAdmin: any, refId: string) {
+    if (!refId || !dbAdmin) return null;
+    const cleanRef = refId.trim();
+
+    // 1. Direct doc lookup
+    try {
+      const docSnap = await dbAdmin.collection('tenants').doc(cleanRef).get();
+      if (docSnap.exists) {
+        return { ref: docSnap.ref, snap: docSnap, data: docSnap.data(), id: docSnap.id };
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // 2. Query by 'id', 'slug', 'subdomain', 'email'
+    const fields = ['id', 'slug', 'subdomain', 'email'];
+    for (const field of fields) {
+      try {
+        const q = await dbAdmin.collection('tenants').where(field, '==', cleanRef).limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // 3. Query by lowercase cleanRef
+    const lowerRef = cleanRef.toLowerCase();
+    if (lowerRef !== cleanRef) {
+      for (const field of fields) {
+        try {
+          const q = await dbAdmin.collection('tenants').where(field, '==', lowerRef).limit(1).get();
+          if (!q.empty) {
+            const snap = q.docs[0];
+            return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    return null;
+  }
+
   // Helper to find subscription in Firestore by any available Asaas identifier or docId
   async function findSubscriptionInFirestore(dbAdmin: any, params: {
     paymentId?: string;
@@ -1306,26 +1354,36 @@ Instruções:
   app.post(["/api/saas/payment/webhook", "/saas/payment/webhook"], async (req, res) => {
     try {
       const timestamp = new Date().toISOString();
-      const event = req.body || {};
-      const payment = event.payment || event;
-      const eventType = event?.event || event?.status || 'UNKNOWN_EVENT';
+      let event: any = {};
+      try {
+        event = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+      } catch (pErr) {
+        event = req.body || {};
+      }
+
+      const payment = event.payment || event || {};
+      const eventType = event?.event || event?.status || payment?.status || 'UNKNOWN_EVENT';
 
       console.log("\n==================================================");
       console.log("WEBHOOK ASAAS RECEBIDO");
       console.log(`📅 Data/Hora: ${timestamp}`);
-      console.log(`📋 Headers recebidos:`, JSON.stringify(req.headers || {}, null, 2));
-      console.log(`⚡ 1. webhook recebido & 2. evento identificado: ${eventType}`);
+      console.log(`⚡ Evento: ${eventType}`);
       console.log(`🆔 Payment ID: ${payment?.id || 'N/A'}`);
-      console.log(`📊 Payment Status: ${payment?.status || event?.status || 'N/A'}`);
-      console.log(`👤 Payment Customer: ${payment?.customer || 'N/A'}`);
-      console.log(`📋 Payment Subscription: ${payment?.subscription || 'N/A'}`);
-      console.log(`🔗 Payment ExternalReference: ${payment?.externalReference || event?.external_reference || 'N/A'}`);
-      console.log("📦 Payload Completo:", JSON.stringify(event, null, 2));
+      console.log(`📊 Payment Status: ${payment?.status || 'N/A'}`);
+      console.log(`🔗 ExternalReference: ${payment?.externalReference || event?.external_reference || 'N/A'}`);
       console.log("==================================================");
 
       // Handle Asaas payment received or confirmed
-      if (event?.event === 'PAYMENT_RECEIVED' || event?.event === 'PAYMENT_CONFIRMED' || event?.status === 'approved' || event?.event === 'PAYMENT_CREATED' || event?.event === 'PAYMENT_UPDATED') {
-        let refId = payment?.externalReference || event.external_reference;
+      if (
+        eventType === 'PAYMENT_RECEIVED' ||
+        eventType === 'PAYMENT_CONFIRMED' ||
+        eventType === 'approved' ||
+        eventType === 'PAYMENT_CREATED' ||
+        eventType === 'PAYMENT_UPDATED' ||
+        payment?.status === 'RECEIVED' ||
+        payment?.status === 'CONFIRMED'
+      ) {
+        let refId = payment?.externalReference || event.external_reference || event.externalReference;
         
         // Fallback: extract tenantId from description if present, e.g., "... (gbcortes7)"
         if (!refId && payment?.description && typeof payment.description === 'string') {
@@ -1338,49 +1396,33 @@ Instruções:
 
         const value = Number(payment?.value || payment?.transaction_amount || 0);
 
-        console.log(`🔍 [ASAAS AUDIT] 3. Pagamento localizado / processando -> ID: ${payment?.id}, Subscription: ${payment?.subscription}, externalReference: ${refId}, Valor: ${value}, Customer: ${payment?.customer}`);
+        console.log(`🔍 [ASAAS AUDIT] Processing payment -> ID: ${payment?.id}, Ref: ${refId}, Valor: ${value}`);
 
         const dbAdmin = getAdminDb();
         if (!dbAdmin) {
-          console.error("❌ [ASAAS AUDIT] Erro: Banco de dados Firebase Admin não disponível.");
+          console.warn("⚠️ [ASAAS AUDIT] Banco de dados Firebase Admin não disponível. Webhook respondido com HTTP 200.");
           return res.status(200).json({ received: true, warning: "Database not available" });
         }
 
-        let tenantRef: any = null;
-        let tenantSnap: any = null;
-        let subRef: any = null;
-        let subSnap: any = null;
-        let subData: any = null;
+        let tenantMatch: any = null;
+        let subMatch: any = null;
 
-        // 1. If we have a refId, check Tenant or Subscription directly
+        // 1. Search Tenant in Firestore by refId (doc ID, slug, subdomain, email)
         if (refId) {
           try {
-            tenantRef = dbAdmin.collection('tenants').doc(refId);
-            tenantSnap = await tenantRef.get();
-          } catch (tErr) {
-            console.warn("Could not query tenant doc:", tErr);
-          }
-
-          if (tenantSnap && tenantSnap.exists) {
-            console.log(`👤 [ASAAS AUDIT] 4. Usuário / Tenant localizado via externalReference: ${refId}`);
-          } else {
-            try {
-              subRef = dbAdmin.collection('subscriptions').doc(refId);
-              subSnap = await subRef.get();
-              if (subSnap && subSnap.exists) {
-                subData = subSnap.data();
-                console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada diretamente via ID (${refId})`);
-              }
-            } catch (sErr) {
-              console.warn("Could not query subscription doc:", sErr);
+            tenantMatch = await findTenantInFirestore(dbAdmin, refId);
+            if (tenantMatch) {
+              console.log(`👤 [ASAAS AUDIT] Barbearia / Tenant localizada no Firestore: ${tenantMatch.id}`);
             }
+          } catch (tErr) {
+            console.warn("Erro ao buscar tenant no Firestore:", tErr);
           }
         }
 
-        // 2. If not found, search subscriptions using findSubscriptionInFirestore
-        if (!tenantSnap?.exists && !subData) {
+        // 2. Search Subscription in Firestore if no Tenant match
+        if (!tenantMatch) {
           try {
-            const subMatch = await findSubscriptionInFirestore(dbAdmin, {
+            subMatch = await findSubscriptionInFirestore(dbAdmin, {
               paymentId: payment?.id,
               subscriptionId: payment?.subscription,
               customerId: payment?.customer,
@@ -1389,60 +1431,70 @@ Instruções:
             });
 
             if (subMatch) {
-              subRef = subMatch.ref;
-              subSnap = subMatch.snap;
-              subData = subMatch.data;
-              refId = subMatch.id;
-              console.log(`📋 [ASAAS AUDIT] 5. Assinatura localizada via findSubscriptionInFirestore: ${refId} (Cliente: ${subData.cliente_name})`);
-              console.log(`👤 [ASAAS AUDIT] 4. Usuário / Cliente localizado: ${subData.cliente_id} (${subData.cliente_name})`);
+              console.log(`📋 [ASAAS AUDIT] Assinatura de cliente localizada no Firestore: ${subMatch.id}`);
             }
           } catch (fErr) {
-            console.warn("Error finding subscription in firestore:", fErr);
+            console.warn("Erro ao buscar assinatura no Firestore:", fErr);
           }
         }
 
-        // 3. Process Tenant if found
-        if (tenantSnap && tenantSnap.exists) {
-          const data = tenantSnap.data() || {};
+        // 3. Process Tenant Activation
+        if (tenantMatch) {
+          const data = tenantMatch.data || {};
           let baseDate = new Date();
           const currentExp = data.planExpiresAt || data.planValidUntil;
-          if (currentExp) {
-            const expDate = new Date(currentExp + 'T12:00:00');
-            if (expDate > baseDate) baseDate = expDate;
+          if (currentExp && typeof currentExp === 'string') {
+            const expDate = new Date(currentExp + (currentExp.includes('T') ? '' : 'T12:00:00'));
+            if (!isNaN(expDate.getTime()) && expDate > baseDate) baseDate = expDate;
           }
           const newExpDate = new Date(baseDate);
           newExpDate.setMonth(newExpDate.getMonth() + 1);
           const newExpStr = newExpDate.toISOString().split('T')[0];
 
-          console.log(`🔄 [ASAAS AUDIT] 6. Firestore atualizado (Tenant): ${refId}`);
-          await tenantRef.update({
-            planStatus: 'active',
-            isActive: true,
-            planExpiresAt: newExpStr,
-            planValidUntil: newExpStr,
-            lastPaymentDate: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-
-          await dbAdmin.collection('saas_payments').add({
-            tenantId: refId,
-            tenantName: data.name || refId,
-            planName: data.plan || 'Plano Rull',
-            amount: value,
-            paymentMethod: payment?.billingType || 'PIX',
-            status: 'pago',
-            paidAt: new Date().toISOString(),
-            newExpirationDate: newExpStr,
-            createdAt: new Date()
-          });
-          console.log(`✅ [ASAAS AUDIT] 7. Atualização concluída com sucesso para o Tenant ${refId}! Novo vencimento: ${newExpStr}`);
-        } 
-        // 4. Process Subscription if found
-        else if (subData && subRef) {
-          if (subData.asaasPaymentStatus === 'received' && event?.event === 'PAYMENT_RECEIVED') {
-            console.log(`⚠️ [ASAAS AUDIT] Assinatura ${refId} já estava marcada como recebida. Ignorando duplicidade.`);
+          console.log(`🔄 [ASAAS AUDIT] Ativando Tenant ${tenantMatch.id} até ${newExpStr}`);
+          
+          try {
+            await tenantMatch.ref.update({
+              planStatus: 'active',
+              isActive: true,
+              planExpiresAt: newExpStr,
+              planValidUntil: newExpStr,
+              lastPaymentDate: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          } catch (uErr) {
+            await tenantMatch.ref.set({
+              planStatus: 'active',
+              isActive: true,
+              planExpiresAt: newExpStr,
+              planValidUntil: newExpStr,
+              lastPaymentDate: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
           }
 
+          try {
+            await dbAdmin.collection('saas_payments').add({
+              tenantId: tenantMatch.id,
+              tenantName: data.name || tenantMatch.id,
+              planName: data.plan || payment?.description || 'Plano Ultra',
+              amount: value,
+              paymentMethod: payment?.billingType || 'PIX',
+              status: 'pago',
+              paidAt: new Date().toISOString(),
+              newExpirationDate: newExpStr,
+              createdAt: new Date()
+            });
+          } catch (pErr) {
+            console.warn("Could not record saas_payment:", pErr);
+          }
+
+          console.log(`✅ [ASAAS AUDIT] Barbearia ${tenantMatch.id} ativada com sucesso! Válida até ${newExpStr}`);
+        }
+        // 4. Process Client Subscription Activation
+        else if (subMatch) {
+          const subData = subMatch.data;
+          const subRef = subMatch.ref;
           const tenantId = subData.tenantId;
           const todayStr = new Date().toISOString().split('T')[0];
 
@@ -1456,7 +1508,7 @@ Instruções:
           newEnd.setMonth(newEnd.getMonth() + 1);
           const newEndStr = newEnd.toISOString().split('T')[0];
 
-          console.log(`🔄 [ASAAS AUDIT] 6. Firestore atualizado (Subscription): ${refId}`);
+          console.log(`🔄 [ASAAS AUDIT] Ativando assinatura de cliente ${subMatch.id}`);
           await subRef.update({
             status: 'active',
             asaasPaymentStatus: 'received',
@@ -1468,73 +1520,43 @@ Instruções:
             updatedAt: new Date()
           });
 
-          // Add to financial transactions
-          await dbAdmin.collection('financial_transactions').add({
-            tenantId,
-            type: 'income',
-            amount: value || subData.amount || 0,
-            date: todayStr,
-            category: 'Assinaturas',
-            description: `Assinatura Rull Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-            paymentMethod: payment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
-            status: 'pago',
-            cliente_id: subData.cliente_id,
-            cliente_name: subData.cliente_name,
-            responsavel_id: subData.cliente_id,
-            responsavel_name: subData.cliente_name,
-            net_amount: value || subData.amount || 0,
-            settlement_date: todayStr,
-            is_settled: true,
-            createdAt: new Date()
-          });
-
-          // Update cash session if open
-          const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
-            .where('tenantId', '==', tenantId)
-            .get();
-
-          const openCashDoc = cashSessionsQuery.docs.find(doc => {
-            const s = doc.data().status;
-            return s === 'open' || s === 'reopened';
-          });
-
-          if (openCashDoc) {
-            const cashId = openCashDoc.id;
-            await dbAdmin.collection('cash_movements').add({
+          try {
+            await dbAdmin.collection('financial_transactions').add({
               tenantId,
-              caixa_id: cashId,
               type: 'income',
-              category: 'Assinaturas',
-              description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
               amount: value || subData.amount || 0,
-              payment_method: payment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-              paymentMethod: payment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
               date: todayStr,
+              category: 'Assinaturas',
+              description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+              paymentMethod: payment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+              status: 'pago',
+              cliente_id: subData.cliente_id,
+              cliente_name: subData.cliente_name,
+              responsavel_id: subData.cliente_id,
+              responsavel_name: subData.cliente_name,
+              net_amount: value || subData.amount || 0,
+              settlement_date: todayStr,
+              is_settled: true,
               createdAt: new Date()
             });
-
-            await openCashDoc.ref.update({
-              total_income: (openCashDoc.data().total_income || 0) + (value || subData.amount || 0),
-              expected_balance: (openCashDoc.data().expected_balance || 0) + (value || subData.amount || 0),
-              updatedAt: new Date()
-            });
+          } catch (ftErr) {
+            console.warn("Could not record financial transaction:", ftErr);
           }
 
-          console.log(`✅ [ASAAS AUDIT] 7. Atualização concluída com sucesso! Assinatura do cliente ${subData.cliente_name} (${refId}) ativada no Firestore. Válida até ${newEndStr}`);
+          console.log(`✅ [ASAAS AUDIT] Assinatura do cliente ${subData.cliente_name} (${subMatch.id}) ativada com sucesso! Válida até ${newEndStr}`);
         } else {
-          console.warn(`⚠️ [ASAAS AUDIT] Alerta: Nenhum Tenant ou Assinatura local encontrada para refId: ${refId}, payment.id: ${payment?.id}, subscription: ${payment?.subscription}, customer: ${payment?.customer}`);
+          console.warn(`⚠️ [ASAAS AUDIT] Nenhuma barbearia ou assinatura encontrada para refId: ${refId}, payment.id: ${payment?.id}`);
         }
       } else {
-        console.log(`ℹ️ [ASAAS AUDIT] Evento ignorado ou não catalogado para ativação direta: ${eventType}`);
+        console.log(`ℹ️ [ASAAS AUDIT] Evento ignorado ou informativo: ${eventType}`);
       }
 
-      // 5. Always return HTTP 200 so Asaas considers the webhook successfully delivered
+      // Always return HTTP 200 so Asaas considers the webhook successfully delivered
       return res.status(200).json({ received: true });
     } catch (error: any) {
-      console.error("❌ [ASAAS AUDIT] ERRO CRÍTICO no processamento do Webhook (try/catch):", error);
-      console.error(error.stack || error);
+      console.error("❌ [ASAAS AUDIT] Exceção capturada no Webhook:", error);
       // Always return HTTP 200 to Asaas to prevent spam retries / penalization
-      return res.status(200).json({ received: true, error: error?.message || 'Processed with error' });
+      return res.status(200).json({ received: true, error: error?.message || 'Handled error' });
     }
   });
 

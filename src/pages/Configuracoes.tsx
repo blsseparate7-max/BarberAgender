@@ -336,6 +336,16 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   };
 
   const handleToggleUserActive = async (uid: string, currentStatus: boolean) => {
+    if (uid === profile?.uid && currentStatus === true) {
+      toast.error("Por segurança, você não pode desativar seu próprio acesso.");
+      return;
+    }
+    const currentAdmins = users.filter(u => u.tipo === 'admin' && u.ativo !== false);
+    const targetUser = users.find(u => u.uid === uid);
+    if (targetUser?.tipo === 'admin' && currentStatus === true && currentAdmins.length <= 1) {
+      toast.error("Operação bloqueada: Não é possível desativar o único Administrador ativo do sistema.");
+      return;
+    }
     try {
       await userService.updateUserProfile(uid, { ativo: !currentStatus });
       toast.success("Status do usuário atualizado!");
@@ -346,6 +356,16 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   };
 
   const handleChangeUserRole = async (uid: string, newRole: any) => {
+    if (uid === profile?.uid) {
+      toast.error("Por segurança, você não pode alterar o cargo do seu próprio usuário enquanto está conectado.");
+      return;
+    }
+    const currentAdmins = users.filter(u => u.tipo === 'admin' && u.ativo !== false);
+    const targetUser = users.find(u => u.uid === uid);
+    if (targetUser?.tipo === 'admin' && newRole !== 'admin' && currentAdmins.length <= 1) {
+      toast.error("Operação bloqueada: A barbearia precisa ter pelo menos 1 Administrador ativo.");
+      return;
+    }
     try {
       await userService.updateUserProfile(uid, { tipo: newRole });
       toast.success("Cargo de acesso atualizado com sucesso!");
@@ -1379,6 +1399,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                                   const userName = u.nome || u.name || 'Identificado';
                                   const userRole = u.tipo || 'cliente';
                                   const isActive = u.ativo !== false;
+                                  const isSelf = u.uid === profile?.uid || (profile?.email && u.email && u.email.toLowerCase() === profile.email.toLowerCase());
 
                                   return (
                                     <tr key={`config-user-${u.uid || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
@@ -1388,28 +1409,43 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                                             {userName.substring(0, 2)}
                                           </div>
                                           <div>
-                                            <h5 className="font-bold text-xs text-primary">{userName}</h5>
+                                            <div className="flex items-center gap-1.5">
+                                              <h5 className="font-bold text-xs text-primary">{userName}</h5>
+                                              {isSelf && (
+                                                <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                                  Sua Conta
+                                                </span>
+                                              )}
+                                            </div>
                                             <p className="text-[10px] text-slate-400 font-semibold">{userEmail}</p>
                                           </div>
                                         </div>
                                       </td>
                                       <td className="p-5">
-                                        <select 
-                                          value={userRole}
-                                          onChange={(e) => handleChangeUserRole(u.uid, e.target.value as any)}
-                                          className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-primary focus:outline-none focus:border-accent cursor-pointer"
-                                        >
-                                          <option value="admin">Administrador</option>
-                                          <option value="gerente">Gerente</option>
-                                          <option value="barbeiro">Barbeiro</option>
-                                        </select>
+                                        {isSelf ? (
+                                          <span className="bg-purple-100 text-purple-800 text-xs font-extrabold px-3 py-1.5 rounded-xl inline-flex items-center gap-1 border border-purple-200">
+                                            🔒 Administrador (Protegido)
+                                          </span>
+                                        ) : (
+                                          <select 
+                                            value={userRole}
+                                            onChange={(e) => handleChangeUserRole(u.uid, e.target.value as any)}
+                                            className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-primary focus:outline-none focus:border-accent cursor-pointer"
+                                          >
+                                            <option value="admin">Administrador</option>
+                                            <option value="gerente">Gerente</option>
+                                            <option value="barbeiro">Barbeiro</option>
+                                            <option value="cliente">Cliente</option>
+                                          </select>
+                                        )}
                                       </td>
                                       <td className="p-5">
                                         <div className="flex items-center gap-4">
                                           <button 
                                             type="button"
+                                            disabled={isSelf}
                                             onClick={() => handleToggleUserActive(u.uid, isActive)}
-                                            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${isActive ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                                            className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${isSelf ? 'opacity-50 cursor-not-allowed bg-emerald-500' : 'cursor-pointer'} ${isActive ? 'bg-emerald-500' : 'bg-slate-200'}`}
                                           >
                                             <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${isActive ? 'translate-x-4' : 'translate-x-0'}`} />
                                           </button>

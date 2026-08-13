@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
@@ -407,6 +406,14 @@ Instruções:
   });
 
   // ==========================================
+function getAsaasBaseUrl(env?: string): string {
+  const cleanEnv = (env || process.env.ASAAS_ENVIRONMENT || 'sandbox').toLowerCase().trim();
+  if (cleanEnv === 'production' || cleanEnv === 'prod') {
+    return 'https://api.asaas.com/v3';
+  }
+  return 'https://sandbox.asaas.com/api/v3';
+}
+
   // SAAS PAYMENT GATEWAY ROUTES (Asaas / MP / Pix)
   // ==========================================
 
@@ -426,12 +433,10 @@ Instruções:
 
       // 1. ASAAS GATEWAY INTEGRATION
       if (asaasApiKey) {
-        const baseUrl = asaasEnv === 'production' 
-          ? 'https://www.asaas.com/api/v3' 
-          : 'https://sandbox.asaas.com/api/v3';
+        let baseUrl = getAsaasBaseUrl(asaasEnv);
 
         let cleanCpfCnpj = (ownerCpfCnpj || '').replace(/\D/g, '');
-        const isSandboxMode = asaasEnv !== 'production' || (asaasApiKey && asaasApiKey.toLowerCase().includes('sandbox'));
+        let isSandboxMode = asaasEnv !== 'production' || (asaasApiKey && asaasApiKey.toLowerCase().includes('sandbox'));
         
         const validSandboxCpf = '12345678909';
         const validSandboxCnpj = '11444777000161';
@@ -440,23 +445,50 @@ Instruções:
           cleanCpfCnpj = validSandboxCpf;
         }
 
+        // Helper to fetch from Asaas with auto-fallback between sandbox and production URLs on token error
+        const fetchAsaasApi = async (path: string, options: any = {}) => {
+          const headers = {
+            'Content-Type': 'application/json',
+            'access_token': asaasApiKey,
+            ...(options.headers || {})
+          };
+
+          try {
+            const primaryRes = await fetch(`${baseUrl}${path}`, { ...options, headers });
+            const primaryData = await primaryRes.json();
+
+            // If invalid_access_token, try the alternate Asaas URL (prod vs sandbox)
+            if (primaryData?.errors?.some((e: any) => e.code === 'invalid_access_token')) {
+              const altBaseUrl = baseUrl.includes('sandbox') 
+                ? 'https://api.asaas.com/v3' 
+                : 'https://sandbox.asaas.com/api/v3';
+              console.warn(`⚠️ [Asaas Token Error] Tentando URL alternativa: ${altBaseUrl}${path}`);
+              
+              const altRes = await fetch(`${altBaseUrl}${path}`, { ...options, headers });
+              const altData = await altRes.json();
+              if (!altData.errors) {
+                baseUrl = altBaseUrl; // switch baseUrl if alt URL worked
+                isSandboxMode = altBaseUrl.includes('sandbox');
+                return altData;
+              }
+            }
+            return primaryData;
+          } catch (err) {
+            console.warn(`⚠️ [Asaas Fetch Error] Falha na requisição para ${baseUrl}${path}:`, err);
+            return { errors: [{ description: "Falha de conexão com a API do Asaas." }] };
+          }
+        };
+
         // a) Create or Find Customer in Asaas
         let customerId: string | null = null;
         if (ownerEmail) {
           try {
-            const custRes = await fetch(`${baseUrl}/customers?email=${encodeURIComponent(ownerEmail)}`, {
-              headers: { 'access_token': asaasApiKey }
-            });
-            const custData = await custRes.json();
+            const custData = await fetchAsaasApi(`/customers?email=${encodeURIComponent(ownerEmail)}`);
             if (custData?.data?.length > 0) {
               customerId = custData.data[0].id;
               // Try updating customer CPF in Asaas
-              await fetch(`${baseUrl}/customers/${customerId}`, {
+              await fetchAsaasApi(`/customers/${customerId}`, {
                 method: 'PUT',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'access_token': asaasApiKey
-                },
                 body: JSON.stringify({ cpfCnpj: cleanCpfCnpj })
               });
             }
@@ -466,12 +498,8 @@ Instruções:
         }
 
         if (!customerId) {
-          let createCustRes = await fetch(`${baseUrl}/customers`, {
+          let newCust = await fetchAsaasApi('/customers', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'access_token': asaasApiKey
-            },
             body: JSON.stringify({
               name: tenantName || tenantId,
               email: ownerEmail || `cliente_${Date.now()}@dominio.com`,
@@ -479,16 +507,11 @@ Instruções:
               externalReference: externalReference || tenantId
             })
           });
-          let newCust = await createCustRes.json();
           
           if (newCust.errors && isSandboxMode) {
             cleanCpfCnpj = validSandboxCpf;
-            createCustRes = await fetch(`${baseUrl}/customers`, {
+            newCust = await fetchAsaasApi('/customers', {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'access_token': asaasApiKey
-              },
               body: JSON.stringify({
                 name: tenantName || tenantId,
                 email: ownerEmail || `cliente_${Date.now()}@dominio.com`,
@@ -496,7 +519,6 @@ Instruções:
                 externalReference: externalReference || tenantId
               })
             });
-            newCust = await createCustRes.json();
           }
 
           if (newCust.errors) {
@@ -524,12 +546,8 @@ Instruções:
         const ensureCustomerCpfCnpjValid = async (useCnpj = false) => {
           if (isSandboxMode && customerId && !customerId.startsWith('cus_sandbox_')) {
             cleanCpfCnpj = useCnpj ? validSandboxCnpj : validSandboxCpf;
-            await fetch(`${baseUrl}/customers/${customerId}`, {
+            await fetchAsaasApi(`/customers/${customerId}`, {
               method: 'PUT',
-              headers: {
-                'Content-Type': 'application/json',
-                'access_token': asaasApiKey
-              },
               body: JSON.stringify({ cpfCnpj: cleanCpfCnpj })
             });
           }
@@ -538,12 +556,8 @@ Instruções:
         // If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
         if ((billingType === 'CREDIT_CARD' || req.body.isSubscription) && !customerId.startsWith('cus_sandbox_')) {
           try {
-            const createSub = async () => fetch(`${baseUrl}/subscriptions`, {
+            const createSub = async () => fetchAsaasApi('/subscriptions', {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'access_token': asaasApiKey
-              },
               body: JSON.stringify({
                 customer: customerId,
                 billingType: billingType || 'CREDIT_CARD',
@@ -555,13 +569,11 @@ Instruções:
               })
             });
 
-            let subRes = await createSub();
-            let subData = await subRes.json();
+            let subData = await createSub();
 
             if (subData.errors && isSandboxMode) {
               await ensureCustomerCpfCnpjValid(true);
-              subRes = await createSub();
-              subData = await subRes.json();
+              subData = await createSub();
             }
 
             if (!subData.errors && subData.id) {
@@ -577,12 +589,8 @@ Instruções:
 
         // Fallback to single payment charge if subscription was not created or billingType is PIX
         if ((!payData || payData.errors) && !customerId.startsWith('cus_sandbox_')) {
-          const createPayment = async () => fetch(`${baseUrl}/payments`, {
+          const createPayment = async () => fetchAsaasApi('/payments', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'access_token': asaasApiKey
-            },
             body: JSON.stringify({
               customer: customerId,
               billingType: billingType || 'PIX',
@@ -593,13 +601,11 @@ Instruções:
             })
           });
 
-          let payRes = await createPayment();
-          payData = await payRes.json();
+          payData = await createPayment();
 
           if (payData.errors && isSandboxMode) {
             await ensureCustomerCpfCnpjValid(true);
-            payRes = await createPayment();
-            payData = await payRes.json();
+            payData = await createPayment();
           }
         }
 
@@ -630,10 +636,7 @@ Instruções:
         if (payData.id && payData.id.startsWith('sub_')) {
           try {
             console.log(`[Subscription] Buscando primeiro pagamento para a assinatura ${payData.id}...`);
-            const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${payData.id}/payments`, {
-              headers: { 'access_token': asaasApiKey }
-            });
-            const subPaymentsData = await subPaymentsRes.json();
+            const subPaymentsData = await fetchAsaasApi(`/subscriptions/${payData.id}/payments`);
             if (subPaymentsData?.data?.length > 0) {
               const firstPayment = subPaymentsData.data[0];
               paymentIdForPixOrLink = firstPayment.id;
@@ -647,16 +650,24 @@ Instruções:
         }
 
         // c) If PIX, fetch Pix QR Code
-        let pixCopiaECola = invoiceUrl || payData.invoiceUrl;
+        let pixCopiaECola = invoiceUrl || payData.invoiceUrl || '';
         let pixQrCodeUrl = '';
 
         if (paymentIdForPixOrLink && !paymentIdForPixOrLink.startsWith('sub_') && (billingType === 'PIX' || !billingType)) {
-          const pixRes = await fetch(`${baseUrl}/payments/${paymentIdForPixOrLink}/pixQrCode`, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          const pixData = await pixRes.json();
-          if (pixData.payload) pixCopiaECola = pixData.payload;
-          if (pixData.encodedImage) pixQrCodeUrl = `data:image/png;base64,${pixData.encodedImage}`;
+          try {
+            const pixData = await fetchAsaasApi(`/payments/${paymentIdForPixOrLink}/pixQrCode`);
+            if (pixData?.payload) pixCopiaECola = pixData.payload;
+            if (pixData?.encodedImage) pixQrCodeUrl = `data:image/png;base64,${pixData.encodedImage}`;
+          } catch (pixErr) {
+            console.warn("Aviso ao obter QR Code do Pix no Asaas:", pixErr);
+          }
+        }
+
+        // Always guarantee a QR code image URL if pixCopiaECola or invoiceUrl is available
+        const finalPaymentUrl = bankSlipUrl || invoiceUrl || payData.bankSlipUrl || payData.invoiceUrl || '';
+        const qrTarget = pixCopiaECola || finalPaymentUrl;
+        if (!pixQrCodeUrl && qrTarget) {
+          pixQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrTarget)}`;
         }
 
         return res.json({
@@ -664,8 +675,8 @@ Instruções:
           chargeId: payData.id,
           paymentId: paymentIdForPixOrLink,
           customerId: customerId,
-          paymentUrl: bankSlipUrl || invoiceUrl || payData.bankSlipUrl || payData.invoiceUrl,
-          pixCopiaECola: pixCopiaECola || invoiceUrl || payData.invoiceUrl,
+          paymentUrl: finalPaymentUrl,
+          pixCopiaECola: pixCopiaECola || finalPaymentUrl,
           pixQrCodeUrl: pixQrCodeUrl,
           status: payData.status === 'RECEIVED' || payData.status === 'CONFIRMED' ? 'CONFIRMED' : 'PENDING',
           gatewayUsed: 'asaas',
@@ -744,9 +755,7 @@ Instruções:
         return res.status(400).json({ error: "Integração com Asaas não configurada (chave de API ausente)." });
       }
 
-      const baseUrl = asaasEnv === 'production' 
-        ? 'https://www.asaas.com/api/v3' 
-        : 'https://sandbox.asaas.com/api/v3';
+      const baseUrl = getAsaasBaseUrl(asaasEnv);
 
       console.log(`[Simulação] Solicitado confirmação para o ID de pagamento/assinatura: ${paymentId}`);
 
@@ -1063,9 +1072,7 @@ Instruções:
         return res.status(400).json({ error: "Integração com Asaas não configurada." });
       }
 
-      const baseUrl = asaasEnv === 'production' 
-        ? 'https://www.asaas.com/api/v3' 
-        : 'https://sandbox.asaas.com/api/v3';
+      const baseUrl = getAsaasBaseUrl(asaasEnv);
 
       const dbAdmin = getAdminDb();
       let realAsaasPaymentId = paymentId;
@@ -1239,9 +1246,7 @@ Instruções:
         return res.status(400).json({ error: "Integração com Asaas não configurada." });
       }
 
-      const baseUrl = asaasEnv === 'production' 
-        ? 'https://www.asaas.com/api/v3' 
-        : 'https://sandbox.asaas.com/api/v3';
+      const baseUrl = getAsaasBaseUrl(asaasEnv);
 
       const updateRes = await fetch(`${baseUrl}/subscriptions/${subscriptionId}/creditCard`, {
         method: 'PUT',
@@ -1302,9 +1307,7 @@ Instruções:
         return res.status(400).json({ error: "Integração com Asaas não configurada." });
       }
 
-      const baseUrl = asaasEnv === 'production' 
-        ? 'https://www.asaas.com/api/v3' 
-        : 'https://sandbox.asaas.com/api/v3';
+      const baseUrl = getAsaasBaseUrl(asaasEnv);
 
       // Find pending payment or create one for subscription
       let targetPaymentId = subData.asaasInvoiceId;
@@ -1345,22 +1348,39 @@ Instruções:
       }
 
       // Fetch Pix QR Code
-      const pixRes = await fetch(`${baseUrl}/payments/${targetPaymentId}/pixQrCode`, {
-        headers: { 'access_token': asaasApiKey }
-      });
-      const pixData = await pixRes.json();
+      let pixData: any = {};
+      try {
+        const pixRes = await fetch(`${baseUrl}/payments/${targetPaymentId}/pixQrCode`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        pixData = await pixRes.json();
+      } catch (pixErr) {
+        console.warn("Aviso ao buscar QR Code no Asaas em generate-pix:", pixErr);
+      }
 
-      const payDetailRes = await fetch(`${baseUrl}/payments/${targetPaymentId}`, {
-        headers: { 'access_token': asaasApiKey }
-      });
-      const payDetail = await payDetailRes.json();
+      let payDetail: any = {};
+      try {
+        const payDetailRes = await fetch(`${baseUrl}/payments/${targetPaymentId}`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        payDetail = await payDetailRes.json();
+      } catch (payErr) {
+        console.warn("Aviso ao buscar detalhe no Asaas em generate-pix:", payErr);
+      }
+
+      const pixCopiaECola = pixData.payload || payDetail.invoiceUrl || '';
+      let pixQrCodeUrl = pixData.encodedImage ? `data:image/png;base64,${pixData.encodedImage}` : '';
+
+      if (!pixQrCodeUrl && pixCopiaECola) {
+        pixQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(pixCopiaECola)}`;
+      }
 
       return res.json({
         success: true,
         paymentId: targetPaymentId,
         invoiceUrl: payDetail.invoiceUrl,
-        pixCopiaECola: pixData.payload || payDetail.invoiceUrl,
-        pixQrCodeUrl: pixData.encodedImage ? `data:image/png;base64,${pixData.encodedImage}` : ''
+        pixCopiaECola: pixCopiaECola,
+        pixQrCodeUrl: pixQrCodeUrl
       });
     } catch (error: any) {
       console.error("Erro ao gerar PIX alternativo:", error);
@@ -1370,13 +1390,13 @@ Instruções:
 
   // Webhook Receiver for Asaas / Mercado Pago / Stripe
   // 1. Endpoint GET para validação/teste de conectividade da URL pelo Asaas
-  app.get(["/api/saas/payment/webhook", "/saas/payment/webhook"], (req, res) => {
+  app.get(["/api/saas/payment/webhook", "/saas/payment/webhook", "/api/webhook", "/webhook", "/payment/webhook"], (req, res) => {
     console.log("🌐 [ASAAS WEBHOOK] Validação GET / Ping de conectividade recebido do Asaas.");
     return res.status(200).json({ status: "ok", message: "Webhook Asaas ativo e pronto para receber notificações." });
   });
 
   // 2. Endpoint POST para processamento dos eventos de pagamento / assinatura do Asaas
-  app.post(["/api/saas/payment/webhook", "/saas/payment/webhook"], async (req, res) => {
+  app.post(["/api/saas/payment/webhook", "/saas/payment/webhook", "/api/webhook", "/webhook", "/payment/webhook"], async (req, res) => {
     try {
       const timestamp = new Date().toISOString();
       let event: any = {};
@@ -1656,13 +1676,18 @@ Instruções:
   // Configuração do Vite como Middleware (somente em dev/prod container)
   async function startServer() {
     const PORT = 3000;
-    if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: "spa",
-      });
-      app.use(vite.middlewares);
-    } else if (!process.env.VERCEL) {
+    if (process.env.NODE_ENV !== "production" && !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      try {
+        const { createServer: createViteServer } = await import("vite");
+        const vite = await createViteServer({
+          server: { middlewareMode: true },
+          appType: "spa",
+        });
+        app.use(vite.middlewares);
+      } catch (viteErr) {
+        console.warn("Could not start Vite middleware:", viteErr);
+      }
+    } else if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
       const distPath = path.join(process.cwd(), "dist");
       app.use(express.static(distPath));
       app.get("*", (req, res) => {
@@ -1670,13 +1695,15 @@ Instruções:
       });
     }
 
-    if (!process.env.VERCEL) {
+    if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
       app.listen(PORT, "0.0.0.0", () => {
         console.log(`BarberElite Server running on http://localhost:${PORT}`);
       });
     }
   }
 
-  startServer();
+  if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    startServer();
+  }
 
 export default app;

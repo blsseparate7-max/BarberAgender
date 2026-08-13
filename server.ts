@@ -1011,12 +1011,31 @@ Instruções:
       }
     }
 
-    // 3. Search by asaasCustomerId
+    // 3. Search by asaasCustomerId (prioritizing pending status first)
     if (customerId) {
-      const q = await dbAdmin.collection('subscriptions').where('asaasCustomerId', '==', customerId).limit(1).get();
-      if (!q.empty) {
-        const snap = q.docs[0];
-        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+      try {
+        let q = await dbAdmin.collection('subscriptions')
+          .where('asaasCustomerId', '==', customerId)
+          .where('asaasPaymentStatus', '==', 'pending')
+          .limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) {
+        // ignore index errors
+      }
+
+      try {
+        let q = await dbAdmin.collection('subscriptions')
+          .where('asaasCustomerId', '==', customerId)
+          .limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) {
+        // ignore
       }
     }
 
@@ -1407,8 +1426,25 @@ Instruções:
         let tenantMatch: any = null;
         let subMatch: any = null;
 
-        // 1. Search Tenant in Firestore by refId (doc ID, slug, subdomain, email)
-        if (refId) {
+        // 1. Search Client Subscription in Firestore FIRST (using paymentId, subscriptionId, customerId, or refId)
+        try {
+          subMatch = await findSubscriptionInFirestore(dbAdmin, {
+            paymentId: payment?.id,
+            subscriptionId: payment?.subscription,
+            customerId: payment?.customer,
+            externalReference: refId,
+            docId: refId
+          });
+
+          if (subMatch) {
+            console.log(`📋 [ASAAS AUDIT] Assinatura de cliente localizada no Firestore: ${subMatch.id} (Cliente: ${subMatch.data?.cliente_name || 'N/A'})`);
+          }
+        } catch (fErr) {
+          console.warn("Erro ao buscar assinatura de cliente no Firestore:", fErr);
+        }
+
+        // 2. Search Tenant (Barbearia/SaaS) in Firestore ONLY IF no Client Subscription matched
+        if (!subMatch && refId) {
           try {
             tenantMatch = await findTenantInFirestore(dbAdmin, refId);
             if (tenantMatch) {
@@ -1416,25 +1452,6 @@ Instruções:
             }
           } catch (tErr) {
             console.warn("Erro ao buscar tenant no Firestore:", tErr);
-          }
-        }
-
-        // 2. Search Subscription in Firestore if no Tenant match
-        if (!tenantMatch) {
-          try {
-            subMatch = await findSubscriptionInFirestore(dbAdmin, {
-              paymentId: payment?.id,
-              subscriptionId: payment?.subscription,
-              customerId: payment?.customer,
-              externalReference: refId,
-              docId: refId
-            });
-
-            if (subMatch) {
-              console.log(`📋 [ASAAS AUDIT] Assinatura de cliente localizada no Firestore: ${subMatch.id}`);
-            }
-          } catch (fErr) {
-            console.warn("Erro ao buscar assinatura no Firestore:", fErr);
           }
         }
 

@@ -992,23 +992,29 @@ Instruções:
     // 2. Search by asaasInvoiceId, asaasSubscriptionId, externalReference
     const searchIds = Array.from(new Set([paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
     if (searchIds.length > 0) {
-      let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds).limit(1).get();
-      if (!q.empty) {
-        const snap = q.docs[0];
-        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-      }
+      try {
+        let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds).limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) { /* ignore */ }
 
-      q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds).limit(1).get();
-      if (!q.empty) {
-        const snap = q.docs[0];
-        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-      }
+      try {
+        let q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds).limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) { /* ignore */ }
 
-      q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds).limit(1).get();
-      if (!q.empty) {
-        const snap = q.docs[0];
-        return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-      }
+      try {
+        let q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds).limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) { /* ignore */ }
     }
 
     // 3. Search by asaasCustomerId (prioritizing pending status first)
@@ -1369,7 +1375,7 @@ Instruções:
     return res.status(200).json({ status: "ok", message: "Webhook Asaas ativo e pronto para receber notificações." });
   });
 
-  // 2. Endpoint POST para processamento dos eventos de pagamento do Asaas
+  // 2. Endpoint POST para processamento dos eventos de pagamento / assinatura do Asaas
   app.post(["/api/saas/payment/webhook", "/saas/payment/webhook"], async (req, res) => {
     try {
       const timestamp = new Date().toISOString();
@@ -1380,42 +1386,50 @@ Instruções:
         event = req.body || {};
       }
 
-      const payment = event.payment || event || {};
-      const eventType = event?.event || event?.status || payment?.status || 'UNKNOWN_EVENT';
+      const subscription = event.subscription || {};
+      const payment = event.payment || event.charge || {};
+      const targetObj = event.payment || event.subscription || event || {};
+      const eventType = String(event?.event || event?.status || targetObj?.status || 'UNKNOWN_EVENT').toUpperCase();
 
       console.log("\n==================================================");
       console.log("WEBHOOK ASAAS RECEBIDO");
       console.log(`📅 Data/Hora: ${timestamp}`);
       console.log(`⚡ Evento: ${eventType}`);
-      console.log(`🆔 Payment ID: ${payment?.id || 'N/A'}`);
-      console.log(`📊 Payment Status: ${payment?.status || 'N/A'}`);
-      console.log(`🔗 ExternalReference: ${payment?.externalReference || event?.external_reference || 'N/A'}`);
+      console.log(`🆔 Payment/Sub ID: ${payment?.id || subscription?.id || 'N/A'}`);
+      console.log(`📊 Status: ${payment?.status || subscription?.status || 'N/A'}`);
+      console.log(`👤 Customer: ${payment?.customer || subscription?.customer || 'N/A'}`);
+      console.log(`🔗 ExternalReference: ${payment?.externalReference || subscription?.externalReference || event?.external_reference || event?.externalReference || 'N/A'}`);
       console.log("==================================================");
 
-      // Handle Asaas payment received or confirmed
-      if (
-        eventType === 'PAYMENT_RECEIVED' ||
-        eventType === 'PAYMENT_CONFIRMED' ||
-        eventType === 'approved' ||
-        eventType === 'PAYMENT_CREATED' ||
-        eventType === 'PAYMENT_UPDATED' ||
-        payment?.status === 'RECEIVED' ||
-        payment?.status === 'CONFIRMED'
-      ) {
-        let refId = payment?.externalReference || event.external_reference || event.externalReference;
-        
-        // Fallback: extract tenantId from description if present, e.g., "... (gbcortes7)"
-        if (!refId && payment?.description && typeof payment.description === 'string') {
-          const match = payment.description.match(/\(([^)]+)\)/);
-          if (match && match[1]) {
-            refId = match[1].trim();
-            console.log(`🔍 [ASAAS AUDIT] Tenant ID extraído da descrição: ${refId}`);
-          }
+      let refId = payment?.externalReference || subscription?.externalReference || event.external_reference || event.externalReference;
+      
+      // Fallback: extract tenantId from description if present, e.g., "... (gbcortes7)"
+      const description = payment?.description || subscription?.description || event.description;
+      if (!refId && description && typeof description === 'string') {
+        const match = description.match(/\(([^)]+)\)/);
+        if (match && match[1]) {
+          refId = match[1].trim();
+          console.log(`🔍 [ASAAS AUDIT] Tenant ID extraído da descrição: ${refId}`);
         }
+      }
 
-        const value = Number(payment?.value || payment?.transaction_amount || 0);
+      const value = Number(payment?.value || subscription?.value || payment?.transaction_amount || 0);
 
-        console.log(`🔍 [ASAAS AUDIT] Processing payment -> ID: ${payment?.id}, Ref: ${refId}, Valor: ${value}`);
+      // Handle subscription or payment activation events
+      const isActivationEvent = (
+        eventType.includes('RECEIVED') ||
+        eventType.includes('CONFIRMED') ||
+        eventType.includes('CREATED') ||
+        eventType.includes('UPDATED') ||
+        eventType.includes('APPROVED') ||
+        eventType.includes('ACTIVE') ||
+        payment?.status === 'RECEIVED' ||
+        payment?.status === 'CONFIRMED' ||
+        subscription?.status === 'ACTIVE'
+      );
+
+      if (isActivationEvent) {
+        console.log(`🔍 [ASAAS AUDIT] Processing activation event -> Event: ${eventType}, Ref: ${refId}, Valor: ${value}`);
 
         const dbAdmin = getAdminDb();
         if (!dbAdmin) {
@@ -1423,15 +1437,15 @@ Instruções:
           return res.status(200).json({ received: true, warning: "Database not available" });
         }
 
-        let tenantMatch: any = null;
         let subMatch: any = null;
+        let tenantMatch: any = null;
 
         // 1. Search Client Subscription in Firestore FIRST (using paymentId, subscriptionId, customerId, or refId)
         try {
           subMatch = await findSubscriptionInFirestore(dbAdmin, {
             paymentId: payment?.id,
-            subscriptionId: payment?.subscription,
-            customerId: payment?.customer,
+            subscriptionId: subscription?.id || payment?.subscription,
+            customerId: subscription?.customer || payment?.customer,
             externalReference: refId,
             docId: refId
           });
@@ -1443,7 +1457,26 @@ Instruções:
           console.warn("Erro ao buscar assinatura de cliente no Firestore:", fErr);
         }
 
-        // 2. Search Tenant (Barbearia/SaaS) in Firestore ONLY IF no Client Subscription matched
+        // 2. If no Client Subscription was found directly by IDs, but refId exists (e.g. 'gbcortes7'),
+        // search if there is a pending subscription in 'subscriptions' collection for this tenantId
+        if (!subMatch && refId) {
+          try {
+            const pendingSubSnap = await dbAdmin.collection('subscriptions')
+              .where('tenantId', '==', refId)
+              .where('status', '==', 'pending')
+              .limit(1)
+              .get();
+            if (!pendingSubSnap.empty) {
+              const snap = pendingSubSnap.docs[0];
+              subMatch = { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+              console.log(`📋 [ASAAS AUDIT] Assinatura de cliente pendente encontrada por tenantId (${refId}): ${subMatch.id}`);
+            }
+          } catch (pErr) {
+            console.warn("Erro ao buscar assinatura pendente por tenantId:", pErr);
+          }
+        }
+
+        // 3. Search Tenant (Barbearia/SaaS) in Firestore ONLY IF no Client Subscription matched
         if (!subMatch && refId) {
           try {
             tenantMatch = await findTenantInFirestore(dbAdmin, refId);
@@ -1455,8 +1488,78 @@ Instruções:
           }
         }
 
-        // 3. Process Tenant Activation
-        if (tenantMatch) {
+        // 4. Process Client Subscription Activation
+        if (subMatch) {
+          const subData = subMatch.data;
+          const subRef = subMatch.ref;
+          const tenantId = subData.tenantId;
+          const todayStr = new Date().toISOString().split('T')[0];
+
+          let newStartStr = todayStr;
+          let newEndStr = '';
+
+          // If nextDueDate is sent in subscription payload, use it or calculate 1 month
+          const nextDueDate = subscription?.nextDueDate || payment?.dueDate;
+          if (nextDueDate && typeof nextDueDate === 'string') {
+            newEndStr = nextDueDate.split('T')[0];
+          } else {
+            let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
+            if (!subData.endDate || currentEnd < new Date()) {
+              newStartStr = todayStr;
+            } else {
+              newStartStr = subData.endDate;
+            }
+            const newStart = new Date(newStartStr + 'T12:00:00');
+            const newEnd = new Date(newStart);
+            newEnd.setMonth(newEnd.getMonth() + 1);
+            newEndStr = newEnd.toISOString().split('T')[0];
+          }
+
+          console.log(`🔄 [ASAAS AUDIT] Ativando assinatura de cliente ${subMatch.id}`);
+          await subRef.update({
+            status: 'active',
+            asaasPaymentStatus: 'received',
+            asaasSubscriptionId: subscription?.id || payment?.subscription || subData.asaasSubscriptionId || null,
+            asaasCustomerId: subscription?.customer || payment?.customer || subData.asaasCustomerId || null,
+            asaasInvoiceId: payment?.id || subData.asaasInvoiceId || null,
+            startDate: newStartStr,
+            endDate: newEndStr,
+            haircutsUsed: 0,
+            beardsUsed: 0,
+            lastRenewalDate: todayStr,
+            updatedAt: new Date()
+          });
+
+          // Only record financial transaction if payment value > 0 or if PAYMENT_RECEIVED/CONFIRMED
+          if (value > 0 && (eventType.includes('RECEIVED') || eventType.includes('CONFIRMED') || eventType.includes('APPROVED'))) {
+            try {
+              await dbAdmin.collection('financial_transactions').add({
+                tenantId,
+                type: 'income',
+                amount: value || subData.amount || 0,
+                date: todayStr,
+                category: 'Assinaturas',
+                description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+                status: 'pago',
+                cliente_id: subData.cliente_id,
+                cliente_name: subData.cliente_name,
+                responsavel_id: subData.cliente_id,
+                responsavel_name: subData.cliente_name,
+                net_amount: value || subData.amount || 0,
+                settlement_date: todayStr,
+                is_settled: true,
+                createdAt: new Date()
+              });
+            } catch (ftErr) {
+              console.warn("Could not record financial transaction:", ftErr);
+            }
+          }
+
+          console.log(`✅ [ASAAS AUDIT] Assinatura do cliente ${subData.cliente_name} (${subMatch.id}) ativada com sucesso! Válida até ${newEndStr}`);
+        }
+        // 5. Process Tenant Activation
+        else if (tenantMatch) {
           const data = tenantMatch.data || {};
           let baseDate = new Date();
           const currentExp = data.planExpiresAt || data.planValidUntil;
@@ -1490,79 +1593,27 @@ Instruções:
             }, { merge: true });
           }
 
-          try {
-            await dbAdmin.collection('saas_payments').add({
-              tenantId: tenantMatch.id,
-              tenantName: data.name || tenantMatch.id,
-              planName: data.plan || payment?.description || 'Plano Ultra',
-              amount: value,
-              paymentMethod: payment?.billingType || 'PIX',
-              status: 'pago',
-              paidAt: new Date().toISOString(),
-              newExpirationDate: newExpStr,
-              createdAt: new Date()
-            });
-          } catch (pErr) {
-            console.warn("Could not record saas_payment:", pErr);
+          if (value > 0) {
+            try {
+              await dbAdmin.collection('saas_payments').add({
+                tenantId: tenantMatch.id,
+                tenantName: data.name || tenantMatch.id,
+                planName: data.plan || description || 'Plano Ultra',
+                amount: value,
+                paymentMethod: payment?.billingType || subscription?.billingType || 'PIX',
+                status: 'pago',
+                paidAt: new Date().toISOString(),
+                newExpirationDate: newExpStr,
+                createdAt: new Date()
+              });
+            } catch (pErr) {
+              console.warn("Could not record saas_payment:", pErr);
+            }
           }
 
           console.log(`✅ [ASAAS AUDIT] Barbearia ${tenantMatch.id} ativada com sucesso! Válida até ${newExpStr}`);
-        }
-        // 4. Process Client Subscription Activation
-        else if (subMatch) {
-          const subData = subMatch.data;
-          const subRef = subMatch.ref;
-          const tenantId = subData.tenantId;
-          const todayStr = new Date().toISOString().split('T')[0];
-
-          let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
-          let newStartStr = subData.endDate || todayStr;
-          if (!subData.endDate || currentEnd < new Date()) {
-            newStartStr = todayStr;
-          }
-          const newStart = new Date(newStartStr + 'T12:00:00');
-          const newEnd = new Date(newStart);
-          newEnd.setMonth(newEnd.getMonth() + 1);
-          const newEndStr = newEnd.toISOString().split('T')[0];
-
-          console.log(`🔄 [ASAAS AUDIT] Ativando assinatura de cliente ${subMatch.id}`);
-          await subRef.update({
-            status: 'active',
-            asaasPaymentStatus: 'received',
-            startDate: newStartStr,
-            endDate: newEndStr,
-            haircutsUsed: 0,
-            beardsUsed: 0,
-            lastRenewalDate: todayStr,
-            updatedAt: new Date()
-          });
-
-          try {
-            await dbAdmin.collection('financial_transactions').add({
-              tenantId,
-              type: 'income',
-              amount: value || subData.amount || 0,
-              date: todayStr,
-              category: 'Assinaturas',
-              description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-              paymentMethod: payment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
-              status: 'pago',
-              cliente_id: subData.cliente_id,
-              cliente_name: subData.cliente_name,
-              responsavel_id: subData.cliente_id,
-              responsavel_name: subData.cliente_name,
-              net_amount: value || subData.amount || 0,
-              settlement_date: todayStr,
-              is_settled: true,
-              createdAt: new Date()
-            });
-          } catch (ftErr) {
-            console.warn("Could not record financial transaction:", ftErr);
-          }
-
-          console.log(`✅ [ASAAS AUDIT] Assinatura do cliente ${subData.cliente_name} (${subMatch.id}) ativada com sucesso! Válida até ${newEndStr}`);
         } else {
-          console.warn(`⚠️ [ASAAS AUDIT] Nenhuma barbearia ou assinatura encontrada para refId: ${refId}, payment.id: ${payment?.id}`);
+          console.warn(`⚠️ [ASAAS AUDIT] Nenhuma barbearia ou assinatura encontrada para refId: ${refId}, SubID: ${subscription?.id}, PayID: ${payment?.id}`);
         }
       } else {
         console.log(`ℹ️ [ASAAS AUDIT] Evento ignorado ou informativo: ${eventType}`);

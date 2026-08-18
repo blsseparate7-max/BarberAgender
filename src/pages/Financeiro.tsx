@@ -89,6 +89,7 @@ import { inventoryService } from '../services/inventoryService';
 import { subscriptionService } from '../services/subscriptionService';
 import { getActiveTenantId } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { parseDate } from '../lib/utils';
 import { ProfessionalCommissions } from '../components/Financeiro/ProfessionalCommissions';
@@ -111,6 +112,8 @@ import {
 
 export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
+  const { tenantId, tenant } = useTenant();
+  const currentTenantId = tenantId || tenant?.id || profile?.tenantId || getActiveTenantId();
   const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new'>('overview');
   const [dateRange, setDateRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
@@ -225,7 +228,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     // Real-time transactions for the current period
     const q = query(
       collection(db, 'financial_transactions'),
-      where('tenantId', '==', getActiveTenantId())
+      where('tenantId', '==', currentTenantId)
     );
 
     const unsubscribeTransactions = onSnapshot(q, (snapshot) => {
@@ -282,7 +285,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       unsubscribeCash();
       unsubscribeTransactions();
     };
-  }, [dateRange.start, dateRange.end]);
+  }, [dateRange.start, dateRange.end, currentTenantId]);
 
   // Calculations for Fluxo de Caixa Breakdowns (AppBarber style)
   const overviewBreakdowns = React.useMemo(() => {
@@ -342,25 +345,62 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         defaultMethods[pmKey].net += netAmount;
       }
 
-      // Item type grouping
+      // Item type grouping & revenue distribution
       const cat = (t.category || '').toLowerCase();
       const desc = (t.description || '').toLowerCase();
 
-      let itemKey: 'servicos' | 'pacotes' | 'assinaturas' | 'produtos' = 'servicos';
+      // If transaction has explicit breakdown amounts, allocate proportionally
+      if (t.service_amount !== undefined || t.product_amount !== undefined || t.package_amount !== undefined || t.subscription_amount !== undefined) {
+        const sAmt = t.service_amount || 0;
+        const pAmt = t.product_amount || 0;
+        const pacAmt = t.package_amount || 0;
+        const subAmt = t.subscription_amount || 0;
+        const sumParts = sAmt + pAmt + pacAmt + subAmt;
 
-      if (cat.includes('assinat') || desc.includes('assinat') || desc.includes('plano') || pmKey === 'assinatura') {
-        itemKey = 'assinaturas';
-      } else if (cat.includes('pacote') || desc.includes('pacote')) {
-        itemKey = 'pacotes';
-      } else if (cat.includes('produt') || cat.includes('estoque') || desc.includes('produto') || desc.includes('venda de produto')) {
-        itemKey = 'produtos';
+        if (sumParts > 0) {
+          const ratio = amount / sumParts;
+          if (sAmt > 0) {
+            itemMap.servicos.total += sAmt * ratio;
+            if (isPaid) itemMap.servicos.pgto += sAmt * ratio;
+          }
+          if (pAmt > 0) {
+            itemMap.produtos.total += pAmt * ratio;
+            if (isPaid) itemMap.produtos.pgto += pAmt * ratio;
+          }
+          if (pacAmt > 0) {
+            itemMap.pacotes.total += pacAmt * ratio;
+            if (isPaid) itemMap.pacotes.pgto += pacAmt * ratio;
+          }
+          if (subAmt > 0) {
+            itemMap.assinaturas.total += subAmt * ratio;
+            if (isPaid) itemMap.assinaturas.pgto += subAmt * ratio;
+          }
+        } else {
+          itemMap.servicos.total += amount;
+          if (isPaid) itemMap.servicos.pgto += amount;
+        }
       } else {
-        itemKey = 'servicos';
-      }
+        // Fallback for legacy transactions
+        let itemKey: 'servicos' | 'pacotes' | 'assinaturas' | 'produtos' = 'servicos';
 
-      itemMap[itemKey].total += amount;
-      if (isPaid) {
-        itemMap[itemKey].pgto += amount;
+        if (cat.includes('assinat') || desc.includes('assinat') || desc.includes('plano') || pmKey === 'assinatura') {
+          itemKey = 'assinaturas';
+        } else if (cat.includes('pacote') || desc.includes('pacote')) {
+          itemKey = 'pacotes';
+        } else if (
+          (cat === 'produtos' || cat === 'produto' || cat.includes('estoque') || desc.includes('venda de produto') || desc.includes('venda produto')) &&
+          !cat.includes('serviço') && !cat.includes('servico')
+        ) {
+          itemKey = 'produtos';
+        } else {
+          // Default to services (including 'Serviços/Produtos' without specific product tag)
+          itemKey = 'servicos';
+        }
+
+        itemMap[itemKey].total += amount;
+        if (isPaid) {
+          itemMap[itemKey].pgto += amount;
+        }
       }
 
       // Classification for Disponível vs A Receber

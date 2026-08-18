@@ -42,6 +42,7 @@ import { UserProfile } from '../types';
 import { userService } from '../services/userService';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
+import { getActiveTenantId } from '../services/tenantService';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 
@@ -106,8 +107,9 @@ const MONTHS_LIST = [
 ];
 
 export function Lembretes() {
-  const { tenantId } = useTenant();
-  const { isAdmin, isGerente } = useAuth();
+  const { tenantId, tenant } = useTenant();
+  const { profile, isAdmin, isGerente } = useAuth();
+  const currentTenantId = tenantId || tenant?.id || profile?.tenantId || getActiveTenantId();
   const canManage = isAdmin || isGerente;
 
   const [activeTab, setActiveTab] = useState<'lembretes' | 'aniversariantes'>('lembretes');
@@ -142,26 +144,39 @@ export function Lembretes() {
   useEffect(() => {
     setLoading(true);
 
+    const safetyTimeout = setTimeout(() => {
+      setLoading(false);
+    }, 1500);
+
     // 1. Subscribe to Team Reminders
     const pathRem = 'lembretes_internos';
-    const qRem = query(collection(db, pathRem), orderBy('date', 'asc'));
+    const qRem = query(
+      collection(db, pathRem),
+      where('tenantId', '==', currentTenantId)
+    );
     const unsubRem = onSnapshot(qRem, (snap) => {
+      clearTimeout(safetyTimeout);
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as InternalReminder));
-      setReminders(docs);
+      const sorted = docs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      setReminders(sorted);
       setLoading(false);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, pathRem);
+      clearTimeout(safetyTimeout);
+      console.error("Erro ao carregar lembretes:", error);
+      setLoading(false);
     });
 
     // 2. Fetch Clients using service
-    userService.getAllClients()
-      .then(res => setClients(res.filter(c => c.ativo !== false)))
-      .catch(err => console.error('Erro ao buscar clientes paracadastro:', err));
+    const unsubClients = userService.subscribeToAllClients(true, (data) => {
+      setClients(data);
+    }, currentTenantId);
 
     return () => {
+      clearTimeout(safetyTimeout);
       unsubRem();
+      unsubClients();
     };
-  }, []);
+  }, [currentTenantId]);
 
   // Sync edit form states
   useEffect(() => {
@@ -208,6 +223,7 @@ export function Lembretes() {
       priority: reminderPriority,
       notes: reminderNotes.trim(),
       completed: editingReminder ? editingReminder.completed : false,
+      tenantId: currentTenantId,
       updatedAt: new Date().toISOString()
     };
 

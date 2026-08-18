@@ -1050,10 +1050,10 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
       docs.sort((a, b) => {
-        const dateA = a.date || '';
-        const dateB = b.date || '';
+        const dateA = String(a.date || '');
+        const dateB = String(b.date || '');
         if (dateA !== dateB) return dateB.localeCompare(dateA);
-        return (b.startTime || '').localeCompare(a.startTime || '');
+        return String(b.startTime || '').localeCompare(String(a.startTime || ''));
       });
       setHistory(docs);
       setLoadingHistory(false);

@@ -23,6 +23,7 @@ import {
 } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
+import { getActiveTenantId } from '../services/tenantService';
 
 interface Coupon {
   id: string;
@@ -35,6 +36,7 @@ interface Coupon {
 
 export function CuponsDesconto() {
   const { tenantId } = useTenant();
+  const currentTenantId = tenantId || getActiveTenantId();
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -45,21 +47,35 @@ export function CuponsDesconto() {
   const [couponExpires, setCouponExpires] = useState('');
 
   useEffect(() => {
-    if (!tenantId) return;
+    if (!currentTenantId) {
+      setLoading(false);
+      return;
+    }
+    
+    const safetyTimeout = setTimeout(() => setLoading(false), 1500);
+
     // 1. Fetch coupons list filtered by tenantId
     const q = query(
       collection(db, 'cupons_desconto'), 
-      where('tenantId', '==', tenantId)
+      where('tenantId', '==', currentTenantId)
     );
     const unsubscribe = onSnapshot(q, (snap) => {
+      clearTimeout(safetyTimeout);
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Coupon));
       docs.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
       setCoupons(docs);
       setLoading(false);
+    }, (err) => {
+      clearTimeout(safetyTimeout);
+      console.error("Erro ao carregar cupons:", err);
+      setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [tenantId]);
+    return () => {
+      clearTimeout(safetyTimeout);
+      unsubscribe();
+    };
+  }, [currentTenantId]);
 
   const handleCreateCoupon = async (e: React.FormEvent) => {
     e.preventDefault();

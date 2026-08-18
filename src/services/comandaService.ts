@@ -460,15 +460,45 @@ export const comandaService = {
         const financialRef = doc(collection(db, 'financial_transactions'));
         const isReceivable = !!methodConfig.goesToReceivables;
         
+        // Calculate item proportions for accurate DRE & Cash Flow
+        const comandaItems = comanda.items || [];
+        const rawTotal = comandaItems.reduce((acc, i) => acc + (i.totalPrice || (i.unitPrice * (i.quantity || 1)) || 0), 0) || 1;
+        const servTotal = comandaItems.filter(i => (i.type === 'servico' || !i.type) && !i.isCortesia).reduce((acc, i) => acc + (i.totalPrice || (i.unitPrice * (i.quantity || 1)) || 0), 0);
+        const prodTotal = comandaItems.filter(i => (i.type === 'produto' || i.type === 'product') && !i.isCortesia).reduce((acc, i) => acc + (i.totalPrice || (i.unitPrice * (i.quantity || 1)) || 0), 0);
+        const pacTotal = comandaItems.filter(i => i.type === 'pacote' && !i.isCortesia).reduce((acc, i) => acc + (i.totalPrice || (i.unitPrice * (i.quantity || 1)) || 0), 0);
+        const assTotal = comandaItems.filter(i => i.type === 'assinatura' && !i.isCortesia).reduce((acc, i) => acc + (i.totalPrice || (i.unitPrice * (i.quantity || 1)) || 0), 0);
+
+        // Calculate proportional amounts for this specific payment
+        const payRatio = payment.amount / (comanda.totalAmount || rawTotal || 1);
+        const serviceAmount = Number((servTotal * payRatio).toFixed(2));
+        const productAmount = Number((prodTotal * payRatio).toFixed(2));
+        const packageAmount = Number((pacTotal * payRatio).toFixed(2));
+        const subscriptionAmount = Number((assTotal * payRatio).toFixed(2));
+
+        let categoryName = 'Serviços';
+        if (prodTotal > 0 && servTotal === 0 && pacTotal === 0 && assTotal === 0) {
+          categoryName = 'Produtos';
+        } else if (pacTotal > 0 && servTotal === 0 && prodTotal === 0 && assTotal === 0) {
+          categoryName = 'Pacotes';
+        } else if (assTotal > 0 && servTotal === 0 && prodTotal === 0 && pacTotal === 0) {
+          categoryName = 'Assinaturas';
+        } else if (servTotal > 0 && (prodTotal > 0 || pacTotal > 0 || assTotal > 0)) {
+          categoryName = 'Serviços/Produtos';
+        }
+
         const financialTx: FinancialTransaction = {
           id: financialRef.id,
           tenantId: comanda.tenantId || getActiveTenantId(),
           type: 'income',
-          category: 'Serviços/Produtos',
+          category: categoryName,
           description: `Pagamento Comanda #${comanda.number} - ${comanda.cliente_name}`,
           amount: payment.amount,
           net_amount: netAmount,
           fee_amount: feeAmount,
+          service_amount: serviceAmount,
+          product_amount: productAmount,
+          package_amount: packageAmount,
+          subscription_amount: subscriptionAmount,
           paymentMethod: payment.method,
           metodo_pagamento_id: methodConfig.id,
           date: today,

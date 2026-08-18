@@ -96,12 +96,18 @@ export const inventoryService = {
     const querySnapshot = await getDocs(q);
     const movements = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement));
     return movements.sort((a, b) => {
-      const aDate = a.date || '';
-      const bDate = b.date || '';
+      const aDate = String(a.date || '');
+      const bDate = String(b.date || '');
       if (aDate !== bDate) return bDate.localeCompare(aDate);
-      const aTime = a.createdAt || '';
-      const bTime = b.createdAt || '';
-      return bTime.localeCompare(aTime);
+      const toSafeStr = (val: any) => {
+        if (!val) return '';
+        if (typeof val === 'string') return val;
+        if (typeof val?.toDate === 'function') return val.toDate().toISOString();
+        if (typeof val?.toMillis === 'function') return new Date(val.toMillis()).toISOString();
+        if (val.seconds) return new Date(val.seconds * 1000).toISOString();
+        return String(val);
+      };
+      return toSafeStr(b.createdAt).localeCompare(toSafeStr(a.createdAt));
     });
   },
 

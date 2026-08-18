@@ -26,6 +26,7 @@ import {
 } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
+import { getActiveTenantId } from '../services/tenantService';
 
 interface SurveyQuestion {
   id: string;
@@ -54,45 +55,48 @@ export function PesquisaSatisfacao() {
 
   // Pre-seed mock answer if empty
   useEffect(() => {
-    if (!tenantId) return;
+    const tid = tenantId || getActiveTenantId();
+    if (!tid) {
+      setLoading(false);
+      return;
+    }
+
+    const safetyTimeout = setTimeout(() => {
+      setLoading(false);
+    }, 1500);
 
     // 1. Fetch questions filtered by tenantId
     const q1 = query(
       collection(db, 'pesquisa_perguntas'), 
-      where('tenantId', '==', tenantId)
+      where('tenantId', '==', tid)
     );
     const unsubQ = onSnapshot(q1, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as SurveyQuestion));
       docs.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
       setQuestions(docs);
+    }, (err) => {
+      console.error("Erro ao carregar perguntas:", err);
     });
 
     // 2. Fetch responses filtered by tenantId
     const q2 = query(
       collection(db, 'pesquisa_respostas'), 
-      where('tenantId', '==', tenantId)
+      where('tenantId', '==', tid)
     );
     const unsubR = onSnapshot(q2, (snap) => {
+      clearTimeout(safetyTimeout);
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SurveyResponse));
       data.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
       setResponses(data);
       setLoading(false);
-
-      if (data.length === 0) {
-        // Seed database with sample real reviews to showcase dashboards
-        const sampleReviews = [
-          { tenantId, clientName: 'Roberto Carlos', score: 10, comment: 'Corte perfeito e excelente atendimento! O barbeiro super pontual.', submittedAt: new Date().toISOString() },
-          { tenantId, clientName: 'Maurício Souza', score: 9, comment: 'Estacionamento fácil e cerveja gelada. Recomendo muito.', submittedAt: new Date().toISOString() },
-          { tenantId, clientName: 'Felipe Camargo', score: 8, comment: 'Ambiente aconchegante, o serviço foi ótimo.', submittedAt: new Date().toISOString() },
-          { tenantId, clientName: 'Igor Santos', score: 5, comment: 'Atrasou 10 minutos mas gostei do cabelo.', submittedAt: new Date().toISOString() }
-        ];
-        sampleReviews.forEach(sr => {
-          addDoc(collection(db, 'pesquisa_respostas'), sr);
-        });
-      }
+    }, (err) => {
+      clearTimeout(safetyTimeout);
+      console.error("Erro ao carregar respostas:", err);
+      setLoading(false);
     });
 
     return () => {
+      clearTimeout(safetyTimeout);
       unsubQ();
       unsubR();
     };

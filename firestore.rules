@@ -393,7 +393,7 @@ service cloud.firestore {
     // --- Novos Recursos de Relacionamento e Lembretes (Reminders) ---
     match /lembretes_internos/{reminderId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow write: if isAuthenticated() && isStaff();
+      allow write: if isAuthenticated() && (isStaff() || isBarbeiro());
     }
 
     match /noticias_noticias/{noticiaId} {

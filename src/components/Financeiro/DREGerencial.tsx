@@ -89,12 +89,34 @@ export function DREGerencial({ transactions, commissions, dateRange }: DREGerenc
         const fee = t.fee_amount || 0;
         feeDeductions += fee;
 
-        if (catLower.includes('serviço') || catLower.includes('servico') || catLower.includes('atendimento') || t.agendamento_id) {
-          serviceRevenue += amount;
-        } else if (catLower.includes('produto') || catLower.includes('estoque') || catLower.includes('venda')) {
-          productRevenue += amount;
+        if (t.service_amount !== undefined || t.product_amount !== undefined || t.package_amount !== undefined || t.subscription_amount !== undefined) {
+          const sAmt = t.service_amount || 0;
+          const pAmt = t.product_amount || 0;
+          const otherAmt = (t.package_amount || 0) + (t.subscription_amount || 0);
+          const sumParts = sAmt + pAmt + otherAmt;
+
+          if (sumParts > 0) {
+            const ratio = amount / sumParts;
+            serviceRevenue += sAmt * ratio;
+            productRevenue += pAmt * ratio;
+            otherRevenue += otherAmt * ratio;
+          } else {
+            serviceRevenue += amount;
+          }
         } else {
-          otherRevenue += amount;
+          // Legacy categorization fallback
+          if (catLower.includes('assinat') || catLower.includes('plano') || catLower.includes('pacote') || desc.includes('assinat') || desc.includes('pacote')) {
+            otherRevenue += amount;
+          } else if (
+            (catLower === 'produtos' || catLower === 'produto' || catLower.includes('estoque') || desc.includes('venda de produto') || desc.includes('venda produto')) &&
+            !catLower.includes('serviço') && !catLower.includes('servico')
+          ) {
+            productRevenue += amount;
+          } else if (catLower.includes('serviço') || catLower.includes('servico') || catLower.includes('atendimento') || t.agendamento_id || t.comanda_id) {
+            serviceRevenue += amount;
+          } else {
+            otherRevenue += amount;
+          }
         }
       } else if (t.type === 'expense' || t.type === 'sangria') {
         // Track category aggregate

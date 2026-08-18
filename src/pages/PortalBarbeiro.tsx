@@ -522,7 +522,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     }
 
     // Sort transactions by date descending, then by value/id
-    return list.sort((a, b) => b.date.localeCompare(a.date));
+    return list.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   }, [filteredCommissions, filteredAdvances, typeFilter]);
 
   // Summaries based strictly on the selected filters

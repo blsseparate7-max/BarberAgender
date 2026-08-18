@@ -93,28 +93,16 @@ export function OperationsManager() {
     });
 
     // 2. Fetch active barbers for current tenant
-    const barbersQuery = query(
-      collection(db, 'usuarios'),
-      where('tenantId', '==', tenantId),
-      where('tipo', '==', 'barbeiro'),
-      where('ativo', '==', true)
-    );
-
-    const unsubscribeBarbers = onSnapshot(barbersQuery, (snap) => {
-      const list = snap.docs.map(doc => ({
-        uid: doc.id,
-        ...doc.data()
-      })) as UserProfile[];
-      
+    const unsubscribeBarbers = userService.subscribeToAllBarbers(true, (list) => {
       // Sort by active queue index or default to name
       const sorted = list.sort((a, b) => {
         const indexA = (a as any).rodizioIndex ?? 99;
         const indexB = (b as any).rodizioIndex ?? 99;
         if (indexA !== indexB) return indexA - indexB;
-        return a.nome.localeCompare(b.nome);
+        return (a.nome || '').localeCompare(b.nome || '');
       });
       setBarbers(sorted);
-    });
+    }, tenantId);
 
     // 3. Fetch services list
     serviceService.getServices().then(res => {
@@ -308,7 +296,7 @@ export function OperationsManager() {
     } else {
       setSelectedComandaId(undefined);
       setComandaInitialData({
-        cliente_id: item.cliente_id || '',
+        cliente_id: item.cliente_id || 'avulso',
         cliente_name: item.cliente_name || 'Consumidor Final',
         profissional_id: item.profissional_id || '',
         profissional_name: item.profissional_name || '',
@@ -316,11 +304,14 @@ export function OperationsManager() {
         daily_flow_id: item.id,
         items: item.servico_id ? [{
           id: item.servico_id,
+          referencia_id: item.servico_id,
           name: item.servico_name || serviceObj?.nome || 'Serviço',
           type: 'servico',
           price: itemPrice,
+          unitPrice: itemPrice,
           quantity: 1,
           totalPrice: itemPrice,
+          generateCommission: true,
           profissional_id: item.profissional_id || '',
           profissional_name: item.profissional_name || ''
         }] : []

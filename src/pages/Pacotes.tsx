@@ -239,8 +239,16 @@ export function Pacotes({ defaultTab }: PacotesProps) {
           } as PackageSale;
         });
         
+        const toSafeStr = (val: any) => {
+          if (!val) return '';
+          if (typeof val === 'string') return val;
+          if (typeof val?.toDate === 'function') return val.toDate().toISOString();
+          if (typeof val?.toMillis === 'function') return new Date(val.toMillis()).toISOString();
+          if (val.seconds) return new Date(val.seconds * 1000).toISOString();
+          return String(val);
+        };
         // Sort in memory to avoid requiring a composite index on tenantId + soldAt
-        docs = docs.sort((a, b) => b.soldAt.localeCompare(a.soldAt));
+        docs = docs.sort((a, b) => toSafeStr(b.soldAt).localeCompare(toSafeStr(a.soldAt)));
         setSales(docs);
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, pathSales);
@@ -791,7 +799,17 @@ export function Pacotes({ defaultTab }: PacotesProps) {
             }
           });
           const recentUsageLogs = allUsageLogs
-            .sort((a, b) => b.usedAt.localeCompare(a.usedAt))
+            .sort((a, b) => {
+              const toSafeStr = (val: any) => {
+                if (!val) return '';
+                if (typeof val === 'string') return val;
+                if (typeof val?.toDate === 'function') return val.toDate().toISOString();
+                if (typeof val?.toMillis === 'function') return new Date(val.toMillis()).toISOString();
+                if (val.seconds) return new Date(val.seconds * 1000).toISOString();
+                return String(val);
+              };
+              return toSafeStr(b.usedAt).localeCompare(toSafeStr(a.usedAt));
+            })
             .slice(0, 6);
 
           return (

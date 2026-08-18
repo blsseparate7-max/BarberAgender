@@ -289,6 +289,10 @@ export interface FinancialTransaction {
   cliente_name?: string;
   profissional_id?: string;
   profissional_name?: string;
+  service_amount?: number;
+  product_amount?: number;
+  package_amount?: number;
+  subscription_amount?: number;
   responsavel_id: string;
   responsavel_name: string;
   createdAt: any;

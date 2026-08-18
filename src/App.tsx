@@ -253,6 +253,7 @@ function MainApp() {
     if (activeTab === 'cadastros-noticias') return <NoticiasPromocoes />;
     if (activeTab === 'cadastros-satisfacao') return <PesquisaSatisfacao />;
     if (activeTab === 'cadastros-lembretes') return <Lembretes />;
+    if (activeTab === 'cadastros-pacotes') return <Pacotes />;
     if (activeTab === 'cadastros-produtos') return <Estoque />;
     if (activeTab === 'cadastros-cupons') return <CuponsDesconto />;
     if (activeTab === 'cadastros-metodos-pagamento') return <PaymentMethodManager />;

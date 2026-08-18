@@ -64,45 +64,44 @@ export const userService = {
     });
   },
 
-  subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void) {
-    const tid = getActiveTenantId();
-    let q = query(
+  subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void, tenantId?: string) {
+    const tid = tenantId || getActiveTenantId();
+    const q = query(
       collection(db, COLLECTION), 
-      where('tipo', 'in', ['barbeiro', 'gerente']),
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
       where('tenantId', '==', tid)
     );
-    
-    if (onlyActive) {
-      q = query(q, where('ativo', '==', true));
-    }
 
     return onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs
+      let users = snapshot.docs
         .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
         .filter(u => !tid || u.tenantId === tid);
+      if (onlyActive) {
+        users = users.filter(u => u.ativo !== false);
+      }
       const sorted = users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       callback(sorted);
     });
   },
 
-  subscribeToAllClients(onlyActive = true, callback: (clients: UserProfile[]) => void) {
-    return this.subscribeToUsersByRole('cliente', onlyActive, callback);
+  subscribeToAllClients(onlyActive = true, callback: (clients: UserProfile[]) => void, tenantId?: string) {
+    return this.subscribeToUsersByRole('cliente', onlyActive, callback, tenantId);
   },
 
   async getAllBarbers(onlyActive = true, tenantId?: string) {
     const tid = tenantId || getActiveTenantId();
-    let q = query(
+    const q = query(
       collection(db, COLLECTION),
-      where('tipo', 'in', ['barbeiro', 'gerente']),
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
       where('tenantId', '==', tid)
     );
-    if (onlyActive) {
-      q = query(q, where('ativo', '==', true));
-    }
     const querySnapshot = await getDocs(q);
-    const users = querySnapshot.docs
+    let users = querySnapshot.docs
       .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
       .filter(u => !tid || u.tenantId === tid);
+    if (onlyActive) {
+      users = users.filter(u => u.ativo !== false);
+    }
     return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 

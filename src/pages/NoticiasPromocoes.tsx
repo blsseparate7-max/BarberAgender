@@ -289,8 +289,8 @@ export function NoticiasPromocoes() {
               <div className="py-12 text-center text-sm italic text-muted">Ainda não há campanhas ativas. Programe uma acima!</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {campaigns.map(c => (
-                  <div key={c.id} className="bg-white border rounded-2xl p-5 shadow-inner border-slate-100 flex flex-col justify-between">
+                {campaigns.map((c, idx) => (
+                  <div key={`camp-card-${c.id || idx}-${idx}`} className="bg-white border rounded-2xl p-5 shadow-inner border-slate-100 flex flex-col justify-between">
                     <div>
                       <div className="flex justify-between items-center">
                         <span className="bg-purple-100 text-purple-800 text-[10px] font-black uppercase px-2.5 py-1 rounded-full">

@@ -417,8 +417,8 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                         className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 pl-9 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner appearance-none font-bold cursor-pointer"
                       >
                         <option value="all">Todos Profissionais</option>
-                        {barbers.map(barber => (
-                          <option key={barber.uid} value={barber.uid}>
+                        {barbers.map((barber, idx) => (
+                          <option key={`agenda-barber-opt-${barber.uid || barber.id || idx}-${idx}`} value={barber.uid}>
                             {barber.nome}
                           </option>
                         ))}
@@ -690,9 +690,9 @@ function ExpressComandaModal({ onClose, onSuccess, barbers, currentUser }: { onC
           <div className="space-y-3">
             <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Profissional Responsável</label>
             <div className="grid grid-cols-2 gap-3">
-              {barbers.map(barber => (
+              {barbers.map((barber, idx) => (
                 <button
-                  key={barber.uid}
+                  key={`agenda-barber-btn-${barber.uid || barber.id || idx}-${idx}`}
                   onClick={() => setSelectedBarber(barber.uid)}
                   className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all ${
                     selectedBarber === barber.uid 
@@ -701,7 +701,7 @@ function ExpressComandaModal({ onClose, onSuccess, barbers, currentUser }: { onC
                   }`}
                 >
                   <div className="w-10 h-10 rounded-xl bg-slate-200 flex items-center justify-center text-primary font-bold">
-                    {barber.nome[0]}
+                    {barber.nome?.[0] || 'B'}
                   </div>
                   <span className="text-xs font-black text-primary truncate">{barber.nome}</span>
                 </button>
@@ -725,9 +725,9 @@ function ExpressComandaModal({ onClose, onSuccess, barbers, currentUser }: { onC
             
             {searchTerm && filteredClients.length > 0 && (
               <div className="bg-slate-50 rounded-2xl border border-slate-100 p-2 space-y-1">
-                {filteredClients.map(client => (
+                {filteredClients.map((client, idx) => (
                   <button
-                    key={client.uid}
+                    key={`agenda-client-btn-${client.uid || client.id || idx}-${idx}`}
                     onClick={() => {
                       setSelectedClient(client.uid);
                       setSearchTerm(client.nome);

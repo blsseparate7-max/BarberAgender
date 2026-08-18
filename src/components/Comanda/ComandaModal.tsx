@@ -550,14 +550,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           });
         }
       });
-    } else if (initialData && !comanda && !loading && !hasOpenedComanda.current) {
+    } else if (initialData && !comanda && !loading && !hasOpenedComanda.current && user) {
       handleOpenComanda();
     }
 
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [comanda_id, activeComandaId, initialData?.cliente_id, initialData?.profissional_id, initialData?.agendamento_id]);
+  }, [comanda_id, activeComandaId, initialData?.cliente_id, initialData?.cliente_name, initialData?.profissional_id, initialData?.agendamento_id, user]);
 
   useEffect(() => {
     if (comanda?.cliente_id) {
@@ -617,11 +617,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   };
 
   const handleOpenComanda = async () => {
-    const cliente_id = formData.cliente_id || initialData?.cliente_id;
-    const profissional_id = formData.profissional_id || initialData?.profissional_id;
+    const effectiveClienteId = formData.cliente_id || initialData?.cliente_id || 'avulso';
+    const effectiveClienteName = formData.cliente_name || initialData?.cliente_name || (effectiveClienteId === 'avulso' ? 'Consumidor Final' : '');
+    const effectiveProfissionalId = formData.profissional_id || initialData?.profissional_id || '';
 
-    if (!cliente_id || !user) {
-      return; // Wait for selection and auth if not provided
+    if (!user) {
+      return; // Wait for auth if not provided
+    }
+
+    if (!effectiveClienteId && !effectiveClienteName) {
+      return;
     }
 
     if (hasOpenedComanda.current) return;
@@ -629,15 +634,15 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
     setLoading(true);
     try {
-      const client = clients.find(c => c.uid === cliente_id);
-      const barber = barbers.find(b => b.uid === (profissional_id || ''));
+      const client = clients.find(c => c.uid === effectiveClienteId);
+      const barber = barbers.find(b => b.uid === effectiveProfissionalId);
 
       const newComanda = await comandaService.openComanda({
         ...formData,
-        cliente_id,
-        profissional_id: profissional_id || '',
-        cliente_name: client?.nome || initialData?.cliente_name || '',
-        profissional_name: barber?.nome || initialData?.profissional_name || 'Sem Profissional',
+        cliente_id: effectiveClienteId,
+        profissional_id: effectiveProfissionalId,
+        cliente_name: client?.nome || initialData?.cliente_name || formData.cliente_name || 'Consumidor Final',
+        profissional_name: barber?.nome || initialData?.profissional_name || formData.profissional_name || 'Sem Profissional',
         origin: initialData?.origin || 'balcao',
         agendamento_id: initialData?.agendamento_id,
         status: 'aberta',

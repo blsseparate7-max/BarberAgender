@@ -45,8 +45,8 @@ export function Insights() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <Loader2 className="animate-spin text-emerald-500" size={48} />
-        <p className="text-zinc-500 animate-pulse font-medium tracking-widest uppercase text-xs">Analisando dados do sistema...</p>
+        <Loader2 className="animate-spin text-emerald-600" size={48} />
+        <p className="text-slate-500 animate-pulse font-medium tracking-widest uppercase text-xs">Analisando dados do sistema...</p>
       </div>
     );
   }
@@ -54,20 +54,20 @@ export function Insights() {
   return (
     <div className="space-y-8 pb-12">
       <header>
-        <h1 className="text-3xl font-black tracking-tight text-white mb-1">Inteligência de Negócio</h1>
-        <p className="text-zinc-400 text-sm">Insights estratégicos e automações baseadas em dados reais.</p>
+        <h1 className="text-3xl font-black tracking-tight text-slate-800 mb-1">Inteligência de Negócio</h1>
+        <p className="text-slate-500 text-sm">Insights estratégicos e automações baseadas em dados reais.</p>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-2">
+            <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
               <Lightbulb className="text-amber-500" size={24} />
               Insights Recentes
             </h2>
             <button 
               onClick={loadData}
-              className="text-xs font-black text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors"
+              className="text-xs font-black text-emerald-600 uppercase tracking-widest hover:text-emerald-700 transition-colors"
             >
               Atualizar Análise
             </button>
@@ -81,12 +81,12 @@ export function Insights() {
         </div>
 
         <div className="space-y-6">
-          <h2 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-2">
-            <BarChart3 className="text-blue-500" size={24} />
+          <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+            <BarChart3 className="text-blue-600" size={24} />
             Resumo de Performance
           </h2>
           
-          <div className="bg-zinc-900/40 border border-zinc-800 rounded-[2.5rem] p-8 space-y-8">
+          <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 space-y-8 shadow-sm">
             <PerformanceItem 
               label="Taxa de Retenção" 
               value="68%" 
@@ -110,15 +110,15 @@ export function Insights() {
             />
           </div>
 
-          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-3xl p-6 space-y-4">
-            <div className="flex items-center gap-3 text-emerald-500">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-6 space-y-4 shadow-sm">
+            <div className="flex items-center gap-3 text-emerald-700">
               <Target size={20} />
               <h3 className="font-black uppercase tracking-widest text-xs">Recomendação do Sistema</h3>
             </div>
-            <p className="text-sm text-zinc-300 leading-relaxed">
-              Sua agenda de <span className="text-white font-bold">Quinta-feira</span> tem muitos horários ociosos entre 14h e 16h. Que tal criar uma promoção relâmpago para este período?
+            <p className="text-sm text-slate-700 leading-relaxed">
+              Sua agenda de <span className="text-slate-900 font-bold">Quinta-feira</span> tem muitos horários ociosos entre 14h e 16h. Que tal criar uma promoção relâmpago para este período?
             </p>
-            <button className="w-full py-3 bg-emerald-500 text-zinc-950 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-400 transition-all">
+            <button className="w-full py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-sm">
               Criar Campanha Agora
             </button>
           </div>
@@ -135,9 +135,9 @@ interface InsightCardProps {
 
 function InsightCard({ insight }: InsightCardProps) {
   const severityColors = {
-    low: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
-    medium: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-    high: 'bg-red-500/10 text-red-500 border-red-500/20'
+    low: 'bg-blue-50 text-blue-700 border-blue-200',
+    medium: 'bg-amber-50 text-amber-700 border-amber-200',
+    high: 'bg-red-50 text-red-700 border-red-200'
   };
 
   const icons = {
@@ -152,22 +152,22 @@ function InsightCard({ insight }: InsightCardProps) {
     <motion.div 
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
-      className={`p-6 bg-zinc-900/40 border rounded-3xl flex items-start gap-6 group hover:bg-zinc-800/40 transition-all ${severityColors[insight.severity]}`}
+      className={`p-6 bg-white border rounded-3xl flex items-start gap-6 group hover:shadow-md transition-all ${severityColors[insight.severity]}`}
     >
       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${severityColors[insight.severity]}`}>
         {icons[insight.type] || <Lightbulb size={20} />}
       </div>
       <div className="flex-1 space-y-1">
         <div className="flex items-center justify-between">
-          <h3 className="font-black text-white uppercase tracking-tight">{insight.title}</h3>
-          <span className="text-[9px] font-black uppercase tracking-widest opacity-60">{format(parseISO(insight.date), 'dd/MM/yyyy')}</span>
+          <h3 className="font-black text-slate-900 uppercase tracking-tight">{insight.title}</h3>
+          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">{format(parseISO(insight.date), 'dd/MM/yyyy')}</span>
         </div>
-        <p className="text-zinc-400 text-sm leading-relaxed">{insight.description}</p>
+        <p className="text-slate-600 text-sm leading-relaxed">{insight.description}</p>
         <div className="pt-3 flex items-center gap-4">
-          <button className="text-[10px] font-black uppercase tracking-widest text-white flex items-center gap-1 hover:gap-2 transition-all">
+          <button className="text-[10px] font-black uppercase tracking-widest text-slate-900 flex items-center gap-1 hover:gap-2 transition-all">
             Ver Detalhes <ArrowRight size={12} />
           </button>
-          <button className="text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-emerald-500 transition-colors">
+          <button className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-600 transition-colors">
             Ignorar
           </button>
         </div>
@@ -176,18 +176,26 @@ function InsightCard({ insight }: InsightCardProps) {
   );
 }
 
-function PerformanceItem({ label, value, trend, trendValue, description }: any) {
+interface PerformanceItemProps {
+  label: string;
+  value: string;
+  trend: 'up' | 'down';
+  trendValue: string;
+  description: string;
+}
+
+function PerformanceItem({ label, value, trend, trendValue, description }: PerformanceItemProps) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{label}</p>
-        <div className={`flex items-center gap-1 text-[10px] font-black ${trend === 'up' ? 'text-emerald-500' : 'text-red-500'}`}>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</p>
+        <div className={`flex items-center gap-1 text-[10px] font-black ${trend === 'up' ? 'text-emerald-600' : 'text-red-600'}`}>
           {trend === 'up' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
           {trendValue}
         </div>
       </div>
-      <p className="text-2xl font-black text-white">{value}</p>
-      <p className="text-[10px] text-zinc-600 font-medium">{description}</p>
+      <p className="text-2xl font-black text-slate-900">{value}</p>
+      <p className="text-[10px] text-slate-500 font-medium">{description}</p>
     </div>
   );
 }

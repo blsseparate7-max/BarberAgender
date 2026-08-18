@@ -36,9 +36,13 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { collection, query, orderBy, where, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getActiveTenantId } from '../services/tenantService';
+import { userService } from '../services/userService';
+import { useTenant } from '../contexts/TenantContext';
 
 export function Estoque() {
   const { user, profile, isAdmin, isGerente } = useAuth();
+  const { tenant } = useTenant();
+  const currentTenantId = tenant?.id || profile?.tenantId || getActiveTenantId();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -151,14 +155,20 @@ export function Estoque() {
     let loadedMovements = false;
     let loadedSuppliers = false;
 
+    // Safety fallback to prevent hanging loading indicator
+    const safetyTimeout = setTimeout(() => {
+      setLoading(false);
+    }, 1500);
+
     const checkLoading = () => {
       if (loadedProducts && loadedCategories && loadedMovements && loadedSuppliers) {
+        clearTimeout(safetyTimeout);
         setLoading(false);
       }
     };
 
     // 1. Subscribe to Products
-    const qProducts = query(collection(db, 'products'), where('tenantId', '==', getActiveTenantId()));
+    const qProducts = query(collection(db, 'products'), where('tenantId', '==', currentTenantId));
     const unsubscribeProducts = onSnapshot(qProducts, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -172,7 +182,7 @@ export function Estoque() {
     });
 
     // 2. Subscribe to Categories
-    const qCategories = query(collection(db, 'product_categories'), where('tenantId', '==', getActiveTenantId()));
+    const qCategories = query(collection(db, 'product_categories'), where('tenantId', '==', currentTenantId));
     const unsubscribeCategories = onSnapshot(qCategories, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductCategory));
       data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -186,16 +196,22 @@ export function Estoque() {
     });
 
     // 3. Subscribe to Movements
-    const qMovements = query(collection(db, 'inventory_movements'), where('tenantId', '==', getActiveTenantId()));
+    const qMovements = query(collection(db, 'inventory_movements'), where('tenantId', '==', currentTenantId));
     const unsubscribeMovements = onSnapshot(qMovements, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryMovement));
+      const toSafeStr = (val: any) => {
+        if (!val) return '';
+        if (typeof val === 'string') return val;
+        if (typeof val?.toDate === 'function') return val.toDate().toISOString();
+        if (typeof val?.toMillis === 'function') return new Date(val.toMillis()).toISOString();
+        if (val.seconds) return new Date(val.seconds * 1000).toISOString();
+        return String(val);
+      };
       data.sort((a, b) => {
-        const aDate = a.date || '';
-        const bDate = b.date || '';
+        const aDate = String(a.date || '');
+        const bDate = String(b.date || '');
         if (aDate !== bDate) return bDate.localeCompare(aDate);
-        const aTime = a.createdAt || '';
-        const bTime = b.createdAt || '';
-        return bTime.localeCompare(aTime);
+        return toSafeStr(b.createdAt).localeCompare(toSafeStr(a.createdAt));
       });
       setMovements(data);
       loadedMovements = true;
@@ -207,7 +223,7 @@ export function Estoque() {
     });
 
     // 4. Subscribe to Suppliers (Fornecedores)
-    const qSuppliers = query(collection(db, 'tipos_fornecedores'), where('tenantId', '==', getActiveTenantId()));
+    const qSuppliers = query(collection(db, 'tipos_fornecedores'), where('tenantId', '==', currentTenantId));
     const unsubscribeSuppliers = onSnapshot(qSuppliers, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       data.sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
@@ -221,26 +237,17 @@ export function Estoque() {
     });
 
     // 5. Subscribe to Active Professionals
-    const qProf = query(collection(db, 'usuarios'), orderBy('nome', 'asc'));
-    const unsubscribeProf = onSnapshot(qProf, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }));
-      const barbersOnly = docs.filter((u: any) => u.tipo === 'barbeiro' || u.tipo === 'gerente');
-      setBarbers(barbersOnly);
-    }, (error) => {
-      console.error("Erro ao assinar profissionais:", error);
-    });
+    const unsubscribeProf = userService.subscribeToAllBarbers(true, (barbersList) => {
+      setBarbers(barbersList);
+    }, currentTenantId);
 
     // 6. Subscribe to Clients
-    const qClients = query(collection(db, 'clientes'), where('tenantId', '==', getActiveTenantId()));
-    const unsubscribeClients = onSnapshot(qClients, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      data.sort((a: any, b: any) => (a.nome || a.name || '').localeCompare(b.nome || b.name || ''));
-      setClients(data);
-    }, (error) => {
-      console.error("Erro ao assinar clientes:", error);
-    });
+    const unsubscribeClients = userService.subscribeToAllClients(true, (clientsList) => {
+      setClients(clientsList);
+    }, currentTenantId);
 
     return () => {
+      clearTimeout(safetyTimeout);
       unsubscribeProducts();
       unsubscribeCategories();
       unsubscribeMovements();
@@ -248,7 +255,7 @@ export function Estoque() {
       unsubscribeProf();
       unsubscribeClients();
     };
-  }, []);
+  }, [currentTenantId]);
 
   const filteredProducts = products.filter(p => {
     const matchesSearch = (p.name || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -609,7 +616,7 @@ export function Estoque() {
               className="px-4 py-3 bg-surface border border-border rounded-xl text-primary focus:outline-none focus:border-accent/50 transition-all text-sm font-bold shadow-sm appearance-none"
             >
               <option value="all">Todas Categorias</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {categories.map((c, idx) => <option key={`cat-opt-${c.id || idx}-${idx}`} value={c.id}>{c.name}</option>)}
             </select>
             <select 
               value={filterStatus}
@@ -624,9 +631,9 @@ export function Estoque() {
 
           {/* Products Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {filteredProducts.map(product => (
+            {filteredProducts.map((product, idx) => (
               <ProductCard 
-                key={product.id} 
+                key={`prod-card-${product.id || idx}-${idx}`} 
                 product={product} 
                 onEdit={() => { setEditingProduct(product); setShowProductModal(true); }}
                 onMovement={(type) => openMovementModal(product, type)}
@@ -654,8 +661,8 @@ export function Estoque() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {movements.map(m => (
-                  <tr key={m.id} className="hover:bg-slate-50 transition-colors group">
+                {movements.map((m, idx) => (
+                  <tr key={`mov-row-${m.id || idx}-${idx}`} className="hover:bg-slate-50 transition-colors group">
                     <td className="px-6 py-4 text-xs text-muted font-bold">{format(parseISO(m.date), 'dd/MM/yyyy')}</td>
                     <td className="px-6 py-4">
                       <p className="text-sm font-bold text-primary group-hover:text-accent transition-colors">{m.productName}</p>
@@ -764,10 +771,10 @@ export function Estoque() {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {categories.map((cat) => {
+                {categories.map((cat, idx) => {
                   const productCount = products.filter(p => p.categoria_id === cat.id).length;
                   return (
-                    <div key={cat.id} className="flex items-center justify-between py-4 group hover:bg-slate-50/30 px-2 -mx-2 rounded-xl transition-all">
+                    <div key={`cat-row-${cat.id || idx}-${idx}`} className="flex items-center justify-between py-4 group hover:bg-slate-50/30 px-2 -mx-2 rounded-xl transition-all">
                       <div className="space-y-1">
                         <p className="font-bold text-slate-800 text-sm group-hover:text-accent transition-colors">{cat.name}</p>
                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
@@ -877,7 +884,7 @@ export function Estoque() {
                               {categories.length === 0 ? (
                                 <option value="">Nenhuma categoria cadastrada</option>
                               ) : (
-                                categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)
+                                categories.map((c, idx) => <option key={`prod-form-cat-${c.id || idx}-${idx}`} value={c.id}>{c.name}</option>)
                               )}
                             </select>
                           </div>
@@ -943,7 +950,7 @@ export function Estoque() {
                               className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
                             >
                               <option value="">Sem Fornecedor</option>
-                              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                              {suppliers.map((s, idx) => <option key={`prod-form-sup-${s.id || idx}-${idx}`} value={s.id}>{s.name}</option>)}
                             </select>
                           </div>
                           <button
@@ -1335,7 +1342,7 @@ export function Estoque() {
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
                         >
                           <option value="">Sem Fornecedor</option>
-                          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          {suppliers.map((s, idx) => <option key={`mov-sup-${s.id || idx}-${idx}`} value={s.id}>{s.name}</option>)}
                         </select>
                       </div>
                     </div>
@@ -1370,8 +1377,8 @@ export function Estoque() {
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
                       >
                         <option value={user?.uid}>{profile?.displayName} (Você)</option>
-                        {barbers.filter(b => b.uid !== user?.uid).map(b => (
-                          <option key={b.uid || b.id} value={b.uid || b.id}>{b.nome || b.name}</option>
+                        {barbers.filter(b => b.uid !== user?.uid).map((b, idx) => (
+                          <option key={`barber-saida-${b.uid || b.id || idx}-${idx}`} value={b.uid || b.id}>{b.nome || b.name}</option>
                         ))}
                       </select>
                     </div>
@@ -1424,8 +1431,8 @@ export function Estoque() {
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
                       >
                         <option value={user?.uid}>{profile?.displayName} (Você)</option>
-                        {barbers.filter(b => b.uid !== user?.uid).map(b => (
-                          <option key={b.uid || b.id} value={b.uid || b.id}>{b.nome || b.name}</option>
+                        {barbers.filter(b => b.uid !== user?.uid).map((b, idx) => (
+                          <option key={`barber-consumo-${b.uid || b.id || idx}-${idx}`} value={b.uid || b.id}>{b.nome || b.name}</option>
                         ))}
                       </select>
                     </div>
@@ -1489,8 +1496,8 @@ export function Estoque() {
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
                       >
                         <option value={user?.uid}>{profile?.displayName} (Você)</option>
-                        {barbers.filter(b => b.uid !== user?.uid).map(b => (
-                          <option key={b.uid || b.id} value={b.uid || b.id}>{b.nome || b.name}</option>
+                        {barbers.filter(b => b.uid !== user?.uid).map((b, idx) => (
+                          <option key={`barber-venda-${b.uid || b.id || idx}-${idx}`} value={b.uid || b.id}>{b.nome || b.name}</option>
                         ))}
                       </select>
                     </div>
@@ -1514,8 +1521,8 @@ export function Estoque() {
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium appearance-none"
                         >
                           <option value="">Cliente Avulso</option>
-                          {clients.map(c => (
-                            <option key={c.id} value={c.id}>{c.nome || c.name}</option>
+                          {clients.map((c, idx) => (
+                            <option key={`client-opt-${c.uid || c.id || idx}-${idx}`} value={c.uid || c.id}>{c.nome || c.name}</option>
                           ))}
                         </select>
                       </div>

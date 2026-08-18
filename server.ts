@@ -19,12 +19,24 @@ function getFirebaseAdmin() {
         // 1. Check if service account JSON string is provided in env
         if (process.env.FIREBASE_SERVICE_ACCOUNT) {
           try {
-            const serviceAccount = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
-              ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-              : process.env.FIREBASE_SERVICE_ACCOUNT;
+            let raw = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
+            // Handle quotes added by some environment variable interfaces
+            if ((raw.startsWith("'") && raw.endsWith("'")) || (raw.startsWith('"') && raw.endsWith('"'))) {
+              raw = raw.slice(1, -1);
+            }
+            // Handle base64 encoded string if provided in base64
+            if (!raw.startsWith('{') && !raw.startsWith('[')) {
+              try {
+                raw = Buffer.from(raw, 'base64').toString('utf-8');
+              } catch (_) {}
+            }
+            const serviceAccount = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (serviceAccount.private_key && typeof serviceAccount.private_key === 'string') {
+              serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+            }
             adminApp = initializeApp({
               credential: cert(serviceAccount),
-              projectId: serviceAccount.project_id || "gbagender"
+              projectId: serviceAccount.project_id || process.env.FIREBASE_PROJECT_ID || "gbagender"
             });
             console.log("✅ Firebase Admin initialized with FIREBASE_SERVICE_ACCOUNT JSON credentials.");
           } catch (jsonErr) {
@@ -496,13 +508,15 @@ function getAsaasBaseUrl(env?: string): string {
         if (ownerEmail) {
           try {
             const custData = await fetchAsaasApi(`/customers?email=${encodeURIComponent(ownerEmail)}`);
-            if (custData?.data?.length > 0) {
-              customerId = custData.data[0].id;
-              // Try updating customer CPF in Asaas
-              await fetchAsaasApi(`/customers/${customerId}`, {
-                method: 'PUT',
-                body: JSON.stringify({ cpfCnpj: cleanCpfCnpj })
-              });
+            if (custData?.data && Array.isArray(custData.data) && custData.data.length > 0) {
+              customerId = custData.data[0]?.id || null;
+              // Try updating customer CPF in Asaas if valid
+              if (customerId) {
+                await fetchAsaasApi(`/customers/${customerId}`, {
+                  method: 'PUT',
+                  body: JSON.stringify({ cpfCnpj: cleanCpfCnpj })
+                });
+              }
             }
           } catch (e) {
             console.warn("Aviso ao buscar cliente existente Asaas:", e);
@@ -520,7 +534,7 @@ function getAsaasBaseUrl(env?: string): string {
             })
           });
           
-          if (newCust.errors && isSandboxMode) {
+          if (newCust?.errors && isSandboxMode) {
             cleanCpfCnpj = validSandboxCpf;
             newCust = await fetchAsaasApi('/customers', {
               method: 'POST',
@@ -533,18 +547,20 @@ function getAsaasBaseUrl(env?: string): string {
             });
           }
 
-          if (newCust.errors) {
-            const hasInvalidToken = newCust.errors.some((e: any) => e.code === 'invalid_access_token');
+          if (newCust?.errors) {
+            const hasInvalidToken = Array.isArray(newCust.errors) && newCust.errors.some((e: any) => e.code === 'invalid_access_token');
             if (isSandboxMode || hasInvalidToken) {
               console.warn("[Asaas Sandbox] Token inválido ou erro no Asaas Sandbox, utilizando fallback para testes local:", newCust.errors);
               customerId = 'cus_sandbox_' + Date.now();
             } else {
-              const errMsg = newCust.errors[0]?.description || "O CPF/CNPJ ou dados informados são inválidos no Asaas.";
+              const errMsg = (Array.isArray(newCust.errors) && newCust.errors[0]?.description) || "O CPF/CNPJ ou dados informados são inválidos no Asaas.";
               console.error("[Asaas Error] Falha ao criar cliente:", newCust.errors);
               return res.status(400).json({ error: errMsg, details: newCust.errors });
             }
-          } else {
+          } else if (newCust?.id) {
             customerId = newCust.id;
+          } else {
+            customerId = 'cus_sandbox_' + Date.now();
           }
         }
 
@@ -556,7 +572,7 @@ function getAsaasBaseUrl(env?: string): string {
         let payData: any = null;
 
         const ensureCustomerCpfCnpjValid = async (useCnpj = false) => {
-          if (isSandboxMode && customerId && !customerId.startsWith('cus_sandbox_')) {
+          if (isSandboxMode && customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_')) {
             cleanCpfCnpj = useCnpj ? validSandboxCnpj : validSandboxCpf;
             await fetchAsaasApi(`/customers/${customerId}`, {
               method: 'PUT',
@@ -565,8 +581,10 @@ function getAsaasBaseUrl(env?: string): string {
           }
         };
 
+        const isRealCustomerId = customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_');
+
         // If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
-        if ((billingType === 'CREDIT_CARD' || req.body.isSubscription) && !customerId.startsWith('cus_sandbox_')) {
+        if ((billingType === 'CREDIT_CARD' || req.body?.isSubscription) && isRealCustomerId) {
           try {
             const createSub = async () => fetchAsaasApi('/subscriptions', {
               method: 'POST',
@@ -583,14 +601,14 @@ function getAsaasBaseUrl(env?: string): string {
 
             let subData = await createSub();
 
-            if (subData.errors && isSandboxMode) {
+            if (subData?.errors && isSandboxMode) {
               await ensureCustomerCpfCnpjValid(true);
               subData = await createSub();
             }
 
-            if (!subData.errors && subData.id) {
+            if (subData && !subData.errors && subData.id) {
               payData = subData;
-            } else if (subData.errors) {
+            } else if (subData?.errors) {
               console.warn("Retorno de erro ao criar assinatura no Asaas:", subData.errors);
               payData = subData;
             }
@@ -600,7 +618,7 @@ function getAsaasBaseUrl(env?: string): string {
         }
 
         // Fallback to single payment charge if subscription was not created or billingType is PIX
-        if ((!payData || payData.errors) && !customerId.startsWith('cus_sandbox_')) {
+        if ((!payData || payData?.errors) && isRealCustomerId) {
           const createPayment = async () => fetchAsaasApi('/payments', {
             method: 'POST',
             body: JSON.stringify({
@@ -615,14 +633,14 @@ function getAsaasBaseUrl(env?: string): string {
 
           payData = await createPayment();
 
-          if (payData.errors && isSandboxMode) {
+          if (payData?.errors && isSandboxMode) {
             await ensureCustomerCpfCnpjValid(true);
             payData = await createPayment();
           }
         }
 
-        if (!payData || payData.errors) {
-          if (isSandboxMode) {
+        if (!payData || payData?.errors) {
+          if (isSandboxMode || !isRealCustomerId) {
             console.warn("[Asaas Sandbox] Utilizando cobrança simulada para testes no Sandbox.");
             payData = {
               id: 'pay_sandbox_' + Date.now(),
@@ -630,8 +648,8 @@ function getAsaasBaseUrl(env?: string): string {
               status: 'PENDING'
             };
           } else {
-            const hasInvalidToken = payData?.errors?.some((e: any) => e.code === 'invalid_access_token');
-            let errMsg = payData?.errors?.[0]?.description || "Erro ao gerar cobrança no Asaas. Verifique os dados fornecidos.";
+            const hasInvalidToken = Array.isArray(payData?.errors) && payData.errors.some((e: any) => e.code === 'invalid_access_token');
+            let errMsg = (Array.isArray(payData?.errors) && payData.errors[0]?.description) || "Erro ao gerar cobrança no Asaas. Verifique os dados fornecidos.";
             if (hasInvalidToken) {
               errMsg = "A chave de API do Asaas é inválida ou você inseriu o Token de Webhook. No painel do Asaas, acesse Configurações -> Integrações -> Chaves de API para copiar a Chave de API correta.";
             }
@@ -641,15 +659,15 @@ function getAsaasBaseUrl(env?: string): string {
         }
 
         // If it's a subscription, retrieve the actual first payment to get its QR code or checkout link
-        let paymentIdForPixOrLink = payData.id;
-        let invoiceUrl = payData.invoiceUrl;
-        let bankSlipUrl = payData.bankSlipUrl;
+        let paymentIdForPixOrLink = payData?.id;
+        let invoiceUrl = payData?.invoiceUrl;
+        let bankSlipUrl = payData?.bankSlipUrl;
 
-        if (payData.id && payData.id.startsWith('sub_')) {
+        if (payData?.id && typeof payData.id === 'string' && payData.id.startsWith('sub_')) {
           try {
             console.log(`[Subscription] Buscando primeiro pagamento para a assinatura ${payData.id}...`);
             const subPaymentsData = await fetchAsaasApi(`/subscriptions/${payData.id}/payments`);
-            if (subPaymentsData?.data?.length > 0) {
+            if (subPaymentsData?.data && Array.isArray(subPaymentsData.data) && subPaymentsData.data.length > 0) {
               const firstPayment = subPaymentsData.data[0];
               paymentIdForPixOrLink = firstPayment.id;
               invoiceUrl = firstPayment.invoiceUrl;
@@ -662,10 +680,10 @@ function getAsaasBaseUrl(env?: string): string {
         }
 
         // c) If PIX, fetch Pix QR Code
-        let pixCopiaECola = invoiceUrl || payData.invoiceUrl || '';
+        let pixCopiaECola = invoiceUrl || payData?.invoiceUrl || '';
         let pixQrCodeUrl = '';
 
-        if (paymentIdForPixOrLink && !paymentIdForPixOrLink.startsWith('sub_') && (billingType === 'PIX' || !billingType)) {
+        if (paymentIdForPixOrLink && typeof paymentIdForPixOrLink === 'string' && !paymentIdForPixOrLink.startsWith('sub_') && (billingType === 'PIX' || !billingType)) {
           try {
             const pixData = await fetchAsaasApi(`/payments/${paymentIdForPixOrLink}/pixQrCode`);
             if (pixData?.payload) pixCopiaECola = pixData.payload;
@@ -676,7 +694,7 @@ function getAsaasBaseUrl(env?: string): string {
         }
 
         // Always guarantee a QR code image URL if pixCopiaECola or invoiceUrl is available
-        const finalPaymentUrl = bankSlipUrl || invoiceUrl || payData.bankSlipUrl || payData.invoiceUrl || '';
+        const finalPaymentUrl = bankSlipUrl || invoiceUrl || payData?.bankSlipUrl || payData?.invoiceUrl || '';
         const qrTarget = pixCopiaECola || finalPaymentUrl;
         if (!pixQrCodeUrl && qrTarget) {
           pixQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrTarget)}`;
@@ -684,13 +702,13 @@ function getAsaasBaseUrl(env?: string): string {
 
         return res.json({
           success: true,
-          chargeId: payData.id,
+          chargeId: payData?.id || 'charge_' + Date.now(),
           paymentId: paymentIdForPixOrLink,
           customerId: customerId,
           paymentUrl: finalPaymentUrl,
           pixCopiaECola: pixCopiaECola || finalPaymentUrl,
           pixQrCodeUrl: pixQrCodeUrl,
-          status: payData.status === 'RECEIVED' || payData.status === 'CONFIRMED' ? 'CONFIRMED' : 'PENDING',
+          status: payData?.status === 'RECEIVED' || payData?.status === 'CONFIRMED' ? 'CONFIRMED' : 'PENDING',
           gatewayUsed: 'asaas',
           message: 'Cobrança gerada com sucesso via Asaas.'
         });
@@ -1401,14 +1419,28 @@ function getAsaasBaseUrl(env?: string): string {
   });
 
   // Webhook Receiver for Asaas / Mercado Pago / Stripe
+  const webhookPaths = [
+    "/api/webhooks/asaas",
+    "/api/webhook/asaas",
+    "/webhooks/asaas",
+    "/webhook/asaas",
+    "/api/webhooks",
+    "/webhooks",
+    "/api/webhook",
+    "/webhook",
+    "/api/saas/payment/webhook",
+    "/saas/payment/webhook",
+    "/payment/webhook"
+  ];
+
   // 1. Endpoint GET para validação/teste de conectividade da URL pelo Asaas
-  app.get(["/api/saas/payment/webhook", "/saas/payment/webhook", "/api/webhook", "/webhook", "/payment/webhook"], (req, res) => {
+  app.get(webhookPaths, (req, res) => {
     console.log("🌐 [ASAAS WEBHOOK] Validação GET / Ping de conectividade recebido do Asaas.");
     return res.status(200).json({ status: "ok", message: "Webhook Asaas ativo e pronto para receber notificações." });
   });
 
   // 2. Endpoint POST para processamento dos eventos de pagamento / assinatura do Asaas
-  app.post(["/api/saas/payment/webhook", "/saas/payment/webhook", "/api/webhook", "/webhook", "/payment/webhook"], async (req, res) => {
+  app.post(webhookPaths, async (req, res) => {
     try {
       const timestamp = new Date().toISOString();
       let event: any = {};

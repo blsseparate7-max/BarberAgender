@@ -124,10 +124,21 @@ export default async function handler(req: any, res: any) {
           const baseUrl = asaasEnv === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3';
 
           if (asaasApiKey) {
-            const parentRes = await fetch(`${baseUrl}/subscriptions/${subIdFromPayment}`, {
+            let baseUrl = asaasEnv === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3';
+            
+            let parentRes = await fetch(`${baseUrl}/subscriptions/${subIdFromPayment}`, {
               headers: { 'access_token': asaasApiKey }
             });
-            const parentData = await parentRes.json();
+            let parentData = await parentRes.json();
+
+            if (parentData?.errors?.some((e: any) => e.code === 'invalid_access_token')) {
+              const altBaseUrl = baseUrl.includes('sandbox') ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3';
+              parentRes = await fetch(`${altBaseUrl}/subscriptions/${subIdFromPayment}`, {
+                headers: { 'access_token': asaasApiKey }
+              });
+              parentData = await parentRes.json();
+            }
+
             const parentExtRef = parentData?.externalReference;
 
             if (parentExtRef) {

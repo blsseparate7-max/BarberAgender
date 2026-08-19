@@ -115,8 +115,47 @@ export default async function handler(req: any, res: any) {
       const subIdFromPayment = payment?.subscription || subscription?.id;
       const paymentIdFromPayment = payment?.id;
 
+      // Strategy 0: If payment belongs to an Asaas Subscription, fetch parent subscription from Asaas API for exact externalReference
+      if (subIdFromPayment) {
+        try {
+          const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+          const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
+          const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+          const baseUrl = asaasEnv === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3';
+
+          if (asaasApiKey) {
+            const parentRes = await fetch(`${baseUrl}/subscriptions/${subIdFromPayment}`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const parentData = await parentRes.json();
+            const parentExtRef = parentData?.externalReference;
+
+            if (parentExtRef) {
+              const directDocRef = dbAdmin.collection('subscriptions').doc(parentExtRef);
+              const directSnap = await directDocRef.get();
+              if (directSnap.exists) {
+                subDoc = directSnap;
+                subRef = directDocRef;
+                console.log(`🎯 [ASAAS WEBHOOK] Exact subscription doc matched via Asaas API parent externalReference: ${parentExtRef}`);
+              } else {
+                const extQuery = await dbAdmin.collection('subscriptions')
+                  .where('externalReference', '==', parentExtRef)
+                  .limit(1)
+                  .get();
+                if (!extQuery.empty) {
+                  subDoc = extQuery.docs[0];
+                  subRef = extQuery.docs[0].ref;
+                }
+              }
+            }
+          }
+        } catch (apiErr) {
+          console.warn("⚠️ [ASAAS WEBHOOK] Could not fetch parent subscription from Asaas API:", apiErr);
+        }
+      }
+
       // Strategy A: Check if refId is the Firestore document ID directly
-      if (refId) {
+      if (!subDoc && refId) {
         try {
           const directDocRef = dbAdmin.collection('subscriptions').doc(refId);
           const directSnap = await directDocRef.get();
@@ -151,26 +190,37 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      // Strategy D: Query by asaasSubscriptionId
+      // Strategy D: Query by asaasSubscriptionId (Prioritizing pending)
       if (!subDoc && subIdFromPayment) {
-        const subIdQuery = await dbAdmin.collection('subscriptions')
+        const pendingSubQuery = await dbAdmin.collection('subscriptions')
           .where('asaasSubscriptionId', '==', subIdFromPayment)
+          .where('status', '==', 'pending')
           .limit(1)
           .get();
-        if (!subIdQuery.empty) {
-          subDoc = subIdQuery.docs[0];
+        if (!pendingSubQuery.empty) {
+          subDoc = pendingSubQuery.docs[0];
           subRef = subDoc.ref;
+        } else {
+          const anySubQuery = await dbAdmin.collection('subscriptions')
+            .where('asaasSubscriptionId', '==', subIdFromPayment)
+            .limit(1)
+            .get();
+          if (!anySubQuery.empty) {
+            subDoc = anySubQuery.docs[0];
+            subRef = anySubQuery.docs[0].ref;
+          }
         }
       }
 
-      // Strategy E: Fallback query by tenantId (for SaaS tenant activation)
+      // Strategy E: Fallback query by tenantId (Prioritizing pending subscriptions)
       if (!subDoc && refId) {
-        const tenantSubQuery = await dbAdmin.collection('subscriptions')
+        const tenantPendingQuery = await dbAdmin.collection('subscriptions')
           .where('tenantId', '==', refId)
+          .where('status', '==', 'pending')
           .limit(1)
           .get();
-        if (!tenantSubQuery.empty) {
-          subDoc = tenantSubQuery.docs[0];
+        if (!tenantPendingQuery.empty) {
+          subDoc = tenantPendingQuery.docs[0];
           subRef = subDoc.ref;
         }
       }

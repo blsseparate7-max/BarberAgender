@@ -112,17 +112,71 @@ export default async function handler(req: any, res: any) {
       let subDoc: any = null;
       let subRef: any = null;
 
-      // Search by paymentId, subscriptionId, or tenantId
-      const subQuery = await dbAdmin.collection('subscriptions')
-        .where('tenantId', '==', refId)
-        .limit(1)
-        .get();
+      const subIdFromPayment = payment?.subscription || subscription?.id;
+      const paymentIdFromPayment = payment?.id;
 
-      if (!subQuery.empty) {
-        subDoc = subQuery.docs[0];
-        subRef = subDoc.ref;
-      } else {
-        // Search in tenants
+      // Strategy A: Check if refId is the Firestore document ID directly
+      if (refId) {
+        try {
+          const directDocRef = dbAdmin.collection('subscriptions').doc(refId);
+          const directSnap = await directDocRef.get();
+          if (directSnap.exists) {
+            subDoc = directSnap;
+            subRef = directDocRef;
+          }
+        } catch (_) {}
+      }
+
+      // Strategy B: Query by externalReference
+      if (!subDoc && refId) {
+        const extQuery = await dbAdmin.collection('subscriptions')
+          .where('externalReference', '==', refId)
+          .limit(1)
+          .get();
+        if (!extQuery.empty) {
+          subDoc = extQuery.docs[0];
+          subRef = subDoc.ref;
+        }
+      }
+
+      // Strategy C: Query by asaasInvoiceId
+      if (!subDoc && paymentIdFromPayment) {
+        const invQuery = await dbAdmin.collection('subscriptions')
+          .where('asaasInvoiceId', '==', paymentIdFromPayment)
+          .limit(1)
+          .get();
+        if (!invQuery.empty) {
+          subDoc = invQuery.docs[0];
+          subRef = subDoc.ref;
+        }
+      }
+
+      // Strategy D: Query by asaasSubscriptionId
+      if (!subDoc && subIdFromPayment) {
+        const subIdQuery = await dbAdmin.collection('subscriptions')
+          .where('asaasSubscriptionId', '==', subIdFromPayment)
+          .limit(1)
+          .get();
+        if (!subIdQuery.empty) {
+          subDoc = subIdQuery.docs[0];
+          subRef = subDoc.ref;
+        }
+      }
+
+      // Strategy E: Fallback query by tenantId (for SaaS tenant activation)
+      if (!subDoc && refId) {
+        const tenantSubQuery = await dbAdmin.collection('subscriptions')
+          .where('tenantId', '==', refId)
+          .limit(1)
+          .get();
+        if (!tenantSubQuery.empty) {
+          subDoc = tenantSubQuery.docs[0];
+          subRef = subDoc.ref;
+        }
+      }
+
+      if (!subDoc && refId) {
+        // Search in tenants for SaaS Plan renewals
         const tenantRef = dbAdmin.collection('tenants').doc(refId);
         const tenantSnap = await tenantRef.get();
         if (tenantSnap.exists) {

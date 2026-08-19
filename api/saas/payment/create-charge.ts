@@ -241,12 +241,32 @@ export default async function handler(req: any, res: any) {
     }
 
     const paymentId = payData?.id;
+    let actualPaymentId = paymentId;
+    let paymentUrl = payData?.invoiceUrl || payData?.bankSlipUrl || '';
     let pixCopiaECola = '';
     let pixQrCodeUrl = '';
 
-    if (paymentId && (billingType === 'PIX' || !billingType) && !paymentId.startsWith('sub_')) {
+    // If subscription was created (id starts with 'sub_'), fetch its first payment to get invoiceUrl and Pix QR Code
+    if (paymentId && paymentId.startsWith('sub_')) {
       try {
-        const pixRes = await fetchAsaasApi(`/payments/${paymentId}/pixQrCode`);
+        const subPayments = await fetchAsaasApi(`/subscriptions/${paymentId}/payments`);
+        if (subPayments && Array.isArray(subPayments.data) && subPayments.data.length > 0) {
+          const firstPayment = subPayments.data[0];
+          if (firstPayment?.id) {
+            actualPaymentId = firstPayment.id;
+            paymentUrl = firstPayment.invoiceUrl || firstPayment.bankSlipUrl || paymentUrl;
+          }
+        }
+      } catch (subErr) {
+        console.warn("Aviso ao buscar cobrança da assinatura Asaas:", subErr);
+      }
+    }
+
+    const pixTargetId = actualPaymentId && !actualPaymentId.startsWith('sub_') ? actualPaymentId : null;
+
+    if (pixTargetId && (billingType === 'PIX' || !billingType || body?.billingType === 'PIX')) {
+      try {
+        const pixRes = await fetchAsaasApi(`/payments/${pixTargetId}/pixQrCode`);
         if (pixRes && pixRes.encodedImage) {
           pixCopiaECola = pixRes.payload || '';
           pixQrCodeUrl = `data:image/png;base64,${pixRes.encodedImage}`;
@@ -259,9 +279,9 @@ export default async function handler(req: any, res: any) {
     return res.json({
       success: true,
       chargeId: paymentId,
-      paymentId: paymentId,
+      paymentId: actualPaymentId || paymentId,
       customerId: customerId,
-      paymentUrl: payData.invoiceUrl || payData.bankSlipUrl || '',
+      paymentUrl,
       pixCopiaECola,
       pixQrCodeUrl
     });

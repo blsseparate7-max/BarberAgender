@@ -2,7 +2,16 @@ import { initializeApp as initAdminApp, getApps as getAdminApps, cert } from "fi
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { initializeApp as initClientApp, getApps as getClientApps } from "firebase/app";
 import { getFirestore as getClientFirestore, doc, getDoc, setDoc, collection, query, where, getDocs, addDoc } from "firebase/firestore";
-import firebaseConfig from "../../firebase-applet-config.json";
+
+const FIREBASE_CONFIG = {
+  projectId: process.env.FIREBASE_PROJECT_ID || "gbagender",
+  appId: process.env.FIREBASE_APP_ID || "1:529968557136:web:a9dc6fb8578141ae68f555",
+  apiKey: process.env.FIREBASE_API_KEY || "AIzaSyAcrEPPYvEChBs_oXc4tFpos2oDwWV96Rs",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "gbagender.firebaseapp.com",
+  firestoreDatabaseId: "(default)",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "gbagender.firebasestorage.app",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "529968557136"
+};
 
 function getAdminDb() {
   try {
@@ -41,8 +50,8 @@ function getAdminDb() {
 function getClientDb() {
   try {
     const apps = getClientApps();
-    const app = apps.length > 0 ? apps[0] : initClientApp(firebaseConfig as any);
-    return getClientFirestore(app, firebaseConfig.firestoreDatabaseId || "(default)");
+    const app = apps.length > 0 ? apps[0] : initClientApp(FIREBASE_CONFIG as any);
+    return getClientFirestore(app, FIREBASE_CONFIG.firestoreDatabaseId || "(default)");
   } catch (err) {
     console.error("❌ [VERCEL WEBHOOK] Client SDK init error:", err);
     return null;
@@ -363,6 +372,6 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({ received: true, processed: true });
   } catch (error: any) {
     console.error("❌ [VERCEL ASAAS WEBHOOK] Error handling event:", error);
-    return res.status(500).json({ error: error.message || "Internal server error" });
+    return res.status(200).json({ received: true, warning: String(error?.message || error) });
   }
 }

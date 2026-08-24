@@ -40,6 +40,10 @@ function getAdminDb() {
         projectId: process.env.FIREBASE_PROJECT_ID || "gbagender"
       });
       return getAdminFirestore(app);
+    } else {
+      // Basic initialization fallback for serverless container context
+      const app = initAdminApp({ projectId: process.env.FIREBASE_PROJECT_ID || "gbagender" });
+      return getAdminFirestore(app);
     }
   } catch (err) {
     console.warn("⚠️ [VERCEL WEBHOOK] Admin SDK init error, fallback to Client SDK:", err);
@@ -179,13 +183,15 @@ export default async function handler(req: any, res: any) {
 
     console.log("🔔 [VERCEL ASAAS WEBHOOK] Event:", eventType, "Payment ID:", payment?.id, "Sub ID:", payment?.subscription);
 
-    let refId = payment?.externalReference || subscription?.externalReference || body?.external_reference || body?.externalReference;
+    let rawRefId = payment?.externalReference || subscription?.externalReference || body?.external_reference || body?.externalReference || '';
     const description = payment?.description || subscription?.description || body?.description;
 
-    if (!refId && description && typeof description === 'string') {
+    if (!rawRefId && description && typeof description === 'string') {
       const match = description.match(/\(([^)]+)\)/);
-      if (match && match[1]) refId = match[1].trim();
+      if (match && match[1]) rawRefId = match[1].trim();
     }
+
+    const cleanRefId = rawRefId.replace(/^client_sub:/, '').replace(/^saas_tenant:/, '').trim();
 
     const value = Number(payment?.value || subscription?.value || 0);
     const isActivation = (
@@ -228,11 +234,16 @@ export default async function handler(req: any, res: any) {
 
             const parentExtRef = parentData?.externalReference;
             if (parentExtRef) {
-              const matchDoc = await getDocById('subscriptions', parentExtRef);
-              if (matchDoc) {
-                targetSubDoc = matchDoc;
-                console.log(`🎯 [ASAAS WEBHOOK] Parent ExtRef matched in subscriptions: ${parentExtRef}`);
-              } else {
+              const cleanParentRef = parentExtRef.replace(/^client_sub:/, '').replace(/^saas_tenant:/, '').trim();
+              for (const pRef of Array.from(new Set([cleanParentRef, parentExtRef]))) {
+                const matchDoc = await getDocById('subscriptions', pRef);
+                if (matchDoc) {
+                  targetSubDoc = matchDoc;
+                  console.log(`🎯 [ASAAS WEBHOOK] Parent ExtRef direct match in subscriptions: ${pRef}`);
+                  break;
+                }
+              }
+              if (!targetSubDoc) {
                 const qRes = await queryCollection('subscriptions', 'externalReference', '==', parentExtRef);
                 if (qRes.length > 0) targetSubDoc = qRes[0];
               }
@@ -243,16 +254,28 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      // Strategy A: Check refId as direct doc ID in subscriptions
-      if (!targetSubDoc && refId) {
-        const matchDoc = await getDocById('subscriptions', refId);
-        if (matchDoc) targetSubDoc = matchDoc;
+      // Strategy A: Check cleanRefId & rawRefId as direct doc IDs in subscriptions
+      if (!targetSubDoc) {
+        for (const idToCheck of Array.from(new Set([cleanRefId, rawRefId].filter(Boolean)))) {
+          const matchDoc = await getDocById('subscriptions', idToCheck);
+          if (matchDoc) {
+            targetSubDoc = matchDoc;
+            console.log(`🎯 [ASAAS WEBHOOK] Direct doc match in subscriptions: ${idToCheck}`);
+            break;
+          }
+        }
       }
 
       // Strategy B: Query externalReference in subscriptions
-      if (!targetSubDoc && refId) {
-        const qRes = await queryCollection('subscriptions', 'externalReference', '==', refId);
-        if (qRes.length > 0) targetSubDoc = qRes[0];
+      if (!targetSubDoc) {
+        for (const extRef of Array.from(new Set([rawRefId, cleanRefId, `client_sub:${cleanRefId}`].filter(Boolean)))) {
+          const qRes = await queryCollection('subscriptions', 'externalReference', '==', extRef);
+          if (qRes.length > 0) {
+            targetSubDoc = qRes[0];
+            console.log(`🎯 [ASAAS WEBHOOK] externalReference query match in subscriptions: ${extRef}`);
+            break;
+          }
+        }
       }
 
       // Strategy C: Query asaasInvoiceId
@@ -271,34 +294,58 @@ export default async function handler(req: any, res: any) {
       }
 
       // Strategy E: Fallback query tenantId for pending subscriptions
-      if (!targetSubDoc && refId) {
-        const qRes = await queryCollection('subscriptions', 'tenantId', '==', refId);
+      if (!targetSubDoc && cleanRefId) {
+        const qRes = await queryCollection('subscriptions', 'tenantId', '==', cleanRefId);
         const pending = qRes.filter((item: any) => item.data.status === 'pending');
         if (pending.length > 0) targetSubDoc = pending[0];
       }
 
       // IF CLIENT CLUB SUBSCRIPTION FOUND:
       if (targetSubDoc) {
-        const subData = targetSubDoc.data;
-        const tenantId = subData.tenantId;
-        const newStart = new Date();
-        const newEnd = new Date(newStart);
-        newEnd.setMonth(newEnd.getMonth() + 1);
-        const newEndStr = newEnd.toISOString().split('T')[0];
+        const subData = targetSubDoc.data || {};
+        const tenantId = subData.tenantId || cleanRefId || 'gbcortes7';
+        
+        let newStartStr = todayStr;
+        let newEndStr = '';
+
+        const payDueDate = payment?.dueDate ? String(payment.dueDate).split('T')[0] : null;
+        let baseDate = new Date();
+
+        if (payDueDate) {
+          baseDate = new Date(payDueDate + 'T12:00:00');
+          newStartStr = payDueDate;
+        } else if (subData.endDate) {
+          baseDate = new Date(subData.endDate + 'T12:00:00');
+          newStartStr = subData.endDate;
+        } else {
+          newStartStr = todayStr;
+        }
+
+        const nextMonth = new Date(baseDate);
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        newEndStr = nextMonth.toISOString().split('T')[0];
 
         await updateDocById('subscriptions', targetSubDoc.id, {
           status: 'active',
           asaasPaymentStatus: 'received',
-          asaasSubscriptionId: subIdFromPayment || null,
-          asaasCustomerId: subscription?.customer || payment?.customer || null,
-          asaasInvoiceId: payment?.id || null,
-          startDate: todayStr,
+          asaasSubscriptionId: subIdFromPayment || subData.asaasSubscriptionId || null,
+          asaasCustomerId: subscription?.customer || payment?.customer || subData.asaasCustomerId || null,
+          asaasInvoiceId: payment?.id || subData.asaasInvoiceId || null,
+          startDate: newStartStr,
           endDate: newEndStr,
           haircutsUsed: 0,
           beardsUsed: 0,
           lastRenewalDate: todayStr,
           updatedAt: new Date().toISOString()
         });
+
+        if (subData.cliente_id) {
+          await updateDocById('usuarios', subData.cliente_id, {
+            tenantId,
+            ativo: true,
+            updatedAt: new Date().toISOString()
+          });
+        }
 
         if (value > 0) {
           await addDocToCollection('financial_transactions', {
@@ -307,13 +354,13 @@ export default async function handler(req: any, res: any) {
             amount: value || subData.amount || 0,
             date: todayStr,
             category: 'Assinaturas',
-            description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-            paymentMethod: 'pix',
+            description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+            paymentMethod: payment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
             status: 'pago',
-            cliente_id: subData.cliente_id,
-            cliente_name: subData.cliente_name,
-            responsavel_id: subData.cliente_id,
-            responsavel_name: subData.cliente_name,
+            cliente_id: subData.cliente_id || 'N/A',
+            cliente_name: subData.cliente_name || 'Cliente',
+            responsavel_id: subData.cliente_id || 'N/A',
+            responsavel_name: subData.cliente_name || 'Cliente',
             net_amount: value || subData.amount || 0,
             settlement_date: todayStr,
             is_settled: true,
@@ -326,8 +373,9 @@ export default async function handler(req: any, res: any) {
       }
 
       // ELSE IF TENANT SAAS PLAN:
-      if (refId) {
-        const tenantDoc = await getDocById('tenants', refId);
+      const tenantSearchIds = Array.from(new Set([cleanRefId, rawRefId].filter(Boolean)));
+      for (const tId of tenantSearchIds) {
+        const tenantDoc = await getDocById('tenants', tId);
         if (tenantDoc) {
           const tenantData = tenantDoc.data || {};
           let baseDate = new Date();
@@ -340,7 +388,7 @@ export default async function handler(req: any, res: any) {
           newExpDate.setMonth(newExpDate.getMonth() + 1);
           const newExpStr = newExpDate.toISOString().split('T')[0];
 
-          await updateDocById('tenants', refId, {
+          await updateDocById('tenants', tId, {
             planStatus: 'active',
             isActive: true,
             planExpiresAt: newExpStr,
@@ -351,8 +399,8 @@ export default async function handler(req: any, res: any) {
 
           if (value > 0) {
             await addDocToCollection('saas_payments', {
-              tenantId: refId,
-              tenantName: tenantData.name || refId,
+              tenantId: tId,
+              tenantName: tenantData.name || tId,
               planName: tenantData.plan || description || 'Plano Ultra',
               amount: value,
               paymentMethod: payment?.billingType || 'PIX',
@@ -363,8 +411,8 @@ export default async function handler(req: any, res: any) {
             });
           }
 
-          console.log(`✅ [ASAAS WEBHOOK] Tenant SaaS ${refId} activated successfully!`);
-          return res.status(200).json({ received: true, success: true, activated: "saas_tenant", tenantId: refId });
+          console.log(`✅ [ASAAS WEBHOOK] Tenant SaaS ${tId} activated successfully!`);
+          return res.status(200).json({ received: true, success: true, activated: "saas_tenant", tenantId: tId });
         }
       }
     }

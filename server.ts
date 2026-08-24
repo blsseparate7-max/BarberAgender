@@ -1048,8 +1048,9 @@ async function safeJsonFetch(response: any): Promise<any> {
     customerId?: string;
     externalReference?: string;
     docId?: string;
+    tenantId?: string;
   }) {
-    const { paymentId, subscriptionId, customerId, externalReference, docId } = params;
+    const { paymentId, subscriptionId, customerId, externalReference, docId, tenantId } = params;
 
     // 1. Direct document ID lookup
     const directDocIds = Array.from(new Set([docId, externalReference].filter(Boolean))) as string[];
@@ -1070,7 +1071,7 @@ async function safeJsonFetch(response: any): Promise<any> {
     }
 
     // 2. Search by externalReference, asaasInvoiceId, asaasSubscriptionId
-    const baseSearchIds = Array.from(new Set([paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
+    const baseSearchIds = Array.from(new Set([docId, paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
     const expandedIds: string[] = [];
     for (const sid of baseSearchIds) {
       if (sid) {
@@ -1083,7 +1084,7 @@ async function safeJsonFetch(response: any): Promise<any> {
 
     if (searchIds.length > 0) {
       try {
-        let q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds).limit(1).get();
+        let q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds.slice(0, 30)).limit(1).get();
         if (!q.empty) {
           const snap = q.docs[0];
           return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
@@ -1091,7 +1092,7 @@ async function safeJsonFetch(response: any): Promise<any> {
       } catch (e) { /* ignore */ }
 
       try {
-        let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds).limit(1).get();
+        let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds.slice(0, 30)).limit(1).get();
         if (!q.empty) {
           const snap = q.docs[0];
           return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
@@ -1099,7 +1100,7 @@ async function safeJsonFetch(response: any): Promise<any> {
       } catch (e) { /* ignore */ }
 
       try {
-        let q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds).limit(1).get();
+        let q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds.slice(0, 30)).limit(1).get();
         if (!q.empty) {
           const snap = q.docs[0];
           return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
@@ -1133,6 +1134,20 @@ async function safeJsonFetch(response: any): Promise<any> {
       } catch (e) {
         // ignore
       }
+    }
+
+    // 4. Fallback search by tenantId and pending status
+    if (tenantId) {
+      try {
+        let q = await dbAdmin.collection('subscriptions')
+          .where('tenantId', '==', tenantId)
+          .where('status', '==', 'pending')
+          .limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) { /* ignore */ }
     }
 
     return null;
@@ -1585,6 +1600,14 @@ async function safeJsonFetch(response: any): Promise<any> {
         cleanRefId = cleanRefId.replace(/^saas_tenant:/, '');
       }
 
+      // Extract potential tenantId from description or refId
+      let refTenantId = '';
+      if (rawRefId && !rawRefId.includes(':')) refTenantId = rawRefId;
+      if (!refTenantId && description && typeof description === 'string') {
+        const match = description.match(/\(([^)]+)\)/);
+        if (match && match[1]) refTenantId = match[1].trim();
+      }
+
       // 1. Search Client Subscription FIRST if targetType is client_sub or unknown
       if (targetType === 'client_sub' || targetType === 'unknown') {
         try {
@@ -1593,7 +1616,8 @@ async function safeJsonFetch(response: any): Promise<any> {
             subscriptionId: subscription?.id || payment?.subscription,
             customerId: subscription?.customer || payment?.customer,
             externalReference: rawRefId,
-            docId: cleanRefId
+            docId: cleanRefId,
+            tenantId: refTenantId
           });
 
           if (subMatch) {
@@ -1620,9 +1644,9 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       // 3. PROCESS CLIENT SUBSCRIPTION EVENTS
       if (subMatch && targetType === 'client_sub') {
-        const subData = subMatch.data;
+        const subData = subMatch.data || {};
         const subRef = subMatch.ref;
-        const tenantId = subData.tenantId;
+        const tenantId = subData.tenantId || refTenantId || 'gbcortes7';
         const todayStr = new Date().toISOString().split('T')[0];
 
         if (isPaymentConfirmed) {
@@ -1656,7 +1680,7 @@ async function safeJsonFetch(response: any): Promise<any> {
             newEndStr = nextMonth.toISOString().split('T')[0];
           }
 
-          console.log(`🔄 [ASAAS AUDIT] Confirmando pagamento & Ativando assinatura do cliente ${subData.cliente_name} (${subMatch.id}). Novo período: ${newStartStr} até ${newEndStr}`);
+          console.log(`🔄 [ASAAS AUDIT] Confirmando pagamento & Ativando assinatura do cliente ${subData.cliente_name || 'Desconhecido'} (${subMatch.id}). Novo período: ${newStartStr} até ${newEndStr}`);
           await subRef.update({
             status: 'active',
             asaasPaymentStatus: 'received',
@@ -1676,18 +1700,18 @@ async function safeJsonFetch(response: any): Promise<any> {
           if (finalVal > 0) {
             try {
               await dbAdmin.collection('financial_transactions').add({
-                tenantId,
+                tenantId: tenantId || 'gbcortes7',
                 type: 'income',
                 amount: finalVal,
                 date: todayStr,
                 category: 'Assinaturas',
-                description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
                 paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
                 status: 'pago',
-                cliente_id: subData.cliente_id,
-                cliente_name: subData.cliente_name,
-                responsavel_id: subData.cliente_id,
-                responsavel_name: subData.cliente_name,
+                cliente_id: subData.cliente_id || 'N/A',
+                cliente_name: subData.cliente_name || 'Cliente',
+                responsavel_id: subData.cliente_id || 'N/A',
+                responsavel_name: subData.cliente_name || 'Cliente',
                 net_amount: finalVal,
                 settlement_date: todayStr,
                 is_settled: true,

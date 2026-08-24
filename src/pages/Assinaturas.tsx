@@ -404,6 +404,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   useEffect(() => {
     let unsubServ: (() => void) | undefined;
     let unsubProd: (() => void) | undefined;
+    let unsubSubs: (() => void) | undefined;
 
     const setupListeners = () => {
       // Services snapshot
@@ -429,6 +430,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
           console.error('Erro ao buscar produtos:', error);
         }
       );
+
+      // Subscriptions real-time listener
+      unsubSubs = subscriptionService.subscribeToSubscriptions(
+        profile?.tipo === 'cliente' ? user?.uid : undefined,
+        (updatedSubs) => {
+          setSubscriptions(updatedSubs);
+        }
+      );
     };
 
     loadData();
@@ -437,6 +446,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     return () => {
       if (unsubServ) unsubServ();
       if (unsubProd) unsubProd();
+      if (unsubSubs) unsubSubs();
     };
   }, [profile?.uid, profile?.tipo, activeTab, user?.uid, canManage]);
 

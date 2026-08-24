@@ -1050,10 +1050,43 @@ async function safeJsonFetch(response: any): Promise<any> {
     docId?: string;
     tenantId?: string;
   }) {
-    const { paymentId, subscriptionId, customerId, externalReference, docId, tenantId } = params;
+    let { paymentId, subscriptionId, customerId, externalReference, docId, tenantId } = params;
+
+    // Fallback: If externalReference is missing or incomplete, attempt to fetch parent object from Asaas API
+    if ((!externalReference || !externalReference.includes('client_sub')) && (subscriptionId || paymentId)) {
+      try {
+        const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+        const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
+        const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+        if (asaasApiKey) {
+          const baseUrl = asaasEnv === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/api/v3';
+          let fetchUrl = '';
+          if (subscriptionId) fetchUrl = `${baseUrl}/subscriptions/${subscriptionId}`;
+          else if (paymentId) fetchUrl = `${baseUrl}/payments/${paymentId}`;
+
+          if (fetchUrl) {
+            const apiRes = await fetch(fetchUrl, { headers: { 'access_token': asaasApiKey } });
+            if (apiRes.ok) {
+              const apiData = await apiRes.json();
+              if (apiData?.externalReference) {
+                externalReference = apiData.externalReference;
+                console.log(`🎯 [ASAAS AUDIT] RefId recuperado via API Asaas: ${externalReference}`);
+              }
+            }
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Aviso ao buscar refId na API Asaas:", apiErr);
+      }
+    }
 
     // 1. Direct document ID lookup
-    const directDocIds = Array.from(new Set([docId, externalReference].filter(Boolean))) as string[];
+    let cleanDocId = docId || '';
+    if (externalReference && externalReference.startsWith('client_sub:')) {
+      cleanDocId = externalReference.replace(/^client_sub:/, '');
+    }
+
+    const directDocIds = Array.from(new Set([cleanDocId, docId, externalReference].filter(Boolean))) as string[];
     for (let id of directDocIds) {
       if (id) {
         const cleanId = id.replace(/^client_sub:/, '').replace(/^saas_tenant:/, '');
@@ -1071,7 +1104,7 @@ async function safeJsonFetch(response: any): Promise<any> {
     }
 
     // 2. Search by externalReference, asaasInvoiceId, asaasSubscriptionId
-    const baseSearchIds = Array.from(new Set([docId, paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
+    const baseSearchIds = Array.from(new Set([cleanDocId, docId, paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
     const expandedIds: string[] = [];
     for (const sid of baseSearchIds) {
       if (sid) {
@@ -1113,7 +1146,7 @@ async function safeJsonFetch(response: any): Promise<any> {
       try {
         let q = await dbAdmin.collection('subscriptions')
           .where('asaasCustomerId', '==', customerId)
-          .where('asaasPaymentStatus', '==', 'pending')
+          .where('status', '==', 'pending')
           .limit(1).get();
         if (!q.empty) {
           const snap = q.docs[0];
@@ -1484,6 +1517,113 @@ async function safeJsonFetch(response: any): Promise<any> {
     }
   });
 
+  // Check Asaas payment status on-demand / polling
+  app.post("/api/saas/payment/check-status", async (req, res) => {
+    try {
+      const { paymentId, subscriptionId, id } = req.body || {};
+      const targetId = paymentId || subscriptionId || id;
+
+      if (!targetId) {
+        return res.status(400).json({ error: "paymentId or subscriptionId is required" });
+      }
+
+      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
+      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+
+      let isPaid = false;
+      let statusStr = 'PENDING';
+      let fetchedPayment: any = null;
+
+      if (asaasApiKey && !targetId.startsWith('pay_sandbox_') && !targetId.startsWith('sub_sandbox_')) {
+        const baseUrl = getAsaasBaseUrl(asaasEnv);
+        let checkUrl = `${baseUrl}/payments/${targetId}`;
+
+        if (targetId.startsWith('sub_')) {
+          checkUrl = `${baseUrl}/subscriptions/${targetId}/payments`;
+        }
+
+        try {
+          const apiRes = await fetch(checkUrl, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (targetId.startsWith('sub_') && Array.isArray(apiData?.data) && apiData.data.length > 0) {
+              fetchedPayment = apiData.data[0];
+            } else {
+              fetchedPayment = apiData;
+            }
+
+            statusStr = (fetchedPayment?.status || 'PENDING').toUpperCase();
+            if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE', 'ACTIVE'].includes(statusStr)) {
+              isPaid = true;
+            }
+          }
+        } catch (fetchErr) {
+          console.warn("Aviso ao checar status na API Asaas:", fetchErr);
+        }
+      }
+
+      const dbAdmin = getAdminDb();
+      if (dbAdmin) {
+        let subMatch = await findSubscriptionInFirestore(dbAdmin, {
+          paymentId: fetchedPayment?.id || (targetId.startsWith('pay_') ? targetId : undefined),
+          subscriptionId: fetchedPayment?.subscription || (targetId.startsWith('sub_') ? targetId : undefined),
+          externalReference: targetId,
+          docId: targetId
+        });
+
+        if (subMatch) {
+          const subData = subMatch.data || {};
+          if (isPaid && subData.status !== 'active') {
+            const todayStr = new Date().toISOString().split('T')[0];
+            let newStartStr = todayStr;
+            let newEndStr = '';
+            const baseDate = new Date();
+            const calcEndDate = new Date(baseDate.setMonth(baseDate.getMonth() + 1));
+            newEndStr = calcEndDate.toISOString().split('T')[0];
+
+            await subMatch.ref.update({
+              status: 'active',
+              asaasPaymentStatus: 'received',
+              startDate: newStartStr,
+              endDate: newEndStr,
+              haircutsUsed: 0,
+              beardsUsed: 0,
+              lastRenewalDate: todayStr,
+              updatedAt: new Date()
+            });
+
+            if (subData.cliente_id) {
+              try {
+                await dbAdmin.collection('usuarios').doc(subData.cliente_id).set({
+                  tenantId: subData.tenantId || 'gbcortes7',
+                  ativo: true,
+                  updatedAt: new Date().toISOString()
+                }, { merge: true });
+              } catch (uErr) {
+                console.warn("Could not activate user profile:", uErr);
+              }
+            }
+          } else if (subData.status === 'active') {
+            isPaid = true;
+          }
+        }
+      }
+
+      return res.json({
+        success: true,
+        isPaid,
+        status: statusStr,
+        payment: fetchedPayment
+      });
+    } catch (error: any) {
+      console.error("Erro no check-status:", error);
+      return res.status(500).json({ error: error.message || "Erro ao verificar status" });
+    }
+  });
+
   // Webhook Receiver for Asaas / Mercado Pago / Stripe
   const webhookPaths = [
     "/api/webhooks/asaas",
@@ -1552,8 +1692,13 @@ async function safeJsonFetch(response: any): Promise<any> {
         eventType === 'PAYMENT_RECEIVED_IN_CASH_FEE' ||
         eventType === 'PAYMENT_DUNNING_RECEIVED' ||
         eventType === 'PAYMENT_APPROVED' ||
+        eventType.includes('RECEIVED') ||
+        eventType.includes('CONFIRMED') ||
         payment?.status === 'RECEIVED' ||
-        payment?.status === 'CONFIRMED'
+        payment?.status === 'CONFIRMED' ||
+        payment?.status === 'RECEIVED_IN_CASH' ||
+        payment?.status === 'RECEIVED_IN_CASH_FEE' ||
+        subscription?.status === 'ACTIVE'
       );
 
       const isPaymentOverdue = (
@@ -1563,17 +1708,24 @@ async function safeJsonFetch(response: any): Promise<any> {
       );
 
       const isPaymentCanceledOrRefunded = (
-        eventType === 'PAYMENT_DELETED' ||
-        eventType === 'PAYMENT_REFUNDED' ||
-        eventType === 'PAYMENT_CHARGEBACK_REQUESTED' ||
-        payment?.status === 'REFUNDED'
+        !isPaymentConfirmed && (
+          eventType === 'PAYMENT_REFUNDED' ||
+          eventType === 'PAYMENT_CHARGEBACK_REQUESTED' ||
+          payment?.status === 'REFUNDED'
+        )
       );
 
       const isInformationalEvent = (
-        eventType === 'PAYMENT_CREATED' ||
-        eventType === 'PAYMENT_UPDATED' ||
-        eventType === 'SUBSCRIPTION_CREATED' ||
-        eventType === 'SUBSCRIPTION_UPDATED'
+        !isPaymentConfirmed &&
+        !isPaymentOverdue &&
+        !isPaymentCanceledOrRefunded &&
+        (
+          eventType === 'PAYMENT_CREATED' ||
+          eventType === 'PAYMENT_UPDATED' ||
+          eventType === 'PAYMENT_DELETED' ||
+          eventType === 'SUBSCRIPTION_CREATED' ||
+          eventType === 'SUBSCRIPTION_UPDATED'
+        )
       );
 
       if (isInformationalEvent) {

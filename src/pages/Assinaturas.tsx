@@ -450,6 +450,43 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     };
   }, [profile?.uid, profile?.tipo, activeTab, user?.uid, canManage]);
 
+  // Auto-sync & poll status when charge modal is displayed
+  useEffect(() => {
+    if (!showCreatedChargeModal || !createdChargeData || createdChargeData.status === 'active') return;
+
+    // 1. Instant check against real-time subscriptions array
+    const activeSub = subscriptions.find(s => (s.id === createdChargeData.id || s.asaasInvoiceId === createdChargeData.id || s.asaasSubscriptionId === createdChargeData.id) && s.status === 'active');
+    if (activeSub) {
+      setCreatedChargeData(prev => prev ? { ...prev, status: 'active' } : null);
+      toast.success("Pagamento verificado! Assinatura ativada.");
+      setTimeout(() => setShowCreatedChargeModal(false), 2000);
+      return;
+    }
+
+    // 2. Polling /api/saas/payment/check-status every 3.5 seconds
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/saas/payment/check-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paymentId: createdChargeData.id, subscriptionId: createdChargeData.id })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.isPaid || data.status === 'RECEIVED' || data.status === 'CONFIRMED') {
+            setCreatedChargeData(prev => prev ? { ...prev, status: 'active' } : null);
+            toast.success("Pagamento identificado no Asaas! Assinatura ativada com sucesso.");
+            setTimeout(() => setShowCreatedChargeModal(false), 2000);
+          }
+        }
+      } catch (err) {
+        console.warn("Polling charge status error:", err);
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [showCreatedChargeModal, createdChargeData?.id, createdChargeData?.status, subscriptions]);
+
   useEffect(() => {
     if (showPlanModal) {
       if (editingPlan) {

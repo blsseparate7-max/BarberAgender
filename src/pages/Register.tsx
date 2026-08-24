@@ -724,6 +724,20 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
                 Ir para a Página Inicial
               </button>
             )}
+
+            <div className="pt-3 border-t border-zinc-800/80">
+              <p className="text-[11px] text-zinc-400">
+                É dono de barbearia e quer testar o sistema?{' '}
+                <a 
+                  href="https://wa.me/5543999227226?text=Ol%C3%A1!%20Sou%20dono%20de%20barbearia%20e%20gostaria%20de%20solicitar%20meu%20acesso%20para%20testar%20o%20sistema." 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-emerald-400 hover:underline font-bold"
+                >
+                  Fale com nosso Suporte no WhatsApp
+                </a>
+              </p>
+            </div>
           </div>
         </form>
       </motion.div>

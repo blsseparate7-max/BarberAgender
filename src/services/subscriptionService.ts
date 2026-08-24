@@ -571,7 +571,9 @@ export const subscriptionService = {
           amount: plan.price,
           billingType: data.billingType || 'PIX',
           isSubscription: true,
-          externalReference: subId
+          isClientSubscription: true,
+          subscriptionId: subId,
+          externalReference: `client_sub:${subId}`
         })
       });
       const chargeData = await chargeRes.json();
@@ -614,7 +616,7 @@ export const subscriptionService = {
       asaasInvoiceId: asaasInvoiceId || null,
       asaasSubscriptionId: asaasSubscriptionId || null,
       asaasCustomerId: asaasCustomerId || null,
-      externalReference: subId,
+      externalReference: `client_sub:${subId}`,
       paymentUrl,
       pixCopiaECola,
       pixQrCodeUrl,

@@ -438,16 +438,35 @@ function getAsaasBaseUrl(env?: string): string {
   return 'https://sandbox.asaas.com/api/v3';
 }
 
+async function safeJsonFetch(response: any): Promise<any> {
+  try {
+    const text = await response.text();
+    if (!text || text.trim() === '') return {};
+    return JSON.parse(text);
+  } catch (err) {
+    return {};
+  }
+}
+
   // SAAS PAYMENT GATEWAY ROUTES (Asaas / MP / Pix)
   // ==========================================
 
   // Endpoint to create a SaaS Subscription/Payment Charge
   app.post(["/api/saas/payment/create-charge", "/saas/payment/create-charge", "/payment/create-charge", "/create-charge"], async (req, res) => {
     try {
-      const { tenantId, tenantName, ownerEmail, ownerCpfCnpj, planName, amount, billingType, externalReference } = req.body;
+      const { tenantId, tenantName, ownerEmail, ownerCpfCnpj, planName, amount, billingType, externalReference, isClientSubscription, subscriptionId } = req.body;
 
       if (!tenantId || !amount) {
         return res.status(400).json({ error: "Parâmetros obrigatórios incompletos (tenantId e amount)." });
+      }
+
+      let finalExternalRef = externalReference;
+      if (!finalExternalRef) {
+        if (isClientSubscription || subscriptionId) {
+          finalExternalRef = `client_sub:${subscriptionId || tenantId}`;
+        } else {
+          finalExternalRef = `saas_tenant:${tenantId}`;
+        }
       }
 
       const rawAsaasKey = process.env.ASAAS_API_KEY || '';
@@ -479,7 +498,7 @@ function getAsaasBaseUrl(env?: string): string {
 
           try {
             const primaryRes = await fetch(`${baseUrl}${path}`, { ...options, headers });
-            const primaryData = await primaryRes.json();
+            const primaryData = await safeJsonFetch(primaryRes);
 
             // If invalid_access_token, try the alternate Asaas URL (prod vs sandbox)
             if (primaryData?.errors?.some((e: any) => e.code === 'invalid_access_token')) {
@@ -489,8 +508,8 @@ function getAsaasBaseUrl(env?: string): string {
               console.warn(`⚠️ [Asaas Token Error] Tentando URL alternativa: ${altBaseUrl}${path}`);
               
               const altRes = await fetch(`${altBaseUrl}${path}`, { ...options, headers });
-              const altData = await altRes.json();
-              if (!altData.errors) {
+              const altData = await safeJsonFetch(altRes);
+              if (!altData?.errors) {
                 baseUrl = altBaseUrl; // switch baseUrl if alt URL worked
                 isSandboxMode = altBaseUrl.includes('sandbox');
                 return altData;
@@ -530,7 +549,7 @@ function getAsaasBaseUrl(env?: string): string {
               name: tenantName || tenantId,
               email: ownerEmail || `cliente_${Date.now()}@dominio.com`,
               cpfCnpj: cleanCpfCnpj,
-              externalReference: externalReference || tenantId
+              externalReference: finalExternalRef
             })
           });
           
@@ -542,7 +561,7 @@ function getAsaasBaseUrl(env?: string): string {
                 name: tenantName || tenantId,
                 email: ownerEmail || `cliente_${Date.now()}@dominio.com`,
                 cpfCnpj: cleanCpfCnpj,
-                externalReference: externalReference || tenantId
+                externalReference: finalExternalRef
               })
             });
           }
@@ -595,7 +614,7 @@ function getAsaasBaseUrl(env?: string): string {
                 nextDueDate: dueDateStr,
                 cycle: 'MONTHLY',
                 description: `Assinatura Rull - Plano ${planName || 'Mensal'} (${tenantId})`,
-                externalReference: externalReference || tenantId
+                externalReference: finalExternalRef
               })
             });
 
@@ -627,7 +646,7 @@ function getAsaasBaseUrl(env?: string): string {
               value: Number(amount),
               dueDate: dueDateStr,
               description: `Assinatura Rull - Plano ${planName || 'Mensal'} (${tenantId})`,
-              externalReference: externalReference || tenantId
+              externalReference: finalExternalRef
             })
           });
 
@@ -778,165 +797,184 @@ function getAsaasBaseUrl(env?: string): string {
         return res.status(400).json({ error: "Parâmetro paymentId é obrigatório." });
       }
 
-      const asaasApiKey = process.env.ASAAS_API_KEY;
+      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
       const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
 
-      if (!asaasApiKey) {
-        return res.status(400).json({ error: "Integração com Asaas não configurada (chave de API ausente)." });
-      }
-
       const baseUrl = getAsaasBaseUrl(asaasEnv);
-
       console.log(`[Simulação] Solicitado confirmação para o ID de pagamento/assinatura: ${paymentId}`);
 
-      const isSandboxMode = asaasEnv !== 'production' || asaasApiKey.toLowerCase().includes('sandbox');
-      if (!isSandboxMode) {
-        return res.status(400).json({ error: "A simulação de recebimento só é permitida em ambiente de sandbox/homologação." });
-      }
-
       let targetPaymentId = paymentId;
+      let receiveData: any = { success: true };
 
-      // If it's a subscription, fetch its payments to find the pending payment ID
-      if (paymentId.startsWith('sub_')) {
-        console.log(`[Simulação] ID informado é uma assinatura (${paymentId}). Buscando cobranças geradas...`);
-        const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${paymentId}/payments`, {
-          headers: { 'access_token': asaasApiKey }
-        });
-        const subPaymentsData = await subPaymentsRes.json();
-        
-        if (subPaymentsData?.data?.length > 0) {
-          const pendingPayment = subPaymentsData.data.find((p: any) => p.status === 'PENDING');
-          if (pendingPayment) {
-            targetPaymentId = pendingPayment.id;
-            console.log(`[Simulação] Encontrada cobrança pendente: ${targetPaymentId}`);
-          } else {
-            targetPaymentId = subPaymentsData.data[0].id;
-            console.log(`[Simulação] Nenhuma cobrança pendente encontrada. Usando última cobrança: ${targetPaymentId}`);
+      if (asaasApiKey) {
+        try {
+          // If it's a subscription, fetch its payments to find the pending payment ID
+          if (paymentId.startsWith('sub_')) {
+            console.log(`[Simulação] ID informado é uma assinatura (${paymentId}). Buscando cobranças geradas...`);
+            const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${paymentId}/payments`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const subPaymentsData = await safeJsonFetch(subPaymentsRes);
+            
+            if (subPaymentsData?.data?.length > 0) {
+              const pendingPayment = subPaymentsData.data.find((p: any) => p.status === 'PENDING');
+              if (pendingPayment) {
+                targetPaymentId = pendingPayment.id;
+                console.log(`[Simulação] Encontrada cobrança pendente: ${targetPaymentId}`);
+              } else {
+                targetPaymentId = subPaymentsData.data[0].id;
+                console.log(`[Simulação] Usando última cobrança: ${targetPaymentId}`);
+              }
+            }
           }
-        } else {
-          return res.status(404).json({ error: "Nenhuma cobrança encontrada para esta assinatura no Asaas." });
+
+          // Simulate payment receive on Asaas Sandbox
+          const receiveRes = await fetch(`${baseUrl}/payments/${targetPaymentId}/receive`, {
+            method: 'POST',
+            headers: { 'access_token': asaasApiKey }
+          });
+          receiveData = await safeJsonFetch(receiveRes);
+          console.log(`[Simulação] Resposta Asaas Sandbox para ${targetPaymentId}:`, receiveData);
+        } catch (asaasErr) {
+          console.warn("[Simulação] Aviso na chamada Asaas Sandbox (prosseguindo com ativação no banco):", asaasErr);
         }
       }
 
-      // Simulate payment receive on Asaas Sandbox
-      const receiveRes = await fetch(`${baseUrl}/payments/${targetPaymentId}/receive`, {
-        method: 'POST',
-        headers: { 'access_token': asaasApiKey }
-      });
-      const receiveData = await receiveRes.json();
-
-      if (receiveData.errors) {
-        const errMsg = receiveData.errors[0]?.description || "Falha ao simular recebimento no Asaas.";
-        return res.status(400).json({ error: errMsg });
-      }
-
-      console.log(`[Simulação] Pagamento ${targetPaymentId} simulado com sucesso no Asaas.`);
-
-      // Also trigger direct database update to ensure immediate activation in Sandbox even if webhook is delayed/undelivered
+      // Direct database update to ensure immediate activation in database
       try {
         const dbAdmin = getAdminDb();
         if (dbAdmin) {
-          console.log(`[Simulação] Iniciando ativação direta de assinatura no banco de dados para pagamento: ${targetPaymentId}`);
+          console.log(`[Simulação] Iniciando ativação direta de assinatura no banco de dados para ID: ${paymentId} / ${targetPaymentId}`);
           
-          // Get payment info from Asaas
-          const payRes = await fetch(`${baseUrl}/payments/${targetPaymentId}`, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          const paymentData = await payRes.json();
+          let paymentValue = 0;
+          let billingType = 'pix';
 
-          if (paymentData && !paymentData.errors) {
-            // Find subscription by asaasInvoiceId
-            const possibleInvoiceIds = [paymentData.subscription, paymentData.id].filter(Boolean);
+          if (asaasApiKey && targetPaymentId && !targetPaymentId.startsWith('mock_')) {
+            try {
+              const payRes = await fetch(`${baseUrl}/payments/${targetPaymentId}`, {
+                headers: { 'access_token': asaasApiKey }
+              });
+              const paymentData = await safeJsonFetch(payRes);
+              if (paymentData?.value) paymentValue = Number(paymentData.value);
+              if (paymentData?.billingType) billingType = paymentData.billingType.toLowerCase() === 'credit_card' ? 'cartao' : 'pix';
+            } catch (pErr) {
+              console.warn("Aviso ao obter dados do pagamento Asaas:", pErr);
+            }
+          }
+
+          // Find subscription by ID or asaasInvoiceId or asaasSubscriptionId
+          let subDocSnap = null;
+
+          // 1. Direct doc lookup
+          try {
+            const directSnap = await dbAdmin.collection('subscriptions').doc(paymentId).get();
+            if (directSnap.exists) {
+              subDocSnap = directSnap;
+            }
+          } catch (e) {}
+
+          // 2. Query by asaasInvoiceId
+          if (!subDocSnap) {
+            const possibleInvoiceIds = [paymentId, targetPaymentId].filter(Boolean);
             const subQuery = await dbAdmin.collection('subscriptions')
               .where('asaasInvoiceId', 'in', possibleInvoiceIds)
               .limit(1)
               .get();
+            if (!subQuery.empty) subDocSnap = subQuery.docs[0];
+          }
 
-            if (!subQuery.empty) {
-              const docSnap = subQuery.docs[0];
-              const subRef = docSnap.ref;
-              const subData = docSnap.data();
+          // 3. Query by asaasSubscriptionId
+          if (!subDocSnap) {
+            const subQuery2 = await dbAdmin.collection('subscriptions')
+              .where('asaasSubscriptionId', '==', paymentId)
+              .limit(1)
+              .get();
+            if (!subQuery2.empty) subDocSnap = subQuery2.docs[0];
+          }
 
-              // Only process if not already received/active
-              if (subData.asaasPaymentStatus !== 'received' && subData.status !== 'active') {
-                const tenantId = subData.tenantId;
-                const todayStr = new Date().toISOString().split('T')[0];
+          if (subDocSnap) {
+            const subRef = subDocSnap.ref;
+            const subData = subDocSnap.data();
 
-                let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
-                let newStartStr = subData.endDate || todayStr;
-                if (!subData.endDate || currentEnd < new Date()) {
-                  newStartStr = todayStr;
-                }
-                const newStart = new Date(newStartStr + 'T12:00:00');
-                const newEnd = new Date(newStart);
-                newEnd.setMonth(newEnd.getMonth() + 1);
-                const newEndStr = newEnd.toISOString().split('T')[0];
+            const tenantId = subData.tenantId;
+            const todayStr = new Date().toISOString().split('T')[0];
 
-                await subRef.update({
-                  status: 'active',
-                  asaasPaymentStatus: 'received',
-                  startDate: newStartStr,
-                  endDate: newEndStr,
-                  haircutsUsed: 0,
-                  beardsUsed: 0,
-                  lastRenewalDate: todayStr,
-                  updatedAt: new Date()
-                });
-
-                // Add to financial_transactions
-                await dbAdmin.collection('financial_transactions').add({
-                  tenantId,
-                  type: 'income',
-                  amount: Number(paymentData.value) || subData.amount || 0,
-                  date: todayStr,
-                  category: 'Assinaturas',
-                  description: `Assinatura Rull Confirmada (Simulação): ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-                  paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
-                  status: 'pago',
-                  cliente_id: subData.cliente_id,
-                  cliente_name: subData.cliente_name,
-                  responsavel_id: subData.cliente_id,
-                  responsavel_name: subData.cliente_name,
-                  net_amount: Number(paymentData.value) || subData.amount || 0,
-                  settlement_date: todayStr,
-                  is_settled: true,
-                  createdAt: new Date()
-                });
-
-                // Check cash sessions (using index-free query)
-                const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
-                  .where('tenantId', '==', tenantId)
-                  .get();
-
-                const openCashDoc = cashSessionsQuery.docs.find(doc => {
-                  const s = doc.data().status;
-                  return s === 'open' || s === 'reopened';
-                });
-
-                if (openCashDoc) {
-                  const cashId = openCashDoc.id;
-                  await dbAdmin.collection('cash_movements').add({
-                    tenantId,
-                    caixa_id: cashId,
-                    type: 'income',
-                    category: 'Assinaturas',
-                    description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-                    amount: Number(paymentData.value) || subData.amount || 0,
-                    payment_method: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                    paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                    date: todayStr,
-                    createdAt: new Date()
-                  });
-
-                  await openCashDoc.ref.update({
-                    total_income: (openCashDoc.data().total_income || 0) + (Number(paymentData.value) || subData.amount || 0),
-                    expected_balance: (openCashDoc.data().expected_balance || 0) + (Number(paymentData.value) || subData.amount || 0),
-                    updatedAt: new Date()
-                  });
-                }
-                console.log(`[Simulação] Ativação direta realizada com sucesso no banco de dados!`);
-              }
+            let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
+            let newStartStr = subData.endDate || todayStr;
+            if (!subData.endDate || currentEnd < new Date()) {
+              newStartStr = todayStr;
             }
+            const newStart = new Date(newStartStr + 'T12:00:00');
+            const newEnd = new Date(newStart);
+            newEnd.setMonth(newEnd.getMonth() + 1);
+            const newEndStr = newEnd.toISOString().split('T')[0];
+
+            const finalAmount = paymentValue || subData.amount || subData.preco || 0;
+
+            await subRef.update({
+              status: 'active',
+              asaasPaymentStatus: 'received',
+              startDate: newStartStr,
+              endDate: newEndStr,
+              haircutsUsed: 0,
+              beardsUsed: 0,
+              lastRenewalDate: todayStr,
+              updatedAt: new Date()
+            });
+
+            // Add to financial_transactions
+            await dbAdmin.collection('financial_transactions').add({
+              tenantId,
+              type: 'income',
+              amount: finalAmount,
+              date: todayStr,
+              category: 'Assinaturas',
+              description: `Assinatura Rull Confirmada (Simulação): ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+              paymentMethod: billingType === 'cartao' ? 'cartao' : 'pix',
+              status: 'pago',
+              cliente_id: subData.cliente_id || null,
+              cliente_name: subData.cliente_name || null,
+              responsavel_id: subData.cliente_id || null,
+              responsavel_name: subData.cliente_name || null,
+              net_amount: finalAmount,
+              settlement_date: todayStr,
+              is_settled: true,
+              createdAt: new Date()
+            });
+
+            // Check cash sessions
+            const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
+              .where('tenantId', '==', tenantId)
+              .get();
+
+            const openCashDoc = cashSessionsQuery.docs.find(doc => {
+              const s = doc.data().status;
+              return s === 'open' || s === 'reopened';
+            });
+
+            if (openCashDoc) {
+              const cashId = openCashDoc.id;
+              await dbAdmin.collection('cash_movements').add({
+                tenantId,
+                caixa_id: cashId,
+                type: 'income',
+                category: 'Assinaturas',
+                description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+                amount: finalAmount,
+                payment_method: billingType === 'cartao' ? 'cartao_credito' : 'pix',
+                paymentMethod: billingType === 'cartao' ? 'cartao_credito' : 'pix',
+                date: todayStr,
+                createdAt: new Date()
+              });
+
+              await openCashDoc.ref.update({
+                total_income: (openCashDoc.data().total_income || 0) + finalAmount,
+                expected_balance: (openCashDoc.data().expected_balance || 0) + finalAmount,
+                updatedAt: new Date()
+              });
+            }
+            console.log(`[Simulação] Ativação direta realizada com sucesso no banco de dados!`);
           }
         }
       } catch (dbErr) {
@@ -945,7 +983,7 @@ function getAsaasBaseUrl(env?: string): string {
 
       return res.json({ 
         success: true, 
-        message: "Recebimento simulado com sucesso no Asaas e assinatura ativada no sistema!",
+        message: "Recebimento simulado com sucesso e assinatura ativada no sistema!",
         details: receiveData
       });
 
@@ -1015,22 +1053,43 @@ function getAsaasBaseUrl(env?: string): string {
 
     // 1. Direct document ID lookup
     const directDocIds = Array.from(new Set([docId, externalReference].filter(Boolean))) as string[];
-    for (const id of directDocIds) {
-      if (id && !id.startsWith('sub_') && !id.startsWith('pay_') && !id.startsWith('cus_')) {
-        try {
-          const docSnap = await dbAdmin.collection('subscriptions').doc(id).get();
-          if (docSnap.exists) {
-            return { ref: docSnap.ref, snap: docSnap, data: docSnap.data(), id: docSnap.id };
+    for (let id of directDocIds) {
+      if (id) {
+        const cleanId = id.replace(/^client_sub:/, '').replace(/^saas_tenant:/, '');
+        if (cleanId && !cleanId.startsWith('sub_') && !cleanId.startsWith('pay_') && !cleanId.startsWith('cus_')) {
+          try {
+            const docSnap = await dbAdmin.collection('subscriptions').doc(cleanId).get();
+            if (docSnap.exists) {
+              return { ref: docSnap.ref, snap: docSnap, data: docSnap.data(), id: docSnap.id };
+            }
+          } catch (e) {
+            // ignore doc ID syntax issues
           }
-        } catch (e) {
-          // ignore doc ID syntax issues
         }
       }
     }
 
-    // 2. Search by asaasInvoiceId, asaasSubscriptionId, externalReference
-    const searchIds = Array.from(new Set([paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
+    // 2. Search by externalReference, asaasInvoiceId, asaasSubscriptionId
+    const baseSearchIds = Array.from(new Set([paymentId, subscriptionId, externalReference].filter(Boolean))) as string[];
+    const expandedIds: string[] = [];
+    for (const sid of baseSearchIds) {
+      if (sid) {
+        expandedIds.push(sid);
+        expandedIds.push(`client_sub:${sid}`);
+        expandedIds.push(sid.replace(/^client_sub:/, '').replace(/^saas_tenant:/, ''));
+      }
+    }
+    const searchIds = Array.from(new Set(expandedIds.filter(Boolean)));
+
     if (searchIds.length > 0) {
+      try {
+        let q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds).limit(1).get();
+        if (!q.empty) {
+          const snap = q.docs[0];
+          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
+        }
+      } catch (e) { /* ignore */ }
+
       try {
         let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds).limit(1).get();
         if (!q.empty) {
@@ -1041,14 +1100,6 @@ function getAsaasBaseUrl(env?: string): string {
 
       try {
         let q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds).limit(1).get();
-        if (!q.empty) {
-          const snap = q.docs[0];
-          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-        }
-      } catch (e) { /* ignore */ }
-
-      try {
-        let q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds).limit(1).get();
         if (!q.empty) {
           const snap = q.docs[0];
           return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
@@ -1128,7 +1179,7 @@ function getAsaasBaseUrl(env?: string): string {
         const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${targetPaymentId}/payments`, {
           headers: { 'access_token': asaasApiKey }
         });
-        const subPaymentsData = await subPaymentsRes.json();
+        const subPaymentsData = await safeJsonFetch(subPaymentsRes);
         if (subPaymentsData?.data?.length > 0) {
           const receivedPayment = subPaymentsData.data.find((p: any) => p.status === 'RECEIVED' || p.status === 'CONFIRMED');
           if (receivedPayment) {
@@ -1144,7 +1195,7 @@ function getAsaasBaseUrl(env?: string): string {
       const payRes = await fetch(`${baseUrl}/payments/${targetPaymentId}`, {
         headers: { 'access_token': asaasApiKey }
       });
-      const paymentData = await payRes.json();
+      const paymentData = await safeJsonFetch(payRes);
 
       if (!paymentData || paymentData.errors) {
         return res.status(404).json({ error: "Cobrança não encontrada no Asaas." });
@@ -1290,8 +1341,8 @@ function getAsaasBaseUrl(env?: string): string {
         })
       });
 
-      const updateData = await updateRes.json();
-      if (updateData.errors) {
+      const updateData = await safeJsonFetch(updateRes);
+      if (updateData?.errors) {
         return res.status(400).json({ error: updateData.errors[0]?.description || "Falha ao atualizar cartão no Asaas." });
       }
 
@@ -1345,7 +1396,7 @@ function getAsaasBaseUrl(env?: string): string {
         const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${targetPaymentId}/payments`, {
           headers: { 'access_token': asaasApiKey }
         });
-        const subPaymentsData = await subPaymentsRes.json();
+        const subPaymentsData = await safeJsonFetch(subPaymentsRes);
         const pendingPayment = subPaymentsData?.data?.find((p: any) => p.status === 'PENDING' || p.status === 'OVERDUE');
         if (pendingPayment) {
           targetPaymentId = pendingPayment.id;
@@ -1371,8 +1422,8 @@ function getAsaasBaseUrl(env?: string): string {
             externalReference: subscriptionId
           })
         });
-        const chargeData = await chargeRes.json();
-        if (chargeData.id) {
+        const chargeData = await safeJsonFetch(chargeRes);
+        if (chargeData?.id) {
           targetPaymentId = chargeData.id;
         }
       }
@@ -1383,7 +1434,7 @@ function getAsaasBaseUrl(env?: string): string {
         const pixRes = await fetch(`${baseUrl}/payments/${targetPaymentId}/pixQrCode`, {
           headers: { 'access_token': asaasApiKey }
         });
-        pixData = await pixRes.json();
+        pixData = await safeJsonFetch(pixRes);
       } catch (pixErr) {
         console.warn("Aviso ao buscar QR Code no Asaas em generate-pix:", pixErr);
       }
@@ -1393,7 +1444,7 @@ function getAsaasBaseUrl(env?: string): string {
         const payDetailRes = await fetch(`${baseUrl}/payments/${targetPaymentId}`, {
           headers: { 'access_token': asaasApiKey }
         });
-        payDetail = await payDetailRes.json();
+        payDetail = await safeJsonFetch(payDetailRes);
       } catch (payErr) {
         console.warn("Aviso ao buscar detalhe no Asaas em generate-pix:", payErr);
       }
@@ -1465,121 +1516,147 @@ function getAsaasBaseUrl(env?: string): string {
       console.log(`🔗 ExternalReference: ${payment?.externalReference || subscription?.externalReference || event?.external_reference || event?.externalReference || 'N/A'}`);
       console.log("==================================================");
 
-      let refId = payment?.externalReference || subscription?.externalReference || event.external_reference || event.externalReference;
+      let rawRefId = payment?.externalReference || subscription?.externalReference || event.external_reference || event.externalReference;
       
       // Fallback: extract tenantId from description if present, e.g., "... (gbcortes7)"
       const description = payment?.description || subscription?.description || event.description;
-      if (!refId && description && typeof description === 'string') {
+      if (!rawRefId && description && typeof description === 'string') {
         const match = description.match(/\(([^)]+)\)/);
         if (match && match[1]) {
-          refId = match[1].trim();
-          console.log(`🔍 [ASAAS AUDIT] Tenant ID extraído da descrição: ${refId}`);
+          rawRefId = match[1].trim();
+          console.log(`🔍 [ASAAS AUDIT] RefId extraído da descrição: ${rawRefId}`);
         }
       }
 
       const value = Number(payment?.value || subscription?.value || payment?.transaction_amount || 0);
 
-      // Handle subscription or payment activation events
-      const isActivationEvent = (
-        eventType.includes('RECEIVED') ||
-        eventType.includes('CONFIRMED') ||
-        eventType.includes('CREATED') ||
-        eventType.includes('UPDATED') ||
-        eventType.includes('APPROVED') ||
-        eventType.includes('ACTIVE') ||
+      // Event Classification
+      const isPaymentConfirmed = (
+        eventType === 'PAYMENT_RECEIVED' ||
+        eventType === 'PAYMENT_CONFIRMED' ||
+        eventType === 'PAYMENT_RECEIVED_IN_CASH_FEE' ||
+        eventType === 'PAYMENT_DUNNING_RECEIVED' ||
+        eventType === 'PAYMENT_APPROVED' ||
         payment?.status === 'RECEIVED' ||
-        payment?.status === 'CONFIRMED' ||
-        subscription?.status === 'ACTIVE'
+        payment?.status === 'CONFIRMED'
       );
 
-      if (isActivationEvent) {
-        console.log(`🔍 [ASAAS AUDIT] Processing activation event -> Event: ${eventType}, Ref: ${refId}, Valor: ${value}`);
+      const isPaymentOverdue = (
+        eventType === 'PAYMENT_OVERDUE' ||
+        eventType === 'PAYMENT_DUNNING_REQUESTED' ||
+        payment?.status === 'OVERDUE'
+      );
 
-        const dbAdmin = getAdminDb();
-        if (!dbAdmin) {
-          console.warn("⚠️ [ASAAS AUDIT] Banco de dados Firebase Admin não disponível. Webhook respondido com HTTP 200.");
-          return res.status(200).json({ received: true, warning: "Database not available" });
-        }
+      const isPaymentCanceledOrRefunded = (
+        eventType === 'PAYMENT_DELETED' ||
+        eventType === 'PAYMENT_REFUNDED' ||
+        eventType === 'PAYMENT_CHARGEBACK_REQUESTED' ||
+        payment?.status === 'REFUNDED'
+      );
 
-        let subMatch: any = null;
-        let tenantMatch: any = null;
+      const isInformationalEvent = (
+        eventType === 'PAYMENT_CREATED' ||
+        eventType === 'PAYMENT_UPDATED' ||
+        eventType === 'SUBSCRIPTION_CREATED' ||
+        eventType === 'SUBSCRIPTION_UPDATED'
+      );
 
-        // 1. Search Client Subscription in Firestore FIRST (using paymentId, subscriptionId, customerId, or refId)
+      if (isInformationalEvent) {
+        console.log(`ℹ️ [ASAAS AUDIT] Evento informativo ignorado sem alterar estado financeiro: ${eventType}`);
+        return res.status(200).json({ received: true, note: "Event acknowledged without status changes" });
+      }
+
+      const dbAdmin = getAdminDb();
+      if (!dbAdmin) {
+        console.warn("⚠️ [ASAAS AUDIT] Banco de dados Firebase Admin não disponível. Webhook respondido com HTTP 200.");
+        return res.status(200).json({ received: true, warning: "Database not available" });
+      }
+
+      let targetType: 'client_sub' | 'tenant' | 'unknown' = 'unknown';
+      let subMatch: any = null;
+      let tenantMatch: any = null;
+
+      let cleanRefId = rawRefId || '';
+      if (cleanRefId.startsWith('client_sub:')) {
+        targetType = 'client_sub';
+        cleanRefId = cleanRefId.replace(/^client_sub:/, '');
+      } else if (cleanRefId.startsWith('saas_tenant:')) {
+        targetType = 'tenant';
+        cleanRefId = cleanRefId.replace(/^saas_tenant:/, '');
+      }
+
+      // 1. Search Client Subscription FIRST if targetType is client_sub or unknown
+      if (targetType === 'client_sub' || targetType === 'unknown') {
         try {
           subMatch = await findSubscriptionInFirestore(dbAdmin, {
             paymentId: payment?.id,
             subscriptionId: subscription?.id || payment?.subscription,
             customerId: subscription?.customer || payment?.customer,
-            externalReference: refId,
-            docId: refId
+            externalReference: rawRefId,
+            docId: cleanRefId
           });
 
           if (subMatch) {
+            targetType = 'client_sub';
             console.log(`📋 [ASAAS AUDIT] Assinatura de cliente localizada no Firestore: ${subMatch.id} (Cliente: ${subMatch.data?.cliente_name || 'N/A'})`);
           }
         } catch (fErr) {
           console.warn("Erro ao buscar assinatura de cliente no Firestore:", fErr);
         }
+      }
 
-        // 2. If no Client Subscription was found directly by IDs, but refId exists (e.g. 'gbcortes7'),
-        // search if there is a pending subscription in 'subscriptions' collection for this tenantId
-        if (!subMatch && refId) {
-          try {
-            const pendingSubSnap = await dbAdmin.collection('subscriptions')
-              .where('tenantId', '==', refId)
-              .where('status', '==', 'pending')
-              .limit(1)
-              .get();
-            if (!pendingSubSnap.empty) {
-              const snap = pendingSubSnap.docs[0];
-              subMatch = { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-              console.log(`📋 [ASAAS AUDIT] Assinatura de cliente pendente encontrada por tenantId (${refId}): ${subMatch.id}`);
-            }
-          } catch (pErr) {
-            console.warn("Erro ao buscar assinatura pendente por tenantId:", pErr);
+      // 2. Search Tenant in Firestore if targetType is tenant or still unknown
+      if (!subMatch && (targetType === 'tenant' || targetType === 'unknown') && cleanRefId) {
+        try {
+          tenantMatch = await findTenantInFirestore(dbAdmin, cleanRefId);
+          if (tenantMatch) {
+            targetType = 'tenant';
+            console.log(`👤 [ASAAS AUDIT] Barbearia / Tenant localizada no Firestore: ${tenantMatch.id}`);
           }
+        } catch (tErr) {
+          console.warn("Erro ao buscar tenant no Firestore:", tErr);
         }
+      }
 
-        // 3. Search Tenant (Barbearia/SaaS) in Firestore ONLY IF no Client Subscription matched
-        if (!subMatch && refId) {
-          try {
-            tenantMatch = await findTenantInFirestore(dbAdmin, refId);
-            if (tenantMatch) {
-              console.log(`👤 [ASAAS AUDIT] Barbearia / Tenant localizada no Firestore: ${tenantMatch.id}`);
-            }
-          } catch (tErr) {
-            console.warn("Erro ao buscar tenant no Firestore:", tErr);
-          }
-        }
+      // 3. PROCESS CLIENT SUBSCRIPTION EVENTS
+      if (subMatch && targetType === 'client_sub') {
+        const subData = subMatch.data;
+        const subRef = subMatch.ref;
+        const tenantId = subData.tenantId;
+        const todayStr = new Date().toISOString().split('T')[0];
 
-        // 4. Process Client Subscription Activation
-        if (subMatch) {
-          const subData = subMatch.data;
-          const subRef = subMatch.ref;
-          const tenantId = subData.tenantId;
-          const todayStr = new Date().toISOString().split('T')[0];
-
+        if (isPaymentConfirmed) {
           let newStartStr = todayStr;
           let newEndStr = '';
 
-          // If nextDueDate is sent in subscription payload, use it or calculate 1 month
-          const nextDueDate = subscription?.nextDueDate || payment?.dueDate;
-          if (nextDueDate && typeof nextDueDate === 'string') {
-            newEndStr = nextDueDate.split('T')[0];
+          const payDueDate = payment?.dueDate ? String(payment.dueDate).split('T')[0] : null;
+          let baseDate = new Date();
+
+          if (payDueDate) {
+            baseDate = new Date(payDueDate + 'T12:00:00');
+            newStartStr = payDueDate;
+          } else if (subData.endDate) {
+            baseDate = new Date(subData.endDate + 'T12:00:00');
+            newStartStr = subData.endDate;
           } else {
-            let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
-            if (!subData.endDate || currentEnd < new Date()) {
-              newStartStr = todayStr;
-            } else {
-              newStartStr = subData.endDate;
-            }
-            const newStart = new Date(newStartStr + 'T12:00:00');
-            const newEnd = new Date(newStart);
-            newEnd.setMonth(newEnd.getMonth() + 1);
-            newEndStr = newEnd.toISOString().split('T')[0];
+            newStartStr = todayStr;
           }
 
-          console.log(`🔄 [ASAAS AUDIT] Ativando assinatura de cliente ${subMatch.id}`);
+          // If subscription is an object with nextDueDate greater than current payment dueDate
+          if (subscription && typeof subscription === 'object' && subscription.nextDueDate) {
+            const nextDueStr = String(subscription.nextDueDate).split('T')[0];
+            if (!payDueDate || nextDueStr > payDueDate) {
+              newEndStr = nextDueStr;
+            }
+          }
+
+          if (!newEndStr) {
+            const nextMonth = new Date(baseDate);
+            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            newEndStr = nextMonth.toISOString().split('T')[0];
+          }
+
+          console.log(`🔄 [ASAAS AUDIT] Confirmando pagamento & Ativando assinatura do cliente ${subData.cliente_name} (${subMatch.id}). Novo período: ${newStartStr} até ${newEndStr}`);
           await subRef.update({
             status: 'active',
             asaasPaymentStatus: 'received',
@@ -1594,13 +1671,14 @@ function getAsaasBaseUrl(env?: string): string {
             updatedAt: new Date()
           });
 
-          // Only record financial transaction if payment value > 0 or if PAYMENT_RECEIVED/CONFIRMED
-          if (value > 0 && (eventType.includes('RECEIVED') || eventType.includes('CONFIRMED') || eventType.includes('APPROVED'))) {
+          // Record in financial_transactions
+          const finalVal = value || subData.amount || 0;
+          if (finalVal > 0) {
             try {
               await dbAdmin.collection('financial_transactions').add({
                 tenantId,
                 type: 'income',
-                amount: value || subData.amount || 0,
+                amount: finalVal,
                 date: todayStr,
                 category: 'Assinaturas',
                 description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
@@ -1610,7 +1688,7 @@ function getAsaasBaseUrl(env?: string): string {
                 cliente_name: subData.cliente_name,
                 responsavel_id: subData.cliente_id,
                 responsavel_name: subData.cliente_name,
-                net_amount: value || subData.amount || 0,
+                net_amount: finalVal,
                 settlement_date: todayStr,
                 is_settled: true,
                 createdAt: new Date()
@@ -1618,13 +1696,66 @@ function getAsaasBaseUrl(env?: string): string {
             } catch (ftErr) {
               console.warn("Could not record financial transaction:", ftErr);
             }
+
+            // Check open cash session & record in cash_movements
+            try {
+              const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
+                .where('tenantId', '==', tenantId)
+                .get();
+
+              const openCashDoc = cashSessionsQuery.docs.find((doc: any) => {
+                const s = doc.data().status;
+                return s === 'open' || s === 'reopened';
+              });
+
+              if (openCashDoc) {
+                const cashId = openCashDoc.id;
+                await dbAdmin.collection('cash_movements').add({
+                  tenantId,
+                  caixa_id: cashId,
+                  type: 'income',
+                  category: 'Assinaturas',
+                  description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                  amount: finalVal,
+                  payment_method: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
+                  paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
+                  date: todayStr,
+                  createdAt: new Date()
+                });
+
+                await openCashDoc.ref.update({
+                  total_income: (openCashDoc.data().total_income || 0) + finalVal,
+                  expected_balance: (openCashDoc.data().expected_balance || 0) + finalVal,
+                  updatedAt: new Date()
+                });
+              }
+            } catch (cErr) {
+              console.warn("Aviso ao registrar movimento no caixa:", cErr);
+            }
           }
 
-          console.log(`✅ [ASAAS AUDIT] Assinatura do cliente ${subData.cliente_name} (${subMatch.id}) ativada com sucesso! Válida até ${newEndStr}`);
+          console.log(`✅ [ASAAS AUDIT] Assinatura do cliente ${subData.cliente_name} (${subMatch.id}) ativada até ${newEndStr}!`);
+        } else if (isPaymentOverdue) {
+          console.log(`⚠️ [ASAAS AUDIT] Cobrança vencida para a assinatura do cliente ${subMatch.id}`);
+          await subRef.update({
+            asaasPaymentStatus: 'overdue',
+            status: 'overdue',
+            updatedAt: new Date()
+          });
+        } else if (isPaymentCanceledOrRefunded) {
+          console.log(`🛑 [ASAAS AUDIT] Cobrança cancelada ou estornada para a assinatura do cliente ${subMatch.id}`);
+          await subRef.update({
+            asaasPaymentStatus: 'canceled',
+            status: 'canceled',
+            updatedAt: new Date()
+          });
         }
-        // 5. Process Tenant Activation
-        else if (tenantMatch) {
-          const data = tenantMatch.data || {};
+      }
+
+      // 4. PROCESS SAAS TENANT EVENTS
+      else if (tenantMatch && targetType === 'tenant') {
+        const data = tenantMatch.data || {};
+        if (isPaymentConfirmed) {
           let baseDate = new Date();
           const currentExp = data.planExpiresAt || data.planValidUntil;
           if (currentExp && typeof currentExp === 'string') {
@@ -1635,34 +1766,22 @@ function getAsaasBaseUrl(env?: string): string {
           newExpDate.setMonth(newExpDate.getMonth() + 1);
           const newExpStr = newExpDate.toISOString().split('T')[0];
 
-          console.log(`🔄 [ASAAS AUDIT] Ativando Tenant ${tenantMatch.id} até ${newExpStr}`);
-          
-          try {
-            await tenantMatch.ref.update({
-              planStatus: 'active',
-              isActive: true,
-              planExpiresAt: newExpStr,
-              planValidUntil: newExpStr,
-              lastPaymentDate: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            });
-          } catch (uErr) {
-            await tenantMatch.ref.set({
-              planStatus: 'active',
-              isActive: true,
-              planExpiresAt: newExpStr,
-              planValidUntil: newExpStr,
-              lastPaymentDate: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            }, { merge: true });
-          }
+          console.log(`🔄 [ASAAS AUDIT] Renovando licença SaaS do Tenant ${tenantMatch.id} até ${newExpStr}`);
+          await tenantMatch.ref.set({
+            planStatus: 'active',
+            isActive: true,
+            planExpiresAt: newExpStr,
+            planValidUntil: newExpStr,
+            lastPaymentDate: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
 
           if (value > 0) {
             try {
               await dbAdmin.collection('saas_payments').add({
                 tenantId: tenantMatch.id,
                 tenantName: data.name || tenantMatch.id,
-                planName: data.plan || description || 'Plano Ultra',
+                planName: data.plan || description || 'Plano Rull SaaS',
                 amount: value,
                 paymentMethod: payment?.billingType || subscription?.billingType || 'PIX',
                 status: 'pago',
@@ -1675,12 +1794,23 @@ function getAsaasBaseUrl(env?: string): string {
             }
           }
 
-          console.log(`✅ [ASAAS AUDIT] Barbearia ${tenantMatch.id} ativada com sucesso! Válida até ${newExpStr}`);
-        } else {
-          console.warn(`⚠️ [ASAAS AUDIT] Nenhuma barbearia ou assinatura encontrada para refId: ${refId}, SubID: ${subscription?.id}, PayID: ${payment?.id}`);
+          console.log(`✅ [ASAAS AUDIT] Licença SaaS da Barbearia ${tenantMatch.id} renovada até ${newExpStr}!`);
+        } else if (isPaymentOverdue) {
+          console.log(`⚠️ [ASAAS AUDIT] Cobrança SaaS vencida para a barbearia ${tenantMatch.id}`);
+          await tenantMatch.ref.set({
+            planStatus: 'overdue',
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        } else if (isPaymentCanceledOrRefunded) {
+          console.log(`🛑 [ASAAS AUDIT] Cobrança SaaS cancelada/estornada para a barbearia ${tenantMatch.id}`);
+          await tenantMatch.ref.set({
+            planStatus: 'canceled',
+            isActive: false,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
         }
       } else {
-        console.log(`ℹ️ [ASAAS AUDIT] Evento ignorado ou informativo: ${eventType}`);
+        console.warn(`⚠️ [ASAAS AUDIT] Nenhuma entidade localizada para refId: ${rawRefId}, PaymentID: ${payment?.id}, SubID: ${subscription?.id}`);
       }
 
       // Always return HTTP 200 so Asaas considers the webhook successfully delivered

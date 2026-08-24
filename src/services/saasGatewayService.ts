@@ -30,10 +30,15 @@ export const saasGatewayService = {
    */
   async createSaaSCharge(payload: SaaSChargeRequest): Promise<SaaSChargeResponse> {
     try {
+      const bodyPayload = {
+        ...payload,
+        isSaaSCharge: true,
+        externalReference: `saas_tenant:${payload.tenantId}`
+      };
       const response = await fetch('/api/saas/payment/create-charge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(bodyPayload)
       });
 
       if (!response.ok) {

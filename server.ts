@@ -1570,7 +1570,8 @@ async function safeJsonFetch(response: any): Promise<any> {
         let subMatch = await findSubscriptionInFirestore(dbAdmin, {
           paymentId: fetchedPayment?.id || (targetId.startsWith('pay_') ? targetId : undefined),
           subscriptionId: fetchedPayment?.subscription || (targetId.startsWith('sub_') ? targetId : undefined),
-          externalReference: targetId,
+          customerId: fetchedPayment?.customer,
+          externalReference: fetchedPayment?.externalReference || targetId,
           docId: targetId
         });
 
@@ -1587,6 +1588,9 @@ async function safeJsonFetch(response: any): Promise<any> {
             await subMatch.ref.update({
               status: 'active',
               asaasPaymentStatus: 'received',
+              asaasSubscriptionId: fetchedPayment?.subscription || subData.asaasSubscriptionId || null,
+              asaasCustomerId: fetchedPayment?.customer || subData.asaasCustomerId || null,
+              asaasInvoiceId: fetchedPayment?.id || subData.asaasInvoiceId || null,
               startDate: newStartStr,
               endDate: newEndStr,
               haircutsUsed: 0,

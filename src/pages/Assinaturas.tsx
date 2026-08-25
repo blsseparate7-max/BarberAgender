@@ -455,15 +455,23 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     if (!showCreatedChargeModal || !createdChargeData || createdChargeData.status === 'active') return;
 
     // 1. Instant check against real-time subscriptions array
-    const activeSub = subscriptions.find(s => (s.id === createdChargeData.id || s.asaasInvoiceId === createdChargeData.id || s.asaasSubscriptionId === createdChargeData.id) && s.status === 'active');
+    const activeSub = subscriptions.find(s => 
+      (s.id === createdChargeData.id || 
+       s.externalReference === `client_sub:${createdChargeData.id}` || 
+       s.asaasInvoiceId === createdChargeData.id || 
+       s.asaasSubscriptionId === createdChargeData.id) && 
+      s.status === 'active'
+    );
+
     if (activeSub) {
       setCreatedChargeData(prev => prev ? { ...prev, status: 'active' } : null);
       toast.success("Pagamento verificado! Assinatura ativada.");
-      setTimeout(() => setShowCreatedChargeModal(false), 2000);
+      loadData();
+      setTimeout(() => setShowCreatedChargeModal(false), 1500);
       return;
     }
 
-    // 2. Polling /api/saas/payment/check-status every 3.5 seconds
+    // 2. Polling /api/saas/payment/check-status every 3 seconds
     const interval = setInterval(async () => {
       try {
         const res = await fetch('/api/saas/payment/check-status', {
@@ -473,16 +481,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.isPaid || data.status === 'RECEIVED' || data.status === 'CONFIRMED') {
+          if (data.isPaid || data.status === 'RECEIVED' || data.status === 'CONFIRMED' || data.status === 'ACTIVE') {
             setCreatedChargeData(prev => prev ? { ...prev, status: 'active' } : null);
             toast.success("Pagamento identificado no Asaas! Assinatura ativada com sucesso.");
-            setTimeout(() => setShowCreatedChargeModal(false), 2000);
+            await loadData();
+            setTimeout(() => setShowCreatedChargeModal(false), 1500);
           }
         }
       } catch (err) {
         console.warn("Polling charge status error:", err);
       }
-    }, 3500);
+    }, 3000);
 
     return () => clearInterval(interval);
   }, [showCreatedChargeModal, createdChargeData?.id, createdChargeData?.status, subscriptions]);

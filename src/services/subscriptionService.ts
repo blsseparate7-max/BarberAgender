@@ -549,6 +549,37 @@ export const subscriptionService = {
     const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
     const subId = subscriptionRef.id;
 
+    // Pre-save to Firestore FIRST so document exists with status 'pending' before webhook fires
+    const subscriptionData: any = {
+      tenantId: activeTenantId,
+      cliente_id: data.cliente_id,
+      cliente_name: data.cliente_name,
+      plano_id: data.plano_id,
+      planName: plan.name,
+      startDate: format(startDate, 'yyyy-MM-dd'),
+      endDate: format(endDate, 'yyyy-MM-dd'),
+      status: 'pending',
+      autoRenew: true,
+      haircutsUsed: 0,
+      beardsUsed: 0,
+      lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
+      discounts: plan.discounts || [],
+      activationType: 'asaas',
+      asaasPaymentStatus: 'pending',
+      asaasInvoiceId: null,
+      asaasSubscriptionId: null,
+      asaasCustomerId: null,
+      externalReference: `client_sub:${subId}`,
+      paymentUrl: '',
+      pixCopiaECola: '',
+      pixQrCodeUrl: '',
+      billingType: data.billingType || 'PIX',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(subscriptionRef, subscriptionData);
+
     let asaasInvoiceId = 'pay_' + Math.random().toString(36).substring(2, 9);
     let asaasSubscriptionId: string | null = null;
     let asaasCustomerId: string | null = null;
@@ -589,43 +620,29 @@ export const subscriptionService = {
         paymentUrl = chargeData.paymentUrl || '';
         pixCopiaECola = chargeData.pixCopiaECola || '';
         pixQrCodeUrl = chargeData.pixQrCodeUrl || '';
+
+        await updateDoc(subscriptionRef, {
+          asaasInvoiceId: asaasInvoiceId || null,
+          asaasSubscriptionId: asaasSubscriptionId || null,
+          asaasCustomerId: asaasCustomerId || null,
+          paymentUrl,
+          pixCopiaECola,
+          pixQrCodeUrl,
+          updatedAt: serverTimestamp()
+        });
       } else if (chargeData.error) {
         console.error("Erro ao criar cobrança Asaas:", chargeData.error);
+        await updateDoc(subscriptionRef, {
+          asaasPaymentStatus: 'failed',
+          errorMessage: chargeData.error,
+          updatedAt: serverTimestamp()
+        });
         throw new Error(chargeData.error);
       }
     } catch (e: any) {
       console.warn("Erro de conexão ao gerar cobrança Asaas:", e);
     }
 
-    const subscriptionData = {
-      tenantId: activeTenantId,
-      cliente_id: data.cliente_id,
-      cliente_name: data.cliente_name,
-      plano_id: data.plano_id,
-      planName: plan.name,
-      startDate: format(startDate, 'yyyy-MM-dd'),
-      endDate: format(endDate, 'yyyy-MM-dd'),
-      status: 'pending',
-      autoRenew: true,
-      haircutsUsed: 0,
-      beardsUsed: 0,
-      lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
-      discounts: plan.discounts || [],
-      activationType: 'asaas',
-      asaasPaymentStatus: 'pending',
-      asaasInvoiceId: asaasInvoiceId || null,
-      asaasSubscriptionId: asaasSubscriptionId || null,
-      asaasCustomerId: asaasCustomerId || null,
-      externalReference: `client_sub:${subId}`,
-      paymentUrl,
-      pixCopiaECola,
-      pixQrCodeUrl,
-      billingType: data.billingType || 'PIX',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    };
-
-    await setDoc(subscriptionRef, subscriptionData);
     return { id: subId, paymentUrl, pixCopiaECola, pixQrCodeUrl };
   },
 

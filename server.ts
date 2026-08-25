@@ -1772,6 +1772,19 @@ async function safeJsonFetch(response: any): Promise<any> {
             tenantId: refTenantId
           });
 
+          // Retry delay if not found (in case frontend is still persisting setDoc)
+          if (!subMatch) {
+            await new Promise(res => setTimeout(res, 1500));
+            subMatch = await findSubscriptionInFirestore(dbAdmin, {
+              paymentId: payment?.id,
+              subscriptionId: subscription?.id || payment?.subscription,
+              customerId: subscription?.customer || payment?.customer,
+              externalReference: rawRefId,
+              docId: cleanRefId,
+              tenantId: refTenantId
+            });
+          }
+
           if (subMatch) {
             targetType = 'client_sub';
             console.log(`📋 [ASAAS AUDIT] Assinatura de cliente localizada no Firestore: ${subMatch.id} (Cliente: ${subMatch.data?.cliente_name || 'N/A'})`);

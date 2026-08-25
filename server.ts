@@ -1699,6 +1699,162 @@ async function safeJsonFetch(response: any): Promise<any> {
     }
   });
 
+  // Retry / Recobrar charge endpoint for Asaas Subscription (Credit Card / Asaas)
+  app.post(["/api/saas/subscription/retry-charge", "/saas/subscription/retry-charge", "/api/saas/subscription/recobrar", "/recobrar"], async (req, res) => {
+    try {
+      const { subscriptionId } = req.body;
+      if (!subscriptionId) {
+        return res.status(400).json({ error: "Parâmetro subscriptionId é obrigatório." });
+      }
+
+      const dbAdmin = getAdminDb();
+      let subDocData: any = null;
+      let targetSubDocId = subscriptionId;
+      let isRestDoc = false;
+
+      if (dbAdmin) {
+        let docSnap = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
+        if (docSnap.exists) {
+          subDocData = docSnap.data();
+        } else {
+          const found = await findSubscriptionInFirestore(dbAdmin, { docId: subscriptionId, externalReference: subscriptionId });
+          if (found) {
+            subDocData = found.data;
+            targetSubDocId = found.id;
+            isRestDoc = found.isRest;
+          }
+        }
+      } else {
+        const rDoc = await getFirestoreRestDoc('subscriptions', subscriptionId);
+        if (rDoc) {
+          subDocData = rDoc.data;
+          isRestDoc = true;
+        }
+      }
+
+      if (!subDocData) {
+        return res.status(404).json({ error: "Assinatura não encontrada." });
+      }
+
+      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
+      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+
+      let newPaymentUrl = subDocData.paymentUrl || '';
+      let newPixCopiaECola = subDocData.pixCopiaECola || '';
+      let newPixQrCodeUrl = subDocData.pixQrCodeUrl || '';
+      let newInvoiceId = subDocData.asaasInvoiceId || '';
+
+      if (asaasApiKey) {
+        const baseUrl = getAsaasBaseUrl(asaasEnv);
+        const todayStr = new Date().toISOString().split('T')[0];
+
+        let customerId = subDocData.asaasCustomerId || subDocData.cliente_id;
+        if (!customerId || !customerId.startsWith('cus_')) {
+          const clientCpf = subDocData.cliente_cpf || subDocData.cpf || '123.456.789-09';
+          const cleanCpf = clientCpf.replace(/\D/g, '');
+          if (cleanCpf) {
+            const cusRes = await fetch(`${baseUrl}/customers?cpfCnpj=${cleanCpf}`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const cusData = await safeJsonFetch(cusRes);
+            if (cusData?.data?.length > 0) {
+              customerId = cusData.data[0].id;
+            }
+          }
+        }
+
+        if (!customerId || !customerId.startsWith('cus_')) {
+          const cusCreateRes = await fetch(`${baseUrl}/customers`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'access_token': asaasApiKey
+            },
+            body: JSON.stringify({
+              name: subDocData.cliente_name || 'Cliente Assinante',
+              cpfCnpj: (subDocData.cliente_cpf || '123.456.789-09').replace(/\D/g, '')
+            })
+          });
+          const cusCreateData = await safeJsonFetch(cusCreateRes);
+          if (cusCreateData?.id) {
+            customerId = cusCreateData.id;
+          }
+        }
+
+        const billingType = subDocData.billingType || 'CREDIT_CARD';
+        const chargePayload: any = {
+          customer: customerId || 'cus_000008858108',
+          billingType: billingType,
+          value: Number(subDocData.amount) || Number(subDocData.price) || 100,
+          dueDate: todayStr,
+          description: `Recobrança Assinatura BarberElite - ${subDocData.planName || 'Plano'} (${subDocData.cliente_name || 'Cliente'})`,
+          externalReference: `client_sub:${targetSubDocId}`
+        };
+
+        const chargeRes = await fetch(`${baseUrl}/payments`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'access_token': asaasApiKey
+          },
+          body: JSON.stringify(chargePayload)
+        });
+
+        const chargeData = await safeJsonFetch(chargeRes);
+        if (chargeData?.id) {
+          newInvoiceId = chargeData.id;
+          newPaymentUrl = chargeData.invoiceUrl || chargeData.bankSlipUrl || chargeData.paymentLink || newPaymentUrl;
+
+          try {
+            const pixRes = await fetch(`${baseUrl}/payments/${newInvoiceId}/pixQrCode`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const pixData = await safeJsonFetch(pixRes);
+            if (pixData?.payload) {
+              newPixCopiaECola = pixData.payload;
+              newPixQrCodeUrl = pixData.encodedImage ? `data:image/png;base64,${pixData.encodedImage}` : '';
+            }
+          } catch (pixErr) {
+            console.warn("Aviso ao buscar QR Code Pix em retry-charge:", pixErr);
+          }
+        }
+      }
+
+      const updatePayload = {
+        status: 'pending',
+        asaasPaymentStatus: 'pending',
+        asaasInvoiceId: newInvoiceId || subDocData.asaasInvoiceId || '',
+        paymentUrl: newPaymentUrl || subDocData.paymentUrl || '',
+        pixCopiaECola: newPixCopiaECola || subDocData.pixCopiaECola || '',
+        pixQrCodeUrl: newPixQrCodeUrl || subDocData.pixQrCodeUrl || '',
+        lastRecobrarAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (dbAdmin && !isRestDoc) {
+        await dbAdmin.collection('subscriptions').doc(targetSubDocId).update(updatePayload);
+      } else {
+        await updateFirestoreRestDoc('subscriptions', targetSubDocId, updatePayload);
+      }
+
+      console.log(`[Recobrar] Assinatura ${targetSubDocId} recobrada com sucesso! Nova cobrança: ${newInvoiceId}`);
+
+      return res.json({
+        success: true,
+        message: "Cobrança gerada com sucesso no Asaas!",
+        paymentUrl: newPaymentUrl,
+        pixCopiaECola: newPixCopiaECola,
+        pixQrCodeUrl: newPixQrCodeUrl,
+        invoiceId: newInvoiceId
+      });
+
+    } catch (error: any) {
+      console.error("Erro ao recobrar assinatura:", error);
+      res.status(500).json({ error: error.message || "Falha ao processar recobrança." });
+    }
+  });
+
   // Check Asaas payment status on-demand / polling
   app.post("/api/saas/payment/check-status", async (req, res) => {
     try {

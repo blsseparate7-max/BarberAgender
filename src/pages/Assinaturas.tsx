@@ -720,6 +720,51 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     setShowCreatedChargeModal(true);
   };
 
+  // Action to retry/recobrar subscription payment via Asaas / Credit Card
+  const handleRecobrarSubscription = async (subId: string) => {
+    const sub = subscriptions.find(s => s.id === subId);
+    if (!sub) {
+      toast.error("Assinatura não encontrada.");
+      return;
+    }
+
+    const toastId = toast.loading(`Enviando nova cobrança no cartão para ${sub.cliente_name}...`);
+
+    try {
+      const res = await fetch("/api/saas/subscription/retry-charge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscriptionId: subId })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Falha ao reenviar cobrança.");
+      }
+
+      toast.success(`Cobrança de cartão reenviada com sucesso para ${sub.cliente_name}!`, { id: toastId });
+
+      const plan = plans.find(p => p.id === sub.plano_id);
+      setCreatedChargeData({
+        id: sub.id,
+        paymentUrl: data.paymentUrl || sub.paymentUrl,
+        pixCopiaECola: data.pixCopiaECola || sub.pixCopiaECola,
+        pixQrCodeUrl: data.pixQrCodeUrl || sub.pixQrCodeUrl,
+        planName: sub.planName || plan?.name || 'Assinatura',
+        price: plan?.price || 0,
+        clientName: sub.cliente_name,
+        status: 'pending',
+        billingType: sub.billingType || 'CREDIT_CARD'
+      });
+      setShowCreatedChargeModal(true);
+      loadData();
+    } catch (error: any) {
+      console.error("Erro ao recobrar assinatura:", error);
+      toast.error(error.message || "Erro ao efetuar recobrança.", { id: toastId });
+    }
+  };
+
   // Action to register subscriber benefit usage
   const { execute: handleRegisterUsage, isLoading: isRegisteringUsage } = useAsyncAction(async (subId: string, type: string, serviceId?: string) => {
     try {
@@ -1731,6 +1776,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               isAdmin={canManage}
                               onRegisterUsage={handleRegisterUsage}
                               onRenew={handleManualRenewSubscription}
+                              onRecobrar={handleRecobrarSubscription}
                               onToggleAutoRenew={handleToggleAutoRenew}
                               onStatusChange={handleUpdateSubscriptionStatus}
                               onDelete={(id) => setDeleteSubId(id)}
@@ -1754,6 +1800,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       isAdmin={canManage}
                       onRegisterUsage={handleRegisterUsage}
                       onRenew={handleManualRenewSubscription}
+                      onRecobrar={handleRecobrarSubscription}
                       onToggleAutoRenew={handleToggleAutoRenew}
                       onStatusChange={handleUpdateSubscriptionStatus}
                       onDelete={(id) => setDeleteSubId(id)}
@@ -4003,6 +4050,7 @@ interface SubscriptionCardProps {
   isAdmin: boolean;
   onRegisterUsage: (id: string, type: string, serviceId?: string) => void;
   onRenew?: (id: string) => void;
+  onRecobrar?: (id: string) => void;
   onToggleAutoRenew?: (id: string, autoRenew: boolean) => void;
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
@@ -4018,6 +4066,7 @@ function SubscriptionCard({
   isAdmin, 
   onRegisterUsage, 
   onRenew, 
+  onRecobrar,
   onToggleAutoRenew, 
   onStatusChange, 
   onDelete,
@@ -4090,6 +4139,18 @@ function SubscriptionCard({
                 >
                   <QrCode size={13} />
                   <span>Ver Fatura / Pix QR Code</span>
+                </button>
+              )}
+
+              {isAdmin && onRecobrar && (
+                <button
+                  type="button"
+                  onClick={() => onRecobrar(sub.id)}
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                  title="Recobrar assinatura (gerar nova cobrança de cartão)"
+                >
+                  <CreditCard size={13} />
+                  <span>Recobrar</span>
                 </button>
               )}
 
@@ -4173,6 +4234,18 @@ function SubscriptionCard({
             >
               <RefreshCw size={11} />
               <span>Renovar</span>
+            </button>
+          )}
+
+          {isAdmin && onRecobrar && (
+            <button
+              type="button"
+              onClick={() => onRecobrar(sub.id)}
+              className="flex items-center gap-1 px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-600 hover:text-white transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
+              title="Recobrar assinatura (enviar nova cobrança no cartão/Asaas)"
+            >
+              <CreditCard size={11} />
+              <span>Recobrar</span>
             </button>
           )}
 
@@ -4274,6 +4347,7 @@ interface SubscriptionTableRowProps {
   isAdmin: boolean;
   onRegisterUsage: (id: string, type: string, serviceId?: string) => void;
   onRenew?: (id: string) => void;
+  onRecobrar?: (id: string) => void;
   onToggleAutoRenew?: (id: string, autoRenew: boolean) => void;
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
@@ -4290,6 +4364,7 @@ function SubscriptionTableRow({
   isAdmin,
   onRegisterUsage,
   onRenew,
+  onRecobrar,
   onToggleAutoRenew,
   onStatusChange,
   onDelete,
@@ -4407,6 +4482,17 @@ function SubscriptionTableRow({
               <span>Ver Fatura / Pix</span>
             </button>
           )}
+          {isAdmin && onRecobrar && (
+            <button
+              type="button"
+              onClick={() => onRecobrar(sub.id)}
+              className="mt-1 text-[9px] font-extrabold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-600 hover:text-white px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer transition-all"
+              title="Recobrar cobrança de cartão de crédito"
+            >
+              <CreditCard size={10} />
+              <span>Recobrar</span>
+            </button>
+          )}
           {sub.status === 'pending' && sub.activationType === 'asaas' && isAdmin && onConfirmAsaasPayment && (
             <button
               type="button"
@@ -4517,6 +4603,18 @@ function SubscriptionTableRow({
               title="Renovar por +1 mês"
             >
               <RefreshCw size={14} />
+            </button>
+          )}
+
+          {/* Recobrar */}
+          {isAdmin && onRecobrar && (
+            <button
+              type="button"
+              onClick={() => onRecobrar(sub.id)}
+              className="p-2 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-600 hover:text-white rounded-xl transition cursor-pointer"
+              title="Recobrar (Enviar nova cobrança no cartão Asaas)"
+            >
+              <CreditCard size={14} />
             </button>
           )}
 

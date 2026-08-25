@@ -1041,6 +1041,143 @@ async function safeJsonFetch(response: any): Promise<any> {
     return null;
   }
 
+  // --- FIRESTORE REST API FALLBACK HELPERS ---
+  const FIREBASE_REST_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "gbagender";
+  const FIREBASE_REST_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyAcrEPPYvEChBs_oXc4tFpos2oDwWV96Rs";
+  const FIREBASE_REST_BASE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_REST_PROJECT_ID}/databases/(default)/documents`;
+
+  function parseFirestoreRestValue(valObj: any): any {
+    if (!valObj) return null;
+    if ('stringValue' in valObj) return valObj.stringValue;
+    if ('booleanValue' in valObj) return valObj.booleanValue;
+    if ('integerValue' in valObj) return parseInt(valObj.integerValue, 10);
+    if ('doubleValue' in valObj) return parseFloat(valObj.doubleValue);
+    if ('timestampValue' in valObj) return valObj.timestampValue;
+    if ('nullValue' in valObj) return null;
+    if ('mapValue' in valObj) {
+      const fields = valObj.mapValue?.fields || {};
+      const res: any = {};
+      for (const k in fields) {
+        res[k] = parseFirestoreRestValue(fields[k]);
+      }
+      return res;
+    }
+    if ('arrayValue' in valObj) {
+      const values = valObj.arrayValue?.values || [];
+      return values.map((v: any) => parseFirestoreRestValue(v));
+    }
+    return null;
+  }
+
+  function parseFirestoreRestDoc(docObj: any) {
+    if (!docObj || !docObj.name) return null;
+    const parts = docObj.name.split('/');
+    const docId = parts[parts.length - 1];
+    const fields = docObj.fields || {};
+    const data: any = {};
+    for (const k in fields) {
+      data[k] = parseFirestoreRestValue(fields[k]);
+    }
+    return { id: docId, data, path: docObj.name };
+  }
+
+  function toFirestoreRestValue(val: any): any {
+    if (val === null || val === undefined) return { nullValue: null };
+    if (typeof val === 'boolean') return { booleanValue: val };
+    if (typeof val === 'number') {
+      if (Number.isInteger(val)) return { integerValue: String(val) };
+      return { doubleValue: val };
+    }
+    if (val instanceof Date) return { timestampValue: val.toISOString() };
+    if (typeof val === 'string') return { stringValue: val };
+    if (Array.isArray(val)) {
+      return { arrayValue: { values: val.map(toFirestoreRestValue) } };
+    }
+    if (typeof val === 'object') {
+      const fields: any = {};
+      for (const k in val) {
+        fields[k] = toFirestoreRestValue(val[k]);
+      }
+      return { mapValue: { fields } };
+    }
+    return { stringValue: String(val) };
+  }
+
+  async function getFirestoreRestDoc(collectionName: string, docId: string) {
+    try {
+      const url = `${FIREBASE_REST_BASE_URL}/${collectionName}/${encodeURIComponent(docId)}?key=${FIREBASE_REST_API_KEY}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const raw = await res.json();
+        return parseFirestoreRestDoc(raw);
+      }
+    } catch (err) {
+      console.warn(`[Firestore REST] Error fetching ${collectionName}/${docId}:`, err);
+    }
+    return null;
+  }
+
+  async function queryFirestoreRest(collectionName: string, fieldName: string, op: string, value: any) {
+    try {
+      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_REST_PROJECT_ID}/databases/(default)/documents:runQuery?key=${FIREBASE_REST_API_KEY}`;
+      const body = {
+        structuredQuery: {
+          from: [{ collectionId: collectionName }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: fieldName },
+              op: op.toUpperCase(),
+              value: toFirestoreRestValue(value)
+            }
+          },
+          limit: 1
+        }
+      };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0 && list[0].document) {
+          return parseFirestoreRestDoc(list[0].document);
+        }
+      }
+    } catch (err) {
+      console.warn(`[Firestore REST Query Error] ${collectionName} ${fieldName} ${op} ${value}:`, err);
+    }
+    return null;
+  }
+
+  async function updateFirestoreRestDoc(collectionName: string, docId: string, fieldsToUpdate: Record<string, any>) {
+    try {
+      const maskParams = Object.keys(fieldsToUpdate)
+        .map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`)
+        .join('&');
+      const url = `${FIREBASE_REST_BASE_URL}/${collectionName}/${encodeURIComponent(docId)}?${maskParams}&key=${FIREBASE_REST_API_KEY}`;
+      const restFields: any = {};
+      for (const k in fieldsToUpdate) {
+        restFields[k] = toFirestoreRestValue(fieldsToUpdate[k]);
+      }
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: restFields })
+      });
+      if (res.ok) {
+        console.log(`✅ [Firestore REST] Documento ${collectionName}/${docId} atualizado com sucesso!`);
+        return true;
+      } else {
+        const errTxt = await res.text();
+        console.warn(`⚠️ [Firestore REST Update Error] ${collectionName}/${docId}:`, errTxt);
+      }
+    } catch (err) {
+      console.error(`❌ [Firestore REST Exception] ${collectionName}/${docId}:`, err);
+    }
+    return false;
+  }
+
   // Helper to find subscription in Firestore by any available Asaas identifier or docId
   async function findSubscriptionInFirestore(dbAdmin: any, params: {
     paymentId?: string;
@@ -1049,7 +1186,7 @@ async function safeJsonFetch(response: any): Promise<any> {
     externalReference?: string;
     docId?: string;
     tenantId?: string;
-  }) {
+  }): Promise<any> {
     let { paymentId, subscriptionId, customerId, externalReference, docId, tenantId } = params;
 
     // Fallback: If externalReference is missing or incomplete, attempt to fetch parent object from Asaas API
@@ -1091,13 +1228,22 @@ async function safeJsonFetch(response: any): Promise<any> {
       if (id) {
         const cleanId = id.replace(/^client_sub:/, '').replace(/^saas_tenant:/, '');
         if (cleanId && !cleanId.startsWith('sub_') && !cleanId.startsWith('pay_') && !cleanId.startsWith('cus_')) {
-          try {
-            const docSnap = await dbAdmin.collection('subscriptions').doc(cleanId).get();
-            if (docSnap.exists) {
-              return { ref: docSnap.ref, snap: docSnap, data: docSnap.data(), id: docSnap.id };
+          if (dbAdmin) {
+            try {
+              const docSnap = await dbAdmin.collection('subscriptions').doc(cleanId).get();
+              if (docSnap.exists) {
+                return { ref: docSnap.ref, snap: docSnap, data: docSnap.data(), id: docSnap.id, isRest: false };
+              }
+            } catch (e) {
+              // ignore doc ID syntax issues in dbAdmin
             }
-          } catch (e) {
-            // ignore doc ID syntax issues
+          }
+
+          // REST Fallback
+          const restDoc = await getFirestoreRestDoc('subscriptions', cleanId);
+          if (restDoc) {
+            console.log(`🎯 [ASAAS AUDIT] Assinatura localizada via Firestore REST docId: ${restDoc.id}`);
+            return { ref: null, snap: null, data: restDoc.data, id: restDoc.id, isRest: true };
           }
         }
       }
@@ -1116,71 +1262,93 @@ async function safeJsonFetch(response: any): Promise<any> {
     const searchIds = Array.from(new Set(expandedIds.filter(Boolean)));
 
     if (searchIds.length > 0) {
-      try {
-        let q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds.slice(0, 30)).limit(1).get();
-        if (!q.empty) {
-          const snap = q.docs[0];
-          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-        }
-      } catch (e) { /* ignore */ }
+      if (dbAdmin) {
+        try {
+          let q = await dbAdmin.collection('subscriptions').where('externalReference', 'in', searchIds.slice(0, 30)).limit(1).get();
+          if (!q.empty) {
+            const snap = q.docs[0];
+            return { ref: snap.ref, snap, data: snap.data(), id: snap.id, isRest: false };
+          }
+        } catch (e) { /* ignore */ }
 
-      try {
-        let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds.slice(0, 30)).limit(1).get();
-        if (!q.empty) {
-          const snap = q.docs[0];
-          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-        }
-      } catch (e) { /* ignore */ }
+        try {
+          let q = await dbAdmin.collection('subscriptions').where('asaasInvoiceId', 'in', searchIds.slice(0, 30)).limit(1).get();
+          if (!q.empty) {
+            const snap = q.docs[0];
+            return { ref: snap.ref, snap, data: snap.data(), id: snap.id, isRest: false };
+          }
+        } catch (e) { /* ignore */ }
 
-      try {
-        let q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds.slice(0, 30)).limit(1).get();
-        if (!q.empty) {
-          const snap = q.docs[0];
-          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-        }
-      } catch (e) { /* ignore */ }
+        try {
+          let q = await dbAdmin.collection('subscriptions').where('asaasSubscriptionId', 'in', searchIds.slice(0, 30)).limit(1).get();
+          if (!q.empty) {
+            const snap = q.docs[0];
+            return { ref: snap.ref, snap, data: snap.data(), id: snap.id, isRest: false };
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      // REST Fallback search
+      for (const sId of searchIds) {
+        let rDoc = await queryFirestoreRest('subscriptions', 'externalReference', 'EQUAL', sId);
+        if (rDoc) return { ref: null, snap: null, data: rDoc.data, id: rDoc.id, isRest: true };
+
+        rDoc = await queryFirestoreRest('subscriptions', 'asaasInvoiceId', 'EQUAL', sId);
+        if (rDoc) return { ref: null, snap: null, data: rDoc.data, id: rDoc.id, isRest: true };
+
+        rDoc = await queryFirestoreRest('subscriptions', 'asaasSubscriptionId', 'EQUAL', sId);
+        if (rDoc) return { ref: null, snap: null, data: rDoc.data, id: rDoc.id, isRest: true };
+      }
     }
 
     // 3. Search by asaasCustomerId (prioritizing pending status first)
     if (customerId) {
-      try {
-        let q = await dbAdmin.collection('subscriptions')
-          .where('asaasCustomerId', '==', customerId)
-          .where('status', '==', 'pending')
-          .limit(1).get();
-        if (!q.empty) {
-          const snap = q.docs[0];
-          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-        }
-      } catch (e) {
-        // ignore index errors
+      if (dbAdmin) {
+        try {
+          let q = await dbAdmin.collection('subscriptions')
+            .where('asaasCustomerId', '==', customerId)
+            .where('status', '==', 'pending')
+            .limit(1).get();
+          if (!q.empty) {
+            const snap = q.docs[0];
+            return { ref: snap.ref, snap, data: snap.data(), id: snap.id, isRest: false };
+          }
+        } catch (e) { /* ignore */ }
+
+        try {
+          let q = await dbAdmin.collection('subscriptions')
+            .where('asaasCustomerId', '==', customerId)
+            .limit(1).get();
+          if (!q.empty) {
+            const snap = q.docs[0];
+            return { ref: snap.ref, snap, data: snap.data(), id: snap.id, isRest: false };
+          }
+        } catch (e) { /* ignore */ }
       }
 
-      try {
-        let q = await dbAdmin.collection('subscriptions')
-          .where('asaasCustomerId', '==', customerId)
-          .limit(1).get();
-        if (!q.empty) {
-          const snap = q.docs[0];
-          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-        }
-      } catch (e) {
-        // ignore
-      }
+      let rDoc = await queryFirestoreRest('subscriptions', 'asaasCustomerId', 'EQUAL', customerId);
+      if (rDoc) return { ref: null, snap: null, data: rDoc.data, id: rDoc.id, isRest: true };
     }
 
     // 4. Fallback search by tenantId and pending status
     if (tenantId) {
-      try {
-        let q = await dbAdmin.collection('subscriptions')
-          .where('tenantId', '==', tenantId)
-          .where('status', '==', 'pending')
-          .limit(1).get();
-        if (!q.empty) {
-          const snap = q.docs[0];
-          return { ref: snap.ref, snap, data: snap.data(), id: snap.id };
-        }
-      } catch (e) { /* ignore */ }
+      if (dbAdmin) {
+        try {
+          let q = await dbAdmin.collection('subscriptions')
+            .where('tenantId', '==', tenantId)
+            .where('status', '==', 'pending')
+            .limit(1).get();
+          if (!q.empty) {
+            const snap = q.docs[0];
+            return { ref: snap.ref, snap, data: snap.data(), id: snap.id, isRest: false };
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      let rDoc = await queryFirestoreRest('subscriptions', 'tenantId', 'EQUAL', tenantId);
+      if (rDoc && rDoc.data?.status === 'pending') {
+        return { ref: null, snap: null, data: rDoc.data, id: rDoc.id, isRest: true };
+      }
     }
 
     return null;
@@ -1251,7 +1419,7 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       const isPaid = paymentData.status === 'RECEIVED' || paymentData.status === 'CONFIRMED';
 
-      if (isPaid && dbAdmin) {
+      if (isPaid) {
         let subMatch = existingSub;
         if (!subMatch) {
           subMatch = await findSubscriptionInFirestore(dbAdmin, {
@@ -1265,7 +1433,7 @@ async function safeJsonFetch(response: any): Promise<any> {
 
         if (subMatch) {
           const subRef = subMatch.ref;
-          const subData = subMatch.data;
+          const subData = subMatch.data || {};
 
           if (subData.asaasPaymentStatus !== 'received' || subData.status !== 'active') {
             const tenantId = subData.tenantId;
@@ -1281,16 +1449,30 @@ async function safeJsonFetch(response: any): Promise<any> {
             newEnd.setMonth(newEnd.getMonth() + 1);
             const newEndStr = newEnd.toISOString().split('T')[0];
 
-            await subRef.update({
+            const updateFields = {
               status: 'active',
               asaasPaymentStatus: 'received',
+              asaasSubscriptionId: paymentData.subscription || subData.asaasSubscriptionId || null,
+              asaasCustomerId: paymentData.customer || subData.asaasCustomerId || null,
+              asaasInvoiceId: paymentData.id || subData.asaasInvoiceId || null,
               startDate: newStartStr,
               endDate: newEndStr,
               haircutsUsed: 0,
               beardsUsed: 0,
               lastRenewalDate: todayStr,
               updatedAt: new Date()
-            });
+            };
+
+            if (subRef) {
+              try {
+                await subRef.update(updateFields);
+              } catch (upErr) {
+                console.warn(`⚠️ [Check Status] Fallback REST update para ${subMatch.id}`);
+                await updateFirestoreRestDoc('subscriptions', subMatch.id, updateFields);
+              }
+            } else {
+              await updateFirestoreRestDoc('subscriptions', subMatch.id, updateFields);
+            }
 
             // Add to financial_transactions
             await dbAdmin.collection('financial_transactions').add({
@@ -1850,7 +2032,8 @@ async function safeJsonFetch(response: any): Promise<any> {
           }
 
           console.log(`🔄 [ASAAS AUDIT] Confirmando pagamento & Ativando assinatura do cliente ${subData.cliente_name || 'Desconhecido'} (${subMatch.id}). Novo período: ${newStartStr} até ${newEndStr}`);
-          await subRef.update({
+          
+          const subUpdateData = {
             status: 'active',
             asaasPaymentStatus: 'received',
             asaasSubscriptionId: subscription?.id || payment?.subscription || subData.asaasSubscriptionId || null,
@@ -1862,86 +2045,107 @@ async function safeJsonFetch(response: any): Promise<any> {
             beardsUsed: 0,
             lastRenewalDate: todayStr,
             updatedAt: new Date()
-          });
+          };
+
+          if (subRef) {
+            try {
+              await subRef.update(subUpdateData);
+            } catch (uErr) {
+              console.warn(`⚠️ [Webhook Client Sub] Fallback REST update para ${subMatch.id}`);
+              await updateFirestoreRestDoc('subscriptions', subMatch.id, subUpdateData);
+            }
+          } else {
+            await updateFirestoreRestDoc('subscriptions', subMatch.id, subUpdateData);
+          }
 
           // Record in financial_transactions
           const finalVal = value || subData.amount || 0;
           if (finalVal > 0) {
-            try {
-              await dbAdmin.collection('financial_transactions').add({
-                tenantId: tenantId || 'gbcortes7',
-                type: 'income',
-                amount: finalVal,
-                date: todayStr,
-                category: 'Assinaturas',
-                description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
-                paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
-                status: 'pago',
-                cliente_id: subData.cliente_id || 'N/A',
-                cliente_name: subData.cliente_name || 'Cliente',
-                responsavel_id: subData.cliente_id || 'N/A',
-                responsavel_name: subData.cliente_name || 'Cliente',
-                net_amount: finalVal,
-                settlement_date: todayStr,
-                is_settled: true,
-                createdAt: new Date()
-              });
-            } catch (ftErr) {
-              console.warn("Could not record financial transaction:", ftErr);
-            }
-
-            // Check open cash session & record in cash_movements
-            try {
-              const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
-                .where('tenantId', '==', tenantId)
-                .get();
-
-              const openCashDoc = cashSessionsQuery.docs.find((doc: any) => {
-                const s = doc.data().status;
-                return s === 'open' || s === 'reopened';
-              });
-
-              if (openCashDoc) {
-                const cashId = openCashDoc.id;
-                await dbAdmin.collection('cash_movements').add({
-                  tenantId,
-                  caixa_id: cashId,
+            if (dbAdmin) {
+              try {
+                await dbAdmin.collection('financial_transactions').add({
+                  tenantId: tenantId || 'gbcortes7',
                   type: 'income',
-                  category: 'Assinaturas',
-                  description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
                   amount: finalVal,
-                  payment_method: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                  paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
                   date: todayStr,
+                  category: 'Assinaturas',
+                  description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+                  paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+                  status: 'pago',
+                  cliente_id: subData.cliente_id || 'N/A',
+                  cliente_name: subData.cliente_name || 'Cliente',
+                  responsavel_id: subData.cliente_id || 'N/A',
+                  responsavel_name: subData.cliente_name || 'Cliente',
+                  net_amount: finalVal,
+                  settlement_date: todayStr,
+                  is_settled: true,
                   createdAt: new Date()
                 });
-
-                await openCashDoc.ref.update({
-                  total_income: (openCashDoc.data().total_income || 0) + finalVal,
-                  expected_balance: (openCashDoc.data().expected_balance || 0) + finalVal,
-                  updatedAt: new Date()
-                });
+              } catch (ftErr) {
+                console.warn("Could not record financial transaction:", ftErr);
               }
-            } catch (cErr) {
-              console.warn("Aviso ao registrar movimento no caixa:", cErr);
+
+              // Check open cash session & record in cash_movements
+              try {
+                const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
+                  .where('tenantId', '==', tenantId)
+                  .get();
+
+                const openCashDoc = cashSessionsQuery.docs.find((doc: any) => {
+                  const s = doc.data().status;
+                  return s === 'open' || s === 'reopened';
+                });
+
+                if (openCashDoc) {
+                  const cashId = openCashDoc.id;
+                  await dbAdmin.collection('cash_movements').add({
+                    tenantId,
+                    caixa_id: cashId,
+                    type: 'income',
+                    category: 'Assinaturas',
+                    description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                    amount: finalVal,
+                    payment_method: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
+                    paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
+                    date: todayStr,
+                    createdAt: new Date()
+                  });
+
+                  await openCashDoc.ref.update({
+                    total_income: (openCashDoc.data().total_income || 0) + finalVal,
+                    expected_balance: (openCashDoc.data().expected_balance || 0) + finalVal,
+                    updatedAt: new Date()
+                  });
+                }
+              } catch (cErr) {
+                console.warn("Aviso ao registrar movimento no caixa:", cErr);
+              }
             }
           }
 
           console.log(`✅ [ASAAS AUDIT] Assinatura do cliente ${subData.cliente_name} (${subMatch.id}) ativada até ${newEndStr}!`);
         } else if (isPaymentOverdue) {
           console.log(`⚠️ [ASAAS AUDIT] Cobrança vencida para a assinatura do cliente ${subMatch.id}`);
-          await subRef.update({
-            asaasPaymentStatus: 'overdue',
-            status: 'overdue',
-            updatedAt: new Date()
-          });
+          if (subRef) {
+            try {
+              await subRef.update({ asaasPaymentStatus: 'overdue', status: 'overdue', updatedAt: new Date() });
+            } catch (e) {
+              await updateFirestoreRestDoc('subscriptions', subMatch.id, { asaasPaymentStatus: 'overdue', status: 'overdue', updatedAt: new Date() });
+            }
+          } else {
+            await updateFirestoreRestDoc('subscriptions', subMatch.id, { asaasPaymentStatus: 'overdue', status: 'overdue', updatedAt: new Date() });
+          }
         } else if (isPaymentCanceledOrRefunded) {
           console.log(`🛑 [ASAAS AUDIT] Cobrança cancelada ou estornada para a assinatura do cliente ${subMatch.id}`);
-          await subRef.update({
-            asaasPaymentStatus: 'canceled',
-            status: 'canceled',
-            updatedAt: new Date()
-          });
+          if (subRef) {
+            try {
+              await subRef.update({ asaasPaymentStatus: 'canceled', status: 'canceled', updatedAt: new Date() });
+            } catch (e) {
+              await updateFirestoreRestDoc('subscriptions', subMatch.id, { asaasPaymentStatus: 'canceled', status: 'canceled', updatedAt: new Date() });
+            }
+          } else {
+            await updateFirestoreRestDoc('subscriptions', subMatch.id, { asaasPaymentStatus: 'canceled', status: 'canceled', updatedAt: new Date() });
+          }
         }
       }
 

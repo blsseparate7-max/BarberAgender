@@ -52,7 +52,7 @@ import { AgendaBlocks as BlocksManager } from '../components/Agenda/AgendaBlocks
 import { AppointmentList } from '../components/Agenda/AppointmentList';
 import { RecurringAppointments } from '../components/Agenda/RecurringAppointments';
 import { OperationsManager } from '../components/Agenda/OperationsManager';
-import { format, addDays, subDays, isSameDay, startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfMonth, parse, isAfter, isBefore, isEqual } from 'date-fns';
+import { format, addDays, subDays, isSameDay, startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfMonth, parse, isAfter, isBefore, isEqual, isToday, isTomorrow, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 interface AgendaProps {
@@ -117,7 +117,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
   const filteredBarbersForGrid = React.useMemo(() => {
     if (selectedBarberFilter === 'all') return barbers;
-    return barbers.filter(b => b.uid === selectedBarberFilter);
+    return barbers.filter(b => b.uid === selectedBarberFilter || b.id === selectedBarberFilter);
   }, [barbers, selectedBarberFilter]);
 
   // Modal State
@@ -384,27 +384,73 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
                 <div className="h-8 w-px bg-slate-200 hidden sm:block" />
 
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setSelectedDate(subDays(selectedDate, viewType === 'week' ? 7 : 1))} className="p-2.5 text-muted hover:text-primary hover:bg-slate-50 rounded-xl transition-all border border-transparent hover:border-slate-200">
-                    <ChevronLeft size={20} />
-                  </button>
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <button 
-                    onClick={() => setSelectedDate(new Date())}
-                    className="px-4 py-2 bg-white border border-slate-200 text-primary text-xs font-bold rounded-xl hover:bg-slate-50 transition-all shadow-sm active:scale-95"
+                    onClick={() => setSelectedDate(subDays(selectedDate, viewType === 'week' ? 7 : 1))} 
+                    className="p-2 text-muted hover:text-primary hover:bg-slate-100 rounded-xl transition-all border border-transparent hover:border-slate-200"
+                    title="Anterior"
                   >
-                    Hoje
+                    <ChevronLeft size={18} />
                   </button>
-                  <button onClick={() => setSelectedDate(addDays(selectedDate, viewType === 'week' ? 7 : 1))} className="p-2.5 text-muted hover:text-primary hover:bg-slate-50 rounded-xl transition-all border border-transparent hover:border-slate-200">
-                    <ChevronRight size={20} />
+
+                  <div className="flex items-center gap-1.5">
+                    <span 
+                      className={`px-3 py-1.5 border text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-xs flex items-center gap-1.5 select-none ${
+                        isToday(selectedDate)
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : isTomorrow(selectedDate)
+                          ? 'bg-blue-50 text-blue-700 border-blue-200'
+                          : isYesterday(selectedDate)
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {isToday(selectedDate) && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                      {viewType === 'week' 
+                        ? `Semana ${format(startOfWeek(selectedDate, { weekStartsOn: 0 }), 'dd/MM')}`
+                        : viewType === 'month'
+                        ? format(selectedDate, 'MMM/yyyy', { locale: ptBR })
+                        : isToday(selectedDate)
+                        ? 'Hoje'
+                        : isTomorrow(selectedDate)
+                        ? 'Amanhã'
+                        : isYesterday(selectedDate)
+                        ? 'Ontem'
+                        : format(selectedDate, 'EEE, dd/MM', { locale: ptBR })
+                      }
+                    </span>
+
+                    {!isToday(selectedDate) && (
+                      <button 
+                        onClick={() => setSelectedDate(new Date())}
+                        className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-primary text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-xs active:scale-95 flex items-center gap-1 text-slate-600 hover:text-slate-900"
+                        title="Voltar para a data de hoje"
+                      >
+                        <CalendarIcon size={12} className="text-emerald-600" />
+                        <span>Ir p/ Hoje</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <button 
+                    onClick={() => setSelectedDate(addDays(selectedDate, viewType === 'week' ? 7 : 1))} 
+                    className="p-2 text-muted hover:text-primary hover:bg-slate-100 rounded-xl transition-all border border-transparent hover:border-slate-200"
+                    title="Próximo"
+                  >
+                    <ChevronRight size={18} />
                   </button>
                 </div>
 
-                <h2 className="text-lg font-black text-primary hidden md:block tracking-tight">
-                  {viewType === 'week' 
-                    ? `Semana de ${format(startOfWeek(selectedDate), "dd 'de' MMM", { locale: ptBR })}`
-                    : format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })
-                  }
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm sm:text-base md:text-lg font-black text-primary tracking-tight">
+                    {viewType === 'week' 
+                      ? `Semana de ${format(startOfWeek(selectedDate, { weekStartsOn: 0 }), "dd 'de' MMM", { locale: ptBR })}`
+                      : viewType === 'month'
+                      ? format(selectedDate, "MMMM 'de' yyyy", { locale: ptBR })
+                      : format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })
+                    }
+                  </h2>
+                </div>
 
                 {viewType !== 'month' && barbers.length > 0 && (
                   <>
@@ -418,7 +464,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                       >
                         <option value="all">Todos Profissionais</option>
                         {barbers.map((barber, idx) => (
-                          <option key={`agenda-barber-opt-${barber.uid || barber.id || idx}-${idx}`} value={barber.uid}>
+                          <option key={`agenda-barber-opt-${barber.uid || barber.id || idx}-${idx}`} value={barber.uid || barber.id}>
                             {barber.nome}
                           </option>
                         ))}

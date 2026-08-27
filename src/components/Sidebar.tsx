@@ -199,6 +199,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       icon: <DollarSign size={20} />,
       roles: ['admin', 'gerente'],
       subItems: [
+        { id: 'financeiro-conta-digital', label: 'Conta Digital (Asaas)', roles: ['admin', 'gerente'] },
         { id: 'financeiro-caixa', label: 'Caixa do Dia', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-pagar', label: 'Contas a Pagar', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-receber', label: 'Contas a Receber', roles: ['admin', 'gerente'] },
@@ -238,6 +239,9 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         if (!profile) return false;
         if (!sub.roles.includes(profile.tipo)) return false;
         if (sub.id === 'cadastros-assinantes' && tenant?.subscriptions_enabled !== true) {
+          return false;
+        }
+        if (sub.id === 'financeiro-conta-digital' && tenant?.subscriptions_enabled !== true) {
           return false;
         }
         return true;

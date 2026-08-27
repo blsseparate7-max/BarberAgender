@@ -150,14 +150,15 @@ export function AgendaGeneral({
     setTimeSlots(slots);
   }, []);
 
-  const getBarberAppointments = (profissional_id: string, time: string) => {
+  const getBarberAppointments = (barber: UserProfile, time: string) => {
     try {
       const slotStart = parse(time, 'HH:mm', new Date());
       const slotEnd = addMinutes(slotStart, 30);
       if (isNaN(slotStart.getTime())) return [];
       
       return appointments.filter(app => {
-        if (app.profissional_id !== profissional_id || app.date !== format(selectedDate, 'yyyy-MM-dd')) return false;
+        const matchProf = app.profissional_id === barber.uid || (barber.id && app.profissional_id === barber.id);
+        if (!matchProf || app.date !== format(selectedDate, 'yyyy-MM-dd')) return false;
         if (!app.startTime || !app.endTime) return false;
         
         const appStart = parse(app.startTime, 'HH:mm', new Date());
@@ -173,14 +174,15 @@ export function AgendaGeneral({
     }
   };
 
-  const getBarberBlock = (profissional_id: string, time: string) => {
+  const getBarberBlock = (barber: UserProfile, time: string) => {
     try {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
       const slotStart = parse(time, 'HH:mm', new Date());
       const slotEnd = addMinutes(slotStart, 30);
       return (blocks || []).find(block => {
         if (block.date !== dateStr) return false;
-        if (!block.isGeneral && block.profissional_id !== profissional_id) return false;
+        const matchProf = block.profissional_id === barber.uid || (barber.id && block.profissional_id === barber.id);
+        if (!block.isGeneral && !matchProf) return false;
         
         const bStart = parse(block.startTime, 'HH:mm', new Date());
         const bEnd = parse(block.endTime, 'HH:mm', new Date());
@@ -239,23 +241,23 @@ export function AgendaGeneral({
                   </div>
                   <div className="flex-1 flex">
                     {barbers.map(barber => {
-                  const apps = getBarberAppointments(barber.uid, time);
-                  const block = getBarberBlock(barber.uid, time);
-                  const isBlockStart = block && (() => {
-                    const bStart = parse(block.startTime, 'HH:mm', new Date());
-                    const slotStart = parse(time, 'HH:mm', new Date());
-                    const slotEnd = addMinutes(slotStart, 30);
-                    return (isEqual(bStart, slotStart) || isAfter(bStart, slotStart)) && isBefore(bStart, slotEnd);
-                  })();
+                      const apps = getBarberAppointments(barber, time);
+                      const block = getBarberBlock(barber, time);
+                      const isBlockStart = block && (() => {
+                        const bStart = parse(block.startTime, 'HH:mm', new Date());
+                        const slotStart = parse(time, 'HH:mm', new Date());
+                        const slotEnd = addMinutes(slotStart, 30);
+                        return (isEqual(bStart, slotStart) || isAfter(bStart, slotStart)) && isBefore(bStart, slotEnd);
+                      })();
 
-                  return (
-                    <div 
-                      key={barber.uid} 
-                      onClick={() => {
-                        if (apps.length === 0 && !block) {
-                          onNewAppointment(time, barber.uid);
-                        }
-                      }}
+                      return (
+                        <div 
+                          key={barber.uid || barber.id} 
+                          onClick={() => {
+                            if (apps.length === 0 && !block) {
+                              onNewAppointment(time, barber.uid || barber.id || '');
+                            }
+                          }}
                       className={`min-w-[200px] flex-1 p-1 h-[60px] border-r border-border/30 transition-colors relative ${
                         block ? 'bg-rose-50/50 cursor-not-allowed' : apps.length > 0 ? 'bg-slate-50/20 cursor-pointer' : 'hover:bg-accent/5 cursor-pointer'
                       }`}

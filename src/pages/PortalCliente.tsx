@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LogOut, 
   Calendar, 
@@ -33,7 +33,13 @@ import {
   RefreshCw,
   Copy,
   ExternalLink,
-  Trash2
+  Trash2,
+  Receipt,
+  FileText,
+  Tag,
+  Megaphone,
+  ChevronDown,
+  ShoppingBag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
@@ -168,6 +174,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [reviewComment, setReviewComment] = useState<string>('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
+  // 2-step cancel confirmation state
+  const [confirmingCancelAppId, setConfirmingCancelAppId] = useState<string | null>(null);
+  const cancelTimeoutRef = useRef<any>(null);
+
   // Subscription Card management states for Client
   const [clientCardModalSub, setClientCardModalSub] = useState<Subscription | null>(null);
   const [clientPixModalData, setClientPixModalData] = useState<any | null>(null);
@@ -185,6 +195,47 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [showClientChargeModal, setShowClientChargeModal] = useState(false);
   const [subToCancel, setSubToCancel] = useState<any | null>(null);
   const [isCancelingSub, setIsCancelingSub] = useState(false);
+
+  // Announcements & Client Comandas States
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [announcementModalData, setAnnouncementModalData] = useState<any | null>(null);
+  const [clientComandas, setClientComandas] = useState<any[]>([]);
+  const [selectedComandaForView, setSelectedComandaForView] = useState<any | null>(null);
+
+  // Subscription Invoices & Renewal States
+  const [subscriptionInvoices, setSubscriptionInvoices] = useState<any[]>([]);
+  const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<any | null>(null);
+  const [renewalModalSub, setRenewalModalSub] = useState<Subscription | null>(null);
+  const [isManualRenewing, setIsManualRenewing] = useState(false);
+
+  const handleManualRenewSubscription = async (sub: Subscription) => {
+    setIsManualRenewing(true);
+    try {
+      await subscriptionService.renewSubscription(sub.id);
+      toast.success("Assinatura renovada com sucesso! Seu período foi estendido por mais 30 dias.");
+      setRenewalModalSub(null);
+      if (profile?.uid) {
+        const updatedSubs = await subscriptionService.getSubscriptions(profile.uid);
+        setSubscriptions(updatedSubs);
+        
+        // Refresh invoices
+        const qInvoices = query(
+          collection(db, 'financial_transactions'),
+          where('cliente_id', '==', profile.uid),
+          where('category', '==', 'Assinaturas')
+        );
+        const invSnap = await getDocs(qInvoices);
+        const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        invList.sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
+        setSubscriptionInvoices(invList);
+      }
+    } catch (err: any) {
+      console.error("Erro ao renovar assinatura manualmente:", err);
+      toast.error(err.message || "Erro ao renovar assinatura.");
+    } finally {
+      setIsManualRenewing(false);
+    }
+  };
 
   const handleCancelSubscriptionByClient = async () => {
     if (!subToCancel) return;
@@ -652,23 +703,37 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         console.warn("Could not load client loyalty points & history:", err);
       }
 
-      // Calculate total spent in barbearia
+      // Calculate total spent in barbearia and load all client comandas
       try {
         const qComandas = query(
           collection(db, 'comandas'),
-          where('cliente_id', '==', profile.uid),
-          where('status', '==', 'fechada')
+          where('cliente_id', '==', profile.uid)
         );
         const comSnap = await getDocs(qComandas);
+        const allComs = comSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setClientComandas(allComs);
+
         let sum = 0;
-        comSnap.docs.forEach(d => {
-          const data = d.data();
-          sum += Number(data.paidAmount || data.totalAmount || 0);
+        allComs.forEach((data: any) => {
+          if (data.status === 'fechada') {
+            sum += Number(data.paidAmount || data.totalAmount || 0);
+          }
         });
         setTotalSpent(sum);
       } catch (err) {
-        console.warn("Could not calculate total spent:", err);
+        console.warn("Could not calculate total spent or load client comandas:", err);
         setTotalSpent(profile.total_pago || profile.total_gasto || 0);
+      }
+
+      // Load announcements/news & promotions
+      try {
+        const qNews = query(collection(db, 'announcements'));
+        const snapNews = await getDocs(qNews);
+        const newsList = snapNews.docs.map(d => ({ id: d.id, ...d.data() }));
+        const filteredNews = newsList.filter((item: any) => !item.tenantId || item.tenantId.toLowerCase() === activeTenantId.toLowerCase());
+        setAnnouncements(filteredNews);
+      } catch (err) {
+        console.warn("Could not load announcements:", err);
       }
 
       // Load subscriptions
@@ -677,6 +742,21 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         setSubscriptions(clientSubs);
       } catch (err) {
         console.warn("Could not load client subscriptions list:", err);
+      }
+
+      // Load subscription invoices / financial history
+      try {
+        const qInvoices = query(
+          collection(db, 'financial_transactions'),
+          where('cliente_id', '==', profile.uid),
+          where('category', '==', 'Assinaturas')
+        );
+        const invSnap = await getDocs(qInvoices);
+        const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        invList.sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
+        setSubscriptionInvoices(invList);
+      } catch (err) {
+        console.warn("Could not load subscription financial history:", err);
       }
 
       // Load package sales
@@ -858,9 +938,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     }
   };
 
-  const handleCancelAppointment = async (appId: string) => {
-    if (!window.confirm("Deseja realmente cancelar este agendamento?")) return;
-    
+  const executeCancelAppointment = async (appId: string) => {
     try {
       await appointmentService.cancelAppointment(appId);
       toast.success("Agendamento cancelado com sucesso.");
@@ -868,6 +946,24 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     } catch (err) {
       console.error("Error canceling appointment:", err);
       toast.error("Erro ao cancelar o agendamento.");
+    }
+  };
+
+  const handleCancelAppointment = (appId: string) => {
+    if (confirmingCancelAppId === appId) {
+      if (cancelTimeoutRef.current) {
+        clearTimeout(cancelTimeoutRef.current);
+      }
+      setConfirmingCancelAppId(null);
+      executeCancelAppointment(appId);
+    } else {
+      if (cancelTimeoutRef.current) {
+        clearTimeout(cancelTimeoutRef.current);
+      }
+      setConfirmingCancelAppId(appId);
+      cancelTimeoutRef.current = setTimeout(() => {
+        setConfirmingCancelAppId(null);
+      }, 4000); // 4 seconds to confirm
     }
   };
 
@@ -1022,38 +1118,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               <h2 className="text-base font-black tracking-tight">{profile.nome}</h2>
               <div className="mt-1 flex items-center gap-1.5">
                 <MapPin size={11} className="text-amber-500 flex-shrink-0" />
-                <select
-                  value={tenantInfo?.id || getActiveTenantId() || ''}
-                  onChange={async (e) => {
-                    if (e.target.value) {
-                      await handleSelectTenant(e.target.value);
-                    }
-                  }}
-                  className="bg-slate-800 text-white text-[11px] font-bold border border-slate-700/60 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer max-w-[150px] truncate"
-                >
-                  {allTenants.length === 0 ? (
-                    <option value="" className="bg-slate-900 text-slate-400 text-[11px]">Nenhuma barbearia cadastrada</option>
-                  ) : (
-                    allTenants.map((tenant) => (
-                      <option key={tenant.id} value={tenant.id} className="bg-slate-900 text-white text-[11px]">
-                        {tenant.name}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const currentTenant = allTenants.find(t => t.id.toLowerCase() === (tenantInfo?.id || getActiveTenantId()).toLowerCase()) || tenantInfo;
-                    if (currentTenant) {
-                      setSelectedPortfolioTenant(currentTenant);
-                      setShowPortfolioModal(true);
-                    }
-                  }}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-lg ml-1 transition-all flex items-center gap-1 shadow-sm shrink-0"
-                >
-                  <Globe size={10} /> Conhecer
-                </button>
+                <span className="text-amber-100 bg-slate-800 text-[11px] font-black tracking-wide px-2.5 py-1 rounded-lg border border-slate-700/60 shadow-sm">
+                  {tenantInfo?.name || 'Barbearia'}
+                </span>
               </div>
             </div>
           </div>
@@ -1084,6 +1151,116 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
+              {/* Notícias & Promoções Banner Widget */}
+              {announcements.length > 0 && (
+                <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Megaphone className="text-amber-500 animate-pulse" size={18} />
+                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-800">
+                        Mural de Notícias & Promoções
+                      </h3>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {announcements.length} {announcements.length === 1 ? 'comunicado' : 'comunicados'}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-3 overflow-x-auto pb-2 pt-1 scrollbar-none">
+                    {announcements.map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={() => setAnnouncementModalData(item)}
+                        className="min-w-[260px] max-w-[280px] bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 rounded-2xl border border-slate-700/60 shadow-sm flex flex-col justify-between cursor-pointer hover:border-amber-500/50 transition-all shrink-0 group"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                              item.category === 'promocao' || item.category === 'Promoção'
+                                ? 'bg-amber-500 text-slate-950'
+                                : item.category === 'aviso' || item.category === 'Aviso'
+                                ? 'bg-rose-500 text-white'
+                                : 'bg-indigo-500 text-white'
+                            }`}>
+                              {item.category || 'Novidade'}
+                            </span>
+                            {item.date && (
+                              <span className="text-[9px] text-slate-400 font-semibold">
+                                {item.date}
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-xs font-black group-hover:text-amber-400 transition-colors line-clamp-1">
+                            {item.title}
+                          </h4>
+                          <p className="text-[11px] text-slate-300 font-medium line-clamp-2 leading-relaxed">
+                            {item.content}
+                          </p>
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-slate-700/50 flex items-center justify-between text-[10px] text-amber-400 font-bold">
+                          <span>Ler mais</span>
+                          <ChevronRight size={12} className="group-hover:translate-x-1 transition-transform" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Smart Rebooking Card ("Cortei há X dias") */}
+              {(() => {
+                if (futureAppointments.length > 0) return null;
+                const lastCompletedApp = pastAppointments.find(a => a.status === 'concluído');
+                if (!lastCompletedApp) return null;
+
+                let daysSinceLastCut = 0;
+                try {
+                  const lastDate = parse(lastCompletedApp.date, 'yyyy-MM-dd', new Date());
+                  const today = new Date();
+                  lastDate.setHours(0, 0, 0, 0);
+                  today.setHours(0, 0, 0, 0);
+                  daysSinceLastCut = Math.max(0, Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24)));
+                } catch (e) {
+                  return null;
+                }
+
+                const handleQuickRebook = () => {
+                  const matchingBarber = barbers.find(b => b.uid === lastCompletedApp.profissional_id || b.nome === lastCompletedApp.profissional_name);
+                  const matchingService = services.find(s => s.id === lastCompletedApp.servico_id || s.nome === lastCompletedApp.servico_name);
+
+                  if (matchingBarber) setSelectedBarber(matchingBarber);
+                  if (matchingService) setSelectedService(matchingService);
+
+                  setActiveTab('schedule');
+                  toast.success(`Barbeiro e serviço selecionados! Escolha a data para repetir seu agendamento.`);
+                };
+
+                return (
+                  <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 p-6 rounded-[32px] text-slate-950 shadow-md relative overflow-hidden space-y-3">
+                    <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-xl pointer-events-none" />
+                    <div className="flex items-center gap-2">
+                      <span className="bg-slate-950 text-amber-400 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full flex items-center gap-1">
+                        <Scissors size={10} /> Frequência de Cortes
+                      </span>
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black tracking-tight text-slate-950">
+                        Faz {daysSinceLastCut} {daysSinceLastCut === 1 ? 'dia' : 'dias'} desde seu último atendimento!
+                      </h3>
+                      <p className="text-xs font-semibold text-slate-900/80 mt-1">
+                        Você cortou em {format(parse(lastCompletedApp.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')} com <span className="font-bold text-slate-950">{lastCompletedApp.profissional_name}</span>. Que tal manter o visual alinhado?
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleQuickRebook}
+                      className="bg-slate-950 hover:bg-slate-900 text-amber-400 font-black text-xs px-5 py-3 rounded-2xl transition-all shadow-md flex items-center gap-2 uppercase tracking-wider active:scale-95"
+                    >
+                      <Scissors size={14} /> Reagendar {lastCompletedApp.servico_name} em 1 Clique
+                    </button>
+                  </div>
+                );
+              })()}
+
               {/* Next Appointment Card */}
               <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col justify-between min-h-[140px]">
                 <div className="flex items-center justify-between">
@@ -1123,9 +1300,13 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     <>
                       <button 
                         onClick={() => handleCancelAppointment(futureAppointments[0].id)}
-                        className="text-[10px] text-rose-500 font-black hover:underline uppercase tracking-wider"
+                        className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg transition-all ${
+                          confirmingCancelAppId === futureAppointments[0].id
+                            ? 'bg-rose-600 text-white animate-pulse shadow-sm'
+                            : 'text-rose-500 hover:bg-rose-50 hover:underline'
+                        }`}
                       >
-                        Cancelar Horário
+                        {confirmingCancelAppId === futureAppointments[0].id ? 'Confirmar Cancelamento?' : 'Cancelar Horário'}
                       </button>
                       <a 
                         href={`https://wa.me/${tenantInfo?.phone || ''}`} 
@@ -1143,150 +1324,6 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     >
                       <Plus size={12} /> Marcar meu primeiro horário
                     </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Barbearias Browser Widget */}
-              <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                      <MapPin className="text-indigo-500 animate-bounce" size={18} />
-                      Navegador de Barbearias
-                    </h3>
-                    <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
-                      Digite o nome ou cidade para encontrar a barbearia ideal para você.
-                    </p>
-                  </div>
-                  
-                  <span className="self-start sm:self-center px-2.5 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase rounded-full">
-                    {allTenants.length} {allTenants.length === 1 ? 'Unidade' : 'Unidades'}
-                  </span>
-                </div>
-
-                {/* Search Bar & City Selector */}
-                <div className="flex flex-col md:flex-row gap-3">
-                  <div className="relative flex-1">
-                    <input
-                      type="text"
-                      placeholder="Pesquisar barbearia por nome, rua ou cidade..."
-                      value={searchTenantTerm}
-                      onChange={(e) => setSearchTenantTerm(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200/80 rounded-2xl px-4 py-3 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
-                    />
-                  </div>
-                  
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={handleRequestLocation}
-                      disabled={loadingLocation}
-                      className="px-3.5 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border border-indigo-200/40 disabled:opacity-50"
-                    >
-                      {loadingLocation ? (
-                        <div className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <MapPin size={12} className="text-indigo-600 animate-pulse" />
-                      )}
-                      {userCoords ? "Recalcular Distância" : "Mais Próximas"}
-                    </button>
-
-                    {/* City filter chips */}
-                    <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full scrollbar-none">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCityFilter('all')}
-                        className={`px-3.5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
-                          selectedCityFilter === 'all'
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200/40'
-                        }`}
-                      >
-                        Todas
-                      </button>
-                      {Array.from(new Set(allTenants.map(t => t.address?.city).filter(Boolean))).map(city => (
-                        <button
-                          key={city}
-                          type="button"
-                          onClick={() => setSelectedCityFilter(city || 'all')}
-                          className={`px-3.5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
-                            selectedCityFilter === city
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200/40'
-                          }`}
-                        >
-                          {city}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Results list */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 max-h-[320px] overflow-y-auto pr-1">
-                  {filteredTenants.length > 0 ? (
-                    filteredTenants.map((item) => {
-                      const isActive = (tenantInfo?.id || getActiveTenantId()).toLowerCase() === item.id.toLowerCase();
-                      return (
-                        <div
-                          key={item.id}
-                          onClick={() => {
-                            setSelectedPortfolioTenant(item);
-                            setShowPortfolioModal(true);
-                          }}
-                          className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-3 hover:shadow-md ${
-                            isActive
-                              ? 'bg-indigo-50/65 border-indigo-200 shadow-sm'
-                              : 'bg-slate-50/50 hover:bg-white border-slate-100'
-                          }`}
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                                {item.name}
-                                {isActive && (
-                                  <span className="bg-indigo-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
-                                    Ativa
-                                  </span>
-                                )}
-                              </h4>
-                              {item.distance !== undefined && (
-                                <span className="bg-emerald-50 text-emerald-700 text-[9px] font-black px-2 py-0.5 rounded-full border border-emerald-100/60 flex items-center gap-1 whitespace-nowrap">
-                                  <MapPin size={9} /> {item.distance.toFixed(1)} km
-                                </span>
-                              )}
-                            </div>
-                            {item.address && (
-                              <p className="text-[10px] text-slate-500 font-semibold flex items-center gap-1">
-                                <MapPin size={11} className="text-slate-400" />
-                                {item.address.street}, {item.address.city} - {item.address.state}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="flex items-center justify-between border-t border-slate-100/50 pt-2.5">
-                            <span className="text-[10px] text-amber-500 font-extrabold flex items-center gap-1">
-                              ★ 4.9 (Excelente)
-                            </span>
-                            <button
-                              type="button"
-                              className={`text-[9px] font-black uppercase tracking-wider px-3 py-1.5 rounded-xl transition-all ${
-                                isActive
-                                  ? 'text-indigo-600 bg-indigo-100/60 font-extrabold'
-                                  : 'text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm'
-                              }`}
-                            >
-                              {isActive ? 'Ver Portfólio' : 'Conhecer & Agendar'}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="col-span-2 py-8 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                      <p className="text-xs text-slate-400 font-semibold">Nenhuma barbearia encontrada com esses filtros.</p>
-                    </div>
                   )}
                 </div>
               </div>
@@ -1379,10 +1416,18 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleCancelAppointment(app.id)}
-                            className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                            title="Cancelar Agendamento"
+                            className={`transition-all rounded-xl ${
+                              confirmingCancelAppId === app.id
+                                ? 'bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wider animate-pulse'
+                                : 'p-2 text-rose-500 hover:bg-rose-50'
+                            }`}
+                            title={confirmingCancelAppId === app.id ? "Confirmar Cancelamento?" : "Cancelar Agendamento"}
                           >
-                            <AlertCircle size={18} />
+                            {confirmingCancelAppId === app.id ? (
+                              <span>Confirmar?</span>
+                            ) : (
+                              <AlertCircle size={18} />
+                            )}
                           </button>
                         </div>
                       </div>
@@ -1898,184 +1943,189 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               <div>
                 <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
                   <History className="text-amber-500" size={20} />
-                  Meu Histórico de Agendamentos
+                  Central de Agendamentos
                 </h3>
                 <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                  Visualize a sua linha do tempo completa de atendimentos e cortes já realizados.
+                  Gerencie seus próximos compromissos e veja todo o histórico de visitas e cortes anteriores.
                 </p>
               </div>
 
-              {pastAppointments.length > 0 ? (
-                <div className="space-y-4">
-                  {pastAppointments.map(app => (
-                    <div 
-                      key={app.id} 
-                      className="p-4 rounded-2xl border border-slate-100 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div className="flex items-start gap-3.5">
-                        <div className="bg-slate-200/50 p-2.5 rounded-xl text-slate-700 flex flex-col items-center min-w-[50px] font-black">
-                          <span className="text-[8px] uppercase text-slate-500">
-                            {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR }).replace('.', '')}
-                          </span>
-                          <span className="text-sm">
-                            {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'dd')}
-                          </span>
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-black text-slate-800">{app.servico_name}</h4>
-                          <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Profissional: {app.profissional_name}</p>
-                          <div className="flex items-center gap-2 mt-1.5 text-[9px] font-bold">
-                            <span className="text-slate-500 flex items-center gap-0.5 bg-slate-200/50 px-1.5 py-0.5 rounded">
-                              <Clock size={9} /> {app.startTime}
+              {/* Seção 1: Próximos Agendamentos */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <Calendar size={13} className="text-indigo-500 animate-pulse" />
+                  Próximos Agendamentos (Ativos)
+                </h4>
+                
+                {futureAppointments.length > 0 ? (
+                  <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/30">
+                    {futureAppointments.map(app => (
+                      <div key={app.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white hover:bg-slate-50/50 transition-colors">
+                        <div className="flex items-center gap-3.5">
+                          <div className="bg-indigo-50 p-2.5 rounded-xl text-indigo-700 flex flex-col items-center min-w-[50px] font-black border border-indigo-100/40">
+                            <span className="text-[8px] uppercase text-indigo-500">
+                              {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR }).replace('.', '')}
                             </span>
-                            <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
-                              R$ {(app.price || 0).toFixed(2)}
+                            <span className="text-sm font-black">
+                              {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'dd')}
+                            </span>
+                          </div>
+                          <div>
+                            <h5 className="text-xs font-black text-slate-800">{app.servico_name}</h5>
+                            <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Profissional: {app.profissional_name}</p>
+                            <span className="text-[9px] font-black tracking-wider uppercase px-2 py-0.5 bg-indigo-50/85 text-indigo-600 rounded-full mt-1.5 inline-block">
+                              {app.startTime} ({app.endTime})
                             </span>
                           </div>
                         </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-center">
+                          <button
+                            type="button"
+                            onClick={() => handleCancelAppointment(app.id)}
+                            className={`px-3.5 py-2 border rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95 ${
+                              confirmingCancelAppId === app.id
+                                ? 'bg-rose-600 hover:bg-rose-700 text-white border-rose-700 animate-pulse'
+                                : 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200'
+                            }`}
+                          >
+                            {confirmingCancelAppId === app.id ? (
+                              <>
+                                <Check size={12} />
+                                <span>Confirmar?</span>
+                              </>
+                            ) : (
+                              <>
+                                <AlertCircle size={12} />
+                                <span>Cancelar Agendamento</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-6 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                    <p className="text-xs text-slate-400 font-semibold">Você não tem nenhum agendamento pendente.</p>
+                  </div>
+                )}
+              </div>
 
-                      <div className="self-end sm:self-center flex flex-col items-end gap-2">
-                        <span className={`text-[9px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full ${
-                          app.status === 'concluído' 
-                            ? 'bg-emerald-100 text-emerald-800' 
-                            : app.status === 'cancelado' 
-                            ? 'bg-rose-100 text-rose-800' 
-                            : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {app.status === 'concluído' ? 'Concluído' : app.status === 'cancelado' ? 'Cancelado' : app.status}
-                        </span>
+              <hr className="border-slate-100" />
 
-                        {app.status === 'concluído' && (() => {
-                          const existingReview = myReviews.find(r => r.agendamento_id === app.id);
-                          if (existingReview) {
-                            return (
-                              <div className="flex text-amber-500 gap-0.5 mt-1" title={existingReview.comentario}>
-                                {Array.from({ length: 5 }).map((_, i) => (
-                                  <Star 
-                                    key={i} 
-                                    size={10} 
-                                    fill={i < existingReview.rating ? 'currentColor' : 'none'} 
-                                    className="text-amber-500" 
-                                  />
-                                ))}
-                              </div>
+              {/* Seção 2: Histórico de Atendimentos */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <CheckCircle size={13} className="text-emerald-500" />
+                  Histórico de Atendimentos (Anteriores)
+                </h4>
+
+                {pastAppointments.length > 0 ? (
+                  <div className="space-y-4">
+                    {pastAppointments.map(app => (
+                      <div 
+                        key={app.id} 
+                        className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="flex items-start gap-3.5">
+                          <div className="bg-slate-200/50 p-2.5 rounded-xl text-slate-700 flex flex-col items-center min-w-[50px] font-black">
+                            <span className="text-[8px] uppercase text-slate-500">
+                              {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR }).replace('.', '')}
+                            </span>
+                            <span className="text-sm">
+                              {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'dd')}
+                            </span>
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-black text-slate-800">{app.servico_name}</h4>
+                            <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Profissional: {app.profissional_name}</p>
+                            <div className="flex items-center gap-2 mt-1.5 text-[9px] font-bold">
+                              <span className="text-slate-500 flex items-center gap-0.5 bg-slate-200/50 px-1.5 py-0.5 rounded">
+                                <Clock size={9} /> {app.startTime}
+                              </span>
+                              <span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                R$ {(app.price || 0).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="self-end sm:self-center flex flex-col items-end gap-2">
+                          <span className={`text-[9px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full ${
+                            app.status === 'concluído' 
+                              ? 'bg-emerald-100 text-emerald-800' 
+                              : app.status === 'cancelado' 
+                              ? 'bg-rose-100 text-rose-800' 
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {app.status === 'concluído' ? 'Concluído' : app.status === 'cancelado' ? 'Cancelado' : app.status}
+                          </span>
+
+                          {/* Comanda Button */}
+                          {(() => {
+                            const matchingComanda = clientComandas.find(c => 
+                              c.agendamento_id === app.id || 
+                              c.id === app.comanda_id ||
+                              (c.date === app.date && c.profissional_id === app.profissional_id)
                             );
-                          } else {
+                            if (!matchingComanda) return null;
                             return (
                               <button
-                                onClick={() => {
-                                  setSelectedAppForReview(app);
-                                  setReviewRating(5);
-                                  setReviewComment('');
-                                  setReviewModalOpen(true);
-                                }}
-                                className="text-[10px] bg-amber-500 hover:bg-amber-600 text-white font-black px-2.5 py-1 rounded-xl transition-all flex items-center gap-1 shadow-sm active:scale-95 mt-1"
+                                onClick={() => setSelectedComandaForView(matchingComanda)}
+                                className="text-[10px] bg-slate-200/70 hover:bg-slate-200 text-slate-800 font-extrabold px-2.5 py-1 rounded-xl transition-all flex items-center gap-1 active:scale-95"
                               >
-                                <Star size={10} fill="currentColor" /> Avaliar Barbeiro
+                                <Receipt size={11} className="text-indigo-600" />
+                                Ver Comanda (#{matchingComanda.number || matchingComanda.id.substring(0, 6)})
                               </button>
                             );
-                          }
-                        })()}
+                          })()}
+
+                          {app.status === 'concluído' && (() => {
+                            const existingReview = myReviews.find(r => r.agendamento_id === app.id);
+                            if (existingReview) {
+                              return (
+                                <div className="flex text-amber-500 gap-0.5 mt-1" title={existingReview.comentario}>
+                                  {Array.from({ length: 5 }).map((_, i) => (
+                                    <Star 
+                                      key={i} 
+                                      size={10} 
+                                      fill={i < existingReview.rating ? 'currentColor' : 'none'} 
+                                      className="text-amber-500" 
+                                    />
+                                  ))}
+                                </div>
+                              );
+                            } else {
+                              return (
+                                <button
+                                  onClick={() => {
+                                    setSelectedAppForReview(app);
+                                    setReviewRating(5);
+                                    setReviewComment('');
+                                    setReviewModalOpen(true);
+                                  }}
+                                  className="text-[10px] bg-amber-500 hover:bg-amber-600 text-white font-black px-2.5 py-1 rounded-xl transition-all flex items-center gap-1 shadow-sm active:scale-95 mt-1"
+                                >
+                                  <Star size={10} fill="currentColor" /> Avaliar Barbeiro
+                                </button>
+                              );
+                            }
+                          })()}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="py-12 text-center bg-slate-50/50 border border-dashed border-slate-200 rounded-2xl">
-                  <p className="text-xs text-slate-400 font-semibold">Sua lista de histórico está limpa atualmente.</p>
-                </div>
-              )}
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-12 text-center bg-slate-50/50 border border-dashed border-slate-200 rounded-2xl">
+                    <p className="text-xs text-slate-400 font-semibold">Sua lista de histórico está limpa atualmente.</p>
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
 
-          {/* TAB: FIDELIDADE */}
-          {activeTab === 'fidelidade' && (
-            <motion.div 
-              key="fidelidade"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12, ease: 'easeOut' }}
-              className="space-y-6"
-            >
-              {/* Rules and Explanation card */}
-              <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
-                <div className="flex items-center gap-3">
-                  <div className="bg-amber-100 p-3 rounded-2xl text-amber-600">
-                    <Award size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-black tracking-tight text-slate-800">Programa de Cashback & Fidelidade</h3>
-                    <p className="text-xs text-slate-500 font-semibold mt-0.5">Veja como funciona e acompanhe seus pontos de retorno.</p>
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-bold text-slate-600">
-                  {/* How to accumulate points (Only if points are enabled) */}
-                  {((loyaltyConfig?.pointsPerReal || 0) > 0 || (loyaltyConfig?.pointsPerAppointment || 0) > 0) ? (
-                    <div className="bg-slate-50 p-4 rounded-2xl space-y-1 border border-indigo-100/30">
-                      <p className="text-[10px] text-indigo-600 font-black uppercase tracking-wider">Como Acumular Pontos</p>
-                      <p className="text-slate-800 font-semibold leading-relaxed">
-                        {(loyaltyConfig?.pointsPerReal || 0) > 0 && `Cada R$ 1,00 gasto gera ${loyaltyConfig.pointsPerReal} ${loyaltyConfig.pointsPerReal === 1 ? 'ponto' : 'pontos'}. `}
-                        {(loyaltyConfig?.pointsPerAppointment || 0) > 0 && `Cada atendimento concluído gera +${loyaltyConfig.pointsPerAppointment} pontos bônus.`}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="bg-slate-50 p-4 rounded-2xl space-y-1 opacity-70">
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Programa de Pontos</p>
-                      <p className="text-slate-400 font-semibold">Esta unidade não utiliza acúmulo de pontos tradicionais no momento.</p>
-                    </div>
-                  )}
-
-                  {/* Cashback Percentage (Only if enabled) */}
-                  {(loyaltyConfig?.cashbackPercentage || 0) > 0 ? (
-                    <div className="bg-slate-50 p-4 rounded-2xl space-y-1 border border-amber-100/30">
-                      <p className="text-[10px] text-amber-600 font-black uppercase tracking-wider">Seu Retorno (Cashback)</p>
-                      <p className="text-slate-800 font-semibold leading-relaxed">
-                        Você recebe {loyaltyConfig.cashbackPercentage}% de cashback direto sobre o valor pago de cada atendimento realizado nesta unidade.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="bg-slate-50 p-4 rounded-2xl space-y-1 opacity-70">
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Cashback (%)</p>
-                      <p className="text-slate-400 font-semibold">Esta unidade não oferece cashback percentual ativo no momento.</p>
-                    </div>
-                  )}
-
-                  {/* How to redeem/use */}
-                  <div className="bg-slate-50 p-4 rounded-2xl space-y-1 border border-emerald-100/30">
-                    <p className="text-[10px] text-emerald-600 font-black uppercase tracking-wider">Como Utilizar o Retorno</p>
-                    <p className="text-slate-800 font-semibold leading-relaxed">
-                      {(loyaltyConfig?.minRedemptionPoints || 0) > 0 ? `Necessário acumular no mínimo ${loyaltyConfig.minRedemptionPoints} pontos para liberar resgates. ` : ''}
-                      Basta avisar ao seu profissional na hora do pagamento para descontar diretamente o saldo acumulado!
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* History list of Loyalty Points */}
-              <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-                <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Extrato de Pontos</h3>
-                
-                <div className="bg-slate-50/50 rounded-2xl p-4 text-center border border-slate-100">
-                  <p className="text-xs font-black text-slate-700">Seu Saldo Consolidado</p>
-                  <div className="mt-2 flex justify-center items-center gap-6">
-                    <div>
-                      <p className="text-2xl font-black text-amber-500">R$ {loyalty?.cashback?.toFixed(2) || '0,00'}</p>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Cashback</p>
-                    </div>
-                    <div className="w-px h-8 bg-slate-200" />
-                    <div>
-                      <p className="text-2xl font-black text-indigo-600">{loyalty?.points || 0}</p>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Pontos Totais</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-            </motion.div>
-          )}
 
           {/* TAB: PACOTES */}
           {activeTab === 'pacotes' && (
@@ -2253,36 +2303,48 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
                 {/* Expired/Past Due subscriptions Alert */}
                 {subscriptions.filter(s => s.status !== 'active').length > 0 && (
-                  <div className="bg-red-50 border border-red-100 p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-pulse">
+                  <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-rose-600 text-white p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md">
                     <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center text-red-600 flex-shrink-0">
-                        <AlertCircle size={20} />
+                      <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-white flex-shrink-0">
+                        <AlertCircle size={22} />
                       </div>
                       <div>
-                        <h4 className="text-sm font-black text-red-950">Assinatura Vencida ou Suspensa</h4>
-                        <p className="text-xs text-red-700 font-bold mt-1">
-                          Sua assinatura do plano <span className="underline font-black">{subscriptions.find(s => s.status !== 'active')?.planName}</span> está inativa, vencida ou suspensa.
+                        <h4 className="text-sm font-black tracking-tight text-white">Assinatura Pendente de Renovação</h4>
+                        <p className="text-xs text-amber-100 font-medium mt-0.5">
+                          Sua assinatura do plano <span className="underline font-black text-white">{subscriptions.find(s => s.status !== 'active')?.planName}</span> está inativa ou aguardando pagamento.
                         </p>
-                        <p className="text-[10px] text-red-600 font-semibold mt-1">
-                          ⚠️ O agendamento de novos atendimentos está BLOQUEADO até a regularização.
+                        <p className="text-[10px] text-amber-200 font-bold mt-1">
+                          ⚡ Clique abaixo para gerar a segunda via PIX ou renovar no cartão e reativar seus benefícios na hora!
                         </p>
                       </div>
                     </div>
                     {(() => {
                       const expiredSub = subscriptions.find(s => s.status !== 'active');
-                      const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
-                      const waText = encodeURIComponent(`Olá! Minha assinatura do plano "${expiredSub?.planName}" está vencida ou pendente de renovação. Gostaria de regularizar para reativar meu clube de benefícios e liberar meus agendamentos!`);
-                      const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
+                      if (!expiredSub) return null;
+                      const expPlanObj = availablePlans.find(p => p.id === expiredSub.plano_id);
+                      const expAllowed = expPlanObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
+                      const expSupportsPix = expAllowed.includes('PIX');
+                      const expSupportsCard = expAllowed.includes('CREDIT_CARD');
+
+                      const handleQuickRenew = () => {
+                        if (expSupportsCard && !expSupportsPix) {
+                          setClientCardModalSub(expiredSub);
+                        } else if (expSupportsPix && !expSupportsCard) {
+                          handleClientPayPix(expiredSub);
+                        } else {
+                          setRenewalModalSub(expiredSub);
+                        }
+                      };
 
                       return (
-                        <a 
-                          href={waUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shadow-md self-start sm:self-center"
-                        >
-                          <Phone size={12} /> Regularizar Plano
-                        </a>
+                        <div className="flex items-center gap-2 flex-wrap self-start sm:self-center">
+                          <button 
+                            onClick={handleQuickRenew}
+                            className="px-4 py-3 bg-slate-950 hover:bg-slate-900 text-amber-400 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer active:scale-95"
+                          >
+                            <RefreshCw size={14} className="animate-spin-slow" /> Renovar Agora
+                          </button>
+                        </div>
                       );
                     })()}
                   </div>
@@ -2293,11 +2355,22 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     {subscriptions.map(sub => {
                       const isActive = sub.status === 'active';
                       const isPending = sub.status === 'pending';
-                      const statusColor = isPending ? 'bg-amber-500 text-white' : (isActive ? 'bg-emerald-600 text-white' : 'bg-red-500 text-white');
-                      const statusLabel = isPending ? 'Aguardando Pagamento' : (isActive ? 'Plano Ativo' : 'Expirado / Pendente');
+                      const isOverdue = sub.status === 'overdue' || sub.status === 'expired' || sub.status === 'suspended';
+                      const statusColor = isPending ? 'bg-amber-500 text-white' : (isActive ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white');
+                      const statusLabel = isPending ? 'Aguardando Pagamento' : (isActive ? 'Plano Ativo' : 'Vencida / Em Atraso');
+
+                      const planObj = availablePlans.find(p => p.id === sub.plano_id);
+                      const maxCuts = planObj?.haircutsPerMonth ?? 999;
+                      const maxBeards = planObj?.beardsPerMonth ?? 999;
+
+                      const cutsUnlimited = maxCuts >= 99 || maxCuts === 0;
+                      const beardsUnlimited = maxBeards >= 99 || maxBeards === 0;
+
+                      const cutsPercent = cutsUnlimited ? 100 : Math.min(100, (sub.haircutsUsed / (maxCuts || 1)) * 100);
+                      const beardsPercent = beardsUnlimited ? 100 : Math.min(100, (sub.beardsUsed / (maxBeards || 1)) * 100);
 
                       return (
-                        <div key={sub.id} className="bg-gradient-to-br from-slate-50 to-indigo-50/20 border border-slate-200 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm space-y-4">
+                        <div key={sub.id} className="bg-gradient-to-br from-slate-50 to-indigo-50/20 border border-slate-200 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm space-y-5">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/50 pb-4">
                             <div>
                               <div className="flex items-center gap-2">
@@ -2305,58 +2378,144 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                 <span className="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Clube de Assinatura</span>
                               </div>
                               <p className="text-[10px] text-slate-500 font-bold mt-1">
-                                Início: {sub.startDate ? format(parse(sub.startDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''} • Próxima Cobrança: <span className="text-slate-800 font-black">{sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</span>
+                                Vigência do Ciclo: {sub.startDate ? format(parse(sub.startDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''} até <span className="text-slate-800 font-black">{sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</span>
                               </p>
                               <p className="text-[10px] text-slate-500 font-bold mt-0.5">
-                                Método de Pagamento: <span className="text-slate-800 font-black">{sub.paymentMethod === 'pix' ? 'PIX' : 'Cartão de Crédito Recorrente (Asaas)'}</span>
+                                Método de Cobrança: <span className="text-slate-800 font-black">{sub.paymentMethod === 'pix' || sub.billingType === 'PIX' ? 'PIX Recorrente' : 'Cartão de Crédito Recorrente (Asaas)'}</span>
                               </p>
                             </div>
-                            <span className={`${statusColor} font-black text-xs px-3 py-1.5 rounded-xl shadow-sm`}>{statusLabel}</span>
+                            <span className={`${statusColor} font-black text-xs px-3 py-1.5 rounded-xl shadow-sm self-start sm:self-center`}>{statusLabel}</span>
                           </div>
 
-                          {/* Consumption counters */}
+                          {/* Consumption progress meters */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-1">
-                              <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Cortes Utilizados no Mês</p>
-                              <p className="text-lg font-black text-slate-800">{sub.haircutsUsed} Utilizados</p>
+                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
+                              <div className="flex justify-between items-center text-xs font-bold">
+                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Cortes de Cabelo</span>
+                                <span className="text-indigo-600 font-black">
+                                  {sub.haircutsUsed} / {cutsUnlimited ? 'Ilimitados' : maxCuts}
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                <div className="bg-indigo-600 h-full transition-all duration-500" style={{ width: `${cutsPercent}%` }} />
+                              </div>
+                              <p className="text-[9px] text-slate-400 font-semibold">
+                                {cutsUnlimited ? 'Aproveite seus cortes ilimitados no ciclo.' : `${Math.max(0, maxCuts - sub.haircutsUsed)} cortes restantes até a renovação.`}
+                              </p>
                             </div>
-                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-1">
-                              <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Barbas Utilizadas no Mês</p>
-                              <p className="text-lg font-black text-slate-800">{sub.beardsUsed} Utilizadas</p>
+
+                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
+                              <div className="flex justify-between items-center text-xs font-bold">
+                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Serviços de Barba</span>
+                                <span className="text-amber-600 font-black">
+                                  {sub.beardsUsed} / {beardsUnlimited ? 'Ilimitadas' : maxBeards}
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${beardsPercent}%` }} />
+                              </div>
+                              <p className="text-[9px] text-slate-400 font-semibold">
+                                {beardsUnlimited ? 'Aproveite suas barbas ilimitadas no ciclo.' : `${Math.max(0, maxBeards - sub.beardsUsed)} barbas restantes até a renovação.`}
+                              </p>
                             </div>
                           </div>
 
-                          {/* Action Buttons for Update Card and Pay via PIX */}
+                          {/* Action Buttons */}
                           <div className="pt-3 border-t border-slate-200/50 flex flex-wrap items-center justify-between gap-3">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <button
-                                type="button"
-                                onClick={() => setClientCardModalSub(sub)}
-                                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <CreditCard size={13} />
-                                <span>Atualizar Cartão</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleClientPayPix(sub)}
-                                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <QrCode size={13} />
-                                <span>Pagar via PIX</span>
-                              </button>
                               {(() => {
-                                const planObj = availablePlans.find(p => p.id === sub.plano_id);
+                                const allowedPaymentMethods = planObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
+                                const supportsPix = allowedPaymentMethods.includes('PIX');
+                                const supportsCard = allowedPaymentMethods.includes('CREDIT_CARD');
+
+                                if (isActive) {
+                                  return (
+                                    <>
+                                      {supportsCard && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setClientCardModalSub(sub)}
+                                          className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <CreditCard size={13} />
+                                          <span>Gerenciar Cartão de Crédito</span>
+                                        </button>
+                                      )}
+                                    </>
+                                  );
+                                }
+
+                                // If subscription is overdue, expired, pending, or suspended (NOT active)
+                                return (
+                                  <>
+                                    {supportsCard && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCheckAsaasStatus(sub)}
+                                          disabled={checkingStatusSubId === sub.id}
+                                          className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                        >
+                                          {checkingStatusSubId === sub.id ? (
+                                            <RefreshCw size={13} className="animate-spin" />
+                                          ) : (
+                                            <RefreshCw size={13} />
+                                          )}
+                                          <span>Tentar Cobrar Novamente</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => setClientCardModalSub(sub)}
+                                          className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <CreditCard size={13} />
+                                          <span>Atualizar Cartão & Cobrar</span>
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {supportsPix && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleClientPayPix(sub)}
+                                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                                      >
+                                        <QrCode size={13} />
+                                        <span>Pagar Segunda Via (PIX)</span>
+                                      </button>
+                                    )}
+
+                                    {supportsPix && !supportsCard && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCheckAsaasStatus(sub)}
+                                        disabled={checkingStatusSubId === sub.id}
+                                        className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                      >
+                                        {checkingStatusSubId === sub.id ? (
+                                          <RefreshCw size={13} className="animate-spin" />
+                                        ) : (
+                                          <CheckCircle size={13} className="text-emerald-600" />
+                                        )}
+                                        <span>Verificar Status</span>
+                                      </button>
+                                    )}
+                                  </>
+                                );
+                              })()}
+
+                              {(() => {
                                 const canCancel = (sub as any).allowClientCancel !== false && (planObj?.allowClientCancel !== false);
                                 if (!canCancel) return null;
                                 return (
                                   <button
                                     type="button"
                                     onClick={() => setSubToCancel(sub)}
-                                    className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                                    className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
                                   >
                                     <Trash2 size={13} />
-                                    <span>Cancelar Assinatura</span>
+                                    <span>Cancelar</span>
                                   </button>
                                 );
                               })()}
@@ -2389,87 +2548,142 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                 )}
               </div>
 
-              {/* Discover/Explore plans */}
-              <div id="discover-subscriptions" className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
-                <div>
-                  <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
-                    <Star className="text-amber-500" size={20} />
-                    Faça Parte do Nosso Clube de Assinatura!
-                  </h3>
-                  <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                    Visitas recorrentes inclusas em uma mensalidade fixa para você ficar sempre no estilo, sem preocupações com pagamentos individuais.
-                  </p>
-                </div>
+              {/* Histórico de Faturas & Recibos de Pagamento */}
+              {subscriptionInvoices.length > 0 && (
+                <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-black tracking-tight flex items-center gap-2 text-slate-800">
+                        <Receipt className="text-indigo-500" size={18} />
+                        Histórico de Faturas & Recibos
+                      </h3>
+                      <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                        Consulte as mensalidades quitadas e comprovantes do seu clube de assinatura.
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
+                      {subscriptionInvoices.length} {subscriptionInvoices.length === 1 ? 'fatura' : 'faturas'}
+                    </span>
+                  </div>
 
-                {availablePlans.filter(p => p.status === 'active' || p.status === undefined).length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {availablePlans.filter(p => p.status === 'active' || p.status === undefined).map(plan => {
-                      const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
-                      const waText = encodeURIComponent(`Olá! Sou o cliente ${profile.nome} e tenho muito interesse em fazer parte do Clube de Assinatura assinando o plano "${plan.name}" (R$ ${plan.price.toFixed(2)}/mês) na Barbearia!`);
-                      const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
-
-                      return (
-                        <div key={plan.id} className="border border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-emerald-200 p-6 rounded-2xl flex flex-col justify-between transition-all group relative overflow-hidden">
-                          <div>
-                            <h4 className="text-base font-black text-slate-800 group-hover:text-emerald-950 transition-colors">{plan.name}</h4>
-                            <p className="text-xs text-slate-500 font-semibold mt-1">{plan.description || 'Plano de assinatura completo'}</p>
-                            
-                            <div className="mt-4">
-                              <span className="text-3xl font-black text-emerald-600">R$ {plan.price.toFixed(2)}</span>
-                              <span className="text-xs font-bold text-slate-400"> / mês</span>
-                            </div>
-
-                            {/* Plan Benefits */}
-                            <div className="mt-5 space-y-2 border-t border-slate-100 pt-4">
-                              <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">O que está incluso:</p>
-                              
-                              <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                                <Check size={14} className="text-emerald-500 flex-shrink-0" />
-                                <span>{plan.haircutsPerMonth > 99 ? 'Cortes de Cabelo Ilimitados' : `${plan.haircutsPerMonth} Cortes de Cabelo / mês`}</span>
-                              </div>
-
-                              <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                                <Check size={14} className="text-emerald-500 flex-shrink-0" />
-                                <span>{plan.beardsPerMonth > 99 ? 'Serviços de Barba Ilimitados' : `${plan.beardsPerMonth} Serviços de Barba / mês`}</span>
-                              </div>
-
-                              {plan.extraBenefits && plan.extraBenefits.map((benefit: string, idx: number) => (
-                                <div key={idx} className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                                  <Check size={14} className="text-emerald-500 flex-shrink-0" />
-                                  <span>{benefit}</span>
-                                </div>
-                              ))}
-                            </div>
+                  <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
+                    {subscriptionInvoices.map((inv) => (
+                      <div key={inv.id} className="p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                            <CheckCircle size={18} />
                           </div>
-
-                          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedPlanForCheckout(plan)}
-                              className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer"
-                            >
-                              <CreditCard size={14} /> Assinar Online (Checkout)
-                            </button>
-                            <a 
-                              href={waUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              title="Falar via WhatsApp"
-                              className="p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 rounded-xl transition-all flex items-center justify-center shadow-sm active:scale-95"
-                            >
-                              <Phone size={14} />
-                            </a>
+                          <div>
+                            <h4 className="text-xs font-black text-slate-800">
+                              {inv.description || 'Pagamento de Assinatura'}
+                            </h4>
+                            <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                              Data: {inv.date ? format(parse(inv.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''} • Método: <span className="uppercase text-slate-600 font-bold">{inv.paymentMethod || 'PIX'}</span>
+                            </p>
                           </div>
                         </div>
-                      );
-                    })}
+
+                        <div className="flex items-center justify-between sm:justify-end gap-3">
+                          <span className="text-sm font-black text-emerald-600">
+                            R$ {(inv.amount || 0).toFixed(2)}
+                          </span>
+                          <button
+                            onClick={() => setSelectedInvoiceForView(inv)}
+                            className="text-[10px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                          >
+                            <FileText size={12} />
+                            Recibo
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ) : (
-                  <div className="py-6 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
-                    <p className="text-xs text-slate-400 font-semibold">Não há planos de assinatura cadastrados nesta barbearia no momento.</p>
+                </div>
+              )}
+
+              {/* Discover/Explore plans */}
+              {!subscriptions.some(s => s.status === 'active') && (
+                <div id="discover-subscriptions" className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
+                  <div>
+                    <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
+                      <Star className="text-amber-500" size={20} />
+                      Faça Parte do Nosso Clube de Assinatura!
+                    </h3>
+                    <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                      Visitas recorrentes inclusas em uma mensalidade fixa para você ficar sempre no estilo, sem preocupações com pagamentos individuais.
+                    </p>
                   </div>
-                )}
-              </div>
+
+                  {availablePlans.filter(p => p.status === 'active' || p.status === undefined).length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {availablePlans.filter(p => p.status === 'active' || p.status === undefined).map(plan => {
+                        const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
+                        const waText = encodeURIComponent(`Olá! Sou o cliente ${profile.nome} e tenho muito interesse em fazer parte do Clube de Assinatura assinando o plano "${plan.name}" (R$ ${plan.price.toFixed(2)}/mês) na Barbearia!`);
+                        const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
+
+                        return (
+                          <div key={plan.id} className="border border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-emerald-200 p-6 rounded-2xl flex flex-col justify-between transition-all group relative overflow-hidden">
+                            <div>
+                              <h4 className="text-base font-black text-slate-800 group-hover:text-emerald-950 transition-colors">{plan.name}</h4>
+                              <p className="text-xs text-slate-500 font-semibold mt-1">{plan.description || 'Plano de assinatura completo'}</p>
+                              
+                              <div className="mt-4">
+                                <span className="text-3xl font-black text-emerald-600">R$ {plan.price.toFixed(2)}</span>
+                                <span className="text-xs font-bold text-slate-400"> / mês</span>
+                              </div>
+
+                              {/* Plan Benefits */}
+                              <div className="mt-5 space-y-2 border-t border-slate-100 pt-4">
+                                <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">O que está incluso:</p>
+                                
+                                <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                  <Check size={14} className="text-emerald-500 flex-shrink-0" />
+                                  <span>{plan.haircutsPerMonth > 99 ? 'Cortes de Cabelo Ilimitados' : `${plan.haircutsPerMonth} Cortes de Cabelo / mês`}</span>
+                                </div>
+
+                                <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                  <Check size={14} className="text-emerald-500 flex-shrink-0" />
+                                  <span>{plan.beardsPerMonth > 99 ? 'Serviços de Barba Ilimitados' : `${plan.beardsPerMonth} Serviços de Barba / mês`}</span>
+                                </div>
+
+                                {plan.extraBenefits && plan.extraBenefits.map((benefit: string, idx: number) => (
+                                  <div key={idx} className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                    <Check size={14} className="text-emerald-500 flex-shrink-0" />
+                                    <span>{benefit}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPlanForCheckout(plan)}
+                                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer"
+                              >
+                                <CreditCard size={14} /> Assinar Online (Checkout)
+                              </button>
+                              <a 
+                                href={waUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Falar via WhatsApp"
+                                className="p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 rounded-xl transition-all flex items-center justify-center shadow-sm active:scale-95"
+                              >
+                                <Phone size={14} />
+                              </a>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                      <p className="text-xs text-slate-400 font-semibold">Não há planos de assinatura cadastrados nesta barbearia no momento.</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -2483,124 +2697,251 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
-              {/* Header Banner */}
-              <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 rounded-[32px] p-6 md:p-8 text-white relative overflow-hidden shadow-xl border border-indigo-800/40">
-                <div className="absolute top-0 right-0 p-6 opacity-10 text-amber-400 pointer-events-none">
-                  <Coins size={160} />
-                </div>
+              {(() => {
+                const mode = loyaltyConfig?.loyaltyMode || 'saldo';
+                const isEnabled = loyaltyConfig?.cashbackEnabled !== false;
+                const minVal = loyaltyConfig?.minRedemptionValue || 0;
+                const minPts = loyaltyConfig?.minRedemptionPoints || 0;
+                const currentCashback = loyalty?.cashback || 0;
+                const currentPoints = loyalty?.points || 0;
 
-                <div className="relative z-10 space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-8 h-8 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-400 flex items-center justify-center font-bold">
-                        <Award size={18} />
-                      </span>
-                      <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">
-                        Programa de Cashback
-                      </span>
-                    </div>
-                    {loyaltyConfig?.cashbackEnabled !== false ? (
-                      <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-black uppercase tracking-widest rounded-full flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> Programa Ativo ({loyaltyConfig?.cashbackPercentage ?? 5}%)
-                      </span>
-                    ) : (
-                      <span className="px-3 py-1 bg-slate-800 text-slate-400 border border-slate-700 text-[9px] font-black uppercase tracking-widest rounded-full">
-                        Programa Inativo
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Stats Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-                    {/* Cashback Balance Card */}
-                    <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-5 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-300/80">
-                          Seu Saldo de Cashback
-                        </span>
-                        <Coins size={18} className="text-amber-400" />
+                return (
+                  <>
+                    {/* Header Banner */}
+                    <div className={`rounded-[32px] p-6 md:p-8 text-white relative overflow-hidden shadow-xl border ${
+                      mode === 'saldo'
+                        ? 'bg-gradient-to-br from-amber-950 via-slate-900 to-amber-900 border-amber-800/40'
+                        : 'bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 border-indigo-800/40'
+                    }`}>
+                      <div className="absolute top-0 right-0 p-6 opacity-10 text-white pointer-events-none">
+                        {mode === 'saldo' ? <Coins size={160} /> : <Award size={160} />}
                       </div>
-                      <p className="text-3xl font-black text-amber-300 tracking-tight">
-                        R$ {(loyalty?.cashback || 0).toFixed(2)}
-                      </p>
-                      <p className="text-[10px] font-semibold text-slate-300">
-                        Disponível para descontar no seu próximo atendimento
-                      </p>
-                    </div>
 
-                    {/* Total Spent Card */}
-                    <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-5 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200/80">
-                          Total Gasto na Barbearia
-                        </span>
-                        <TrendingUp size={18} className="text-emerald-400" />
-                      </div>
-                      <p className="text-3xl font-black text-white tracking-tight">
-                        R$ {totalSpent.toFixed(2)}
-                      </p>
-                      <p className="text-[10px] font-semibold text-slate-300">
-                        Acumulado em atendimentos concluídos
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Rule explanation box */}
-                  <div className="p-4 bg-indigo-900/50 border border-indigo-700/50 rounded-2xl flex items-start gap-3 text-xs font-semibold text-indigo-100">
-                    <Zap size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
-                    <p>
-                      <strong className="text-white">Como funciona?</strong> Você recebe <span className="text-amber-300 font-bold">{loyaltyConfig?.cashbackPercentage ?? 5}% de cashback</span> de volta sobre o valor gasto em cada atendimento ou comanda finalizada nesta barbearia!
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Statement / History Section */}
-              <div className="bg-white rounded-[32px] border border-slate-100 p-6 md:p-8 space-y-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <History size={18} className="text-indigo-600" />
-                    <h3 className="text-sm font-black text-slate-800 tracking-tight">Extrato de Cashback</h3>
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                    {loyaltyHistory.length} {loyaltyHistory.length === 1 ? 'registro' : 'registros'}
-                  </span>
-                </div>
-
-                {loyaltyHistory.length > 0 ? (
-                  <div className="divide-y divide-slate-100">
-                    {loyaltyHistory.map((item, idx) => (
-                      <div key={item.id || idx} className="py-3.5 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold ${
-                            item.type === 'earn' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
-                          }`}>
-                            {item.type === 'earn' ? '+' : '-'}
+                      <div className="relative z-10 space-y-6">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border ${
+                              mode === 'saldo'
+                                ? 'bg-amber-400/20 border-amber-400/40 text-amber-400'
+                                : 'bg-indigo-400/20 border-indigo-400/40 text-indigo-400'
+                            }`}>
+                              {mode === 'saldo' ? <Coins size={18} /> : <Award size={18} />}
+                            </span>
+                            <span className={`text-[10px] font-black uppercase tracking-widest ${
+                              mode === 'saldo' ? 'text-amber-300' : 'text-indigo-300'
+                            }`}>
+                              {mode === 'saldo' ? 'Programa de Saldo & Cashback' : 'Clube de Pontos & Fidelidade'}
+                            </span>
                           </div>
+                          {isEnabled ? (
+                            <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-black uppercase tracking-widest rounded-full flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> 
+                              {mode === 'saldo' 
+                                ? (loyaltyConfig?.cashbackType === 'fixo' 
+                                    ? `Ativo (R$ ${(loyaltyConfig?.cashbackFixedValue ?? 5).toFixed(2)} / visita)`
+                                    : `Ativo (${loyaltyConfig?.cashbackPercentage ?? 5}% de volta)`)
+                                : `Ativo (${loyaltyConfig?.pointsPerReal ?? 1} pt / R$ 1)`}
+                            </span>
+                          ) : (
+                            <span className="px-3 py-1 bg-slate-800 text-slate-400 border border-slate-700 text-[9px] font-black uppercase tracking-widest rounded-full">
+                              Programa Inativo
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                          {/* SALDO MODE CARD */}
+                          {mode === 'saldo' ? (
+                            <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-5 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-amber-300/80">
+                                  Seu Saldo Disponível
+                                </span>
+                                <Coins size={18} className="text-amber-400" />
+                              </div>
+                              <p className="text-3xl font-black text-amber-300 tracking-tight">
+                                R$ {currentCashback.toFixed(2)}
+                              </p>
+                              {minVal > 0 ? (
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex justify-between text-[9px] font-bold text-slate-300">
+                                    <span>Meta para resgate: R$ {minVal.toFixed(2)}</span>
+                                    <span className={currentCashback >= minVal ? 'text-emerald-400 font-black' : 'text-amber-300'}>
+                                      {currentCashback >= minVal ? 'Liberado para uso!' : `Faltam R$ ${(minVal - currentCashback).toFixed(2)}`}
+                                    </span>
+                                  </div>
+                                  <div className="w-full bg-white/20 h-1.5 rounded-full overflow-hidden">
+                                    <div 
+                                      className={`h-full transition-all duration-500 ${currentCashback >= minVal ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                                      style={{ width: `${Math.min(100, (currentCashback / minVal) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-[10px] font-semibold text-slate-300">
+                                  Disponível para abater no pagamento do seu próximo atendimento
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            /* PONTOS MODE CARD */
+                            <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-5 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200/80">
+                                  Seus Pontos Acumulados
+                                </span>
+                                <Award size={18} className="text-indigo-300" />
+                              </div>
+                              <p className="text-3xl font-black text-indigo-200 tracking-tight">
+                                {currentPoints} pts
+                              </p>
+                              {minPts > 0 ? (
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex justify-between text-[9px] font-bold text-slate-300">
+                                    <span>Mínimo para troca: {minPts} pts</span>
+                                    <span className={currentPoints >= minPts ? 'text-emerald-400 font-black' : 'text-indigo-300'}>
+                                      {currentPoints >= minPts ? 'Pronto para resgatar!' : `Faltam ${minPts - currentPoints} pts`}
+                                    </span>
+                                  </div>
+                                  <div className="w-full bg-white/20 h-1.5 rounded-full overflow-hidden">
+                                    <div 
+                                      className={`h-full transition-all duration-500 ${currentPoints >= minPts ? 'bg-emerald-400' : 'bg-indigo-400'}`}
+                                      style={{ width: `${Math.min(100, (currentPoints / minPts) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-[10px] font-semibold text-slate-300">
+                                  Acumule pontos em seus cortes e troque por vantagens exclusivas
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Total Spent Card */}
+                          <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-5 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">
+                                Total Gasto na Barbearia
+                              </span>
+                              <TrendingUp size={18} className="text-emerald-400" />
+                            </div>
+                            <p className="text-3xl font-black text-white tracking-tight">
+                              R$ {totalSpent.toFixed(2)}
+                            </p>
+                            <p className="text-[10px] font-semibold text-slate-300">
+                              Histórico acumulado em atendimentos concluídos
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Rule explanation box */}
+                        <div className="p-4 bg-black/20 border border-white/10 rounded-2xl flex items-start gap-3 text-xs font-semibold text-white/90">
+                          <Zap size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
                           <div>
-                            <p className="text-xs font-bold text-slate-800">{item.description}</p>
-                            <p className="text-[10px] font-medium text-slate-400">{item.date}</p>
+                            <strong className="text-white">Como funciona nesta barbearia?</strong>
+                            {mode === 'saldo' ? (
+                              <p className="mt-0.5 text-slate-200">
+                                {loyaltyConfig?.cashbackType === 'fixo' ? (
+                                  <>Você recebe <span className="text-amber-300 font-bold">R$ {(loyaltyConfig?.cashbackFixedValue ?? 5).toFixed(2)} fixos</span> de volta a cada atendimento finalizado. </>
+                                ) : (
+                                  <>Você recebe <span className="text-amber-300 font-bold">{loyaltyConfig?.cashbackPercentage ?? 5}% de cashback</span> de volta sobre o total gasto em cada serviço. </>
+                                )}
+                                {minVal > 0 && (
+                                  <>O resgate pode ser solicitado quando você atingir no mínimo <span className="text-amber-300 font-bold">R$ {minVal.toFixed(2)}</span> de saldo.</>
+                                )}
+                              </p>
+                            ) : (
+                              <p className="mt-0.5 text-slate-200">
+                                Você ganha <span className="text-indigo-300 font-bold">{loyaltyConfig?.pointsPerReal ?? 1} ponto(s)</span> para cada R$ 1,00 gasto
+                                {(loyaltyConfig?.pointsPerAppointment || 0) > 0 && (
+                                  <>, mais <span className="text-indigo-300 font-bold">+{loyaltyConfig.pointsPerAppointment} pontos bônus</span> por atendimento</>
+                                )}.
+                                {minPts > 0 && (
+                                  <> A pontuação mínima para resgatar recompensas é de <span className="text-indigo-300 font-bold">{minPts} pontos</span>.</>
+                                )}
+                              </p>
+                            )}
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className={`text-xs font-black ${item.type === 'earn' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {item.type === 'earn' ? '+' : '-'}R$ {(item.cashback || 0).toFixed(2)}
-                          </p>
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                            {item.type === 'earn' ? 'Cashback Creditado' : 'Resgatado'}
-                          </span>
-                        </div>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
-                    <Coins className="mx-auto text-slate-300" size={32} />
-                    <p className="text-xs text-slate-500 font-bold">Nenhuma movimentação de cashback registrada ainda.</p>
-                    <p className="text-[10px] text-slate-400 font-medium">Seu cashback acumulado aparecerá aqui ao concluir seus próximos atendimentos.</p>
-                  </div>
-                )}
-              </div>
+                    </div>
+
+                    {/* Statement / History Section */}
+                    <div className="bg-white rounded-[32px] border border-slate-100 p-6 md:p-8 space-y-4 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <History size={18} className="text-indigo-600" />
+                          <h3 className="text-sm font-black text-slate-800 tracking-tight">
+                            {mode === 'saldo' ? 'Extrato de Saldo & Cashback' : 'Extrato de Pontuação'}
+                          </h3>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                          {loyaltyHistory.length} {loyaltyHistory.length === 1 ? 'registro' : 'registros'}
+                        </span>
+                      </div>
+
+                      {loyaltyHistory.length > 0 ? (
+                        <div className="divide-y divide-slate-100">
+                          {loyaltyHistory.map((item, idx) => (
+                            <div key={item.id || idx} className="py-3.5 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold ${
+                                  item.type === 'earn' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
+                                }`}>
+                                  {item.type === 'earn' ? '+' : '-'}
+                                </div>
+                                <div>
+                                  <p className="text-xs font-bold text-slate-800">{item.description}</p>
+                                  <p className="text-[10px] font-medium text-slate-400">{item.date}</p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                {mode === 'saldo' ? (
+                                  <>
+                                    <p className={`text-xs font-black ${item.type === 'earn' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                      {item.type === 'earn' ? '+' : '-'}R$ {(item.cashback || 0).toFixed(2)}
+                                    </p>
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                                      {item.type === 'earn' ? 'Saldo Creditado' : 'Resgatado'}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className={`text-xs font-black ${item.type === 'earn' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                      {item.type === 'earn' ? '+' : '-'}{item.points || 0} pts
+                                    </p>
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                                      {item.type === 'earn' ? 'Pontos Ganhos' : 'Pontos Trocados'}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                          {mode === 'saldo' ? (
+                            <Coins className="mx-auto text-slate-300" size={32} />
+                          ) : (
+                            <Award className="mx-auto text-slate-300" size={32} />
+                          )}
+                          <p className="text-xs text-slate-500 font-bold">
+                            {mode === 'saldo' ? 'Nenhuma movimentação de saldo registrada ainda.' : 'Nenhuma movimentação de pontos registrada ainda.'}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-medium">
+                            {mode === 'saldo'
+                              ? 'Seu saldo acumulado aparecerá aqui ao concluir seus próximos atendimentos.'
+                              : 'Seus pontos acumulados aparecerão aqui ao concluir seus próximos atendimentos.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </motion.div>
           )}
 
@@ -3523,6 +3864,375 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   </button>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Notícia / Comunicado Detalhado */}
+      <AnimatePresence>
+        {announcementModalData && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white max-w-lg w-full rounded-3xl p-6 shadow-2xl space-y-4 border border-slate-100 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <span className={`text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg ${
+                  announcementModalData.category === 'promocao' || announcementModalData.category === 'Promoção'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-indigo-100 text-indigo-800'
+                }`}>
+                  {announcementModalData.category || 'Comunicado'}
+                </span>
+                <button
+                  onClick={() => setAnnouncementModalData(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  {announcementModalData.title}
+                </h3>
+                {announcementModalData.date && (
+                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                    Publicado em: {announcementModalData.date}
+                  </p>
+                )}
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-2xl text-xs text-slate-700 leading-relaxed font-medium whitespace-pre-line border border-slate-100">
+                {announcementModalData.content}
+              </div>
+
+              <button
+                onClick={() => setAnnouncementModalData(null)}
+                className="w-full bg-slate-900 text-white font-extrabold text-xs py-3 rounded-2xl transition-all hover:bg-slate-800 cursor-pointer"
+              >
+                Entendido
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Detalhes da Comanda do Cliente */}
+      <AnimatePresence>
+        {selectedComandaForView && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white max-w-md w-full rounded-3xl p-6 shadow-2xl space-y-5 border border-slate-100 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                    <Receipt size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800">
+                      Comanda #{selectedComandaForView.number || selectedComandaForView.id.substring(0, 6)}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                      Status: {selectedComandaForView.status === 'fechada' ? 'Pago & Fechado' : selectedComandaForView.status}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedComandaForView(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Professional & Client info */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl text-xs space-y-1 text-slate-600 font-medium border border-slate-100">
+                <p><strong className="text-slate-800">Profissional:</strong> {selectedComandaForView.profissional_name}</p>
+                <p><strong className="text-slate-800">Cliente:</strong> {selectedComandaForView.cliente_name}</p>
+              </div>
+
+              {/* Items List (Services & Products) */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider">Itens Consumidos</h4>
+                {selectedComandaForView.items && selectedComandaForView.items.length > 0 ? (
+                  <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
+                    {selectedComandaForView.items.map((item: any, idx: number) => (
+                      <div key={idx} className="p-3 bg-white flex items-center justify-between text-xs">
+                        <div>
+                          <span className="font-bold text-slate-800">{item.name}</span>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-400 font-semibold mt-0.5">
+                            <span>Qtd: {item.quantity || 1}</span>
+                            <span>R$ {(item.unitPrice || 0).toFixed(2)}</span>
+                            {item.isCortesia && (
+                              <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.2 rounded">
+                                Cortesia
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="font-black text-slate-800">
+                          R$ {(item.totalPrice || 0).toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 italic">Nenhum item listado.</p>
+                )}
+              </div>
+
+              {/* Totals Breakdown */}
+              <div className="bg-slate-900 text-white p-4 rounded-2xl space-y-2 text-xs font-bold">
+                {selectedComandaForView.subtotalServices > 0 && (
+                  <div className="flex justify-between text-slate-300">
+                    <span>Subtotal Serviços</span>
+                    <span>R$ {selectedComandaForView.subtotalServices.toFixed(2)}</span>
+                  </div>
+                )}
+                {selectedComandaForView.subtotalProducts > 0 && (
+                  <div className="flex justify-between text-slate-300">
+                    <span>Subtotal Produtos</span>
+                    <span>R$ {selectedComandaForView.subtotalProducts.toFixed(2)}</span>
+                  </div>
+                )}
+                {selectedComandaForView.discount > 0 && (
+                  <div className="flex justify-between text-emerald-400">
+                    <span>Desconto</span>
+                    <span>- R$ {selectedComandaForView.discount.toFixed(2)}</span>
+                  </div>
+                )}
+                {selectedComandaForView.tip > 0 && (
+                  <div className="flex justify-between text-amber-400">
+                    <span>Gorjeta</span>
+                    <span>+ R$ {selectedComandaForView.tip.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="pt-2 border-t border-slate-800 flex justify-between text-sm font-black text-amber-400">
+                  <span>Total Pago</span>
+                  <span>R$ {(selectedComandaForView.totalAmount || selectedComandaForView.paidAmount || 0).toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Payments list */}
+              {selectedComandaForView.payments && selectedComandaForView.payments.length > 0 && (
+                <div className="space-y-1.5 text-xs">
+                  <h4 className="font-black text-slate-700 uppercase tracking-wider text-[10px]">Forma de Pagamento</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedComandaForView.payments.map((p: any, i: number) => (
+                      <span key={i} className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-slate-200">
+                        {p.methodName || p.method || 'Pagamento'}: R$ {(p.amount || 0).toFixed(2)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => setSelectedComandaForView(null)}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs py-3 rounded-2xl transition-all cursor-pointer"
+              >
+                Fechar
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Renovação Direta de Assinatura */}
+      <AnimatePresence>
+        {renewalModalSub && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white max-w-lg w-full rounded-3xl p-6 md:p-8 shadow-2xl space-y-6 border border-slate-100"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center">
+                    <RefreshCw size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800">Renovação de Assinatura</h3>
+                    <p className="text-xs text-slate-500 font-semibold">{renewalModalSub.planName}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setRenewalModalSub(null)}
+                  className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-xs text-slate-600 font-semibold leading-relaxed">
+                  Escolha como deseja efetuar o pagamento da mensalidade para manter seus benefícios ativos e liberar novos agendamentos:
+                </p>
+
+                {/* Renewal options */}
+                <div className="space-y-3">
+                  {(() => {
+                    const rPlanObj = availablePlans.find(p => p.id === renewalModalSub.plano_id);
+                    const rAllowed = rPlanObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
+                    const rSupportsPix = rAllowed.includes('PIX');
+                    const rSupportsCard = rAllowed.includes('CREDIT_CARD');
+
+                    return (
+                      <>
+                        {/* Option 1: PIX */}
+                        {rSupportsPix && (
+                          <div className="p-4 bg-emerald-50/50 border border-emerald-200/80 rounded-2xl flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-emerald-600 text-white rounded-xl">
+                                <QrCode size={18} />
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-black text-slate-800">Pagar via PIX Instantâneo</h4>
+                                <p className="text-[10px] text-slate-500 font-semibold">Gera QR Code e código Copia e Cola imediato</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const sub = renewalModalSub;
+                                setRenewalModalSub(null);
+                                handleClientPayPix(sub);
+                              }}
+                              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-xs shrink-0 cursor-pointer"
+                            >
+                              Gerar PIX
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Option 2: Credit Card */}
+                        {rSupportsCard && (
+                          <div className="p-4 bg-indigo-50/50 border border-indigo-200/80 rounded-2xl flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-indigo-600 text-white rounded-xl">
+                                <CreditCard size={18} />
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-black text-slate-800">Cartão de Crédito Recorrente</h4>
+                                <p className="text-[10px] text-slate-500 font-semibold">Atualize os dados do cartão de crédito no Asaas</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const sub = renewalModalSub;
+                                setRenewalModalSub(null);
+                                setClientCardModalSub(sub);
+                              }}
+                              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-xs shrink-0 cursor-pointer"
+                            >
+                              Usar Cartão
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+
+                  {/* Option 3: Direct Manual Renewal */}
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-slate-800 text-amber-400 rounded-xl">
+                        <ShieldCheck size={18} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800">Renovação Direta (+30 Dias)</h4>
+                        <p className="text-[10px] text-slate-500 font-semibold">Caso já tenha pago na barbearia ou via PIX direto</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleManualRenewSubscription(renewalModalSub)}
+                      disabled={isManualRenewing}
+                      className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-50"
+                    >
+                      {isManualRenewing ? 'Renovando...' : 'Reativar Agora'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setRenewalModalSub(null)}
+                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Comprovante/Recibo de Fatura */}
+      <AnimatePresence>
+        {selectedInvoiceForView && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-950 text-white max-w-sm w-full rounded-3xl p-6 shadow-2xl space-y-5 border border-slate-800 relative overflow-hidden"
+            >
+              {/* Receipt Header */}
+              <div className="text-center space-y-2 border-b border-slate-800 pb-4">
+                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-2xl mx-auto flex items-center justify-center border border-emerald-500/30">
+                  <ShieldCheck size={24} />
+                </div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-200">Comprovante de Pagamento</h3>
+                <p className="text-xs text-emerald-400 font-bold">Mensalidade Quitada com Sucesso</p>
+              </div>
+
+              {/* Receipt Content */}
+              <div className="space-y-3 text-xs bg-slate-900/80 p-4 rounded-2xl border border-slate-800 font-mono">
+                <div className="flex justify-between text-slate-400">
+                  <span>Descrição:</span>
+                  <span className="text-white font-bold">{selectedInvoiceForView.description || 'Assinatura Mensal'}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Data:</span>
+                  <span className="text-white font-bold">
+                    {selectedInvoiceForView.date ? format(parse(selectedInvoiceForView.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Método:</span>
+                  <span className="text-amber-400 font-bold uppercase">{selectedInvoiceForView.paymentMethod || 'PIX'}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Cliente:</span>
+                  <span className="text-white font-bold">{selectedInvoiceForView.cliente_name || profile.nome}</span>
+                </div>
+                <div className="pt-2 border-t border-slate-800 flex justify-between text-sm font-sans font-black text-emerald-400">
+                  <span>Valor Pago:</span>
+                  <span>R$ {(selectedInvoiceForView.amount || 0).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="text-center text-[10px] text-slate-500 font-sans">
+                {tenantInfo?.name || 'Barbearia'} • Clube de Assinatura
+              </div>
+
+              <button
+                onClick={() => setSelectedInvoiceForView(null)}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-white font-black text-xs py-3 rounded-2xl transition-all cursor-pointer"
+              >
+                Fechar Recibo
+              </button>
             </motion.div>
           </div>
         )}

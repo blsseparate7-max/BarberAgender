@@ -1,51 +1,62 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
-import { Dashboard } from './pages/Dashboard';
-import { Agenda } from './pages/Agenda';
-import { Clientes } from './pages/Clientes';
-import { Barbeiros } from './pages/Barbeiros';
-import { Servicos } from './pages/Servicos';
-import { Comandas } from './pages/Comandas';
-import { Financeiro } from './pages/Financeiro';
-import { Comissoes } from './pages/Comissoes';
-import { Relatorios } from './pages/Relatorios';
-import { Estoque } from './pages/Estoque';
-import { Assinaturas } from './pages/Assinaturas';
-import { Pacotes } from './pages/Pacotes';
-import { Fidelidade } from './pages/Fidelidade';
-import { Marketing } from './pages/Marketing';
-import { Insights } from './pages/Insights';
-import { Configuracoes } from './pages/Configuracoes';
 import { PaymentMethodManager } from './components/PaymentMethodManager';
 import { CashWidget } from './components/Financeiro/CashWidget';
-import { LoginPage } from './pages/Login';
-import { RegisterPage } from './pages/Register';
-import { ForgotPasswordPage } from './pages/ForgotPassword';
 import { TabId, Stats } from './types';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { TenantProvider, useTenant } from './contexts/TenantContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Lock } from 'lucide-react';
 import { PagePlaceholder } from './components/PagePlaceholder';
-
-// Novas importações de submenus solicitados
-import { Tipos } from './pages/Tipos';
-import { Combos } from './pages/Combos';
-import { MensagensUsuarios } from './pages/MensagensUsuarios';
-import { NoticiasPromocoes } from './pages/NoticiasPromocoes';
-import { PesquisaSatisfacao } from './pages/PesquisaSatisfacao';
-import { Lembretes } from './pages/Lembretes';
-import { CuponsDesconto } from './pages/CuponsDesconto';
-import { LandingPage } from './pages/LandingPage';
-import { PortalCliente } from './pages/PortalCliente';
-import { PortalBarbeiro } from './pages/PortalBarbeiro';
-import PortalSaaSAdmin from './pages/PortalSaaSAdmin';
 import { OnboardingWelcome } from './components/OnboardingWelcome';
 import { MobileBottomNav } from './components/MobileBottomNav';
+
+// Code-split dynamic page imports with React.lazy
+const Dashboard = React.lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Agenda = React.lazy(() => import('./pages/Agenda').then(m => ({ default: m.Agenda })));
+const Clientes = React.lazy(() => import('./pages/Clientes').then(m => ({ default: m.Clientes })));
+const Barbeiros = React.lazy(() => import('./pages/Barbeiros').then(m => ({ default: m.Barbeiros })));
+const Servicos = React.lazy(() => import('./pages/Servicos').then(m => ({ default: m.Servicos })));
+const Comandas = React.lazy(() => import('./pages/Comandas').then(m => ({ default: m.Comandas })));
+const Financeiro = React.lazy(() => import('./pages/Financeiro').then(m => ({ default: m.Financeiro })));
+const Comissoes = React.lazy(() => import('./pages/Comissoes').then(m => ({ default: m.Comissoes })));
+const Relatorios = React.lazy(() => import('./pages/Relatorios').then(m => ({ default: m.Relatorios })));
+const Estoque = React.lazy(() => import('./pages/Estoque').then(m => ({ default: m.Estoque })));
+const Assinaturas = React.lazy(() => import('./pages/Assinaturas').then(m => ({ default: m.Assinaturas })));
+const Pacotes = React.lazy(() => import('./pages/Pacotes').then(m => ({ default: m.Pacotes })));
+const Fidelidade = React.lazy(() => import('./pages/Fidelidade').then(m => ({ default: m.Fidelidade })));
+const Marketing = React.lazy(() => import('./pages/Marketing').then(m => ({ default: m.Marketing })));
+const Insights = React.lazy(() => import('./pages/Insights').then(m => ({ default: m.Insights })));
+const Configuracoes = React.lazy(() => import('./pages/Configuracoes').then(m => ({ default: m.Configuracoes })));
+const LoginPage = React.lazy(() => import('./pages/Login').then(m => ({ default: m.LoginPage })));
+const RegisterPage = React.lazy(() => import('./pages/Register').then(m => ({ default: m.RegisterPage })));
+const ForgotPasswordPage = React.lazy(() => import('./pages/ForgotPassword').then(m => ({ default: m.ForgotPasswordPage })));
+const Tipos = React.lazy(() => import('./pages/Tipos').then(m => ({ default: m.Tipos })));
+const Combos = React.lazy(() => import('./pages/Combos').then(m => ({ default: m.Combos })));
+const MensagensUsuarios = React.lazy(() => import('./pages/MensagensUsuarios').then(m => ({ default: m.MensagensUsuarios })));
+const NoticiasPromocoes = React.lazy(() => import('./pages/NoticiasPromocoes').then(m => ({ default: m.NoticiasPromocoes })));
+const PesquisaSatisfacao = React.lazy(() => import('./pages/PesquisaSatisfacao').then(m => ({ default: m.PesquisaSatisfacao })));
+const Lembretes = React.lazy(() => import('./pages/Lembretes').then(m => ({ default: m.Lembretes })));
+const CuponsDesconto = React.lazy(() => import('./pages/CuponsDesconto').then(m => ({ default: m.CuponsDesconto })));
+const LandingPage = React.lazy(() => import('./pages/LandingPage').then(m => ({ default: m.LandingPage })));
+const PortalCliente = React.lazy(() => import('./pages/PortalCliente').then(m => ({ default: m.PortalCliente })));
+const PortalBarbeiro = React.lazy(() => import('./pages/PortalBarbeiro').then(m => ({ default: m.PortalBarbeiro })));
+const PortalSaaSAdmin = React.lazy(() => import('./pages/PortalSaaSAdmin'));
+
+const PageLoadingFallback = () => (
+  <div className="flex items-center justify-center min-h-[350px] w-full p-8">
+    <div className="flex flex-col items-center gap-3">
+      <Loader2 className="animate-spin text-accent w-9 h-9" />
+      <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+        Carregando...
+      </span>
+    </div>
+  </div>
+);
 
 const initialStats: Stats = {
   revenue: 12450.00,
@@ -127,54 +138,50 @@ function MainApp() {
   }
 
   if (!user) {
-    if (showLanding) {
-      return (
-        <LandingPage 
-          activeTenant={tenant}
-          onSelectRole={(roleType) => {
-            if (roleType === 'dono-registro') {
-              setInitialRegisterRole('admin');
-              setAuthView('register');
-              setShowLanding(false);
-            } else if (roleType === 'cliente') {
-              setInitialRegisterRole('cliente');
-              setAuthView('login');
-              setShowLanding(false);
-            } else if (roleType === 'cliente-registro') {
-              setInitialRegisterRole('cliente');
-              setAuthView('register');
-              setShowLanding(false);
-            } else { // 'profissional'
-              setInitialRegisterRole('cliente');
-              setAuthView('login');
-              setShowLanding(false);
-            }
-          }}
-        />
-      );
-    }
-
-    if (authView === 'register') {
-      return (
-        <RegisterPage 
-          initialRole={initialRegisterRole}
-          onLoginClick={() => setAuthView('login')} 
-          onBackToLanding={() => setShowLanding(true)}
-        />
-      );
-    }
-    if (authView === 'forgot') {
-      return <ForgotPasswordPage onLoginClick={() => setAuthView('login')} />;
-    }
     return (
-      <LoginPage 
-        onRegisterClick={() => {
-          setInitialRegisterRole('cliente');
-          setAuthView('register');
-        }} 
-        onForgotClick={() => setAuthView('forgot')}
-        onBackToLanding={() => setShowLanding(true)}
-      />
+      <Suspense fallback={<PageLoadingFallback />}>
+        {showLanding ? (
+          <LandingPage 
+            activeTenant={tenant}
+            onSelectRole={(roleType) => {
+              if (roleType === 'dono-registro') {
+                setInitialRegisterRole('admin');
+                setAuthView('register');
+                setShowLanding(false);
+              } else if (roleType === 'cliente') {
+                setInitialRegisterRole('cliente');
+                setAuthView('login');
+                setShowLanding(false);
+              } else if (roleType === 'cliente-registro') {
+                setInitialRegisterRole('cliente');
+                setAuthView('register');
+                setShowLanding(false);
+              } else { // 'profissional'
+                setInitialRegisterRole('cliente');
+                setAuthView('login');
+                setShowLanding(false);
+              }
+            }}
+          />
+        ) : authView === 'register' ? (
+          <RegisterPage 
+            initialRole={initialRegisterRole}
+            onLoginClick={() => setAuthView('login')} 
+            onBackToLanding={() => setShowLanding(true)}
+          />
+        ) : authView === 'forgot' ? (
+          <ForgotPasswordPage onLoginClick={() => setAuthView('login')} />
+        ) : (
+          <LoginPage 
+            onRegisterClick={() => {
+              setInitialRegisterRole('cliente');
+              setAuthView('register');
+            }} 
+            onForgotClick={() => setAuthView('forgot')}
+            onBackToLanding={() => setShowLanding(true)}
+          />
+        )}
+      </Suspense>
     );
   }
 
@@ -193,17 +200,29 @@ function MainApp() {
 
   // Portal do Superadministrador SaaS
   if (profile && profile.tipo === 'saas_admin') {
-    return <PortalSaaSAdmin />;
+    return (
+      <Suspense fallback={<PageLoadingFallback />}>
+        <PortalSaaSAdmin />
+      </Suspense>
+    );
   }
 
   // Portal do Cliente
   if (profile && profile.tipo === 'cliente') {
-    return <PortalCliente profile={profile} />;
+    return (
+      <Suspense fallback={<PageLoadingFallback />}>
+        <PortalCliente profile={profile} />
+      </Suspense>
+    );
   }
 
   // Portal do Barbeiro
   if (profile && profile.tipo === 'barbeiro') {
-    return <PortalBarbeiro profile={profile} />;
+    return (
+      <Suspense fallback={<PageLoadingFallback />}>
+        <PortalBarbeiro profile={profile} />
+      </Suspense>
+    );
   }
 
   const renderContent = () => {
@@ -344,7 +363,9 @@ function MainApp() {
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                {renderContent()}
+                <Suspense fallback={<PageLoadingFallback />}>
+                  {renderContent()}
+                </Suspense>
               </motion.div>
             </AnimatePresence>
           </div>

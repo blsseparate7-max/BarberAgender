@@ -46,7 +46,8 @@ import {
   Play,
   Pause,
   Activity,
-  Trash2
+  Trash2,
+  Landmark
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -97,6 +98,7 @@ import { DREGerencial } from '../components/Financeiro/DREGerencial';
 import { AccountsPayableManager } from '../components/AccountsPayableManager';
 import { AccountsReceivableManager } from '../components/AccountsReceivableManager';
 import { InputModal } from '../components/InputModal';
+import { ContaDigitalAsaas } from '../components/Financeiro/ContaDigitalAsaas';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -114,7 +116,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
   const { tenantId, tenant } = useTenant();
   const currentTenantId = tenantId || tenant?.id || profile?.tenantId || getActiveTenantId();
-  const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'digital-account' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new'>('overview');
   const [dateRange, setDateRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
@@ -186,6 +188,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   useEffect(() => {
     if (activeSubTab) {
       const tabMap: Record<string, typeof activeTab> = {
+        'financeiro-conta-digital': 'digital-account',
         'financeiro-caixa': 'daily-cash',
         'financeiro-historico': 'cash-history',
         'financeiro-comissoes': 'commissions',
@@ -849,6 +852,9 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
 
       {/* Tabs Navigation */}
       <div className="flex border-b border-slate-200 overflow-x-auto custom-scrollbar no-scrollbar gap-2 py-1 scroll-smooth">
+        {(isAdmin || isGerente) && tenant?.subscriptions_enabled === true && (
+          <TabButton active={activeTab === 'digital-account'} onClick={() => setActiveTab('digital-account')} label="Conta Digital Asaas" icon={<Landmark className="text-emerald-500 scale-110" size={16} />} />
+        )}
         <TabButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} label="Fluxo de Caixa" icon={<PieChart size={16} />} />
         <TabButton active={activeTab === 'dre'} onClick={() => setActiveTab('dre')} label="DRE Gerencial" icon={<BarChart3 size={16} />} />
         <TabButton active={activeTab === 'daily-cash'} onClick={() => setActiveTab('daily-cash')} label="Caixa" icon={<Receipt size={16} />} />
@@ -876,6 +882,49 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           </div>
         ) : (
           <AnimatePresence mode="wait">
+            {activeTab === 'digital-account' && (
+              <motion.div 
+                key="digital-account"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-8"
+              >
+                {tenant?.subscriptions_enabled === true ? (
+                  <ContaDigitalAsaas tenantId={currentTenantId} />
+                ) : (
+                  <div className="bg-white border border-slate-200 rounded-[2.5rem] p-12 text-center shadow-sm max-w-2xl mx-auto space-y-6">
+                    <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 rounded-3xl flex items-center justify-center text-indigo-600 mx-auto shadow-sm">
+                      <Lock size={36} />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="text-2xl font-black text-slate-900">Módulo de Conta Digital Bloqueado</h3>
+                      <p className="text-sm text-slate-500 font-medium leading-relaxed max-w-md mx-auto">
+                        A <strong>Conta Digital Asaas</strong> é um recurso exclusivo integrado ao <strong>Módulo de Clubes e Assinaturas Recorrentes</strong>.
+                      </p>
+                    </div>
+                    <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs text-slate-600 font-bold space-y-1 text-left max-w-md mx-auto">
+                      <p className="flex items-center gap-2 text-indigo-900 font-black">
+                        <CheckCircle2 size={15} className="text-indigo-600 shrink-0" />
+                        Cobranças automáticas de assinaturas via PIX e Cartão
+                      </p>
+                      <p className="flex items-center gap-2 text-indigo-900 font-black">
+                        <CheckCircle2 size={15} className="text-indigo-600 shrink-0" />
+                        Saldo isolado em tempo real com saques instantâneos via PIX
+                      </p>
+                      <p className="flex items-center gap-2 text-indigo-900 font-black">
+                        <CheckCircle2 size={15} className="text-indigo-600 shrink-0" />
+                        Conciliação automática sem taxa de adesão
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-400 font-semibold">
+                      Entre em contato com o suporte do sistema para ativar o módulo no plano da sua barbearia.
+                    </p>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
             {activeTab === 'overview' && (
               <motion.div 
                 key="overview"
@@ -960,7 +1009,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                       </div>
                       <div className="divide-y divide-slate-100">
                         {overviewBreakdowns.methods.map((m, idx) => (
-                          <div key={idx} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
+                          <div key={`overview-method-${m.label || idx}-${idx}`} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
                             <span className="font-bold text-xs text-slate-700">{m.label}:</span>
                             <span className="font-black text-xs text-slate-900">
                               R$ {m.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -983,7 +1032,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                       </div>
                       <div className="divide-y divide-slate-100">
                         {overviewBreakdowns.items.map((it, idx) => (
-                          <div key={idx} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
+                          <div key={`overview-item-${it.label || idx}-${idx}`} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
                             <span className="font-bold text-xs text-slate-700">{it.label}:</span>
                             <span className="font-black text-xs text-slate-900">
                               {it.pgto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | {it.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}

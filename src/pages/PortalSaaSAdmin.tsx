@@ -395,7 +395,7 @@ export default function PortalSaaSAdmin() {
         ownerPhone: editTenantOwnerPhone,
         dueDateDay: Number(editTenantDueDateDay),
         notes: editTenantNotes
-      });
+      }, { allowAsaasUpdate: true });
       toast.dismiss(toastId);
       toast.success(`Barbearia ${editTenantName} atualizada com sucesso!`);
       setEditingTenant(null);
@@ -445,6 +445,40 @@ export default function PortalSaaSAdmin() {
       const trialStartDateISO = isTrial ? new Date().toISOString() : undefined;
       const trialEndDateISO = isTrial ? new Date(Date.now() + (Number(trialDaysInput) || 30) * 24 * 60 * 60 * 1000).toISOString() : undefined;
 
+      // Se o módulo de assinaturas estiver ativo e tiver CPF/CNPJ, criar automaticamente a subconta Asaas da barbearia
+      let createdAsaasSubaccount: any = null;
+      if (newTenantSubscriptionsEnabled && (newTenantCnpjCpf.trim() || newTenantEmail.trim())) {
+        try {
+          const subaccountRes = await fetch('/api/saas/tenants/create-subaccount', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tenantId: cleanSlug,
+              name: newTenantName.trim(),
+              email: newOwnerEmail.trim() || newTenantEmail.trim(),
+              cpfCnpj: newTenantCnpjCpf.trim(),
+              phone: newOwnerPhone || newTenantPhone,
+              mobilePhone: newOwnerPhone || newTenantPhone,
+              address: newTenantStreet,
+              addressNumber: newTenantNumber,
+              neighborhood: newTenantNeighborhood,
+              province: newTenantNeighborhood,
+              postalCode: newTenantZipCode
+            })
+          });
+
+          const subaccountData = await subaccountRes.json();
+          if (subaccountRes.ok && subaccountData.subaccount) {
+            createdAsaasSubaccount = subaccountData.subaccount;
+            toast.success(`Conta Digital Asaas criada e integrada com sucesso para ${newTenantName}!`);
+          } else {
+            console.warn("Aviso ao criar subconta Asaas:", subaccountData);
+          }
+        } catch (asErr: any) {
+          console.warn("Falha ao comunicar com API de subcontas Asaas:", asErr);
+        }
+      }
+
       const createdTenant = await tenantService.createTenant({
         id: cleanSlug,
         name: newTenantName,
@@ -476,6 +510,7 @@ export default function PortalSaaSAdmin() {
         dueDateDay: Number(newDueDateDay),
         isActive: isTrial || newPlanStatus === 'active',
         subscriptions_enabled: newTenantSubscriptionsEnabled,
+        asaas: createdAsaasSubaccount || undefined,
         notes: newTenantNotes
       });
 

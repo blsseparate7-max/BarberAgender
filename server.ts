@@ -11,6 +11,10 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin lazily
 let adminApp: App | null = null;
+export function hasAdminCredentials(): boolean {
+  return !!(process.env.FIREBASE_SERVICE_ACCOUNT || (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL));
+}
+
 function getFirebaseAdmin() {
   if (!adminApp) {
     try {
@@ -57,55 +61,37 @@ function getFirebaseAdmin() {
           console.log("✅ Firebase Admin initialized with FIREBASE_PRIVATE_KEY & CLIENT_EMAIL.");
         }
 
-        // 3. Try applicationDefault first for standard GCP/Cloud Run context
-        if (!adminApp) {
+        // 3. Try applicationDefault first only if credentials exist or in GCP environment
+        if (!adminApp && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
           try {
             adminApp = initializeApp({
               credential: applicationDefault(),
-              projectId: "gbagender"
+              projectId: process.env.FIREBASE_PROJECT_ID || "gbagender"
             });
             console.log("✅ Firebase Admin initialized with applicationDefault.");
           } catch (adcErr: any) {
             console.warn("Could not initialize with applicationDefault:", adcErr.message || adcErr);
           }
         }
-
-        // 4. Fallback try basic initialization
-        if (!adminApp) {
-          adminApp = initializeApp({
-            projectId: "gbagender"
-          });
-          console.log("⚠️ Firebase Admin initialized with basic projectId fallback.");
-        }
       } else {
         adminApp = apps[0];
       }
     } catch (err: any) {
-      console.warn("Could not initialize Firebase Admin SDK, attempting fallback:", err.message || err);
-      try {
-        const apps = getApps();
-        if (apps.length === 0) {
-          adminApp = initializeApp({
-            projectId: "gbagender"
-          });
-        } else {
-          adminApp = apps[0];
-        }
-      } catch (innerErr) {
-        console.error("Critical: Fallback Firebase Admin initialization also failed:", innerErr);
-      }
+      console.warn("Could not initialize Firebase Admin SDK:", err.message || err);
     }
   }
   return adminApp;
 }
 
 function getAdminDb() {
+  if (!hasAdminCredentials() && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    return null;
+  }
   const app = getFirebaseAdmin();
   if (!app) return null;
   try {
     return getFirestore(app);
   } catch (e) {
-    console.warn("Could not initialize Firestore Admin instance:", e);
     return null;
   }
 }
@@ -1178,6 +1164,30 @@ async function safeJsonFetch(response: any): Promise<any> {
     return false;
   }
 
+  async function createFirestoreRestDoc(collectionName: string, docId: string | null, data: Record<string, any>) {
+    try {
+      const url = docId 
+        ? `${FIREBASE_REST_BASE_URL}/${collectionName}?documentId=${encodeURIComponent(docId)}&key=${FIREBASE_REST_API_KEY}`
+        : `${FIREBASE_REST_BASE_URL}/${collectionName}?key=${FIREBASE_REST_API_KEY}`;
+      const restFields: any = {};
+      for (const k in data) {
+        restFields[k] = toFirestoreRestValue(data[k]);
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: restFields })
+      });
+      if (res.ok) {
+        const created = await res.json();
+        return parseFirestoreRestDoc(created);
+      }
+    } catch (err) {
+      console.error(`❌ [Firestore REST Create Exception] ${collectionName}:`, err);
+    }
+    return null;
+  }
+
   // Helper to find subscription in Firestore by any available Asaas identifier or docId
   async function findSubscriptionInFirestore(dbAdmin: any, params: {
     paymentId?: string;
@@ -1852,6 +1862,946 @@ async function safeJsonFetch(response: any): Promise<any> {
     } catch (error: any) {
       console.error("Erro ao recobrar assinatura:", error);
       res.status(500).json({ error: error.message || "Falha ao processar recobrança." });
+    }
+  });
+
+  // Skip Invoice / Pular Fatura (Dar Baixa Manual no Caixa / Balcão)
+  app.post(["/api/saas/subscription/skip-invoice", "/saas/subscription/skip-invoice", "/api/saas/subscription/pular-fatura"], async (req, res) => {
+    try {
+      const { subscriptionId, paymentMethod = 'dinheiro', amount, notes, userId, userName, launchInCash = true, cancelAsaasInvoice = true } = req.body;
+      if (!subscriptionId) {
+        return res.status(400).json({ error: "Parâmetro subscriptionId é obrigatório." });
+      }
+
+      const dbAdmin = getAdminDb();
+      let subDocData: any = null;
+      let targetSubDocId = subscriptionId;
+      let isRestDoc = false;
+
+      if (dbAdmin) {
+        let docSnap = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
+        if (docSnap.exists) {
+          subDocData = docSnap.data();
+        } else {
+          const found = await findSubscriptionInFirestore(dbAdmin, { docId: subscriptionId, externalReference: subscriptionId });
+          if (found) {
+            subDocData = found.data;
+            targetSubDocId = found.id;
+            isRestDoc = found.isRest;
+          }
+        }
+      } else {
+        const rDoc = await getFirestoreRestDoc('subscriptions', subscriptionId);
+        if (rDoc) {
+          subDocData = rDoc.data;
+          isRestDoc = true;
+        }
+      }
+
+      if (!subDocData) {
+        return res.status(404).json({ error: "Assinatura não encontrada." });
+      }
+
+      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
+      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+      const baseUrl = getAsaasBaseUrl(asaasEnv);
+
+      // Cancel/delete pending Asaas payment if exists and requested so credit card is not charged
+      if (cancelAsaasInvoice && asaasApiKey && subDocData.asaasInvoiceId && !subDocData.asaasInvoiceId.startsWith('pay_sandbox_')) {
+        try {
+          await fetch(`${baseUrl}/payments/${subDocData.asaasInvoiceId}`, {
+            method: 'DELETE',
+            headers: { 'access_token': asaasApiKey }
+          });
+          console.log(`[Pular Fatura] Cobrança Asaas ${subDocData.asaasInvoiceId} cancelada com sucesso.`);
+        } catch (delErr) {
+          console.warn("Aviso ao cancelar cobrança no Asaas em skip-invoice:", delErr);
+        }
+      }
+
+      const finalAmount = Number(amount) || Number(subDocData.amount) || Number(subDocData.price) || 0;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const todayObj = new Date();
+      const newEndDate = new Date(todayObj);
+      newEndDate.setDate(newEndDate.getDate() + 30);
+      const newEndDateStr = newEndDate.toISOString().split('T')[0];
+
+      // 1. Update subscription
+      const updateSubPayload: any = {
+        status: 'active',
+        asaasPaymentStatus: 'received',
+        startDate: todayStr,
+        endDate: newEndDateStr,
+        haircutsUsed: 0,
+        beardsUsed: 0,
+        serviceUsages: {},
+        lastRenewalDate: new Date().toISOString(),
+        lastManualSettlement: {
+          date: todayStr,
+          amount: finalAmount,
+          paymentMethod,
+          notes: notes || 'Baixa Manual / Pular Fatura',
+          settledBy: userName || 'Admin'
+        },
+        updatedAt: new Date().toISOString()
+      };
+
+      if (dbAdmin && !isRestDoc) {
+        await dbAdmin.collection('subscriptions').doc(targetSubDocId).update(updateSubPayload);
+      } else {
+        await updateFirestoreRestDoc('subscriptions', targetSubDocId, updateSubPayload);
+      }
+
+      // 2. Create financial transaction
+      const txPayload = {
+        type: 'income',
+        category: 'Assinaturas',
+        description: notes || `Assinatura: ${subDocData.planName || 'Plano'} - ${subDocData.cliente_name || 'Cliente'} (Baixa Manual no Balcão)`,
+        amount: finalAmount,
+        net_amount: finalAmount,
+        fee_amount: 0,
+        paymentMethod: paymentMethod,
+        date: todayStr,
+        settlement_date: todayStr,
+        status: 'pago',
+        is_settled: true,
+        cliente_id: subDocData.cliente_id || '',
+        cliente_name: subDocData.cliente_name || '',
+        plano_id: subDocData.plano_id || '',
+        subscription_amount: finalAmount,
+        responsavel_id: userId || 'admin',
+        responsavel_name: userName || 'Administrador',
+        tenantId: subDocData.tenantId || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (dbAdmin) {
+        await dbAdmin.collection('financial_transactions').add(txPayload);
+      } else {
+        await createFirestoreRestDoc('financial_transactions', null, txPayload);
+      }
+
+      // 3. Register cash movement in open daily cash if requested
+      if (launchInCash && finalAmount > 0) {
+        try {
+          let openCashSnap: any = null;
+          if (dbAdmin) {
+            const cashQ = await dbAdmin.collection('daily_cash')
+              .where('status', '==', 'open')
+              .orderBy('openedAt', 'desc')
+              .limit(1)
+              .get();
+            if (!cashQ.empty) {
+              openCashSnap = cashQ.docs[0];
+            }
+          }
+
+          if (openCashSnap) {
+            const cashData = openCashSnap.data();
+            const movPayload = {
+              caixa_id: openCashSnap.id,
+              tenantId: subDocData.tenantId || cashData.tenantId || '',
+              type: 'income',
+              category: 'Assinaturas',
+              description: `Recebimento Assinatura: ${subDocData.planName || 'Plano'} (${subDocData.cliente_name || 'Cliente'})`,
+              amount: finalAmount,
+              paymentMethod: paymentMethod,
+              is_receivable: false,
+              referencia_id: targetSubDocId,
+              usuario_id: userId || 'admin',
+              usuario_name: userName || 'Administrador',
+              date: todayStr,
+              createdAt: new Date().toISOString()
+            };
+
+            await dbAdmin.collection('cash_movements').add(movPayload);
+            await openCashSnap.ref.update({
+              total_income: (cashData.total_income || 0) + finalAmount,
+              expected_balance: (cashData.expected_balance || 0) + finalAmount,
+              updatedAt: new Date().toISOString()
+            });
+          }
+        } catch (cashErr) {
+          console.warn("Aviso ao lançar no caixa aberto em skip-invoice:", cashErr);
+        }
+      }
+
+      console.log(`[Pular Fatura] Assinatura ${targetSubDocId} renovada manualmente com sucesso no valor de R$ ${finalAmount}`);
+
+      return res.json({
+        success: true,
+        message: "Fatura pulada e pagamento registrado no caixa com sucesso!",
+        newEndDate: newEndDateStr
+      });
+
+    } catch (error: any) {
+      console.error("Erro ao pular fatura / baixa manual:", error);
+      res.status(500).json({ error: error.message || "Falha ao processar baixa manual." });
+    }
+  });
+
+  // Get Invoices History for Subscription (Asaas + Local Firestore)
+  app.get(["/api/saas/subscription/invoices", "/saas/subscription/invoices"], async (req, res) => {
+    try {
+      const subscriptionId = (req.query.subscriptionId as string) || '';
+      const customerId = (req.query.customerId as string) || '';
+      const clienteId = (req.query.clienteId as string) || '';
+
+      const invoices: any[] = [];
+      const dbAdmin = getAdminDb();
+
+      // 1. Fetch from Firestore financial_transactions
+      if (dbAdmin) {
+        try {
+          let q = dbAdmin.collection('financial_transactions').where('category', '==', 'Assinaturas');
+          if (clienteId) {
+            q = q.where('cliente_id', '==', clienteId);
+          }
+          const snap = await q.orderBy('date', 'desc').limit(30).get();
+          snap.forEach((doc: any) => {
+            const data = doc.data();
+            invoices.push({
+              id: doc.id,
+              date: data.date || (typeof data.createdAt === 'string' ? data.createdAt.substring(0, 10) : ''),
+              dueDate: data.settlement_date || data.date || '',
+              amount: data.amount || data.net_amount || 0,
+              status: data.status === 'pago' ? 'RECEIVED' : (data.status === 'pendente' ? 'PENDING' : 'OVERDUE'),
+              statusLabel: data.status === 'pago' ? 'Paga no Balcão' : 'Pendente',
+              billingType: data.paymentMethod ? String(data.paymentMethod).toUpperCase() : 'BALCAO',
+              billingTypeLabel: data.paymentMethod === 'dinheiro' ? 'Dinheiro (Balcão)' : (data.paymentMethod === 'pix' ? 'Pix Balcão' : (data.paymentMethod === 'debito' ? 'Cartão Débito (Maquininha)' : (data.paymentMethod === 'credito' ? 'Cartão Crédito (Maquininha)' : 'Balcão / Caixa'))),
+              description: data.description || 'Assinatura',
+              source: 'local'
+            });
+          });
+        } catch (fErr) {
+          console.warn("Aviso ao buscar transações no Firestore em subscription/invoices:", fErr);
+        }
+      }
+
+      // 2. Fetch from Asaas API if customerId or subscriptionId exists
+      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
+      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+
+      if (asaasApiKey && (customerId || subscriptionId)) {
+        const baseUrl = getAsaasBaseUrl(asaasEnv);
+        let asaasCustomer = customerId;
+
+        // If no customerId provided, look up in subscription document
+        if (!asaasCustomer && subscriptionId && dbAdmin) {
+          try {
+            const subDoc = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
+            if (subDoc.exists) {
+              const sData = subDoc.data();
+              asaasCustomer = sData?.asaasCustomerId || '';
+            }
+          } catch (e) { /* ignore */ }
+        }
+
+        if (asaasCustomer && asaasCustomer.startsWith('cus_')) {
+          try {
+            const asaasRes = await fetch(`${baseUrl}/payments?customer=${asaasCustomer}&limit=20`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const asaasData = await safeJsonFetch(asaasRes);
+            if (asaasData?.data && Array.isArray(asaasData.data)) {
+              for (const p of asaasData.data) {
+                const isPaid = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(p.status);
+                const isOverdue = p.status === 'OVERDUE';
+                const isPending = p.status === 'PENDING';
+
+                invoices.push({
+                  id: p.id,
+                  date: p.paymentDate || p.clientPaymentDate || p.dateCreated || p.dueDate,
+                  dueDate: p.dueDate,
+                  amount: p.value || 0,
+                  netValue: p.netValue,
+                  status: p.status,
+                  statusLabel: isPaid ? 'Paga (Asaas)' : (isOverdue ? 'Atrasada / Não Cobrada' : (isPending ? 'Aguardando Pagamento' : p.status)),
+                  billingType: p.billingType,
+                  billingTypeLabel: p.billingType === 'CREDIT_CARD' ? 'Cartão de Crédito (Asaas)' : (p.billingType === 'PIX' ? 'Pix (Asaas)' : (p.billingType === 'BOLETO' ? 'Boleto' : p.billingType)),
+                  description: p.description || 'Assinatura Asaas',
+                  paymentUrl: p.invoiceUrl || p.bankSlipUrl || p.paymentLink || '',
+                  invoiceUrl: p.invoiceUrl || p.bankSlipUrl || '',
+                  source: 'asaas'
+                });
+              }
+            }
+          } catch (aErr) {
+            console.warn("Aviso ao buscar cobranças no Asaas em subscription/invoices:", aErr);
+          }
+        }
+      }
+
+      // Sort combined by date descending
+      invoices.sort((a, b) => {
+        const dateA = new Date(a.date || a.dueDate || 0).getTime();
+        const dateB = new Date(b.date || b.dueDate || 0).getTime();
+        return dateB - dateA;
+      });
+
+      return res.json({
+        success: true,
+        invoices
+      });
+
+    } catch (error: any) {
+      console.error("Erro ao listar faturas da assinatura:", error);
+      res.status(500).json({ error: error.message || "Falha ao buscar faturas." });
+    }
+  });
+
+  // Helper for Asaas transaction types
+  function formatAsaasTransactionType(type?: string): string {
+    switch (type) {
+      case 'PAYMENT_RECEIVED': return 'Recebimento de Cobrança';
+      case 'PAYMENT_FEE': return 'Taxa do Gateway Asaas';
+      case 'TRANSFER': return 'Transferência / Saque';
+      case 'TRANSFER_FEE': return 'Taxa de Transferência';
+      case 'REFUND': return 'Estorno de Pagamento';
+      case 'PIX_TRANSACTION_CREDIT': return 'PIX Recebido';
+      case 'PIX_TRANSACTION_DEBIT': return 'PIX Enviado';
+      case 'BILL_PAYMENT': return 'Pagamento de Boleto/Conta';
+      case 'CHARGEBACK': return 'Chargeback / Contestação';
+      case 'INTERNAL_TRANSFER_CREDIT': return 'Transferência Recebida';
+      case 'INTERNAL_TRANSFER_DEBIT': return 'Transferência Enviada';
+      default: return type || 'Transação Asaas';
+    }
+  }
+
+  // Helper to get Asaas credentials (tenant-specific subaccount or master fallback)
+  async function getTenantAsaasCredentials(tenantId?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; tenantData?: any }> {
+    const rawMasterKey = process.env.ASAAS_API_KEY || '';
+    const masterApiKey = rawMasterKey.trim().replace(/^['"]|['"]$/g, '');
+    const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+    const baseUrl = getAsaasBaseUrl(asaasEnv);
+
+    if (!tenantId) {
+      return { apiKey: masterApiKey, baseUrl, env: asaasEnv, isSubaccount: false };
+    }
+
+    const dbAdmin = getAdminDb();
+    if (dbAdmin) {
+      try {
+        const tenantDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
+        if (tenantDoc.exists) {
+          const tData = tenantDoc.data();
+          if (tData?.asaas?.apiKey) {
+            return {
+              apiKey: tData.asaas.apiKey.trim().replace(/^['"]|['"]$/g, ''),
+              baseUrl,
+              env: asaasEnv,
+              isSubaccount: true,
+              tenantData: tData
+            };
+          }
+          return { apiKey: masterApiKey, baseUrl, env: asaasEnv, isSubaccount: false, tenantData: tData };
+        }
+      } catch (err) {
+        console.warn(`[getTenantAsaasCredentials] Erro ao buscar credenciais do tenant ${tenantId}:`, err);
+      }
+    }
+
+    return { apiKey: masterApiKey, baseUrl, env: asaasEnv, isSubaccount: false };
+  }
+
+  // Endpoint to create Asaas Subaccount for a tenant
+  app.post(["/api/saas/tenants/create-subaccount", "/api/saas/create-subaccount"], async (req, res) => {
+    try {
+      const {
+        tenantId,
+        name,
+        email,
+        cpfCnpj,
+        phone,
+        mobilePhone,
+        address,
+        addressNumber,
+        complement,
+        province,
+        postalCode
+      } = req.body || {};
+
+      if (!name || !cpfCnpj || !email) {
+        return res.status(400).json({ error: "Nome, CPF/CNPJ e E-mail são obrigatórios para criar a subconta Asaas." });
+      }
+
+      const rawMasterKey = process.env.ASAAS_API_KEY || '';
+      const masterApiKey = rawMasterKey.trim().replace(/^['"]|['"]$/g, '');
+      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+      const baseUrl = getAsaasBaseUrl(asaasEnv);
+
+      if (!masterApiKey) {
+        return res.status(400).json({ error: "Chave Master do Asaas não configurada no servidor." });
+      }
+
+      const cleanCpfCnpj = String(cpfCnpj).replace(/\D/g, '');
+      const cleanPhone = String(mobilePhone || phone || '').replace(/\D/g, '');
+      const cleanPostalCode = String(postalCode || '').replace(/\D/g, '');
+
+      // Payload for Asaas /v3/accounts (Subconta / White-label)
+      const subaccountPayload: any = {
+        name,
+        email,
+        cpfCnpj: cleanCpfCnpj,
+        phone: cleanPhone || undefined,
+        mobilePhone: cleanPhone || undefined,
+        address: address || undefined,
+        addressNumber: addressNumber || undefined,
+        complement: complement || undefined,
+        province: province || undefined,
+        postalCode: cleanPostalCode || undefined,
+        companyType: cleanCpfCnpj.length > 11 ? 'LIMITED' : 'MEI'
+      };
+
+      console.log(`[Asaas Subaccount] Criando subconta para tenant ${tenantId || name} (${cleanCpfCnpj})...`);
+
+      const asaasRes = await fetch(`${baseUrl}/accounts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'access_token': masterApiKey
+        },
+        body: JSON.stringify(subaccountPayload)
+      });
+
+      const asaasData = await asaasRes.json();
+
+      if (!asaasRes.ok) {
+        const errorMsg = asaasData?.errors?.[0]?.description || asaasData?.message || "Erro ao registrar subconta no Asaas.";
+        console.error("[Asaas Subaccount Error]", asaasData);
+        return res.status(asaasRes.status).json({ error: errorMsg, details: asaasData });
+      }
+
+      const subaccountId = asaasData.id || asaasData.walletId;
+      const apiKey = asaasData.apiKey;
+      const walletId = asaasData.walletId || asaasData.id;
+      const accountStatus = asaasData.status || 'APPROVED';
+
+      const asaasSubaccountInfo = {
+        subaccountId,
+        apiKey,
+        walletId,
+        accountStatus,
+        cpfCnpj: cleanCpfCnpj,
+        createdAt: new Date().toISOString()
+      };
+
+      // If tenantId was provided, update the tenant in Firestore
+      if (tenantId) {
+        const dbAdmin = getAdminDb();
+        if (dbAdmin) {
+          try {
+            await dbAdmin.collection('tenants').doc(tenantId).set({
+              asaas: asaasSubaccountInfo,
+              cnpjCpf: cleanCpfCnpj,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          } catch (dbErr) {
+            console.warn("Aviso ao persistir subconta no tenant:", dbErr);
+          }
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "Subconta Asaas criada com sucesso!",
+        subaccount: asaasSubaccountInfo
+      });
+
+    } catch (error: any) {
+      console.error("Erro interno ao criar subconta Asaas:", error);
+      res.status(500).json({ error: error.message || "Falha interna ao criar subconta Asaas." });
+    }
+  });
+
+  // Digital Account Summary (Saldo, Previsão, Status)
+  app.get(["/api/saas/gateway/digital-account/summary", "/api/digital-account/summary"], async (req, res) => {
+    try {
+      const tenantId = (req.query.tenantId as string) || '';
+      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, isSubaccount } = await getTenantAsaasCredentials(tenantId);
+
+      let balance = 0;
+      let pendingBalance = 0;
+      let totalReceived = 0;
+      let accountStatus = 'ACTIVE';
+      let isConnected = false;
+
+      if (asaasApiKey && asaasApiKey.length > 10) {
+        // 1. Saldo em conta
+        try {
+          const balRes = await fetch(`${baseUrl}/finance/balance`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          if (balRes.ok) {
+            const balData = await balRes.json();
+            balance = Number(balData.balance) || 0;
+            isConnected = true;
+          }
+        } catch (balErr) {
+          console.warn("Aviso ao buscar saldo Asaas:", balErr);
+        }
+
+        // 2. Estatísticas financeiras de recebimento
+        try {
+          const statRes = await fetch(`${baseUrl}/finance/split/statistics`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          if (statRes.ok) {
+            const statData = await statRes.json();
+            totalReceived = Number(statData.totalReceivedValue || statData.totalValue || 0);
+          }
+        } catch (sErr) {}
+
+        // 3. Saldo a liberar / pendente
+        try {
+          const pendRes = await fetch(`${baseUrl}/payments?status=PENDING&limit=50`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          if (pendRes.ok) {
+            const pendData = await pendRes.json();
+            if (Array.isArray(pendData?.data)) {
+              pendingBalance = pendData.data.reduce((acc: number, p: any) => acc + (Number(p.value) || 0), 0);
+            }
+          }
+        } catch (pErr) {}
+
+        // 4. Status cadastral da conta Asaas
+        try {
+          const accRes = await fetch(`${baseUrl}/myAccount/status`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          if (accRes.ok) {
+            const accData = await accRes.json();
+            accountStatus = accData.commercialInfo?.status || accData.general?.status || 'APPROVED';
+          }
+        } catch (aErr) {}
+      }
+
+      // If in sandbox and no connection, provide healthy demo balance
+      if (!isConnected && (!asaasApiKey || asaasApiKey.length <= 10)) {
+        balance = 1250.00;
+        pendingBalance = 450.00;
+        totalReceived = 3820.00;
+        accountStatus = 'SANDBOX_READY';
+      }
+
+      return res.json({
+        success: true,
+        balance,
+        pendingBalance,
+        totalReceived,
+        accountStatus: isConnected ? accountStatus : (asaasEnv === 'sandbox' ? 'SANDBOX' : 'NOT_CONFIGURED'),
+        environment: asaasEnv,
+        isSubaccount,
+        isConnected: isConnected || (!!asaasApiKey && asaasApiKey.length > 10),
+        lastSync: new Date().toISOString()
+      });
+    } catch (error: any) {
+      console.error("Erro no resumo da conta digital:", error);
+      res.status(500).json({ error: error.message || "Erro ao consultar resumo da conta digital." });
+    }
+  });
+
+  // Digital Account Statement (Extrato de Movimentações)
+  app.get(["/api/saas/gateway/digital-account/statement", "/api/digital-account/statement"], async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 30, 100);
+      const offset = Number(req.query.offset) || 0;
+      const startDate = req.query.startDate as string;
+      const finishDate = req.query.finishDate as string;
+      const tenantId = (req.query.tenantId as string) || '';
+
+      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv } = await getTenantAsaasCredentials(tenantId);
+
+      let transactions: any[] = [];
+      let totalCount = 0;
+      let hasMore = false;
+
+      if (asaasApiKey && asaasApiKey.length > 10) {
+        // 1. Try to fetch from /finance/financialTransactions (Extrato oficial do Asaas)
+        try {
+          let url = `${baseUrl}/finance/financialTransactions?limit=${limit}&offset=${offset}`;
+          if (startDate) url += `&startDate=${encodeURIComponent(startDate)}`;
+          if (finishDate) url += `&finishDate=${encodeURIComponent(finishDate)}`;
+
+          const txRes = await fetch(url, {
+            headers: { 'access_token': asaasApiKey }
+          });
+
+          if (txRes.ok) {
+            const txData = await txRes.json();
+            if (Array.isArray(txData?.data) && txData.data.length > 0) {
+              totalCount = txData.totalCount || txData.data.length;
+              hasMore = txData.hasMore || false;
+              transactions = txData.data.map((item: any) => {
+                const val = Number(item.value) || 0;
+                const isIncome = val >= 0;
+                return {
+                  id: item.id,
+                  date: item.date || item.paymentDate || '',
+                  type: item.type || 'PAYMENT',
+                  typeLabel: formatAsaasTransactionType(item.type),
+                  description: item.description || (isIncome ? 'Recebimento de Pagamento' : 'Tarifa / Transferência'),
+                  value: Math.abs(val),
+                  isIncome,
+                  balance: Number(item.balance) || 0,
+                  paymentId: item.paymentId || null,
+                  transferId: item.transferId || null,
+                  invoiceUrl: item.paymentId ? `https://${asaasEnv === 'sandbox' ? 'sandbox.' : ''}asaas.com/i/${item.paymentId}` : ''
+                };
+              });
+            }
+          }
+        } catch (err) {
+          console.warn("Aviso ao buscar extrato financeiro Asaas:", err);
+        }
+
+        // 2. Fallback to /payments if financialTransactions has no items (common in sandbox or initial state)
+        if (transactions.length === 0) {
+          try {
+            let payUrl = `${baseUrl}/payments?limit=${limit}&offset=${offset}`;
+            if (startDate) payUrl += `&dueDate[ge]=${startDate}`;
+            if (finishDate) payUrl += `&dueDate[le]=${finishDate}`;
+
+            const payRes = await fetch(payUrl, {
+              headers: { 'access_token': asaasApiKey }
+            });
+
+            if (payRes.ok) {
+              const payData = await payRes.json();
+              if (Array.isArray(payData?.data)) {
+                totalCount = payData.totalCount || payData.data.length;
+                hasMore = payData.hasMore || false;
+                transactions = payData.data.map((p: any) => {
+                  const isReceived = p.status === 'RECEIVED' || p.status === 'CONFIRMED';
+                  return {
+                    id: p.id,
+                    date: p.paymentDate || p.clientPaymentDate || p.dueDate || '',
+                    type: isReceived ? 'PAYMENT_RECEIVED' : (p.status === 'OVERDUE' ? 'PAYMENT_OVERDUE' : 'PAYMENT_PENDING'),
+                    typeLabel: isReceived 
+                      ? `Recebido via ${p.billingType === 'CREDIT_CARD' ? 'Cartão de Crédito' : (p.billingType === 'PIX' ? 'PIX' : 'Boleto')}`
+                      : `Cobrança ${p.billingType} (${p.status})`,
+                    description: p.description || `Pagamento Asaas - ${p.billingType}`,
+                    customerName: p.customerName || '',
+                    value: Number(p.value) || 0,
+                    netValue: Number(p.netValue) || Number(p.value) || 0,
+                    fee: (Number(p.value) || 0) - (Number(p.netValue) || Number(p.value) || 0),
+                    isIncome: true,
+                    status: p.status,
+                    billingType: p.billingType,
+                    invoiceUrl: p.invoiceUrl || p.bankSlipUrl || p.paymentLink || '',
+                    balance: 0
+                  };
+                });
+              }
+            }
+          } catch (pErr) {
+            console.warn("Aviso ao buscar cobranças para extrato:", pErr);
+          }
+        }
+      }
+
+      return res.json({
+        success: true,
+        transactions,
+        totalCount,
+        hasMore,
+        environment: asaasEnv
+      });
+    } catch (error: any) {
+      console.error("Erro ao listar extrato da conta digital:", error);
+      res.status(500).json({ error: error.message || "Erro ao consultar extrato." });
+    }
+  });
+
+  // Get Payment Details from Asaas
+  app.get(["/api/saas/gateway/digital-account/payment-details", "/api/digital-account/payment-details"], async (req, res) => {
+    try {
+      const paymentId = req.query.paymentId as string;
+      const tenantId = (req.query.tenantId as string) || '';
+      if (!paymentId) {
+        return res.status(400).json({ error: "paymentId é obrigatório." });
+      }
+
+      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv } = await getTenantAsaasCredentials(tenantId);
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Chave do Asaas não configurada." });
+      }
+
+      const payRes = await fetch(`${baseUrl}/payments/${paymentId}`, {
+        headers: { 'access_token': asaasApiKey }
+      });
+
+      if (!payRes.ok) {
+        const errText = await payRes.text();
+        return res.status(payRes.status).json({ error: `Erro do Asaas: ${errText}` });
+      }
+
+      const payment = await payRes.json();
+
+      // Optional: fetch customer info if customer ID is present
+      let customer = null;
+      if (payment.customer) {
+        try {
+          const custRes = await fetch(`${baseUrl}/customers/${payment.customer}`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          if (custRes.ok) {
+            customer = await custRes.json();
+          }
+        } catch (cErr) {}
+      }
+
+      return res.json({
+        success: true,
+        payment,
+        customer,
+        environment: asaasEnv
+      });
+    } catch (error: any) {
+      console.error("Erro ao buscar detalhes da cobrança:", error);
+      res.status(500).json({ error: error.message || "Erro ao buscar detalhes." });
+    }
+  });
+
+  // Refund Payment in Asaas
+  app.post(["/api/saas/gateway/digital-account/refund", "/api/digital-account/refund"], async (req, res) => {
+    try {
+      const { paymentId, value, description, tenantId } = req.body || {};
+      if (!paymentId) {
+        return res.status(400).json({ error: "paymentId é obrigatório para estorno." });
+      }
+
+      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Chave de API do Asaas não configurada." });
+      }
+
+      const refundPayload: any = {};
+      if (value && Number(value) > 0) {
+        refundPayload.value = Number(value);
+      }
+      if (description) {
+        refundPayload.description = description;
+      }
+
+      const refundRes = await fetch(`${baseUrl}/payments/${paymentId}/refund`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "access_token": asaasApiKey
+        },
+        body: JSON.stringify(refundPayload)
+      });
+
+      const refundData = await refundRes.json();
+
+      if (!refundRes.ok) {
+        const errorMsg = refundData?.errors?.[0]?.description || refundData?.message || "Erro ao processar estorno no Asaas.";
+        return res.status(refundRes.status).json({ error: errorMsg, details: refundData });
+      }
+
+      // If DB admin is initialized, attempt to update local financial transactions
+      const dbAdmin = getAdminDb();
+      if (dbAdmin) {
+        try {
+          const transSnap = await dbAdmin.collection('financial_transactions')
+            .where('paymentId', '==', paymentId)
+            .get();
+          
+          const batch = dbAdmin.batch();
+          transSnap.forEach((docSnap) => {
+            batch.update(docSnap.ref, {
+              status: 'estornado',
+              refundedAt: new Date().toISOString(),
+              refundReason: description || 'Estorno via Conta Digital Asaas'
+            });
+          });
+          if (!transSnap.empty) {
+            await batch.commit();
+          }
+        } catch (dbErr) {
+          console.warn("Aviso ao atualizar transações locais após estorno:", dbErr);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "Estorno processado com sucesso!",
+        payment: refundData
+      });
+    } catch (error: any) {
+      console.error("Erro ao realizar estorno:", error);
+      res.status(500).json({ error: error.message || "Erro interno ao processar estorno." });
+    }
+  });
+
+  // Digital Account Transfers History (List Transfers / Saques)
+  app.get(["/api/saas/gateway/digital-account/transfers", "/api/digital-account/transfers"], async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 30, 100);
+      const tenantId = (req.query.tenantId as string) || '';
+      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
+
+      if (!asaasApiKey) {
+        return res.json({ success: true, transfers: [] });
+      }
+
+      const tfRes = await fetch(`${baseUrl}/transfers?limit=${limit}`, {
+        headers: { 'access_token': asaasApiKey }
+      });
+
+      if (!tfRes.ok) {
+        return res.json({ success: true, transfers: [] });
+      }
+
+      const tfData = await tfRes.json();
+      const transfers = Array.isArray(tfData?.data) ? tfData.data.map((t: any) => ({
+        id: t.id,
+        date: t.dateCreated || t.effectiveDate || '',
+        value: Number(t.value) || 0,
+        netValue: Number(t.netValue) || Number(t.value) || 0,
+        transferFee: Number(t.transferFee) || 0,
+        status: t.status,
+        type: t.type || 'PIX',
+        pixAddressKey: t.pixAddressKey || null,
+        pixAddressKeyType: t.pixAddressKeyType || null,
+        bankAccount: t.bankAccount || null,
+        failReason: t.failReason || null,
+        transactionReceiptUrl: t.transactionReceiptUrl || null
+      })) : [];
+
+      return res.json({
+        success: true,
+        transfers
+      });
+    } catch (error: any) {
+      console.error("Erro ao listar transferências:", error);
+      res.status(500).json({ error: error.message || "Erro ao consultar histórico de saques." });
+    }
+  });
+
+  // Digital Account Transfer Request (Solicitar Saque / Transferência Pix ou TED)
+  app.post(["/api/saas/gateway/digital-account/transfer", "/api/digital-account/transfer"], async (req, res) => {
+    try {
+      const {
+        value,
+        operationType, // 'PIX' | 'TED'
+        pixAddressKey,
+        pixAddressKeyType, // 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'EVP'
+        bankAccount, // { bankCode, ownerName, cpfCnpj, agency, account, accountDigit, bankAccountType }
+        description,
+        tenantId
+      } = req.body || {};
+
+      const numValue = Number(value);
+      if (!numValue || isNaN(numValue) || numValue <= 0) {
+        return res.status(400).json({ error: "Informe um valor válido maior que zero." });
+      }
+
+      if (numValue < 5) {
+        return res.status(400).json({ error: "O valor mínimo para transferência no Asaas é de R$ 5,00." });
+      }
+
+      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Chave de API do Asaas não configurada." });
+      }
+
+      // Check current balance before executing transfer
+      try {
+        const balRes = await fetch(`${baseUrl}/finance/balance`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        if (balRes.ok) {
+          const balData = await balRes.json();
+          const currentBal = Number(balData?.balance) || 0;
+          if (numValue > currentBal) {
+            return res.status(400).json({
+              error: `Saldo insuficiente para transferência. Saldo atual: R$ ${currentBal.toFixed(2)}, Valor solicitado: R$ ${numValue.toFixed(2)}`
+            });
+          }
+        }
+      } catch (checkErr) {
+        console.warn("Aviso ao validar saldo pré-transferência:", checkErr);
+      }
+
+      // Construct transfer payload
+      const transferPayload: any = {
+        value: numValue,
+        description: description || "Saque solicitado via Conta Digital da Barbearia"
+      };
+
+      if (operationType === 'PIX' || pixAddressKey) {
+        transferPayload.operationType = 'PIX';
+        transferPayload.pixAddressKey = String(pixAddressKey).trim();
+        if (pixAddressKeyType) {
+          transferPayload.pixAddressKeyType = pixAddressKeyType;
+        }
+      } else if (bankAccount) {
+        transferPayload.operationType = 'TED';
+        transferPayload.bankAccount = {
+          bank: { code: bankAccount.bankCode || '001' },
+          accountName: bankAccount.ownerName || 'Conta Titular',
+          ownerName: bankAccount.ownerName,
+          cpfCnpj: String(bankAccount.cpfCnpj || '').replace(/\D/g, ''),
+          agency: bankAccount.agency,
+          account: bankAccount.account,
+          accountDigit: bankAccount.accountDigit || '0',
+          bankAccountType: bankAccount.bankAccountType || 'CONTA_CORRENTE'
+        };
+      } else {
+        return res.status(400).json({ error: "Informe a Chave PIX ou os Dados Bancários para a transferência." });
+      }
+
+      const tfRes = await fetch(`${baseUrl}/transfers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "access_token": asaasApiKey
+        },
+        body: JSON.stringify(transferPayload)
+      });
+
+      const tfData = await tfRes.json();
+
+      if (!tfRes.ok) {
+        const errMsg = tfData?.errors?.[0]?.description || tfData?.message || "Erro ao solicitar transferência no Asaas.";
+        return res.status(tfRes.status).json({ error: errMsg, details: tfData });
+      }
+
+      // Audit log into financial transactions or audit collection
+      const dbAdmin = getAdminDb();
+      if (dbAdmin) {
+        try {
+          await dbAdmin.collection('financial_audit_logs').add({
+            action: 'TRANSFER_WITHDRAWAL',
+            amount: numValue,
+            transferId: tfData.id,
+            destinationType: transferPayload.operationType,
+            destination: pixAddressKey || `${bankAccount?.bankCode || ''} Ag ${bankAccount?.agency || ''} Cc ${bankAccount?.account || ''}`,
+            createdAt: new Date().toISOString(),
+            status: tfData.status || 'PENDING'
+          });
+        } catch (audErr) {
+          console.warn("Aviso ao gravar log de auditoria de transferência:", audErr);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "Solicitação de transferência realizada com sucesso!",
+        transfer: tfData
+      });
+    } catch (error: any) {
+      console.error("Erro ao realizar transferência:", error);
+      res.status(500).json({ error: error.message || "Erro interno ao processar transferência." });
     }
   });
 

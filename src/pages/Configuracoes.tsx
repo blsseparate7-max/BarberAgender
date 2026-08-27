@@ -4,6 +4,7 @@ import {
   User, 
   Bell, 
   Shield, 
+  ShieldCheck,
   CreditCard, 
   HelpCircle, 
   ChevronRight, 
@@ -210,6 +211,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
 
   // Business / rules states
   const [loyaltyConfigId, setLoyaltyConfigId] = useState<string>('');
+  const [loyaltyMode, setLoyaltyMode] = useState<'saldo' | 'pontos'>('saldo');
+  const [minRedemptionValue, setMinRedemptionValue] = useState('10');
   const [cashbackEnabled, setCashbackEnabled] = useState(false);
   const [cashbackType, setCashbackType] = useState<'percentual' | 'fixo'>('percentual');
   const [cashbackFixedValue, setCashbackFixedValue] = useState('5');
@@ -409,6 +412,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
         const config = await loyaltyService.getConfig();
         if (config) {
           setLoyaltyConfigId(config.id);
+          setLoyaltyMode(config.loyaltyMode || 'saldo');
+          setMinRedemptionValue(String(config.minRedemptionValue ?? 10));
           setCashbackEnabled(config.cashbackEnabled ?? false);
           setCashbackType(config.cashbackType || 'percentual');
           setCashbackFixedValue(String(config.cashbackFixedValue ?? 5));
@@ -435,7 +440,6 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       name: formData.get('name') as string,
       email: formData.get('email') as string,
       phone: formData.get('phone') as string,
-      cnpj: formData.get('cnpj') as string,
       accentColor,
       logoUrl,
       instagram: formData.get('instagram') as string,
@@ -468,6 +472,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     try {
       if (loyaltyConfigId) {
         await loyaltyService.updateConfig(loyaltyConfigId, {
+          loyaltyMode,
+          minRedemptionValue: Number(minRedemptionValue) || 0,
           cashbackEnabled,
           cashbackType,
           cashbackFixedValue: Number(cashbackFixedValue) || 0,
@@ -477,7 +483,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
           minRedemptionPoints: Number(minRedemptionPoints) || 0,
           vipThreshold: Number(vipThreshold) || 0,
         });
-        toast.success("Configurações de fidelidade e cashback salvas com sucesso!");
+        toast.success("Configurações do Programa de Fidelidade salvas com sucesso!");
       }
     } catch (err) {
       console.error(err);
@@ -856,14 +862,66 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">CNPJ (Opcional)</label>
-                      <input 
-                        name="cnpj"
-                        type="text" 
-                        defaultValue={(tenant as any)?.cnpj || ''}
-                        placeholder="00.000.000/0000-00" 
-                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                      />
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-1.5">
+                        <Lock size={12} className="text-amber-500" /> Documento Oficial (CPF / CNPJ)
+                      </label>
+                      <div className="relative">
+                        <input 
+                          type="text" 
+                          value={tenant?.cnpjCpf || tenant?.asaas?.cpfCnpj || (tenant as any)?.cnpj || 'Não cadastrado'} 
+                          disabled
+                          readOnly
+                          className="w-full bg-slate-100 border border-slate-200/80 rounded-2xl py-4 px-5 pr-10 text-sm font-black text-slate-600 cursor-not-allowed select-none shadow-inner"
+                        />
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-amber-500 bg-amber-50 p-1.5 rounded-lg border border-amber-200/60">
+                          <Lock size={14} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card de Proteção de Integridade da Conta Digital Asaas */}
+                  <div className="bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950 text-white p-6 rounded-3xl border border-slate-800 shadow-lg space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center border border-indigo-500/30 shrink-0">
+                          <ShieldCheck size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black tracking-tight text-white flex items-center gap-2">
+                            Conta Digital Asaas & Titularidade
+                          </h4>
+                          <p className="text-[11px] text-slate-400 font-medium">
+                            Integração bancária nativa para recebimento de mensalidades e assinaturas
+                          </p>
+                        </div>
+                      </div>
+
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border shrink-0 ${
+                        tenant?.asaas?.subaccountId 
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' 
+                          : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                      }`}>
+                        {tenant?.asaas?.subaccountId ? '🟢 Conta Digital Ativa' : '🟡 Vinculado ao Master'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-mono">
+                      <div className="p-3.5 bg-slate-900/80 rounded-2xl border border-slate-800 space-y-1">
+                        <span className="text-[9px] font-sans font-black text-slate-400 uppercase tracking-widest block">ID da Subconta Asaas</span>
+                        <span className="text-white font-black">{tenant?.asaas?.subaccountId || 'Pendente de homologação'}</span>
+                      </div>
+                      <div className="p-3.5 bg-slate-900/80 rounded-2xl border border-slate-800 space-y-1">
+                        <span className="text-[9px] font-sans font-black text-slate-400 uppercase tracking-widest block">Status do Cadastro Banco</span>
+                        <span className="text-emerald-400 font-black uppercase">{tenant?.asaas?.accountStatus || 'APROVADO E ATIVO'}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 bg-slate-900/40 border border-amber-500/20 rounded-2xl flex items-start gap-3">
+                      <Lock size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                      <p className="text-[11px] font-sans text-slate-300 font-medium leading-relaxed">
+                        <strong className="text-white">🔒 Proteção de Segurança Financeira:</strong> Os dados da subconta e o documento de titularidade (CPF/CNPJ) são <strong>protegidos contra edições locais</strong> para evitar desconciliação bancária, desativação de chaves de API ou desvios de recebíveis. Alterações cadastrais só podem ser realizadas através da Central Master SaaS.
+                      </p>
                     </div>
                   </div>
 
@@ -1118,15 +1176,15 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             {activeSection === 'business' && (
               <form onSubmit={handleSaveBusinessSettings} className="space-y-8">
                 <div>
-                  <h3 className="text-xl font-black text-primary tracking-tight">Programa de Fidelidade & Cashback</h3>
-                  <p className="text-xs text-muted font-semibold mt-1">Ative e configure o sistema de retorno de cashback e pontuação para os clientes no portal.</p>
+                  <h3 className="text-xl font-black text-primary tracking-tight">Programa de Fidelidade</h3>
+                  <p className="text-xs text-muted font-semibold mt-1">Configure as regras de pontuação ou cashback (saldo em R$) que serão refletidas diretamente no Portal do Cliente.</p>
                 </div>
 
                 <div className="bg-slate-50/80 p-6 rounded-3xl border border-slate-100 space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="text-sm font-black text-primary">Ativar Cashback no Portal do Cliente</h4>
-                      <p className="text-xs text-muted">Quando ativado, exibe a aba de cashback e fidelidade no painel dos clientes.</p>
+                      <h4 className="text-sm font-black text-primary">Ativar Programa de Fidelidade</h4>
+                      <p className="text-xs text-muted">Quando ativado, os clientes acumulam benefícios e visualizam a aba de fidelidade no portal.</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input 
@@ -1142,54 +1200,193 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
 
                 {cashbackEnabled && (
                   <div className="space-y-6 animate-fadeIn">
+                    {/* Modo do Programa: Saldo vs Pontos */}
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Tipo de Cashback</label>
-                      <select
-                        value={cashbackType}
-                        onChange={(e) => setCashbackType(e.target.value as any)}
-                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                      >
-                        <option value="percentual">Percentual sobre o valor pago pelo serviço (%)</option>
-                        <option value="fixo">Valor Fixo em Reais (R$) por atendimento</option>
-                      </select>
-                    </div>
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Critério do Programa de Fidelidade</label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <button
+                          type="button"
+                          onClick={() => setLoyaltyMode('saldo')}
+                          className={`p-5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-3 ${
+                            loyaltyMode === 'saldo'
+                              ? 'bg-amber-50/50 border-amber-500 shadow-sm ring-2 ring-amber-500/20'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-2xl">💰</span>
+                            <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                              loyaltyMode === 'saldo' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {loyaltyMode === 'saldo' ? 'Modo Ativo' : 'Selecionar'}
+                            </span>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-black text-slate-800">Por Saldo (Cashback em R$)</h4>
+                            <p className="text-xs text-muted mt-1 leading-relaxed">
+                              O cliente recebe dinheiro de volta a cada atendimento para abater em futuros pagamentos de comandas.
+                            </p>
+                          </div>
+                        </button>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      {cashbackType === 'percentual' ? (
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Porcentagem de Cashback (%)</label>
-                          <input 
-                            type="number" 
-                            step="0.1"
-                            value={cashbackPct} 
-                            onChange={(e) => setCashbackPct(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                          />
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor Fixo por Atendimento (R$)</label>
-                          <input 
-                            type="number" 
-                            step="0.01"
-                            value={cashbackFixedValue} 
-                            onChange={(e) => setCashbackFixedValue(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                          />
-                        </div>
-                      )}
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Pontos para cada R$ 1,00 gasto</label>
-                        <input 
-                          type="number" 
-                          step="0.1"
-                          value={pointsRate} 
-                          onChange={(e) => setPointsRate(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                        />
+                        <button
+                          type="button"
+                          onClick={() => setLoyaltyMode('pontos')}
+                          className={`p-5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-3 ${
+                            loyaltyMode === 'pontos'
+                              ? 'bg-indigo-50/50 border-indigo-600 shadow-sm ring-2 ring-indigo-600/20'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-2xl">🏅</span>
+                            <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                              loyaltyMode === 'pontos' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {loyaltyMode === 'pontos' ? 'Modo Ativo' : 'Selecionar'}
+                            </span>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-black text-slate-800">Por Pontuação (Clube de Pontos)</h4>
+                            <p className="text-xs text-muted mt-1 leading-relaxed">
+                              O cliente acumula pontos por valor gasto ou por visita para trocar por recompensas exclusivas.
+                            </p>
+                          </div>
+                        </button>
                       </div>
                     </div>
+
+                    {/* CONFIGURAÇÃO SE FOR MODO SALDO */}
+                    {loyaltyMode === 'saldo' && (
+                      <div className="space-y-6 p-6 bg-amber-50/30 rounded-3xl border border-amber-200/60">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Tipo de Cálculo do Saldo</label>
+                          <select
+                            value={cashbackType}
+                            onChange={(e) => setCashbackType(e.target.value as any)}
+                            className="w-full bg-white border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all text-primary shadow-xs"
+                          >
+                            <option value="percentual">Percentual sobre o valor pago pelo serviço (%)</option>
+                            <option value="fixo">Valor Fixo em Reais (R$) por atendimento</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {cashbackType === 'percentual' ? (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Porcentagem de Retorno (%)</label>
+                              <div className="relative">
+                                <input 
+                                  type="number" 
+                                  step="0.5"
+                                  min="0"
+                                  max="100"
+                                  value={cashbackPct} 
+                                  onChange={(e) => setCashbackPct(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all text-primary shadow-xs"
+                                  placeholder="Ex: 5"
+                                />
+                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">%</span>
+                              </div>
+                              <p className="text-[11px] text-muted ml-1">Ex: Em um corte de R$ 60,00 com 5%, o cliente acumula R$ 3,00.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor Fixo por Atendimento (R$)</label>
+                              <div className="relative">
+                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">R$</span>
+                                <input 
+                                  type="number" 
+                                  step="0.50"
+                                  min="0"
+                                  value={cashbackFixedValue} 
+                                  onChange={(e) => setCashbackFixedValue(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl py-4 pl-12 pr-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all text-primary shadow-xs"
+                                  placeholder="Ex: 5.00"
+                                />
+                              </div>
+                              <p className="text-[11px] text-muted ml-1">Valor creditado a cada comanda finalizada.</p>
+                            </div>
+                          )}
+
+                          {/* Valor Mínimo para Resgate */}
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                              Valor Mínimo para Resgate (R$) <span className="text-amber-600 font-bold">*</span>
+                            </label>
+                            <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">R$</span>
+                              <input 
+                                type="number" 
+                                step="1"
+                                min="0"
+                                value={minRedemptionValue} 
+                                onChange={(e) => setMinRedemptionValue(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-2xl py-4 pl-12 pr-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all text-primary shadow-xs"
+                                placeholder="Ex: 10.00"
+                              />
+                            </div>
+                            <p className="text-[11px] text-muted ml-1">
+                              O cliente só poderá usar o saldo para abater pagamentos quando atingir no mínimo esse valor.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CONFIGURAÇÃO SE FOR MODO PONTOS */}
+                    {loyaltyMode === 'pontos' && (
+                      <div className="space-y-6 p-6 bg-indigo-50/30 rounded-3xl border border-indigo-200/60">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Pontos para cada R$ 1,00 gasto</label>
+                            <input 
+                              type="number" 
+                              step="1"
+                              min="0"
+                              value={pointsRate} 
+                              onChange={(e) => setPointsRate(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-primary shadow-xs"
+                              placeholder="Ex: 1"
+                            />
+                            <p className="text-[11px] text-muted ml-1">Ex: 1 ponto por cada R$ 1,00 gasto pelo cliente.</p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Pontos bônus por Atendimento</label>
+                            <input 
+                              type="number" 
+                              step="1"
+                              min="0"
+                              value={pointsAppointment} 
+                              onChange={(e) => setPointsAppointment(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-primary shadow-xs"
+                              placeholder="Ex: 10"
+                            />
+                            <p className="text-[11px] text-muted ml-1">Pontuação extra concedida por visita.</p>
+                          </div>
+
+                          {/* Pontos Mínimos para Resgate */}
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                              Pontuação Mínima para Resgate (Pontos) <span className="text-indigo-600 font-bold">*</span>
+                            </label>
+                            <input 
+                              type="number" 
+                              step="10"
+                              min="0"
+                              value={minRedemptionPoints} 
+                              onChange={(e) => setMinRedemptionPoints(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-primary shadow-xs"
+                              placeholder="Ex: 100"
+                            />
+                            <p className="text-[11px] text-muted ml-1">
+                              Quantidade de pontos necessária para liberar o resgate de benefícios no portal.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1199,7 +1396,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                     className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-lg active:scale-95 uppercase tracking-widest flex items-center gap-3"
                   >
                     <Save size={18} />
-                    Salvar Ajustes
+                    Salvar Regras de Fidelidade
                   </button>
                 </div>
               </form>

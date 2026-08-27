@@ -36,10 +36,15 @@ import {
   MessageCircle,
   QrCode,
   Copy,
-  ExternalLink
+  ExternalLink,
+  Receipt,
+  SkipForward,
+  Wallet,
+  FileText,
+  CheckCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isBefore, startOfDay, addMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '../contexts/AuthContext';
 import { subscriptionService } from '../services/subscriptionService';
@@ -187,6 +192,15 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     status?: string;
   } | null>(null);
   const [showCreatedChargeModal, setShowCreatedChargeModal] = useState(false);
+
+  // State for Skip Invoice / Baixa Manual Modal
+  const [skipInvoiceSub, setSkipInvoiceSub] = useState<Subscription | null>(null);
+  const [isSkippingInvoice, setIsSkippingInvoice] = useState(false);
+
+  // State for Invoices History Modal
+  const [invoicesHistorySub, setInvoicesHistorySub] = useState<Subscription | null>(null);
+  const [invoicesList, setInvoicesList] = useState<any[]>([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
 
   const [planShowInPortal, setPlanShowInPortal] = useState(true);
   const [planAllowedPaymentMethods, setPlanAllowedPaymentMethods] = useState<('PIX' | 'CREDIT_CARD')[]>(['PIX', 'CREDIT_CARD']);
@@ -762,6 +776,122 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     } catch (error: any) {
       console.error("Erro ao recobrar assinatura:", error);
       toast.error(error.message || "Erro ao efetuar recobrança.", { id: toastId });
+    }
+  };
+
+  // Action to Skip Invoice / Baixa Manual no Caixa
+  const handleSkipInvoice = async (params: {
+    subscriptionId: string;
+    paymentMethod: string;
+    amount: number;
+    notes?: string;
+    launchInCash?: boolean;
+    cancelAsaasInvoice?: boolean;
+  }) => {
+    setIsSkippingInvoice(true);
+    const toastId = toast.loading("Registrando baixa no caixa e renovando assinatura...");
+    try {
+      const res = await fetch("/api/saas/subscription/skip-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...params,
+          userId: user?.uid || profile?.uid || 'admin',
+          userName: profile?.nome || 'Administrador'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Falha ao dar baixa manual.");
+      }
+
+      toast.success(data.message || "Fatura pulada com sucesso e pagamento lançado no caixa!", { id: toastId });
+      setSkipInvoiceSub(null);
+      await loadData();
+    } catch (err: any) {
+      console.error("Erro ao pular fatura:", err);
+      toast.error(err.message || "Erro ao registrar baixa manual.", { id: toastId });
+    } finally {
+      setIsSkippingInvoice(false);
+    }
+  };
+
+  // Action to fetch invoices history (local transactions + Asaas)
+  const handleViewInvoices = async (sub: Subscription) => {
+    setInvoicesHistorySub(sub);
+    setLoadingInvoices(true);
+    setInvoicesList([]);
+    try {
+      const combinedInvoices: any[] = [];
+      const seenIds = new Set<string>();
+
+      // 1. Fetch Local Transactions from client-side Firestore
+      try {
+        const transRef = collection(db, 'financial_transactions');
+        const q = query(
+          transRef,
+          where('tenantId', '==', (profile as any)?.tenantId || 'gbcortes7')
+        );
+        const snap = await getDocs(q);
+        snap.forEach(docSnap => {
+          const data = docSnap.data();
+          const isCategorySub = data.category === 'Assinaturas' || data.category === 'Planos' || data.type === 'assinatura';
+          const matchesClient = (sub.cliente_id && data.cliente_id === sub.cliente_id) || 
+                                (sub.cliente_name && data.description?.toLowerCase().includes(sub.cliente_name.toLowerCase()));
+          
+          if (isCategorySub && matchesClient) {
+            seenIds.add(docSnap.id);
+            combinedInvoices.push({
+              id: docSnap.id,
+              date: data.date || (typeof data.createdAt === 'string' ? data.createdAt.substring(0, 10) : ''),
+              dueDate: data.settlement_date || data.date || '',
+              amount: data.amount || data.net_amount || 0,
+              status: data.status === 'pago' ? 'RECEIVED' : (data.status === 'pendente' ? 'PENDING' : 'OVERDUE'),
+              statusLabel: data.status === 'pago' ? 'Paga no Balcão' : 'Pendente',
+              billingType: data.paymentMethod ? String(data.paymentMethod).toUpperCase() : 'BALCAO',
+              billingTypeLabel: data.paymentMethod === 'dinheiro' ? 'Dinheiro (Balcão)' : (data.paymentMethod === 'pix' ? 'Pix Balcão' : (data.paymentMethod === 'debito' ? 'Cartão Débito (Maquininha)' : (data.paymentMethod === 'credito' ? 'Cartão Crédito (Maquininha)' : 'Balcão / Caixa'))),
+              description: data.description || 'Assinatura (Balcão)',
+              source: 'local'
+            });
+          }
+        });
+      } catch (localErr) {
+        console.warn("Aviso ao buscar transações locais:", localErr);
+      }
+
+      // 2. Fetch Asaas API Invoices via Server Endpoint
+      const customerId = (sub as any).asaasCustomerId || '';
+      const clienteId = sub.cliente_id || '';
+      try {
+        const res = await fetch(`/api/saas/subscription/invoices?subscriptionId=${encodeURIComponent(sub.id)}&customerId=${encodeURIComponent(customerId)}&clienteId=${encodeURIComponent(clienteId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          const apiInvoices = data.invoices || [];
+          apiInvoices.forEach((inv: any) => {
+            if (!seenIds.has(inv.id)) {
+              seenIds.add(inv.id);
+              combinedInvoices.push(inv);
+            }
+          });
+        }
+      } catch (apiErr) {
+        console.warn("Aviso ao buscar faturas Asaas no backend:", apiErr);
+      }
+
+      // Sort all combined invoices by date descending
+      combinedInvoices.sort((a, b) => {
+        const dateA = new Date(a.date || a.dueDate || 0).getTime();
+        const dateB = new Date(b.date || b.dueDate || 0).getTime();
+        return dateB - dateA;
+      });
+
+      setInvoicesList(combinedInvoices);
+    } catch (err) {
+      console.error("Erro ao buscar histórico de faturas:", err);
+      toast.error("Erro ao carregar faturas.");
+    } finally {
+      setLoadingInvoices(false);
     }
   };
 
@@ -1777,6 +1907,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               onRegisterUsage={handleRegisterUsage}
                               onRenew={handleManualRenewSubscription}
                               onRecobrar={handleRecobrarSubscription}
+                              onSkipInvoice={setSkipInvoiceSub}
+                              onViewInvoices={handleViewInvoices}
                               onToggleAutoRenew={handleToggleAutoRenew}
                               onStatusChange={handleUpdateSubscriptionStatus}
                               onDelete={(id) => setDeleteSubId(id)}
@@ -1792,24 +1924,32 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {paginatedSubscriptions.map(sub => (
-                    <SubscriptionCard 
-                      key={sub.id} 
-                      sub={sub} 
-                      plan={plans.find(p => p.id === sub.plano_id)}
-                      isAdmin={canManage}
-                      onRegisterUsage={handleRegisterUsage}
-                      onRenew={handleManualRenewSubscription}
-                      onRecobrar={handleRecobrarSubscription}
-                      onToggleAutoRenew={handleToggleAutoRenew}
-                      onStatusChange={handleUpdateSubscriptionStatus}
-                      onDelete={(id) => setDeleteSubId(id)}
-                      onConfirmAsaasPayment={handleConfirmAsaasPayment}
-                      onShowChargeModal={handleOpenChargeModal}
-                      onViewDetail={handleViewSubDetail}
-                      isClient={false}
-                    />
-                  ))}
+                  {paginatedSubscriptions.map(sub => {
+                    const matchedClient = clients.find(c => c.uid === sub.cliente_id);
+                    const clientPhone = matchedClient?.telefone || matchedClient?.whatsapp || '';
+                    return (
+                      <SubscriptionCard 
+                        key={sub.id} 
+                        sub={sub} 
+                        plan={plans.find(p => p.id === sub.plano_id)}
+                        clientPhone={clientPhone}
+                        matchedClient={matchedClient}
+                        isAdmin={canManage}
+                        onRegisterUsage={handleRegisterUsage}
+                        onRenew={handleManualRenewSubscription}
+                        onRecobrar={handleRecobrarSubscription}
+                        onSkipInvoice={setSkipInvoiceSub}
+                        onViewInvoices={handleViewInvoices}
+                        onToggleAutoRenew={handleToggleAutoRenew}
+                        onStatusChange={handleUpdateSubscriptionStatus}
+                        onDelete={(id) => setDeleteSubId(id)}
+                        onConfirmAsaasPayment={handleConfirmAsaasPayment}
+                        onShowChargeModal={handleOpenChargeModal}
+                        onViewDetail={handleViewSubDetail}
+                        isClient={false}
+                      />
+                    );
+                  })}
                 </div>
               )}
 
@@ -2751,9 +2891,11 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   plan={plans.find(p => p.id === sub.plano_id)}
                   isAdmin={false}
                   onRegisterUsage={() => {}}
+                  onViewInvoices={handleViewInvoices}
                   onToggleAutoRenew={handleToggleAutoRenew}
                   onStatusChange={handleUpdateSubscriptionStatus}
                   onShowChargeModal={handleOpenChargeModal}
+                  onViewDetail={handleViewSubDetail}
                   isClient={true}
                 />
               ))}
@@ -3778,6 +3920,354 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
           </div>
         )}
       </AnimatePresence>
+
+      {/* MODAL: PULAR FATURA / BAIXA MANUAL NO CAIXA */}
+      <AnimatePresence>
+        {skipInvoiceSub && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center font-black shadow-sm">
+                    <SkipForward size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">Pular Fatura / Baixa Manual</h3>
+                    <p className="text-xs font-bold text-slate-500">
+                      Registrar pagamento avulso e renovar assinatura
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSkipInvoiceSub(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-200/50 transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Form */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const formData = new FormData(e.currentTarget);
+                  const paymentMethod = formData.get('paymentMethod') as string;
+                  const amount = Number(formData.get('amount')) || 0;
+                  const notes = formData.get('notes') as string;
+                  const launchInCash = formData.get('launchInCash') === 'on';
+                  const cancelAsaasInvoice = formData.get('cancelAsaasInvoice') === 'on';
+
+                  handleSkipInvoice({
+                    subscriptionId: skipInvoiceSub.id,
+                    paymentMethod,
+                    amount,
+                    notes,
+                    launchInCash,
+                    cancelAsaasInvoice
+                  });
+                }}
+                className="p-6 space-y-5 overflow-y-auto max-h-[75vh]"
+              >
+                {/* Client & Plan Info Card */}
+                <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">Assinante & Plano</span>
+                    <h4 className="text-sm font-black text-slate-900">{skipInvoiceSub.cliente_name}</h4>
+                    <span className="text-xs font-bold text-indigo-600">
+                      {plans.find(p => p.id === skipInvoiceSub.plano_id)?.name || 'Plano de Assinatura'}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">Novo Vencimento</span>
+                    <span className="text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">
+                      +1 mês a partir de hoje
+                    </span>
+                  </div>
+                </div>
+
+                {/* Amount */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
+                    <DollarSign size={14} className="text-indigo-600" />
+                    <span>Valor Recebido (R$)</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="amount"
+                    defaultValue={plans.find(p => p.id === skipInvoiceSub.plano_id)?.price || 0}
+                    required
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-3.5 text-base font-black text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition shadow-sm"
+                  />
+                  <p className="text-[10px] font-bold text-slate-400">
+                    Valor que será registrado como entrada financeira no caixa.
+                  </p>
+                </div>
+
+                {/* Payment Method */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
+                    <Wallet size={14} className="text-indigo-600" />
+                    <span>Forma de Pagamento Recebida</span>
+                  </label>
+                  <select
+                    name="paymentMethod"
+                    defaultValue="pix"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white transition cursor-pointer shadow-sm"
+                  >
+                    <option value="dinheiro">💵 Dinheiro (Balcão)</option>
+                    <option value="pix">⚡ Pix (Chave / QR Code no Balcão)</option>
+                    <option value="cartao_debito">💳 Cartão de Débito (Maquininha)</option>
+                    <option value="cartao_credito">💳 Cartão de Crédito (Maquininha do Balcão)</option>
+                    <option value="outro">🏷️ Outro / Cortesia / Acordo</option>
+                  </select>
+                </div>
+
+                {/* Observations */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
+                    <FileText size={14} className="text-indigo-600" />
+                    <span>Observações (Opcional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="notes"
+                    placeholder="Ex: Cliente pagou em dinheiro no balcão"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3.5 text-xs font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white transition shadow-sm"
+                  />
+                </div>
+
+                {/* Checkboxes */}
+                <div className="space-y-3 pt-2">
+                  <label className="flex items-start gap-3 p-3 bg-emerald-50/60 border border-emerald-200/60 rounded-xl cursor-pointer hover:bg-emerald-50 transition select-none">
+                    <input
+                      type="checkbox"
+                      name="launchInCash"
+                      defaultChecked
+                      className="w-4 h-4 mt-0.5 accent-emerald-600 rounded cursor-pointer"
+                    />
+                    <div className="text-left">
+                      <span className="text-xs font-black text-emerald-900 block">Lançar no Caixa Aberto da Barbearia</span>
+                      <span className="text-[10px] font-semibold text-emerald-700 block">
+                        Cria movimentação de entrada no turno de caixa atual com a forma de pagamento escolhida.
+                      </span>
+                    </div>
+                  </label>
+
+                  {skipInvoiceSub.activationType === 'asaas' && (
+                    <label className="flex items-start gap-3 p-3 bg-purple-50/60 border border-purple-200/60 rounded-xl cursor-pointer hover:bg-purple-50 transition select-none">
+                      <input
+                        type="checkbox"
+                        name="cancelAsaasInvoice"
+                        defaultChecked
+                        className="w-4 h-4 mt-0.5 accent-purple-600 rounded cursor-pointer"
+                      />
+                      <div className="text-left">
+                        <span className="text-xs font-black text-purple-950 block">Cancelar / Ignorar cobrança pendente do Asaas</span>
+                        <span className="text-[10px] font-semibold text-purple-800 block">
+                          Evita que o cartão do cliente seja cobrado em duplicidade no gateway online.
+                        </span>
+                      </div>
+                    </label>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-3 pt-4 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setSkipInvoiceSub(null)}
+                    disabled={isSkippingInvoice}
+                    className="flex-1 py-3 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSkippingInvoice}
+                    className="flex-[2] py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition shadow-sm active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {isSkippingInvoice ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>Processando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={16} />
+                        <span>Confirmar Baixa e Renovar</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL: HISTÓRICO DE FATURAS PAGAS */}
+      <AnimatePresence>
+        {invoicesHistorySub && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center font-black shadow-sm">
+                    <Receipt size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">Histórico de Faturas & Pagamentos</h3>
+                    <p className="text-xs font-bold text-slate-500">
+                      {invoicesHistorySub.cliente_name} • {plans.find(p => p.id === invoicesHistorySub.plano_id)?.name || 'Assinatura'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInvoicesHistorySub(null);
+                    setInvoicesList([]);
+                  }}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-200/50 transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6 overflow-y-auto space-y-4">
+                {loadingInvoices ? (
+                  <div className="py-16 text-center space-y-3">
+                    <Loader2 size={32} className="animate-spin text-indigo-600 mx-auto" />
+                    <p className="text-xs font-bold text-slate-500">Consultando faturas locais e no Asaas...</p>
+                  </div>
+                ) : invoicesList.length === 0 ? (
+                  <div className="py-16 text-center space-y-2">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 mx-auto">
+                      <FileText size={24} />
+                    </div>
+                    <p className="text-sm font-black text-slate-700">Nenhuma fatura registrada ainda</p>
+                    <p className="text-xs font-semibold text-slate-400">
+                      Os pagamentos efetuados via cartão, Pix ou baixa no caixa serão listados aqui.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-[10px] font-black text-slate-500 uppercase tracking-widest border-b">
+                          <th className="p-3.5">Data / Vencimento</th>
+                          <th className="p-3.5">Descrição / Origem</th>
+                          <th className="p-3.5">Método</th>
+                          <th className="p-3.5">Status</th>
+                          <th className="p-3.5 text-right font-black">Valor</th>
+                          <th className="p-3.5 text-center">Comprovante</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                        {invoicesList.map((inv, idx) => {
+                          const isPaid = inv.status === 'RECEIVED' || inv.status === 'CONFIRMED' || inv.status === 'pago' || inv.status === 'active' || inv.status === 'received';
+                          const isOverdue = inv.status === 'OVERDUE' || inv.status === 'overdue';
+                          
+                          let statusLabel = 'Pendente';
+                          let statusClass = 'bg-amber-50 text-amber-700 border-amber-200';
+
+                          if (isPaid) {
+                            statusLabel = 'Paga';
+                            statusClass = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                          } else if (isOverdue) {
+                            statusLabel = 'Atrasada';
+                            statusClass = 'bg-rose-50 text-rose-700 border-rose-200';
+                          }
+
+                          const dateFormatted = inv.paymentDate 
+                            ? format(parseISO(inv.paymentDate), 'dd/MM/yyyy') 
+                            : (inv.dueDate ? format(parseISO(inv.dueDate), 'dd/MM/yyyy') : (inv.date ? format(parseISO(inv.date), 'dd/MM/yyyy') : '-'));
+
+                          return (
+                            <tr key={inv.id || idx} className="hover:bg-slate-50/70 transition">
+                              <td className="p-3.5 font-bold text-slate-900 whitespace-nowrap">
+                                {dateFormatted}
+                              </td>
+                              <td className="p-3.5 text-slate-600">
+                                <div className="font-bold text-slate-800">{inv.description || 'Assinatura Mensal'}</div>
+                                <span className="text-[9px] text-slate-400 font-extrabold uppercase">
+                                  {inv.source === 'asaas' ? 'Gateway Asaas' : 'Baixa Balcão / Caixa'}
+                                </span>
+                              </td>
+                              <td className="p-3.5">
+                                <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase">
+                                  {inv.billingType || inv.forma_pagamento || 'Cartão'}
+                                </span>
+                              </td>
+                              <td className="p-3.5">
+                                <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${statusClass}`}>
+                                  {isPaid && <CheckCheck size={10} />}
+                                  <span>{statusLabel}</span>
+                                </span>
+                              </td>
+                              <td className="p-3.5 text-right font-black text-slate-900 text-sm whitespace-nowrap">
+                                R$ {Number(inv.value || inv.valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="p-3.5 text-center">
+                                {inv.invoiceUrl || inv.bankSlipUrl || inv.paymentUrl ? (
+                                  <a
+                                    href={inv.invoiceUrl || inv.bankSlipUrl || inv.paymentUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg inline-flex items-center gap-1 text-[10px] font-black uppercase transition"
+                                    title="Abrir fatura / comprovante"
+                                  >
+                                    <ExternalLink size={12} />
+                                    <span>Ver</span>
+                                  </a>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 italic">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between shrink-0">
+                <span className="text-xs font-bold text-slate-500">
+                  Total de {invoicesList.length} faturas encontradas
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInvoicesHistorySub(null);
+                    setInvoicesList([]);
+                  }}
+                  className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {selectedBarberDetailModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
@@ -4043,14 +4533,57 @@ function BenefitItem({ icon, text }: BenefitItemProps) {
   );
 }
 
+// Helper to determine if subscription needs payment recovery (only show Recobrar if overdue / failed after due date)
+const isSubOverdueOrFailed = (sub: Subscription) => {
+  if ((sub.status as string) === 'canceled') return false;
+  const isPastDue = isBefore(parseISO(sub.endDate), startOfDay(new Date()));
+  const asaasStatus = (sub as any).asaasPaymentStatus;
+  return (
+    (sub.status as string) === 'overdue' ||
+    sub.status === 'expired' ||
+    (sub.status === 'pending' && isPastDue) ||
+    asaasStatus === 'OVERDUE' ||
+    asaasStatus === 'overdue' ||
+    asaasStatus === 'FAILED' ||
+    asaasStatus === 'failed'
+  );
+};
+
+// Helper for Smart WhatsApp URL
+function getSmartWhatsAppUrl(clientPhone: string | undefined, clientName: string, sub: Subscription, planName: string, planPrice: number) {
+  if (!clientPhone) return null;
+  const rawPhone = clientPhone.replace(/\D/g, '');
+  if (!rawPhone || rawPhone.length < 10) return null;
+  const formattedPhone = rawPhone.length >= 10 && !rawPhone.startsWith('55') ? `55${rawPhone}` : rawPhone;
+  
+  const endDateStr = sub.endDate ? format(parseISO(sub.endDate), 'dd/MM/yyyy') : '';
+  const paymentLink = sub.paymentUrl || '';
+  const isOverdue = (sub.status as string) === 'overdue' || sub.status === 'expired' || (sub.status === 'pending' && isBefore(parseISO(sub.endDate), startOfDay(new Date())));
+
+  let message = '';
+  if (isOverdue) {
+    message = `Olá, ${clientName}! 👋 Tudo bem?\nPassando para avisar que sua assinatura do plano *${planName}* (R$ ${planPrice.toFixed(2)}) está pendente ou com renovação pendente.\nPara regularizar e continuar utilizando seus benefícios sem interrupções${paymentLink ? `, acesse o link: ${paymentLink}` : ''}.\nSe já realizou o pagamento ou deseja pagar no balcão, estamos à disposição! 💈`;
+  } else if (sub.status === 'pending') {
+    message = `Olá, ${clientName}! 👋 Tudo bem?\nSua assinatura do plano *${planName}* (R$ ${planPrice.toFixed(2)}) foi gerada e está aguardando confirmação.${paymentLink ? `\nVocê pode acessar sua fatura / Pix aqui: ${paymentLink}` : ''}\nQualquer dúvida é só nos chamar! 💈`;
+  } else {
+    message = `Olá, ${clientName}! 👋 Tudo bem?\nPassando para lembrar que sua assinatura do plano *${planName}* está ativa com vencimento em *${endDateStr}*.\nSe precisar agendar seus horários ou tirar qualquer dúvida, estamos à disposição! 💈`;
+  }
+
+  return `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+}
+
 interface SubscriptionCardProps {
   key?: React.Key;
   sub: Subscription;
   plan?: SubscriptionPlan;
+  clientPhone?: string;
+  matchedClient?: UserProfile;
   isAdmin: boolean;
   onRegisterUsage: (id: string, type: string, serviceId?: string) => void;
   onRenew?: (id: string) => void;
   onRecobrar?: (id: string) => void;
+  onSkipInvoice?: (sub: Subscription) => void;
+  onViewInvoices?: (sub: Subscription) => void;
   onToggleAutoRenew?: (id: string, autoRenew: boolean) => void;
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
@@ -4063,10 +4596,14 @@ interface SubscriptionCardProps {
 function SubscriptionCard({ 
   sub, 
   plan, 
+  clientPhone,
+  matchedClient,
   isAdmin, 
   onRegisterUsage, 
   onRenew, 
   onRecobrar,
+  onSkipInvoice,
+  onViewInvoices,
   onToggleAutoRenew, 
   onStatusChange, 
   onDelete,
@@ -4084,6 +4621,9 @@ function SubscriptionCard({
     paused: 'bg-amber-50 text-amber-600 border-amber-100',
     pending: 'bg-purple-50 text-purple-600 border-purple-100'
   };
+
+  const showRecobrar = isAdmin && onRecobrar && isSubOverdueOrFailed(sub);
+  const whatsappUrl = getSmartWhatsAppUrl(clientPhone, sub.cliente_name, sub, plan.name, plan.price);
 
   return (
     <div className="bg-white border border-slate-200 rounded-[2rem] p-8 space-y-8 shadow-sm group hover:border-accent/20 transition-all flex flex-col justify-between h-full">
@@ -4142,12 +4682,12 @@ function SubscriptionCard({
                 </button>
               )}
 
-              {isAdmin && onRecobrar && (
+              {showRecobrar && (
                 <button
                   type="button"
-                  onClick={() => onRecobrar(sub.id)}
+                  onClick={() => onRecobrar?.(sub.id)}
                   className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
-                  title="Recobrar assinatura (gerar nova cobrança de cartão)"
+                  title="Recobrar assinatura (gerar nova cobrança de cartão no Asaas)"
                 >
                   <CreditCard size={13} />
                   <span>Recobrar</span>
@@ -4175,7 +4715,7 @@ function SubscriptionCard({
               const typeLabel = ps.name.toLowerCase().includes('corte') || ps.name.toLowerCase().includes('cabelo') || ps.name.toLowerCase().includes('hair') ? 'haircut' : (ps.name.toLowerCase().includes('barba') || ps.name.toLowerCase().includes('beard') ? 'beard' : 'other');
               return (
                 <UsageIndicator 
-                  key={ps.serviceId}
+                  key={ps.serviceId} 
                   label={ps.name} 
                   used={used} 
                   total={ps.isUnlimited ? 999 : ps.limit} 
@@ -4218,12 +4758,52 @@ function SubscriptionCard({
           <button
             type="button"
             onClick={() => onViewDetail?.(sub)}
-            className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-150 transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
+            className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
             title="Ver histórico de uso, atendimentos e gerenciar datas"
           >
             <Eye size={11} />
             <span>Detalhes</span>
           </button>
+
+          {/* Botão de Histórico de Faturas */}
+          {onViewInvoices && (
+            <button
+              type="button"
+              onClick={() => onViewInvoices(sub)}
+              className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
+              title="Ver histórico de pagamentos e faturas"
+            >
+              <Receipt size={11} />
+              <span>Faturas</span>
+            </button>
+          )}
+
+          {/* Botão WhatsApp com mensagem pré-formatada */}
+          {whatsappUrl && (
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-600 hover:text-white transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
+              title="Chamar cliente no WhatsApp sobre a assinatura"
+            >
+              <MessageCircle size={11} />
+              <span>WhatsApp</span>
+            </a>
+          )}
+
+          {/* Botão Pular Fatura / Baixa Manual no Caixa */}
+          {isAdmin && onSkipInvoice && (
+            <button
+              type="button"
+              onClick={() => onSkipInvoice(sub)}
+              className="flex items-center gap-1 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-600 hover:text-white transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
+              title="Pular fatura e lançar pagamento recebido no caixa"
+            >
+              <SkipForward size={11} />
+              <span>Pular Fatura</span>
+            </button>
+          )}
 
           {isAdmin && (
             <button
@@ -4237,10 +4817,10 @@ function SubscriptionCard({
             </button>
           )}
 
-          {isAdmin && onRecobrar && (
+          {showRecobrar && (
             <button
               type="button"
-              onClick={() => onRecobrar(sub.id)}
+              onClick={() => onRecobrar?.(sub.id)}
               className="flex items-center gap-1 px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-600 hover:text-white transition rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer font-black"
               title="Recobrar assinatura (enviar nova cobrança no cartão/Asaas)"
             >
@@ -4348,6 +4928,8 @@ interface SubscriptionTableRowProps {
   onRegisterUsage: (id: string, type: string, serviceId?: string) => void;
   onRenew?: (id: string) => void;
   onRecobrar?: (id: string) => void;
+  onSkipInvoice?: (sub: Subscription) => void;
+  onViewInvoices?: (sub: Subscription) => void;
   onToggleAutoRenew?: (id: string, autoRenew: boolean) => void;
   onStatusChange?: (id: string, status: SubscriptionStatus) => void;
   onDelete?: (id: string) => void;
@@ -4365,6 +4947,8 @@ function SubscriptionTableRow({
   onRegisterUsage,
   onRenew,
   onRecobrar,
+  onSkipInvoice,
+  onViewInvoices,
   onToggleAutoRenew,
   onStatusChange,
   onDelete,
@@ -4414,13 +4998,9 @@ function SubscriptionTableRow({
     daysBadgeClass = 'bg-red-50 text-red-700 border-red-200 font-bold';
   }
 
-  // Format WhatsApp Link
-  const rawPhone = clientPhone?.replace(/\D/g, '') || '';
-  const formattedPhone = rawPhone.length >= 10 && !rawPhone.startsWith('55') ? `55${rawPhone}` : rawPhone;
-  const whatsappMsg = encodeURIComponent(
-    `Olá, ${sub.cliente_name}! 👋 Tudo bem?\nPassando para lembrar que sua assinatura do plano *${plan.name}* está com vencimento para *${format(parseISO(sub.endDate), 'dd/MM/yyyy')}*.\nCaso queira renovar ou tirar dúvidas, estamos à disposição!`
-  );
-  const whatsappUrl = formattedPhone ? `https://wa.me/${formattedPhone}?text=${whatsappMsg}` : null;
+  // Format WhatsApp Link with smart text
+  const whatsappUrl = getSmartWhatsAppUrl(clientPhone, sub.cliente_name, sub, plan.name, plan.price);
+  const showRecobrar = isAdmin && onRecobrar && isSubOverdueOrFailed(sub);
 
   return (
     <tr className="hover:bg-slate-50/70 transition border-b border-slate-100">
@@ -4482,12 +5062,12 @@ function SubscriptionTableRow({
               <span>Ver Fatura / Pix</span>
             </button>
           )}
-          {isAdmin && onRecobrar && (
+          {showRecobrar && (
             <button
               type="button"
-              onClick={() => onRecobrar(sub.id)}
+              onClick={() => onRecobrar?.(sub.id)}
               className="mt-1 text-[9px] font-extrabold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-600 hover:text-white px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer transition-all"
-              title="Recobrar cobrança de cartão de crédito"
+              title="Recobrar cobrança de cartão de crédito no Asaas"
             >
               <CreditCard size={10} />
               <span>Recobrar</span>
@@ -4572,14 +5152,26 @@ function SubscriptionTableRow({
             <Eye size={14} />
           </button>
 
-          {/* WhatsApp Link */}
+          {/* Histórico de Faturas Pagas */}
+          {onViewInvoices && (
+            <button
+              type="button"
+              onClick={() => onViewInvoices(sub)}
+              className="p-2 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              title="Histórico de Faturas e Pagamentos"
+            >
+              <Receipt size={14} />
+            </button>
+          )}
+
+          {/* WhatsApp Link com mensagem automática */}
           {whatsappUrl ? (
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="p-2 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-600 hover:text-white rounded-xl transition cursor-pointer"
-              title="Mandar mensagem WhatsApp de renovação/cobrança"
+              title="Mandar mensagem WhatsApp de cobrança / lembrete"
             >
               <MessageCircle size={14} />
             </a>
@@ -4591,6 +5183,18 @@ function SubscriptionTableRow({
               title="Sem telefone cadastrado"
             >
               <MessageCircle size={14} />
+            </button>
+          )}
+
+          {/* Pular Fatura / Baixa Manual no Caixa */}
+          {isAdmin && onSkipInvoice && (
+            <button
+              type="button"
+              onClick={() => onSkipInvoice(sub)}
+              className="p-2 bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-600 hover:text-white rounded-xl transition cursor-pointer"
+              title="Pular fatura e registrar recebimento no caixa"
+            >
+              <SkipForward size={14} />
             </button>
           )}
 
@@ -4606,11 +5210,11 @@ function SubscriptionTableRow({
             </button>
           )}
 
-          {/* Recobrar */}
-          {isAdmin && onRecobrar && (
+          {/* Recobrar (somente após vencimento / falha de cobrança) */}
+          {showRecobrar && (
             <button
               type="button"
-              onClick={() => onRecobrar(sub.id)}
+              onClick={() => onRecobrar?.(sub.id)}
               className="p-2 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-600 hover:text-white rounded-xl transition cursor-pointer"
               title="Recobrar (Enviar nova cobrança no cartão Asaas)"
             >

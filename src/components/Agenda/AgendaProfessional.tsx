@@ -182,7 +182,7 @@ export function AgendaProfessional({
 
   useEffect(() => {
     if (barbers.length > 0 && !selectedProfissionalId) {
-      setSelectedProfissionalId(barbers[0].uid);
+      setSelectedProfissionalId(barbers[0].uid || barbers[0].id || '');
     }
   }, [barbers]);
 
@@ -207,8 +207,11 @@ export function AgendaProfessional({
       const slotEnd = addMinutes(slotStart, 30);
       if (isNaN(slotStart.getTime())) return [];
 
+      const targetBarber = barbers.find(b => b.uid === selectedProfissionalId || b.id === selectedProfissionalId);
+
       return appointments.filter(app => {
-        if (app.profissional_id !== selectedProfissionalId || app.date !== date) return false;
+        const matchProf = app.profissional_id === selectedProfissionalId || (targetBarber && (app.profissional_id === targetBarber.uid || app.profissional_id === targetBarber.id));
+        if (!matchProf || app.date !== date) return false;
         if (!app.startTime || !app.endTime) return false;
         
         const appStart = parse(app.startTime, 'HH:mm', new Date());
@@ -228,9 +231,12 @@ export function AgendaProfessional({
     try {
       const slotStart = parse(time, 'HH:mm', new Date());
       const slotEnd = addMinutes(slotStart, 30);
+      const targetBarber = barbers.find(b => b.uid === selectedProfissionalId || b.id === selectedProfissionalId);
+
       return (blocks || []).find(block => {
         if (block.date !== date) return false;
-        if (!block.isGeneral && block.profissional_id !== selectedProfissionalId) return false;
+        const matchProf = block.profissional_id === selectedProfissionalId || (targetBarber && (block.profissional_id === targetBarber.uid || block.profissional_id === targetBarber.id));
+        if (!block.isGeneral && !matchProf) return false;
         
         const bStart = parse(block.startTime, 'HH:mm', new Date());
         const bEnd = parse(block.endTime, 'HH:mm', new Date());

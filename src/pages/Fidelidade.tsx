@@ -39,6 +39,7 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
   
   // Modals
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [modalLoyaltyMode, setModalLoyaltyMode] = useState<'saldo' | 'pontos'>('saldo');
   const [showRedeemModal, setShowRedeemModal] = useState(false);
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
 
@@ -100,9 +101,17 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
     e.preventDefault();
     if (!config) return;
     const formData = new FormData(e.currentTarget);
+    const mode = modalLoyaltyMode;
     const data = {
+      loyaltyMode: mode,
       cashbackEnabled: formData.get('cashbackEnabled') === 'true',
-      cashbackPercentage: Number(formData.get('cashbackPercentage')),
+      cashbackType: (formData.get('cashbackType') as any) || 'percentual',
+      cashbackPercentage: Number(formData.get('cashbackPercentage')) || 0,
+      cashbackFixedValue: Number(formData.get('cashbackFixedValue')) || 0,
+      minRedemptionValue: Number(formData.get('minRedemptionValue')) || 0,
+      pointsPerReal: Number(formData.get('pointsPerReal')) || 0,
+      pointsPerAppointment: Number(formData.get('pointsPerAppointment')) || 0,
+      minRedemptionPoints: Number(formData.get('minRedemptionPoints')) || 0,
     };
 
     try {
@@ -300,20 +309,23 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-surface border border-border rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl"
+              className="bg-surface border border-border rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl max-h-[90vh] flex flex-col"
             >
-              <div className="p-8 border-b border-border flex items-center justify-between bg-slate-50/50">
-                <h2 className="text-xl font-bold text-primary">Regras de Fidelidade</h2>
+              <div className="p-6 md:p-8 border-b border-border flex items-center justify-between bg-slate-50/50">
+                <div>
+                  <h2 className="text-xl font-bold text-primary">Regras do Programa de Fidelidade</h2>
+                  <p className="text-xs text-muted mt-0.5">Defina se a barbearia pontua por saldo em dinheiro ou por pontos.</p>
+                </div>
                 <button onClick={() => setShowConfigModal(false)} className="p-2 hover:bg-slate-100 rounded-full text-muted transition-colors">
                   <XCircle size={24} />
                 </button>
               </div>
-              <form onSubmit={handleUpdateConfig} className="p-8 space-y-6">
+              <form onSubmit={handleUpdateConfig} className="p-6 md:p-8 space-y-6 overflow-y-auto">
                 <div className="space-y-6">
                   <div className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl">
                     <div>
-                      <label className="text-sm font-bold text-primary block">Ativar Programa de Cashback</label>
-                      <p className="text-xs text-muted">Quando ativo, o cashback em % é gerado automaticamente ao fechar comandas do cliente.</p>
+                      <label className="text-sm font-bold text-primary block">Ativar Programa de Fidelidade</label>
+                      <p className="text-xs text-muted">Quando ativo, o benefício é gerado automaticamente ao fechar comandas.</p>
                     </div>
                     <select 
                       name="cashbackEnabled" 
@@ -325,27 +337,134 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
                     </select>
                   </div>
 
+                  {/* Mode Selector */}
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Percentual de Cashback (%)</label>
-                    <div className="relative">
-                      <input 
-                        name="cashbackPercentage" 
-                        type="number" 
-                        step="0.1"
-                        min="0"
-                        max="100"
-                        defaultValue={config.cashbackPercentage ?? 5} 
-                        required 
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-bold text-lg pr-12" 
-                      />
-                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">%</span>
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Critério de Recompensa</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setModalLoyaltyMode('saldo')}
+                        className={`p-4 rounded-xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
+                          modalLoyaltyMode === 'saldo'
+                            ? 'bg-amber-50/60 border-amber-500 ring-2 ring-amber-500/20'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xl">💰</span>
+                          <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                            modalLoyaltyMode === 'saldo' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {modalLoyaltyMode === 'saldo' ? 'Ativo' : 'Selecionar'}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">Por Saldo (Cashback R$)</p>
+                          <p className="text-[10px] text-muted leading-tight mt-0.5">Dinheiro de volta para abater em contas futuras.</p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setModalLoyaltyMode('pontos')}
+                        className={`p-4 rounded-xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
+                          modalLoyaltyMode === 'pontos'
+                            ? 'bg-indigo-50/60 border-indigo-600 ring-2 ring-indigo-600/20'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xl">🏅</span>
+                          <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                            modalLoyaltyMode === 'pontos' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {modalLoyaltyMode === 'pontos' ? 'Ativo' : 'Selecionar'}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">Por Pontuação (Pontos)</p>
+                          <p className="text-[10px] text-muted leading-tight mt-0.5">Pontos acumulados por R$ gasto ou visita.</p>
+                        </div>
+                      </button>
                     </div>
-                    <p className="text-xs text-muted ml-1">Exemplo: Em um atendimento de R$ 100,00 com 5%, o cliente receberá R$ 5,00 de cashback.</p>
                   </div>
+
+                  {modalLoyaltyMode === 'saldo' && (
+                    <div className="space-y-4 p-5 bg-amber-50/40 rounded-2xl border border-amber-200/70">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Percentual de Retorno (%)</label>
+                          <div className="relative">
+                            <input 
+                              name="cashbackPercentage" 
+                              type="number" 
+                              step="0.5"
+                              min="0"
+                              max="100"
+                              defaultValue={config.cashbackPercentage ?? 5} 
+                              required 
+                              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-primary font-bold text-sm pr-10 focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted font-bold text-xs">%</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Mínimo para Resgate (R$)</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-bold text-xs">R$</span>
+                            <input 
+                              name="minRedemptionValue" 
+                              type="number" 
+                              step="1"
+                              min="0"
+                              defaultValue={config.minRedemptionValue ?? 10} 
+                              required 
+                              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-muted">O cliente só pode resgatar o cashback quando atingir no mínimo o valor estipulado.</p>
+                    </div>
+                  )}
+
+                  {modalLoyaltyMode === 'pontos' && (
+                    <div className="space-y-4 p-5 bg-indigo-50/40 rounded-2xl border border-indigo-200/70">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Pontos por R$ 1,00 gasto</label>
+                          <input 
+                            name="pointsPerReal" 
+                            type="number" 
+                            step="1"
+                            min="0"
+                            defaultValue={config.pointsPerReal ?? 1} 
+                            required 
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" 
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Pontos Mínimos p/ Resgate</label>
+                          <input 
+                            name="minRedemptionPoints" 
+                            type="number" 
+                            step="10"
+                            min="0"
+                            defaultValue={config.minRedemptionPoints ?? 100} 
+                            required 
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" 
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-muted">Pontuação mínima necessária para solicitar resgates no portal.</p>
+                    </div>
+                  )}
                 </div>
-                <div className="flex gap-4 pt-4">
-                  <button type="button" onClick={() => setShowConfigModal(false)} className="flex-1 py-4 border border-border text-muted rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
-                  <button type="submit" disabled={isUpdatingConfig} className="flex-1 py-4 bg-primary text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95">
+                <div className="flex gap-4 pt-4 border-t border-border">
+                  <button type="button" onClick={() => setShowConfigModal(false)} className="flex-1 py-3.5 border border-border text-muted rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
+                  <button type="submit" disabled={isUpdatingConfig} className="flex-1 py-3.5 bg-primary text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95">
                     {isUpdatingConfig ? <Loader2 className="animate-spin" size={18} /> : 'Salvar Regras'}
                   </button>
                 </div>

@@ -4,7 +4,7 @@ export type TabId =
   | 'agenda' | 'agenda-main' | 'agenda-appointments' | 'agenda-recurring' | 'agenda-availability' | 'agenda-blocks' | 'agenda-operations' | 'agenda-resources'
   | 'cadastros' | 'cadastros-clientes' | 'cadastros-profissionais' | 'cadastros-servicos' | 'cadastros-combos' | 'cadastros-cupons' | 'cadastros-planos' | 'cadastros-produtos' | 'cadastros-categorias' | 'cadastros-metodos-pagamento' | 'cadastros-pacotes' | 'cadastros-tipos' | 'cadastros-mensagens' | 'cadastros-noticias' | 'cadastros-satisfacao' | 'cadastros-lembretes' | 'cadastros-assinaturas' | 'cadastros-assinantes' | 'cadastros-pacotes-meus' | 'cadastros-consumo'
   | 'comandas' | 'comandas-nova' | 'comandas-abertas' | 'comandas-historico' | 'comandas-fiadas' | 'comandas-checkout'
-  | 'financeiro' | 'financeiro-caixa' | 'financeiro-historico' | 'financeiro-entradas' | 'financeiro-saidas' | 'financeiro-contas-pagar' | 'financeiro-contas-receber' | 'financeiro-fluxo' | 'financeiro-assinaturas' | 'financeiro-comissoes'
+  | 'financeiro' | 'financeiro-conta-digital' | 'financeiro-caixa' | 'financeiro-historico' | 'financeiro-entradas' | 'financeiro-saidas' | 'financeiro-contas-pagar' | 'financeiro-contas-receber' | 'financeiro-fluxo' | 'financeiro-assinaturas' | 'financeiro-comissoes'
   | 'estoque' | 'estoque-produtos' | 'estoque-movimentacoes' | 'estoque-inventario'
   | 'relatorios' | 'relatorios-geral' | 'relatorios-agendamentos' | 'relatorios-clientes' | 'relatorios-financeiro'
   | 'fidelidade' | 'fidelidade-programa' | 'fidelidade-cashback' | 'fidelidade-vip' | 'fidelidade-campanhas'
@@ -727,6 +727,8 @@ export interface MarketingHistory {
 
 export interface LoyaltyConfig {
   id: string;
+  loyaltyMode?: 'saldo' | 'pontos'; // 'saldo' (cashback) or 'pontos' (points)
+  minRedemptionValue?: number; // Minimum balance in R$ to unlock redemption (e.g. R$ 10.00)
   cashbackEnabled?: boolean;
   cashbackType?: 'percentual' | 'fixo';
   cashbackFixedValue?: number;

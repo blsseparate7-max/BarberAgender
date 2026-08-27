@@ -53,9 +53,9 @@ export const appointmentService = {
   async createAppointment(data: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>) {
     const tenantId = (data as any).tenantId || getActiveTenantId();
 
-    // 1. Validate Date Tampering (Prevent booking in past)
+    // 1. Validate Date Tampering (Prevent booking in past only for client portal booking)
     const todayStr = format(new Date(), 'yyyy-MM-dd');
-    if (data.date < todayStr) {
+    if (data.origin === 'cliente' && data.date < todayStr) {
       throw new Error('Não é permitido realizar agendamentos para datas no passado.');
     }
 

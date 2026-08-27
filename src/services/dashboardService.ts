@@ -27,59 +27,94 @@ export const dashboardService = {
 
     const activeTenantId = getActiveTenantId();
 
-    // 1. Fetch Appointments in period
-    let appointments: Appointment[] = [];
-    try {
-      const appointmentsQuery = query(
-        collection(db, 'appointments'),
-        where('date', '>=', startStr),
-        where('date', '<=', endStr)
-      );
-      const appointmentsSnap = await getDocs(appointmentsQuery);
-      appointments = appointmentsSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-        .filter(a => a.tenantId === activeTenantId);
-    } catch (error) {
-      console.error("Dashboard Query Error [appointments]:", error);
-      throw error;
-    }
+    // Run independent queries in parallel
+    const [
+      appointmentsSnap,
+      financialSnap,
+      commissionsSnap,
+      openCash,
+      comandasSnap,
+      productsSnap,
+      debtsSnap
+    ] = await Promise.all([
+      getDocs(
+        query(
+          collection(db, 'appointments'),
+          where('date', '>=', startStr),
+          where('date', '<=', endStr)
+        )
+      ).catch(err => {
+        console.error("Dashboard Query Error [appointments]:", err);
+        return { docs: [] };
+      }),
+      getDocs(
+        query(
+          collection(db, 'financial_transactions'),
+          where('date', '>=', startStr),
+          where('date', '<=', endStr)
+        )
+      ).catch(err => {
+        console.error("Dashboard Query Error [financial_transactions]:", err);
+        return { docs: [] };
+      }),
+      getDocs(
+        query(
+          collection(db, 'commissions'),
+          where('date', '>=', startStr),
+          where('date', '<=', endStr)
+        )
+      ).catch(err => {
+        console.error("Dashboard Query Error [commissions]:", err);
+        return { docs: [] };
+      }),
+      cashService.getCurrentCash().catch(err => {
+        console.error("Dashboard Query Error [cash_sessions]:", err);
+        return null;
+      }),
+      getDocs(
+        query(
+          collection(db, 'comandas'),
+          where('tenantId', '==', activeTenantId)
+        )
+      ).catch(err => {
+        console.error("Dashboard Query Error [comandas]:", err);
+        return { docs: [] };
+      }),
+      getDocs(
+        query(
+          collection(db, 'products'),
+          where('tenantId', '==', activeTenantId)
+        )
+      ).catch(err => {
+        console.error("Dashboard Query Error [products]:", err);
+        return { docs: [] };
+      }),
+      getDocs(
+        query(
+          collection(db, 'client_debts'),
+          where('tenantId', '==', activeTenantId),
+          where('status', 'in', ['pendente', 'parcial', 'vencido'])
+        )
+      ).catch(err => {
+        console.error("Dashboard Query Error [client_debts]:", err);
+        return { docs: [] };
+      })
+    ]);
+
+    const appointments: Appointment[] = appointmentsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
+      .filter(a => a.tenantId === activeTenantId);
     const completedAppointments = appointments.filter(a => a.status === 'concluído');
 
-    // 2. Fetch Financial Transactions in period
-    let transactions: FinancialTransaction[] = [];
-    try {
-      const financialQuery = query(
-        collection(db, 'financial_transactions'),
-        where('date', '>=', startStr),
-        where('date', '<=', endStr)
-      );
-      const financialSnap = await getDocs(financialQuery);
-      transactions = financialSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
-        .filter(t => t.tenantId === activeTenantId);
-    } catch (error) {
-      console.error("Dashboard Query Error [financial_transactions]:", error);
-      throw error;
-    }
+    const transactions: FinancialTransaction[] = financialSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
+      .filter(t => t.tenantId === activeTenantId);
 
-    // 3. Fetch Commissions in period
-    let commissions: Commission[] = [];
-    try {
-      const commissionsQuery = query(
-        collection(db, 'commissions'),
-        where('date', '>=', startStr),
-        where('date', '<=', endStr)
-      );
-      const commissionsSnap = await getDocs(commissionsQuery);
-      commissions = commissionsSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
-        .filter(c => c.tenantId === activeTenantId);
-    } catch (error) {
-      console.error("Dashboard Query Error [commissions]:", error);
-      throw error;
-    }
+    const commissions: Commission[] = commissionsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
+      .filter(c => c.tenantId === activeTenantId);
 
-    // 4. Daily vs Monthly Stats
+    // Daily vs Monthly Stats
     const dailyRevenue = transactions
       .filter(t => t.date === todayStr && t.type === 'income' && t.status === 'pago')
       .reduce((acc, t) => acc + t.amount, 0);
@@ -91,56 +126,20 @@ export const dashboardService = {
     const dailyAppointments = appointments.filter(a => a.date === todayStr).length;
     const monthlyAppointments = appointments.filter(a => a.date >= monthStartStr).length;
 
-    // 5. Cash Status
-    let openCash = null;
-    try {
-      openCash = await cashService.getCurrentCash();
-    } catch (error) {
-      console.error("Dashboard Query Error [cash_sessions]:", error);
-      throw error;
-    }
     const cashStatus = openCash ? 'open' : 'closed';
 
-    // 6. Active Comandas
-    let activeComandasCount = 0;
-    try {
-      const comandasQuery = query(
-        collection(db, 'comandas'),
-        where('tenantId', '==', getActiveTenantId())
-      );
-      const comandasSnap = await getDocs(comandasQuery);
-      activeComandasCount = comandasSnap.docs
-        .map(doc => doc.data() as any)
-        .filter(c => c.status !== 'fechada' && c.status !== 'cancelada').length;
-    } catch (error) {
-      console.error("Dashboard Query Error [comandas]:", error);
-      throw error;
-    }
+    const activeComandasCount = (comandasSnap.docs as any[])
+      .map(doc => (typeof doc.data === 'function' ? doc.data() : doc))
+      .filter(c => c.status !== 'fechada' && c.status !== 'cancelada').length;
 
-    // 7. Inventory Alerts
-    let lowStockCount = 0;
-    try {
-      const productsSnap = await getDocs(query(collection(db, 'products'), where('tenantId', '==', getActiveTenantId())));
-      lowStockCount = productsSnap.docs.filter(d => {
-        const p = d.data();
-        return p.currentStock <= p.minStock && p.status === 'active';
-      }).length;
-    } catch (error) {
-      console.error("Dashboard Query Error [products]:", error);
-      throw error;
-    }
+    const lowStockCount = (productsSnap.docs as any[]).filter(d => {
+      const p = typeof d.data === 'function' ? d.data() : d;
+      return p.currentStock <= p.minStock && p.status === 'active';
+    }).length;
 
-    // 8. Clients with debt
-    let totalDebts = 0;
-    let debtorClientsCount = 0;
-    try {
-      const debtsSnap = await getDocs(query(collection(db, 'client_debts'), where('tenantId', '==', getActiveTenantId()), where('status', 'in', ['pendente', 'parcial', 'vencido'])));
-      totalDebts = debtsSnap.docs.reduce((acc, d) => acc + (d.data().remainingAmount || 0), 0);
-      debtorClientsCount = new Set(debtsSnap.docs.map(d => d.data().cliente_id)).size;
-    } catch (error) {
-      console.error("Dashboard Query Error [client_debts]:", error);
-      throw error;
-    }
+    const debtsDocs = (debtsSnap.docs as any[]).map(d => (typeof d.data === 'function' ? d.data() : d));
+    const totalDebts = debtsDocs.reduce((acc: number, d: any) => acc + (d?.remainingAmount || 0), 0);
+    const debtorClientsCount = new Set(debtsDocs.map((d: any) => d?.cliente_id)).size;
 
     // Calculations
     const totalRevenue = transactions
@@ -230,23 +229,28 @@ export const dashboardService = {
 
     const activeTenantId = getActiveTenantId();
 
-    const appointmentsQuery = query(
-      collection(db, 'appointments'),
-      where('tenantId', '==', activeTenantId),
-      where('profissional_id', '==', profissional_id)
-    );
-    const appointmentsSnap = await getDocs(appointmentsQuery);
+    const [appointmentsSnap, commissionsSnap] = await Promise.all([
+      getDocs(
+        query(
+          collection(db, 'appointments'),
+          where('tenantId', '==', activeTenantId),
+          where('profissional_id', '==', profissional_id)
+        )
+      ),
+      getDocs(
+        query(
+          collection(db, 'commissions'),
+          where('tenantId', '==', activeTenantId),
+          where('profissional_id', '==', profissional_id)
+        )
+      )
+    ]);
+
     const appointments = appointmentsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
       .filter(a => a.date >= startStr && a.date <= endStr);
     const completed = appointments.filter(a => a.status === 'concluído');
 
-    const commissionsQuery = query(
-      collection(db, 'commissions'),
-      where('tenantId', '==', activeTenantId),
-      where('profissional_id', '==', profissional_id)
-    );
-    const commissionsSnap = await getDocs(commissionsQuery);
     const commissions = commissionsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
       .filter(c => c.date >= startStr && c.date <= endStr);
@@ -269,16 +273,31 @@ export const dashboardService = {
   },
 
   async getClientStats(cliente_id: string) {
+    const activeTenantId = getActiveTenantId();
     const userRef = doc(db, 'usuarios', cliente_id);
-    const userSnap = await getDoc(userRef);
-    const userData = userSnap.exists() ? userSnap.data() : null;
+    const pointsDocId = `${activeTenantId}_${cliente_id}`;
+    const pointsRef = doc(db, 'loyalty_points', pointsDocId);
 
-    const appointmentsQuery = query(
-      collection(db, 'appointments'),
-      where('tenantId', '==', getActiveTenantId()),
-      where('cliente_id', '==', cliente_id)
-    );
-    const appointmentsSnap = await getDocs(appointmentsQuery);
+    const [userSnap, appointmentsSnap, pointsSnap, subsSnap] = await Promise.all([
+      getDoc(userRef),
+      getDocs(
+        query(
+          collection(db, 'appointments'),
+          where('tenantId', '==', activeTenantId),
+          where('cliente_id', '==', cliente_id)
+        )
+      ),
+      getDoc(pointsRef),
+      getDocs(
+        query(
+          collection(db, 'subscriptions'),
+          where('tenantId', '==', activeTenantId),
+          where('cliente_id', '==', cliente_id)
+        )
+      )
+    ]);
+
+    const userData = userSnap.exists() ? userSnap.data() : null;
     const appointments = appointmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
     
     // Sort in memory by date desc, then by startTime desc
@@ -299,20 +318,7 @@ export const dashboardService = {
     const favoriteBarber = Object.entries(barberCounts)
       .sort((a, b) => b[1] - a[1])[0]?.[0] || 'Nenhum';
 
-    // Fetch loyalty points/cashback
-    const activeTenantId = getActiveTenantId();
-    const pointsDocId = `${activeTenantId}_${cliente_id}`;
-    const pointsRef = doc(db, 'loyalty_points', pointsDocId);
-    const pointsSnap = await getDoc(pointsRef);
     const pointsData = pointsSnap.exists() ? pointsSnap.data() : { points: 0, cashback: 0 };
-
-    // Fetch subscriptions
-    const subsQuery = query(
-      collection(db, 'subscriptions'),
-      where('tenantId', '==', getActiveTenantId()),
-      where('cliente_id', '==', cliente_id)
-    );
-    const subsSnap = await getDocs(subsQuery);
     const subscriptionsList = subsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
 
     return {

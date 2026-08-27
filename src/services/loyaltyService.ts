@@ -29,7 +29,9 @@ export const loyaltyService = {
       // Create default config if not exists
       const defaultConfig = {
         tenantId: getActiveTenantId(),
-        cashbackEnabled: false,
+        loyaltyMode: 'saldo',
+        minRedemptionValue: 10,
+        cashbackEnabled: true,
         cashbackType: 'percentual',
         cashbackFixedValue: 5,
         pointsPerReal: 1,
@@ -95,20 +97,32 @@ export const loyaltyService = {
         currentCashback = data.cashback;
       }
 
-      const pointsToAdd = 0;
+      let pointsToAdd = 0;
       let cashbackToAdd = 0;
-      if (config.cashbackEnabled !== false) {
-        if (config.cashbackType === 'fixo') {
-          cashbackToAdd = Number(config.cashbackFixedValue) || 0;
+      const isEnabled = config.cashbackEnabled !== false;
+      const mode = config.loyaltyMode || 'saldo';
+
+      if (isEnabled) {
+        if (mode === 'pontos') {
+          // Calculation for Points mode
+          const pointsPerReal = Number(config.pointsPerReal) || 1;
+          const pointsPerApp = Number(config.pointsPerAppointment) || 0;
+          pointsToAdd = Math.floor(value * pointsPerReal) + (source === 'appointment' ? pointsPerApp : 0);
+          if (amount > 0 && pointsToAdd === 0) pointsToAdd = amount; // fallback if direct points passed
         } else {
-          const pct = Number(config.cashbackPercentage) > 0 ? Number(config.cashbackPercentage) : 5;
-          cashbackToAdd = (value * pct) / 100;
+          // Calculation for Saldo / Cashback mode
+          if (config.cashbackType === 'fixo') {
+            cashbackToAdd = Number(config.cashbackFixedValue) || 0;
+          } else {
+            const pct = Number(config.cashbackPercentage) > 0 ? Number(config.cashbackPercentage) : 5;
+            cashbackToAdd = (value * pct) / 100;
+          }
         }
       }
 
-      const newPoints = currentPoints;
+      const newPoints = currentPoints + pointsToAdd;
       const newCashback = currentCashback + cashbackToAdd;
-      const isVip = false;
+      const isVip = (config.vipThreshold && newPoints >= config.vipThreshold) || false;
 
       transaction.set(pointsRef, {
         cliente_id,

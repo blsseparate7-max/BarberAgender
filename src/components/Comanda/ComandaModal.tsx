@@ -34,7 +34,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt, SubscriptionPlan, SubscriptionDiscount } from '../../types';
+import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt, SubscriptionPlan, SubscriptionDiscount, LoyaltyConfig } from '../../types';
 import { getActiveTenantId } from '../../services/tenantService';
 import { comandaService } from '../../services/comandaService';
 import { debtService } from '../../services/debtService';
@@ -90,6 +90,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   
   const [selectedClientProfile, setSelectedClientProfile] = useState<UserProfile | null>(null);
   const [clientLoyalty, setClientLoyalty] = useState<{ points: number; cashback: number } | null>(null);
+  const [loyaltyConfig, setLoyaltyConfig] = useState<LoyaltyConfig | null>(null);
   
   const [isPDVMode, setIsPDVMode] = useState(false);
   const [showQuickClient, setShowQuickClient] = useState(false);
@@ -558,6 +559,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       if (unsubscribe) unsubscribe();
     };
   }, [comanda_id, activeComandaId, initialData?.cliente_id, initialData?.cliente_name, initialData?.profissional_id, initialData?.agendamento_id, user]);
+
+  useEffect(() => {
+    loyaltyService.getConfig().then(cfg => {
+      setLoyaltyConfig(cfg);
+    }).catch(err => console.error("Error fetching loyalty config:", err));
+  }, []);
 
   useEffect(() => {
     if (comanda?.cliente_id) {
@@ -1051,8 +1058,13 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       }
 
       if (method === 'resgate') {
+        const minVal = loyaltyConfig?.minRedemptionValue || 0;
         if (!clientLoyalty || clientLoyalty.cashback < amount) {
           toast.error("Saldo de cashback insuficiente.");
+          return;
+        }
+        if (minVal > 0 && clientLoyalty.cashback < minVal) {
+          toast.error(`O valor mínimo para resgate de saldo é de R$ ${minVal.toFixed(2)}. Saldo atual: R$ ${clientLoyalty.cashback.toFixed(2)}`);
           return;
         }
         
@@ -2460,25 +2472,56 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       </div>
 
                       {clientLoyalty && clientLoyalty.cashback > 0 && (
-                        <button
-                          onClick={() => {
-                            const valToUse = Math.min(Number(amountToPay) || comanda.pendingAmount, clientLoyalty.cashback);
-                            handleAddPayment('resgate', valToUse);
-                          }}
-                          disabled={loading || comanda.pendingAmount <= 0}
-                          className="w-full p-4 bg-amber-50 border border-amber-200 hover:bg-amber-100/60 rounded-2xl flex items-center justify-between transition-all shadow-sm active:scale-95 text-left"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-amber-600 shadow-sm border border-amber-100">
-                              <Zap size={16} fill="currentColor" />
-                            </div>
-                            <div>
-                              <p className="text-[9px] font-black uppercase tracking-widest text-amber-700 leading-none mb-1">Usar Cashback</p>
-                              <p className="text-xs font-bold text-amber-900">R$ {(clientLoyalty?.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis</p>
-                            </div>
-                          </div>
-                          <span className="text-[9px] font-black uppercase tracking-widest bg-amber-600 text-white px-2 py-1 rounded-lg">Resgatar</span>
-                        </button>
+                        (() => {
+                          const minVal = loyaltyConfig?.minRedemptionValue || 0;
+                          const hasMin = minVal <= 0 || clientLoyalty.cashback >= minVal;
+                          return (
+                            <button
+                              onClick={() => {
+                                if (!hasMin) {
+                                  toast.error(`Mínimo para resgate: R$ ${minVal.toFixed(2)}. Saldo atual: R$ ${clientLoyalty.cashback.toFixed(2)}`);
+                                  return;
+                                }
+                                const valToUse = Math.min(Number(amountToPay) || comanda.pendingAmount, clientLoyalty.cashback);
+                                handleAddPayment('resgate', valToUse);
+                              }}
+                              disabled={loading || comanda.pendingAmount <= 0}
+                              className={`w-full p-4 border rounded-2xl flex items-center justify-between transition-all shadow-sm active:scale-95 text-left ${
+                                hasMin 
+                                  ? 'bg-amber-50 border-amber-200 hover:bg-amber-100/60' 
+                                  : 'bg-slate-50 border-slate-200 opacity-75'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={`w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm border ${
+                                  hasMin ? 'text-amber-600 border-amber-100' : 'text-slate-400 border-slate-200'
+                                }`}>
+                                  <Zap size={16} fill="currentColor" />
+                                </div>
+                                <div>
+                                  <p className={`text-[9px] font-black uppercase tracking-widest leading-none mb-1 ${
+                                    hasMin ? 'text-amber-700' : 'text-slate-500'
+                                  }`}>
+                                    Usar Saldo / Cashback
+                                  </p>
+                                  <p className={`text-xs font-bold ${hasMin ? 'text-amber-900' : 'text-slate-700'}`}>
+                                    R$ {(clientLoyalty?.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis
+                                  </p>
+                                  {!hasMin && (
+                                    <p className="text-[10px] text-amber-600 font-semibold mt-0.5">
+                                      Mínimo para resgate: R$ {minVal.toFixed(2)}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                hasMin ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
+                              }`}>
+                                {hasMin ? 'Resgatar' : `Mín. R$ ${minVal}`}
+                              </span>
+                            </button>
+                          );
+                        })()
                       )}
 
                       <div className="space-y-2">
@@ -2820,28 +2863,59 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
                 <div className="grid grid-cols-2 gap-4">
                   {clientLoyalty && clientLoyalty.cashback > 0 && (
-                    <button
-                      onClick={() => {
-                        const amount = Math.min(Number(partialAmount) || comanda.pendingAmount, clientLoyalty.cashback);
-                        handleAddPayment('resgate', amount);
-                      }}
-                      disabled={loading || comanda.pendingAmount <= 0}
-                      className="col-span-2 p-6 bg-amber-50 border-2 border-amber-200 rounded-3xl flex items-center justify-between hover:bg-amber-100 transition-all shadow-sm active:scale-95 group"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-amber-600 shadow-sm border border-amber-100 group-hover:scale-110 transition-transform">
-                          <Zap size={24} fill="currentColor" />
-                        </div>
-                        <div className="text-left">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 leading-none mb-1">Usar Cashback</p>
-                          <p className="text-sm font-bold text-amber-900">Você tem R$ {(clientLoyalty?.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black uppercase tracking-widest bg-amber-600 text-white px-3 py-1.5 rounded-xl shadow-sm group-hover:bg-amber-700 transition-colors">Resgatar Agora</span>
-                        <ChevronRight size={16} className="text-amber-400" />
-                      </div>
-                    </button>
+                    (() => {
+                      const minVal = loyaltyConfig?.minRedemptionValue || 0;
+                      const hasMin = minVal <= 0 || clientLoyalty.cashback >= minVal;
+                      return (
+                        <button
+                          onClick={() => {
+                            if (!hasMin) {
+                              toast.error(`Mínimo para resgate: R$ ${minVal.toFixed(2)}. Saldo atual: R$ ${clientLoyalty.cashback.toFixed(2)}`);
+                              return;
+                            }
+                            const amount = Math.min(Number(partialAmount) || comanda.pendingAmount, clientLoyalty.cashback);
+                            handleAddPayment('resgate', amount);
+                          }}
+                          disabled={loading || comanda.pendingAmount <= 0}
+                          className={`col-span-2 p-6 border-2 rounded-3xl flex items-center justify-between transition-all shadow-sm active:scale-95 group ${
+                            hasMin 
+                              ? 'bg-amber-50 border-amber-200 hover:bg-amber-100' 
+                              : 'bg-slate-50 border-slate-200 opacity-75'
+                          }`}
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border group-hover:scale-110 transition-transform ${
+                              hasMin ? 'text-amber-600 border-amber-100' : 'text-slate-400 border-slate-200'
+                            }`}>
+                              <Zap size={24} fill="currentColor" />
+                            </div>
+                            <div className="text-left">
+                              <p className={`text-[10px] font-black uppercase tracking-widest leading-none mb-1 ${
+                                hasMin ? 'text-amber-700' : 'text-slate-500'
+                              }`}>
+                                Usar Saldo / Cashback
+                              </p>
+                              <p className={`text-sm font-bold ${hasMin ? 'text-amber-900' : 'text-slate-700'}`}>
+                                Você tem R$ {(clientLoyalty?.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis
+                              </p>
+                              {!hasMin && (
+                                <p className="text-[11px] text-amber-600 font-semibold mt-0.5">
+                                  Valor mínimo necessário para resgate: R$ {minVal.toFixed(2)}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl shadow-sm transition-colors ${
+                              hasMin ? 'bg-amber-600 text-white group-hover:bg-amber-700' : 'bg-slate-200 text-slate-600'
+                            }`}>
+                              {hasMin ? 'Resgatar Agora' : `Mín. R$ ${minVal}`}
+                            </span>
+                            <ChevronRight size={16} className={hasMin ? 'text-amber-400' : 'text-slate-400'} />
+                          </div>
+                        </button>
+                      );
+                    })()
                   )}
                   {paymentMethods.map((method, index) => {
                     const amount = partialAmount ? Number(partialAmount) : comanda.pendingAmount;

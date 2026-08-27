@@ -69,6 +69,16 @@ export interface TenantProfile {
   lastPaymentDate?: string;
   subscriptions_enabled?: boolean; // Módulo de assinaturas ativado ou não
   niche?: 'barbearia' | 'petshop' | 'clinica' | 'manicure'; // Ramo / Niche of the establishment
+
+  // Asaas Subaccount (Conta Digital Integrada com CPF/CNPJ)
+  asaas?: {
+    subaccountId?: string; // ID da subconta Asaas (ex: cus_...)
+    apiKey?: string; // Chave de API exclusiva da subconta
+    walletId?: string; // WalletId da subconta
+    accountStatus?: string; // APPROVED, PENDING, etc.
+    cpfCnpj?: string;
+    createdAt?: string;
+  };
 }
 
 export function getActiveTenantId(): string {
@@ -152,11 +162,29 @@ export const tenantService = {
     }
   },
 
-  async updateTenant(tenantId: string, data: Partial<TenantProfile>): Promise<void> {
+  async updateTenant(tenantId: string, data: Partial<TenantProfile>, options?: { allowAsaasUpdate?: boolean }): Promise<void> {
     try {
       const docRef = doc(db, 'tenants', tenantId);
+      
+      const updateData: any = { ...data };
+      delete updateData.id;
+
+      // Security Protection: If not explicitly authorized by Master Admin, preserve existing asaas subaccount credentials & cnpjCpf
+      if (!options?.allowAsaasUpdate) {
+        const existingSnap = await getDoc(docRef);
+        if (existingSnap.exists()) {
+          const existingData = existingSnap.data() as TenantProfile;
+          if (existingData.asaas) {
+            updateData.asaas = existingData.asaas;
+          }
+          if (existingData.cnpjCpf) {
+            updateData.cnpjCpf = existingData.cnpjCpf;
+          }
+        }
+      }
+
       await updateDoc(docRef, {
-        ...data,
+        ...updateData,
         updatedAt: serverTimestamp()
       });
     } catch (error) {
@@ -194,6 +222,7 @@ export const tenantService = {
         address: tenantData.address || undefined,
         notes: tenantData.notes || '',
         subscriptions_enabled: tenantData.subscriptions_enabled ?? false,
+        asaas: tenantData.asaas || undefined,
         createdAt: new Date(),
         updatedAt: new Date()
       };

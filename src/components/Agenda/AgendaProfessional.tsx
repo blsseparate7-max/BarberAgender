@@ -266,9 +266,9 @@ export function AgendaProfessional({
     <div className="flex flex-col gap-6 h-full">
       {/* Barber Selector */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
-        {barbers.map(barber => (
+        {barbers.map((barber, bIdx) => (
           <button
-            key={barber.uid}
+            key={`agenda-prof-barber-${barber.uid || bIdx}-${bIdx}`}
             onClick={() => setSelectedProfissionalId(barber.uid)}
             className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${
               selectedProfissionalId === barber.uid 
@@ -317,13 +317,13 @@ export function AgendaProfessional({
               <Loader2 className="animate-spin text-accent" size={32} />
             </div>
           ) : (
-            timeSlots.map((time, index) => (
-              <div key={time} className="flex border-b border-border/50 group relative" style={{ zIndex: 100 - index }}>
+            timeSlots.map((time, timeIdx) => (
+              <div key={`prof-timerow-${time}-${timeIdx}`} className="flex border-b border-border/50 group relative" style={{ zIndex: 100 - timeIdx }}>
                 <div className="w-20 flex-shrink-0 border-r border-border p-4 flex items-center justify-center bg-slate-50/30">
                   <span className="text-xs font-bold text-muted">{time}</span>
                 </div>
                 <div className="flex-1 grid grid-cols-7 relative">
-                  {weekDays.map(day => {
+                  {weekDays.map((day, dayIdx) => {
                     const dateStr = format(day, 'yyyy-MM-dd');
                     const apps = getDayAppointments(dateStr, time);
                     const block = getDayBlock(dateStr, time);
@@ -335,7 +335,7 @@ export function AgendaProfessional({
                     })();
                     return (
                       <div 
-                        key={day.toISOString()} 
+                        key={`prof-cell-${dateStr}-${time}-${dayIdx}`} 
                         onClick={() => {
                           if (apps.length === 0 && !block) {
                             onNewAppointment(time, selectedProfissionalId);
@@ -347,8 +347,8 @@ export function AgendaProfessional({
                       >
                         {isBlockStart && (
                           <motion.div
-                            key={block.id}
-                            layoutId={block.id}
+                            key={`prof-block-${block.id || 'block'}-${dateStr}-${time}`}
+                            layoutId={block.id ? `block-layout-${block.id}` : undefined}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
@@ -400,7 +400,7 @@ export function AgendaProfessional({
                           </motion.div>
                         )}
 
-                        {apps.map(app => {
+                        {apps.map((app, appIdx) => {
                           const isStart = (() => {
                             const appStart = parse(app.startTime, 'HH:mm', new Date());
                             const slotStart = parse(time, 'HH:mm', new Date());
@@ -429,8 +429,8 @@ export function AgendaProfessional({
 
                           return (
                             <motion.div
-                              key={app.id}
-                              layoutId={app.id}
+                              key={`prof-app-${app.id || 'app'}-${dateStr}-${time}-${appIdx}`}
+                              layoutId={app.id ? `app-layout-${app.id}` : undefined}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onOpenAppointment(app);
@@ -483,7 +483,7 @@ export function AgendaProfessional({
                                     )}
                                     {getClientClassification(app.cliente_id, app.cliente_name).map((badge, idx) => (
                                       <span 
-                                        key={idx} 
+                                        key={`badge-${badge.label || idx}-${idx}`} 
                                         title={badge.label}
                                         className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[7px] font-black uppercase tracking-wider border ${badge.className}`}
                                       >

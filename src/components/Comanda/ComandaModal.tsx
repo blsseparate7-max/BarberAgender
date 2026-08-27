@@ -1500,7 +1500,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 <option value="">Selecione um cliente</option>
                 <option value="avulso">👤 Cliente Avulso (Sem Cadastro)</option>
                 {clients.map((c, index) => (
-                  <option key={c.uid || `client-${index}`} value={c.uid}>{c.nome}</option>
+                  <option key={`client-opt-${c.uid || index}-${index}`} value={c.uid}>{c.nome}</option>
                 ))}
               </select>
             </div>
@@ -1514,7 +1514,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               >
                 <option value="">Selecione um profissional</option>
                 {barbers.map((b, index) => (
-                  <option key={b.uid || `barber-${index}`} value={b.uid}>{b.nome}</option>
+                  <option key={`barber-opt-${b.uid || index}-${index}`} value={b.uid}>{b.nome}</option>
                 ))}
               </select>
             </div>
@@ -1892,8 +1892,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg) => (
-                          <div key={pkg.id} className="p-3 bg-white/80 rounded-2xl border border-emerald-100/50 flex items-center justify-between shadow-sm">
+                        {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg, pIdx) => (
+                          <div key={`avail-pkg-${pkg.id || pIdx}-${pIdx}`} className="p-3 bg-white/80 rounded-2xl border border-emerald-100/50 flex items-center justify-between shadow-sm">
                             <div>
                               <p className="text-[10px] font-black text-emerald-950 uppercase tracking-wide truncate max-w-[200px]">{pkg.packageName}</p>
                               <p className="text-[11px] text-emerald-700 font-bold">{pkg.remainingCuts} de {pkg.totalCuts} cortes restantes</p>
@@ -1902,8 +1902,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           </div>
                         ))}
                         
-                        {clientSubscriptions.filter(s => s.status === 'active').map((sub) => (
-                          <div key={sub.id} className="p-3 bg-white/80 rounded-2xl border border-emerald-100/50 flex items-center justify-between shadow-sm border-s-4 border-s-indigo-400">
+                        {clientSubscriptions.filter(s => s.status === 'active').map((sub, sIdx) => (
+                          <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="p-3 bg-white/80 rounded-2xl border border-emerald-100/50 flex items-center justify-between shadow-sm border-s-4 border-s-indigo-400">
                             <div>
                               <p className="text-[10px] font-black text-indigo-950 uppercase tracking-wide truncate max-w-[200px]">{sub.planName}</p>
                               <p className="text-[11px] text-indigo-700 font-bold">
@@ -1998,14 +1998,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                           Pagar R$
                                         </button>
                                         
-                                        {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg) => {
+                                        {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg, pkgIdx) => {
                                           const isSelectedPkg = item.deductType === 'pacote' && item.packageSaleId === pkg.id;
                                           const pPrice = pkg.pricePerService !== undefined && pkg.pricePerService !== null 
                                             ? pkg.pricePerService 
                                             : (pkg.pricePaid / pkg.totalCuts);
                                           return (
                                             <button
-                                              key={`assoc-pkg-${pkg.id}`}
+                                              key={`assoc-pkg-${pkg.id || pkgIdx}-${pkgIdx}`}
                                               type="button"
                                               onClick={() => {
                                                 if (isSelectedPkg) {
@@ -2160,7 +2160,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
                 <div className="space-y-4">
                   {comanda.logs?.slice().reverse().map((log, index) => (
-                    <div key={index} className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-3">
+                    <div key={`cmd-log-${log.date || index}-${index}`} className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-500 border border-slate-200 shadow-inner">
@@ -2201,7 +2201,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     <h4 className="text-[10px] font-black text-orange-600 uppercase tracking-widest pl-1">Detalhes de Reabertura</h4>
                     <div className="space-y-3">
                       {comanda.reopenHistory.map((log, index) => (
-                        <div key={index} className="bg-orange-50/30 border border-orange-100/30 rounded-2xl p-5 space-y-3">
+                        <div key={`reopen-hist-${log.date || index}-${index}`} className="bg-orange-50/30 border border-orange-100/30 rounded-2xl p-5 space-y-3">
                           <div className="flex items-center justify-between">
                             <p className="text-xs font-bold text-orange-900">{log.userName}</p>
                             <span className="text-[10px] text-orange-600/70 font-bold">{format(new Date(log.date), 'dd/MM/yyyy HH:mm')}</span>
@@ -2338,9 +2338,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     {/* Quick badges for available coupons */}
                     {availableCoupons.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 pt-1">
-                        {availableCoupons.slice(0, 4).map(c => (
+                        {availableCoupons.slice(0, 4).map((c, cIdx) => (
                           <button
-                            key={`cp-badge-${c.id}`}
+                            key={`cp-badge-${c.id || cIdx}-${cIdx}`}
                             type="button"
                             onClick={() => handleApplyCoupon(c.code)}
                             className="text-[10px] font-black px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shadow-2xs"
@@ -2533,7 +2533,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             
                             return (
                               <button
-                                key={method.id || `pm-${index}`}
+                                key={`pm-btn-${method.id || index}-${index}`}
                                 type="button"
                                 disabled={valToPay <= 0 || (valToPay < comanda.pendingAmount && !method.allowsPartial) || (isFiado && comanda.cliente_id === 'avulso')}
                                 onClick={() => {
@@ -2923,7 +2923,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     
                     return (
                       <button
-                        key={method.id || `pm-${index}`}
+                        key={`pm-sel-${method.id || index}-${index}`}
                         disabled={amount <= 0 || (amount < comanda.pendingAmount && !method.allowsPartial)}
                         onClick={() => {
                           if (amount <= 0) return;
@@ -3024,9 +3024,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         { id: 'ajuste_pagamento', label: 'Ajuste de Pagamento' },
                         { id: 'cortesia', label: 'Cortesia' },
                         { id: 'outro', label: 'Outro' },
-                      ].map(type => (
+                      ].map((type, tIdx) => (
                         <button
-                          key={type.id}
+                          key={`reopen-type-${type.id || tIdx}-${tIdx}`}
                           onClick={() => setReopenReasonType(type.id as any)}
                           className={`py-3 px-4 rounded-xl text-xs font-bold transition-all border-2 ${
                             reopenReasonType === type.id 
@@ -3279,8 +3279,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all text-primary font-bold shadow-inner"
                     >
                       <option value="">-- Mais antigo primeiro (Automático) --</option>
-                      {clientDebts.map(d => (
-                        <option key={d.id} value={d.id}>
+                      {clientDebts.map((d, dIdx) => (
+                        <option key={`debt-opt-${d.id || dIdx}-${dIdx}`} value={d.id}>
                           Comanda #{d.comanda_id?.slice(-4) || 's/n'} - R$ {(d.remainingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({format(new Date(d.date + 'T12:00:00'), 'dd/MM/yyyy')})
                         </option>
                       ))}
@@ -3324,10 +3324,10 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>
                   <div className="grid grid-cols-2 gap-2">
-                    {paymentMethods.map(method => (
+                    {paymentMethods.map((method, mIdx) => (
                       <button
                         id={`pay-debt-method-${method.id}`}
-                        key={method.id}
+                        key={`pay-debt-mth-${method.id || mIdx}-${mIdx}`}
                         type="button"
                         onClick={() => setPayingDebtMethod(method.id)}
                         className={`py-3 px-4 rounded-xl text-xs font-bold transition-all border-2 flex items-center justify-between ${

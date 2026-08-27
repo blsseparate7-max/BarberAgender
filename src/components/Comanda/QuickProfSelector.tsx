@@ -49,9 +49,9 @@ export function QuickProfSelector({ currentProfId, onSelect, onClose }: QuickPro
           <div className="py-8 flex justify-center">
             <Loader2 size={16} className="animate-spin text-slate-300" />
           </div>
-        ) : barbers.map(b => (
+        ) : barbers.map((b, bIdx) => (
           <button 
-            key={b.uid}
+            key={`qbarber-opt-${b.uid || bIdx}-${bIdx}`}
             onClick={() => onSelect({ id: b.uid, name: b.nome })}
             className={`w-full flex items-center justify-between p-3 rounded-xl transition-all ${
               currentProfId === b.uid ? 'bg-accent/5' : 'hover:bg-slate-50'

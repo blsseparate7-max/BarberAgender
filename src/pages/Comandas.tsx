@@ -205,7 +205,7 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
           <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0 custom-scrollbar">
             {['all', 'fechada', 'cancelada', 'nao_paga'].map((status) => (
               <button
-                key={status}
+                key={`comanda-status-tab-${status}`}
                 onClick={() => setStatusFilter(status as any)}
                 className={`px-5 py-3 rounded-2xl text-xs font-bold whitespace-nowrap transition-all border shadow-sm ${
                   statusFilter === status 
@@ -227,9 +227,9 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {currentComandas.map((comanda) => (
+          {currentComandas.map((comanda, comandaIdx) => (
             <motion.div 
-              key={comanda.id}
+              key={`comanda-card-${comanda.id || comandaIdx}-${comandaIdx}`}
               layout
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

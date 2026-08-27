@@ -38,7 +38,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { Edit2 } from 'lucide-react';
 import { ConfirmationModal } from '../components/ConfirmationModal';
-import { collection, onSnapshot, query, where, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { toast } from 'sonner';
@@ -100,6 +100,73 @@ export function Barbeiros() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBarber, setEditingBarber] = useState<UserProfile | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isMerging, setIsMerging] = useState(false);
+
+  const handleResolveDuplicates = async () => {
+    if (!isAdmin && !isGerente) {
+      toast.error("Apenas administradores podem unificar cadastros.");
+      return;
+    }
+    setIsMerging(true);
+    try {
+      const gabrielBarbers = barbeiros.filter(b => 
+        (b.nome && b.nome.toLowerCase().includes('gabriel')) ||
+        (b.email && b.email.toLowerCase() === 'barbeariagbcortes7@gmail.com')
+      );
+
+      if (gabrielBarbers.length <= 1) {
+        toast.info("Nenhum cadastro duplicado encontrado.");
+        setIsMerging(false);
+        return;
+      }
+
+      let primary = gabrielBarbers.find(b => b.email?.toLowerCase() === 'barbeariagbcortes7@gmail.com');
+      if (!primary) primary = gabrielBarbers[0];
+
+      const duplicates = gabrielBarbers.filter(b => b.uid !== primary.uid);
+
+      let totalApps = 0;
+      let totalComms = 0;
+
+      for (const dup of duplicates) {
+        const dupId = dup.uid;
+        const appSnap = await getDocs(query(collection(db, 'appointments'), where('profissional_id', '==', dupId)));
+        for (const appDoc of appSnap.docs) {
+          await updateDoc(doc(db, 'appointments', appDoc.id), {
+            profissional_id: primary.uid,
+            updatedAt: serverTimestamp()
+          });
+          totalApps++;
+        }
+
+        const comSnap = await getDocs(query(collection(db, 'commissions'), where('barbeiro_id', '==', dupId)));
+        for (const comDoc of comSnap.docs) {
+          await updateDoc(doc(db, 'commissions', comDoc.id), {
+            barbeiro_id: primary.uid,
+            updatedAt: serverTimestamp()
+          });
+          totalComms++;
+        }
+
+        const comSnap2 = await getDocs(query(collection(db, 'commissions'), where('profissional_id', '==', dupId)));
+        for (const comDoc of comSnap2.docs) {
+          await updateDoc(doc(db, 'commissions', comDoc.id), {
+            profissional_id: primary.uid,
+            updatedAt: serverTimestamp()
+          });
+        }
+
+        await deleteDoc(doc(db, 'usuarios', dupId));
+      }
+
+      toast.success(`Sucesso! ${totalApps} agendamento(s) e ${totalComms} comissão(ões) migrados para ${primary.nome} (${primary.email}). Registro duplicado removido.`);
+    } catch (err: any) {
+      console.error("Erro ao unificar:", err);
+      toast.error("Erro ao unificar cadastros: " + (err.message || err));
+    } finally {
+      setIsMerging(false);
+    }
+  };
 
   // Live Subscription for Professionals
   useEffect(() => {
@@ -287,6 +354,26 @@ export function Barbeiros() {
           )}
         </div>
       </header>
+
+      {barbeiros.filter(b => (b.nome && b.nome.toLowerCase().includes('gabriel')) || (b.email && b.email.toLowerCase() === 'barbeariagbcortes7@gmail.com')).length > 1 && (
+        <div className="bg-amber-50 border border-amber-200 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="text-amber-600 shrink-0" size={24} />
+            <div>
+              <h4 className="font-extrabold text-amber-900 text-sm">Duplicidade Detectada (Gabriel Alexandre)</h4>
+              <p className="text-xs text-amber-700 font-medium">Detectamos múltiplos cadastros para o mesmo profissional. Você pode unificar os registros para migrar todos os agendamentos e comissões para o perfil principal.</p>
+            </div>
+          </div>
+          <button
+            onClick={handleResolveDuplicates}
+            disabled={isMerging}
+            className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition shrink-0 shadow-sm flex items-center gap-2 disabled:opacity-50"
+          >
+            {isMerging && <Loader2 className="animate-spin" size={14} />}
+            <span>Unificar Cadastros Agora</span>
+          </button>
+        </div>
+      )}
 
       {/* Control filters bar */}
       <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
@@ -563,8 +650,8 @@ function BarberCard({ barber, commissions, onEdit, onToggleAtivo, onDelete, canE
       <div className="space-y-3 mb-6 flex-1">
         {specialties.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 mb-2.5">
-            {specialties.map(spec => (
-              <span key={spec} className="px-2.5 py-1 bg-slate-100 text-[9px] font-black text-slate-600 uppercase tracking-widest rounded-lg border border-slate-200/30">
+            {specialties.map((spec, specIdx) => (
+              <span key={`spec-${spec}-${specIdx}`} className="px-2.5 py-1 bg-slate-100 text-[9px] font-black text-slate-600 uppercase tracking-widest rounded-lg border border-slate-200/30">
                 {spec}
               </span>
             ))}

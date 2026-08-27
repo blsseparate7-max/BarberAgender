@@ -474,9 +474,9 @@ export function AppointmentModal({
               </div>
             ) : (
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                {availableSlots.map(slot => (
+                {availableSlots.map((slot, slotIdx) => (
                   <button
-                    key={slot}
+                    key={`slot-opt-${slot}-${slotIdx}`}
                     type="button"
                     onClick={() => setFormData({...formData, startTime: slot})}
                     className={`py-2 rounded-xl text-xs font-bold transition-all border ${
@@ -515,9 +515,9 @@ export function AppointmentModal({
                   { id: 'cancelado', label: 'Cancelado' },
                   { id: 'faltou', label: 'Faltou' },
                   { id: 'bloqueado', label: 'Bloqueado' }
-                ].map(s => (
+                ].map((s, sIdx) => (
                   <button
-                    key={s.id}
+                    key={`app-st-${s.id}-${sIdx}`}
                     type="button"
                     onClick={() => {
                       if (s.id === 'concluído' && onOpenComanda && appointment) {

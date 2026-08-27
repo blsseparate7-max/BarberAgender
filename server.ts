@@ -2641,6 +2641,187 @@ async function safeJsonFetch(response: any): Promise<any> {
     }
   });
 
+  // Digital Account Payout Account Details (Consultar Conta Homologada para Saque)
+  app.get(["/api/saas/gateway/digital-account/payout-account", "/api/digital-account/payout-account"], async (req, res) => {
+    try {
+      const tenantId = (req.query.tenantId as string) || '';
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenantId é obrigatório." });
+      }
+
+      const dbAdmin = getAdminDb();
+      if (!dbAdmin) {
+        return res.json({ success: true, officialCnpjCpf: '', payoutAccount: null });
+      }
+
+      const tenantDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
+      if (!tenantDoc.exists) {
+        return res.status(404).json({ error: "Barbearia / Tenant não encontrado." });
+      }
+
+      const tData = tenantDoc.data() || {};
+      const officialCnpjCpf = tData.cnpjCpf || tData.asaas?.cpfCnpj || '';
+      const officialName = tData.name || tData.ownerName || '';
+      const payoutAccount = tData.payoutAccount || null;
+
+      return res.json({
+        success: true,
+        officialCnpjCpf,
+        officialName,
+        tenantName: tData.name,
+        payoutAccount
+      });
+    } catch (error: any) {
+      console.error("Erro ao consultar conta de saque do tenant:", error);
+      res.status(500).json({ error: error.message || "Erro ao consultar conta de saque." });
+    }
+  });
+
+  // Digital Account Payout Account Save & Validate (Cadastrar / Homologar Conta de Saque Mesma Titularidade)
+  app.post(["/api/saas/gateway/digital-account/payout-account", "/api/digital-account/payout-account"], async (req, res) => {
+    try {
+      const {
+        tenantId,
+        type, // 'PIX' | 'TED'
+        pixKeyType, // 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'EVP'
+        pixKey,
+        bankCode,
+        bankName,
+        agency,
+        account,
+        accountDigit,
+        bankAccountType, // 'CONTA_CORRENTE' | 'CONTA_POUPANCA'
+        holderName,
+        holderDocument
+      } = req.body || {};
+
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenantId é obrigatório." });
+      }
+
+      const dbAdmin = getAdminDb();
+      if (!dbAdmin) {
+        return res.status(500).json({ error: "Banco de dados indisponível." });
+      }
+
+      const tenantDocRef = dbAdmin.collection('tenants').doc(tenantId);
+      const tenantSnap = await tenantDocRef.get();
+      if (!tenantSnap.exists) {
+        return res.status(404).json({ error: "Barbearia não encontrada no sistema." });
+      }
+
+      const tenantData = tenantSnap.data() || {};
+      const officialDocClean = String(tenantData.cnpjCpf || tenantData.asaas?.cpfCnpj || '').replace(/\D/g, '');
+      const providedDocClean = String(holderDocument || '').replace(/\D/g, '');
+
+      if (!providedDocClean && !officialDocClean) {
+        return res.status(400).json({ error: "O CPF ou CNPJ do titular é obrigatório para cadastrar a conta de saque." });
+      }
+
+      const finalHolderDoc = officialDocClean || providedDocClean;
+
+      // Same-Ownership Security Enforcement:
+      if (officialDocClean && providedDocClean && officialDocClean !== providedDocClean) {
+        return res.status(403).json({
+          error: `Violação de Segurança (Mesma Titularidade): A conta de saque deve pertencer obrigatoriamente ao mesmo CPF/CNPJ cadastrado para a barbearia no Portal SaaS (${officialDocClean}).`
+        });
+      }
+
+      if (!holderName || !holderName.trim()) {
+        return res.status(400).json({ error: "Informe o nome ou razão social completo do titular da conta." });
+      }
+
+      const accountType = type === 'TED' ? 'TED' : 'PIX';
+      const cleanPayoutAccount: any = {
+        type: accountType,
+        holderName: holderName.trim(),
+        holderDocument: finalHolderDoc,
+        status: 'APPROVED',
+        approvedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (accountType === 'PIX') {
+        let cleanKey = String(pixKey || '').trim();
+        const kType = String(pixKeyType || (finalHolderDoc.length > 11 ? 'CNPJ' : 'CPF')).toUpperCase();
+
+        if (kType === 'CPF' || kType === 'CNPJ') {
+          cleanKey = cleanKey.replace(/\D/g, '');
+          if (!cleanKey) {
+            cleanKey = finalHolderDoc; // Auto-preenche com o CPF/CNPJ oficial se vazio
+          }
+          if (cleanKey !== finalHolderDoc) {
+            return res.status(400).json({
+              error: `A chave PIX do tipo ${kType} deve ser exatamente o mesmo documento cadastrado (${finalHolderDoc}).`
+            });
+          }
+        } else if (kType === 'PHONE') {
+          const phoneDigits = cleanKey.replace(/\D/g, '');
+          if (phoneDigits.length < 10) {
+            return res.status(400).json({ error: "Número de celular inválido para chave PIX." });
+          }
+          cleanKey = phoneDigits.startsWith('55') ? `+${phoneDigits}` : `+55${phoneDigits}`;
+        } else if (kType === 'EMAIL') {
+          cleanKey = cleanKey.toLowerCase();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanKey)) {
+            return res.status(400).json({ error: "E-mail inválido para chave PIX." });
+          }
+        }
+
+        if (!cleanKey) {
+          return res.status(400).json({ error: "Informe a chave PIX de destino." });
+        }
+
+        cleanPayoutAccount.pixKey = cleanKey;
+        cleanPayoutAccount.pixKeyType = kType;
+      } else {
+        // TED Validation
+        const cleanAgency = String(agency || '').replace(/\D/g, '');
+        const cleanAccount = String(account || '').replace(/[^\d-]/g, '');
+        const cleanDigit = String(accountDigit || '0').replace(/[^\w]/g, '') || '0';
+
+        if (!cleanAgency || !cleanAccount) {
+          return res.status(400).json({ error: "Informe a agência e o número da conta com dígito." });
+        }
+
+        cleanPayoutAccount.bankCode = String(bankCode || '001').padStart(3, '0');
+        cleanPayoutAccount.bankName = bankName || 'Banco Principal';
+        cleanPayoutAccount.agency = cleanAgency;
+        cleanPayoutAccount.account = cleanAccount;
+        cleanPayoutAccount.accountDigit = cleanDigit;
+        cleanPayoutAccount.bankAccountType = bankAccountType || 'CONTA_CORRENTE';
+      }
+
+      // Save into Tenant profile
+      await tenantDocRef.update({
+        payoutAccount: cleanPayoutAccount,
+        cnpjCpf: finalHolderDoc,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Audit Log
+      try {
+        await dbAdmin.collection('financial_audit_logs').add({
+          action: 'PAYOUT_ACCOUNT_UPDATED',
+          tenantId,
+          type: accountType,
+          holderDocument: finalHolderDoc,
+          status: 'APPROVED',
+          timestamp: new Date().toISOString()
+        });
+      } catch (aErr) {}
+
+      return res.json({
+        success: true,
+        message: "Conta bancária para saque cadastrada e homologada com sucesso!",
+        payoutAccount: cleanPayoutAccount
+      });
+    } catch (error: any) {
+      console.error("Erro ao salvar conta de saque do tenant:", error);
+      res.status(500).json({ error: error.message || "Erro ao salvar conta de saque." });
+    }
+  });
+
   // Digital Account Transfers History (List Transfers / Saques)
   app.get(["/api/saas/gateway/digital-account/transfers", "/api/digital-account/transfers"], async (req, res) => {
     try {
@@ -2714,6 +2895,41 @@ async function safeJsonFetch(response: any): Promise<any> {
         return res.status(400).json({ error: "Chave de API do Asaas não configurada." });
       }
 
+      // Check Same-Ownership if tenant document exists
+      const dbAdmin = getAdminDb();
+      if (dbAdmin && tenantId) {
+        try {
+          const tDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
+          if (tDoc.exists) {
+            const tData = tDoc.data();
+            const officialDoc = String(tData?.cnpjCpf || tData?.asaas?.cpfCnpj || '').replace(/\D/g, '');
+            
+            if (officialDoc) {
+              if (operationType === 'PIX' || pixAddressKey) {
+                const kType = String(pixAddressKeyType || '').toUpperCase();
+                if (kType === 'CPF' || kType === 'CNPJ') {
+                  const cleanKey = String(pixAddressKey || '').replace(/\D/g, '');
+                  if (cleanKey && cleanKey !== officialDoc) {
+                    return res.status(403).json({
+                      error: `Proteção Antifraude (Mesma Titularidade): O saque via PIX com chave ${kType} deve ser obrigatoriamente destinado ao CPF/CNPJ da barbearia (${officialDoc}).`
+                    });
+                  }
+                }
+              } else if (bankAccount) {
+                const bDoc = String(bankAccount.cpfCnpj || '').replace(/\D/g, '');
+                if (bDoc && bDoc !== officialDoc) {
+                  return res.status(403).json({
+                    error: `Proteção Antifraude (Mesma Titularidade): O titular da conta bancária de saque (${bDoc}) deve ter o mesmo CPF/CNPJ cadastrado para a barbearia (${officialDoc}).`
+                  });
+                }
+              }
+            }
+          }
+        } catch (secErr) {
+          console.warn("Aviso na verificação de mesma titularidade de saque:", secErr);
+        }
+      }
+
       // Check current balance before executing transfer
       try {
         const balRes = await fetch(`${baseUrl}/finance/balance`, {
@@ -2740,20 +2956,32 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       if (operationType === 'PIX' || pixAddressKey) {
         transferPayload.operationType = 'PIX';
-        transferPayload.pixAddressKey = String(pixAddressKey).trim();
-        if (pixAddressKeyType) {
-          transferPayload.pixAddressKeyType = pixAddressKeyType;
+        let cleanPixKey = String(pixAddressKey || '').trim();
+        const keyType = String(pixAddressKeyType || '').toUpperCase();
+
+        if (keyType === 'CPF' || keyType === 'CNPJ') {
+          cleanPixKey = cleanPixKey.replace(/\D/g, '');
+        } else if (keyType === 'PHONE') {
+          const digits = cleanPixKey.replace(/\D/g, '');
+          cleanPixKey = digits.startsWith('55') ? `+${digits}` : `+55${digits}`;
+        } else if (keyType === 'EMAIL') {
+          cleanPixKey = cleanPixKey.toLowerCase();
+        }
+
+        transferPayload.pixAddressKey = cleanPixKey;
+        if (keyType) {
+          transferPayload.pixAddressKeyType = keyType;
         }
       } else if (bankAccount) {
         transferPayload.operationType = 'TED';
         transferPayload.bankAccount = {
-          bank: { code: bankAccount.bankCode || '001' },
+          bank: { code: String(bankAccount.bankCode || '001').padStart(3, '0') },
           accountName: bankAccount.ownerName || 'Conta Titular',
-          ownerName: bankAccount.ownerName,
+          ownerName: String(bankAccount.ownerName || '').trim(),
           cpfCnpj: String(bankAccount.cpfCnpj || '').replace(/\D/g, ''),
-          agency: bankAccount.agency,
-          account: bankAccount.account,
-          accountDigit: bankAccount.accountDigit || '0',
+          agency: String(bankAccount.agency || '').replace(/\D/g, ''),
+          account: String(bankAccount.account || '').replace(/[^\d-]/g, ''),
+          accountDigit: String(bankAccount.accountDigit || '0').replace(/[^\w]/g, '') || '0',
           bankAccountType: bankAccount.bankAccountType || 'CONTA_CORRENTE'
         };
       } else {
@@ -2772,12 +3000,14 @@ async function safeJsonFetch(response: any): Promise<any> {
       const tfData = await tfRes.json();
 
       if (!tfRes.ok) {
-        const errMsg = tfData?.errors?.[0]?.description || tfData?.message || "Erro ao solicitar transferência no Asaas.";
+        let errMsg = tfData?.errors?.[0]?.description || tfData?.message || "Erro ao solicitar transferência no Asaas.";
+        if (typeof errMsg === 'string' && (errMsg.includes("pattern") || errMsg.includes("The string did not match"))) {
+          errMsg = "Formato de chave PIX ou dados bancários não corresponde ao padrão esperado pelo Asaas. Verifique os dígitos e o tipo da chave informada.";
+        }
         return res.status(tfRes.status).json({ error: errMsg, details: tfData });
       }
 
       // Audit log into financial transactions or audit collection
-      const dbAdmin = getAdminDb();
       if (dbAdmin) {
         try {
           await dbAdmin.collection('financial_audit_logs').add({
@@ -2940,6 +3170,16 @@ async function safeJsonFetch(response: any): Promise<any> {
   // 2. Endpoint POST para processamento dos eventos de pagamento / assinatura do Asaas
   app.post(webhookPaths, async (req, res) => {
     try {
+      // Security Validation: verify Asaas-Access-Token header if ASAAS_WEBHOOK_SECRET is configured
+      const webhookSecret = process.env.ASAAS_WEBHOOK_SECRET;
+      if (webhookSecret) {
+        const incomingToken = req.headers['asasaaccesstoken'] || req.headers['asaas-access-token'] || req.headers['access-token'];
+        if (!incomingToken || incomingToken !== webhookSecret) {
+          console.warn("⚠️ [ASAAS SECURITY] Webhook rejeitado: Token de acesso inválido ou ausente.");
+          return res.status(401).json({ error: "Unauthorized - Invalid Webhook Token" });
+        }
+      }
+
       const timestamp = new Date().toISOString();
       let event: any = {};
       try {

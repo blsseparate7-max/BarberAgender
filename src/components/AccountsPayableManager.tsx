@@ -568,8 +568,8 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
               className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary text-slate-600 font-bold appearance-none cursor-pointer"
             >
               <option value="all">Todas as Categorias</option>
-              {categories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
+              {categories.map((cat, catIdx) => (
+                <option key={`ap-cat-flt-${cat}-${catIdx}`} value={cat}>{cat}</option>
               ))}
             </select>
           </div>
@@ -791,8 +791,8 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
                         className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
                       >
                         <option value="">Selecione o profissional...</option>
-                        {barbers.map(b => (
-                          <option key={b.id} value={b.id}>{b.nome}</option>
+                        {barbers.map((b, bIdx) => (
+                          <option key={`ap-barber-opt-${b.id || bIdx}-${bIdx}`} value={b.id}>{b.nome}</option>
                         ))}
                       </select>
                       <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400">
@@ -859,8 +859,8 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
                           onChange={e => setFormData({ ...formData, category: e.target.value })}
                           className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
                         >
-                          {categories.map(cat => (
-                            <option key={cat} value={cat}>{cat}</option>
+                          {categories.map((cat, catIdx) => (
+                            <option key={`ap-cat-opt-${cat}-${catIdx}`} value={cat}>{cat}</option>
                           ))}
                         </select>
                       </div>
@@ -873,8 +873,8 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
                           onChange={e => setFormData({ ...formData, recurrence: e.target.value as any })}
                           className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/10 appearance-none cursor-pointer"
                         >
-                          {recurrences.map(rec => (
-                            <option key={rec.value} value={rec.value}>{rec.label}</option>
+                          {recurrences.map((rec, recIdx) => (
+                            <option key={`ap-rec-opt-${rec.value}-${recIdx}`} value={rec.value}>{rec.label}</option>
                           ))}
                         </select>
                       </div>
@@ -983,9 +983,9 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
                       { value: 'credito', label: 'C. Crédito' },
                       { value: 'debito', label: 'C. Débito' },
                       { value: 'outros', label: 'Outra forma' }
-                    ].map(method => (
+                    ].map((method, mIdx) => (
                       <button
-                        key={method.value}
+                        key={`ap-settle-mth-${method.value}-${mIdx}`}
                         type="button"
                         onClick={() => setSettleMethod(method.value)}
                         className={`py-3 px-4 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-2 ${

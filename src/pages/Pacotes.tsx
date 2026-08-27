@@ -911,12 +911,12 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {clientsNearExpiration.map(sale => {
+                      {clientsNearExpiration.map((sale, idx) => {
                         const isCriticalBalance = sale.remainingCuts <= 1;
                         const isCriticalDate = sale.daysRemaining !== Infinity && sale.daysRemaining <= 10;
                         
                         return (
-                          <div key={`near-exp-${sale.id}`} className="flex items-center justify-between bg-slate-50 border border-slate-100 p-4 rounded-2xl hover:border-slate-300 transition">
+                          <div key={`near-exp-${sale.id || idx}-${idx}`} className="flex items-center justify-between bg-slate-50 border border-slate-100 p-4 rounded-2xl hover:border-slate-300 transition">
                             <div className="space-y-1">
                               <p className="text-xs font-extrabold text-slate-800 leading-tight">{sale.clientName}</p>
                               <p className="text-[10px] text-slate-500 font-bold">{sale.packageName}</p>
@@ -980,7 +980,7 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                         const barWidthPercent = maxSales > 0 ? Math.round((ranked.salesCount / maxSales) * 100) : 0;
                         
                         return (
-                          <div key={`rank-${ranked.id}`} className="space-y-1">
+                          <div key={`rank-${ranked.id || index}-${index}`} className="space-y-1">
                             <div className="flex items-center justify-between text-xs">
                               <div className="flex items-center gap-2">
                                 <span className="w-5 h-5 bg-slate-100 text-slate-700 font-black text-[10px] rounded flex items-center justify-center">
@@ -1080,13 +1080,13 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-sm">
-                      {filteredSales.map(sale => {
+                      {filteredSales.map((sale, idx) => {
                         const percentRemaining = Math.max(0, Math.round((sale.remainingCuts / sale.totalCuts) * 100));
                         const isExpanded = expandedSaleId === sale.id;
                         const hasUsages = sale.usages && sale.usages.length > 0;
 
                         return (
-                          <React.Fragment key={sale.id}>
+                          <React.Fragment key={`sale-${sale.id || idx}-${idx}`}>
                             <tr 
                               className="hover:bg-slate-50/40 transition-all font-bold text-primary cursor-pointer"
                               onClick={(e) => {
@@ -1280,12 +1280,12 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                 </p>
               </div>
             ) : (
-              filteredPackages.map(pkg => {
+              filteredPackages.map((pkg, idx) => {
                 const discountPercent = pkg.originalPrice > 0 ? Math.round((1 - (pkg.promotionalPrice / pkg.originalPrice)) * 100) : 0;
                 return (
                   <motion.div 
                     layout
-                    key={pkg.id} 
+                    key={`pkg-card-${pkg.id || idx}-${idx}`} 
                     className={`bg-white border rounded-[2rem] p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative ${
                       pkg.active ? 'border-slate-200' : 'border-red-100 opacity-70 bg-red-50/5'
                     }`}
@@ -1379,10 +1379,10 @@ export function Pacotes({ defaultTab }: PacotesProps) {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {sales.map(sale => {
+                {sales.map((sale, idx) => {
                   const percentRemaining = Math.max(0, Math.round((sale.remainingCuts / sale.totalCuts) * 100));
                   return (
-                    <div key={sale.id} className="bg-white border rounded-[2rem] p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition">
+                    <div key={`client-sale-${sale.id || idx}-${idx}`} className="bg-white border rounded-[2rem] p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition">
                       <div>
                         <span className="text-[8px] font-black px-2.5 py-1 bg-slate-100 rounded-full uppercase border text-slate-500">
                           Pacote Adquirido
@@ -1419,7 +1419,7 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                           <p className="font-extrabold border-b pb-1">Histórico de Visitas (Consumo):</p>
                           {sale.usages && sale.usages.length > 0 ? (
                             sale.usages.map((u, i) => (
-                              <div key={i} className="flex justify-between py-1 text-[11px] text-slate-650 font-semibold border-b border-dashed border-slate-205/60 last:border-b-0">
+                              <div key={`sale-usage-hist-${sale.id || 's'}-${u.index || i}-${i}`} className="flex justify-between py-1 text-[11px] text-slate-650 font-semibold border-b border-dashed border-slate-205/60 last:border-b-0">
                                 <span>Sessão Nº {u.index}</span>
                                 <span>{new Date(u.usedAt).toLocaleDateString('pt-BR')}</span>
                               </div>
@@ -1442,10 +1442,10 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                 Veja nossa grade de pacotes com Descontos
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {packages.filter(p => p.active && p.showInPortal !== false).map(pkg => {
+                {packages.filter(p => p.active && p.showInPortal !== false).map((pkg, idx) => {
                   const discountPercent = pkg.originalPrice > 0 ? Math.round((1 - (pkg.promotionalPrice / pkg.originalPrice)) * 100) : 0;
                   return (
-                    <div key={pkg.id} className="bg-white border rounded-[2rem] p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition relative">
+                    <div key={`pkg-tpl-${pkg.id || idx}-${idx}`} className="bg-white border rounded-[2rem] p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition relative">
                       <div>
                         <div className="flex justify-between">
                           <span className="text-[8px] font-black px-2.5 py-1 bg-emerald-50 border border-emerald-150 text-emerald-700 rounded-full uppercase">
@@ -1568,8 +1568,8 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                     className="w-full bg-slate-50 border p-3.5 rounded-xl cursor-pointer font-bold outline-none focus:bg-white focus:ring-4 focus:ring-slate-50"
                   >
                     <option value="">-- Selecione o Serviço do Catálogo --</option>
-                    {services.map(s => (
-                      <option key={s.id} value={s.id}>
+                    {services.map((s, sIdx) => (
+                      <option key={`pkg-srv-opt-${s.id || sIdx}-${sIdx}`} value={s.id}>
                         {s.nome || s.name} (R$ {(s.preco ?? s.price ?? 0).toFixed(2)})
                       </option>
                     ))}
@@ -1750,8 +1750,8 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                     className="w-full bg-slate-50 border p-3 rounded-xl cursor-pointer font-extrabold outline-none focus:bg-white"
                   >
                     <option value="">-- Escolher Cliente --</option>
-                    {clients.map(c => (
-                      <option key={c.uid} value={c.uid}>{c.nome}</option>
+                    {clients.map((c, cIdx) => (
+                      <option key={`pkg-cli-opt-${c.uid || cIdx}-${cIdx}`} value={c.uid}>{c.nome}</option>
                     ))}
                   </select>
                 </div>
@@ -1774,8 +1774,8 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                     className="w-full bg-slate-50 border p-3 rounded-xl cursor-pointer font-extrabold outline-none focus:bg-white"
                   >
                     <option value="">-- Escolher Regulamento --</option>
-                    {packages.filter(p => p.active).map(p => (
-                      <option key={p.id} value={p.id}>
+                    {packages.filter(p => p.active).map((p, pIdx) => (
+                      <option key={`pkg-reg-opt-${p.id || pIdx}-${pIdx}`} value={p.id}>
                         {p.name} (Sessões: {p.cutsCount} | Preço: R$ {p.promotionalPrice.toFixed(2)})
                       </option>
                     ))}

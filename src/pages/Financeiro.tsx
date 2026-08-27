@@ -739,12 +739,68 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     }
   };
 
+  const TAB_INFO: Record<string, { title: string; subtitle: string }> = {
+    'digital-account': {
+      title: 'Conta Digital Asaas',
+      subtitle: 'Saldo em conta, transferências PIX e acompanhamento financeiro.'
+    },
+    'overview': {
+      title: 'Fluxo de Caixa',
+      subtitle: 'Controle e visão consolidada de entradas, saídas e movimentações.'
+    },
+    'dre': {
+      title: 'DRE Gerencial',
+      subtitle: 'Demonstração do Resultado do Exercício com margens e faturamento.'
+    },
+    'daily-cash': {
+      title: 'Caixa do Dia',
+      subtitle: 'Abertura, fechamento, reforços e sangrias do caixa atual.'
+    },
+    'cash-history': {
+      title: 'Histórico de Caixas',
+      subtitle: 'Registro histórico e relatórios detalhados de caixas anteriores.'
+    },
+    'entries-exits': {
+      title: 'Entradas e Saídas',
+      subtitle: 'Extrato analítico detalhado de lançamentos e receitas/despesas.'
+    },
+    'client-accounts': {
+      title: 'Conta do Cliente (Fiados)',
+      subtitle: 'Gestão de fiados, limites de débito e acerto de contas.'
+    },
+    'inventory-finance': {
+      title: 'Financeiro de Estoque',
+      subtitle: 'Valoração de estoque, custo de mercadorias e investimentos em produtos.'
+    },
+    'subscriptions': {
+      title: 'Clube de Assinaturas',
+      subtitle: 'Gestão de membros, planos ativos e faturamento recorrente.'
+    },
+    'payment-methods': {
+      title: 'Métodos de Pagamento',
+      subtitle: 'Taxas por bandeira, prazos de recebimento (D+N) e maquininhas.'
+    },
+    'inconsistencies': {
+      title: 'Auditoria & Inconsistências',
+      subtitle: 'Identificação e ajuste de divergências operacionais ou financeiras.'
+    }
+  };
+
+  const currentTabInfo = TAB_INFO[activeTab] || {
+    title: 'Gestão Financeira',
+    subtitle: 'Controle de entradas, saídas e fluxo de caixa estratégico.'
+  };
+
   return (
-    <div className="space-y-10 pb-10">
+    <div className="space-y-6 pb-10">
       <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-primary">Gestão Financeira</h1>
-          <p className="text-muted text-sm font-medium mt-1">Controle de entradas, saídas e fluxo de caixa estratégico.</p>
+          <h1 className="text-3xl font-black tracking-tight text-primary transition-all duration-200">
+            {currentTabInfo.title}
+          </h1>
+          <p className="text-muted text-sm font-medium mt-1">
+            {currentTabInfo.subtitle}
+          </p>
         </div>
         
         {/* Filtro Global de Período para abas temporais */}
@@ -817,38 +873,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           </button>
         </div>
       </header>
-
-      {/* Financial Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard 
-          title="Disponível Hoje" 
-          value={stats.disponivel} 
-          icon={<Wallet size={20} />} 
-          color="emerald"
-          subtitle="Dinheiro/PIX imediato (líquido)"
-        />
-        <StatCard 
-          title="A Receber Cartões" 
-          value={stats.aReceberCartoes} 
-          icon={<CreditCard size={20} />} 
-          color="blue"
-          subtitle="Previsão amanhã/futura (D+1+)"
-        />
-        <StatCard 
-          title="Fiados Pendentes" 
-          value={stats.pendingFiado} 
-          icon={<Clock size={20} />} 
-          color="amber"
-          subtitle="Contas de clientes em aberto"
-        />
-        <StatCard 
-          title="Saídas Gerais" 
-          value={stats.expense} 
-          icon={<TrendingDown size={20} />} 
-          color="red"
-          subtitle="Total de saídas no período"
-        />
-      </div>
 
       {/* Tabs Navigation */}
       <div className="flex border-b border-slate-200 overflow-x-auto custom-scrollbar no-scrollbar gap-2 py-1 scroll-smooth">
@@ -933,6 +957,37 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
+                {/* Financial Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <StatCard 
+                    title="Disponível Hoje" 
+                    value={stats.disponivel} 
+                    icon={<Wallet size={20} />} 
+                    color="emerald"
+                    subtitle="Dinheiro/PIX imediato (líquido)"
+                  />
+                  <StatCard 
+                    title="A Receber Cartões" 
+                    value={stats.aReceberCartoes} 
+                    icon={<CreditCard size={20} />} 
+                    color="blue"
+                    subtitle="Previsão amanhã/futura (D+1+)"
+                  />
+                  <StatCard 
+                    title="Fiados Pendentes" 
+                    value={stats.pendingFiado} 
+                    icon={<Clock size={20} />} 
+                    color="amber"
+                    subtitle="Contas de clientes em aberto"
+                  />
+                  <StatCard 
+                    title="Saídas Gerais" 
+                    value={stats.expense} 
+                    icon={<TrendingDown size={20} />} 
+                    color="red"
+                    subtitle="Total de saídas no período"
+                  />
+                </div>
                 {/* Banner Cards (AppBarber Style) */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   {/* Card 1: Total Movimentado */}
@@ -2946,7 +3001,7 @@ function ProfessionalFinancialCard({
                 }
               } catch (e) {}
               return (
-                <div key={`card-vale-${val.id || idx}`} className="flex justify-between items-center text-[11px] font-medium text-slate-700">
+                <div key={`card-vale-${val.id || 'vale'}-${idx}`} className="flex justify-between items-center text-[11px] font-medium text-slate-700">
                   <span className="truncate max-w-[150px]">{val.description || 'Vale / Adiantamento'} ({formattedDate})</span>
                   <span className="font-extrabold text-amber-700">R$ {val.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
@@ -4071,7 +4126,7 @@ function MovementDetailsModal({ movement, onClose }: { movement: any, onClose: (
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Itens Consumidos (Serviços / Produtos)</p>
                     {comanda.items && comanda.items.map((item: any, i: number) => (
-                      <div key={`comanda-item-${item.id || i}`} className="flex justify-between items-center text-xs pb-2 border-b border-slate-100 last:border-0 last:pb-0">
+                      <div key={`comanda-item-${item.id || 'item'}-${i}`} className="flex justify-between items-center text-xs pb-2 border-b border-slate-100 last:border-0 last:pb-0">
                         <div>
                           <p className="font-bold text-primary flex items-center gap-1">
                             {item.type === 'servico' ? <Sparkles size={12} className="text-amber-500" /> : <Award size={12} className="text-blue-500" />}

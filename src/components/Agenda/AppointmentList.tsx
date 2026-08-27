@@ -201,9 +201,9 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
                   </td>
                 </tr>
               ) : (
-                filteredAppointments.map(app => (
+                filteredAppointments.map((app, appIdx) => (
                   <tr 
-                    key={app.id} 
+                    key={`app-row-${app.id || appIdx}-${appIdx}`} 
                     onClick={() => onOpenAppointment(app)}
                     className="hover:bg-slate-50 transition-colors cursor-pointer group"
                   >

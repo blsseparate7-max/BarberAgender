@@ -388,9 +388,9 @@ export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId })
         <nav className="w-full xl:w-80 bg-white border border-slate-200 rounded-[2rem] p-4 space-y-1.5 shadow-sm flex flex-col shrink-0">
           <p className="text-[10px] font-black uppercase text-muted tracking-wide px-3 mb-3">Tabelas e Modelos</p>
           <div className="space-y-1 max-h-[500px] overflow-y-auto pr-1">
-            {menuConfig.map(m => (
+            {menuConfig.map((m, mIdx) => (
               <button
-                key={m.id}
+                key={`type-menu-${m.id || mIdx}-${mIdx}`}
                 onClick={() => {
                   setActiveSub(m.id as SubTypeId);
                   handleResetForm();
@@ -893,7 +893,7 @@ export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId })
           ) : (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredItems.map(item => {
+                {filteredItems.map((item, itemIdx) => {
                   // Advanced decorative styles according to tab class
                   let leftBorderColor = 'border-l-primary';
                   let iconElement: React.ReactNode = <Settings size={16} className="text-slate-400" />;
@@ -935,7 +935,7 @@ export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId })
 
                   return (
                     <div 
-                      key={item.id} 
+                      key={`type-item-${item.id || itemIdx}-${itemIdx}`} 
                       className={`bg-white border-y border-r border-l-4 ${leftBorderColor} rounded-2xl p-4 sm:p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-all duration-300 group ${
                         editingItem?.id === item.id ? 'ring-2 ring-amber-400 bg-amber-50/10' : ''
                       }`}

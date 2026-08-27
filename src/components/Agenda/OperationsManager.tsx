@@ -435,7 +435,7 @@ export function OperationsManager() {
 
                 return (
                   <div 
-                    key={barber.uid}
+                    key={`barber-rot-${barber.uid || barber.id || index}-${index}`}
                     className={`p-4 rounded-2xl border transition-all flex items-center justify-between gap-4 ${
                       index === 0 && status === 'disponivel'
                         ? 'bg-slate-800/80 border-indigo-500/30 shadow-indigo-500/5'
@@ -529,8 +529,8 @@ export function OperationsManager() {
             </div>
 
             <div className="space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin">
-              {waitingList.map(item => (
-                <div key={item.id} className="p-4 bg-slate-50 border border-slate-100/80 rounded-2xl space-y-3 relative group">
+              {waitingList.map((item, wIdx) => (
+                <div key={`wait-item-${item.id || wIdx}-${wIdx}`} className="p-4 bg-slate-50 border border-slate-100/80 rounded-2xl space-y-3 relative group">
                   <button
                     onClick={() => handleDeleteItem(item.id)}
                     className="absolute top-3 right-3 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md"
@@ -590,8 +590,8 @@ export function OperationsManager() {
             </div>
 
             <div className="space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin">
-              {servingList.map(item => (
-                <div key={item.id} className="p-4 bg-blue-50/20 border border-blue-100/50 rounded-2xl space-y-3">
+              {servingList.map((item, sIdx) => (
+                <div key={`serv-item-${item.id || sIdx}-${sIdx}`} className="p-4 bg-blue-50/20 border border-blue-100/50 rounded-2xl space-y-3">
                   <div>
                     <h5 className="font-bold text-xs text-slate-800 truncate">{item.cliente_name}</h5>
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mt-1">{item.servico_name}</p>
@@ -646,8 +646,8 @@ export function OperationsManager() {
             </div>
 
             <div className="space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin">
-              {completedList.map(item => (
-                <div key={item.id} className="p-4 bg-slate-50/60 border border-slate-100 rounded-2xl space-y-2.5 opacity-75">
+              {completedList.map((item, cIdx) => (
+                <div key={`comp-item-${item.id || cIdx}-${cIdx}`} className="p-4 bg-slate-50/60 border border-slate-100 rounded-2xl space-y-2.5 opacity-75">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <h5 className="font-bold text-xs text-slate-700 truncate line-through">{item.cliente_name}</h5>
@@ -800,9 +800,9 @@ export function OperationsManager() {
                           (c.phone || '').includes(clientSearchTerm)
                         )
                         .slice(0, 10)
-                        .map(client => (
+                        .map((client, clIdx) => (
                           <button
-                            key={client.uid}
+                            key={`reg-client-${client.uid || client.id || clIdx}-${clIdx}`}
                             type="button"
                             onClick={() => {
                               setSelectedClientId(client.uid);
@@ -867,7 +867,7 @@ export function OperationsManager() {
                     className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 appearance-none shadow-inner"
                   >
                     <option value="">Selecione o serviço...</option>
-                    {services.map(s => <option key={s.id} value={s.id}>{s.nome || s.name}</option>)}
+                    {services.map((s, sIdx) => <option key={`op-svc-opt-${s.id || sIdx}-${sIdx}`} value={s.id}>{s.nome || s.name}</option>)}
                   </select>
                 </div>
 
@@ -879,7 +879,7 @@ export function OperationsManager() {
                     className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-primary font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/10 focus:border-indigo-600 appearance-none shadow-inner"
                   >
                     <option value="next">Próximo do Rodízio (Recomendado)</option>
-                    {barbers.map(b => <option key={b.uid} value={b.uid}>{b.nome}</option>)}
+                    {barbers.map((b, bIdx) => <option key={`op-barber-opt-${b.uid || bIdx}-${bIdx}`} value={b.uid}>{b.nome}</option>)}
                   </select>
                 </div>
 
@@ -935,7 +935,7 @@ export function OperationsManager() {
 
                       return (
                         <button
-                          key={b.uid}
+                          key={`modal-barber-${b.uid || b.id || i}-${i}`}
                           onClick={() => handleCallClient(selectedFlowItem, b.uid)}
                           className="w-full p-4 bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-2xl flex items-center justify-between transition-all active:scale-95"
                         >

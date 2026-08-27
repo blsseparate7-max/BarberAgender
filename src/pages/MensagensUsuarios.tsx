@@ -203,9 +203,9 @@ export function MensagensUsuarios() {
             {templates.length === 0 ? (
               <div className="py-12 text-center italic text-xs text-muted">Buscando modelos...</div>
             ) : (
-              templates.map(tpl => (
+              templates.map((tpl, tplIdx) => (
                 <div 
-                  key={tpl.id}
+                  key={`tpl-${tpl.id || tplIdx}-${tplIdx}`}
                   onClick={() => handleSelectTemplate(tpl)}
                   className={`p-4 border rounded-2xl cursor-pointer transition-all space-y-2 hover:bg-slate-50 relative group ${
                     selectedTemplateId === tpl.id ? 'border-accent bg-accent/5' : 'border-slate-100'

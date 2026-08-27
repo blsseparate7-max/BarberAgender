@@ -280,7 +280,7 @@ export function Combos() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredCombos.map(combo => {
+            {filteredCombos.map((combo, comboIdx) => {
               // Calculate details for this specific combo card
               let origPrice = 0;
               const detailsList: string[] = [];
@@ -306,7 +306,7 @@ export function Combos() {
 
               return (
                 <div 
-                  key={combo.id}
+                  key={`combo-item-${combo.id || comboIdx}-${comboIdx}`}
                   className={`border rounded-3xl p-6 transition-all flex flex-col justify-between hover:shadow-md ${
                     combo.active 
                       ? 'bg-white border-slate-200' 
@@ -495,9 +495,9 @@ export function Combos() {
                     {services.length === 0 ? (
                       <p className="text-[11px] text-muted italic font-medium">Nenhum serviço disponível.</p>
                     ) : (
-                      services.map(srv => (
+                      services.map((srv, srvIdx) => (
                         <label 
-                          key={srv.id} 
+                          key={`combo-srv-${srv.id || srvIdx}-${srvIdx}`} 
                           className="flex items-center justify-between p-2.5 bg-white border rounded-xl hover:bg-slate-50 cursor-pointer transition"
                         >
                           <div className="flex items-center gap-2">
@@ -530,9 +530,9 @@ export function Combos() {
                     {products.length === 0 ? (
                       <p className="text-[11px] text-muted italic font-medium">Nenhum produto em estoque.</p>
                     ) : (
-                      products.map(prod => (
+                      products.map((prod, prodIdx) => (
                         <label 
-                          key={prod.id} 
+                          key={`combo-prod-${prod.id || prodIdx}-${prodIdx}`} 
                           className="flex items-center justify-between p-2.5 bg-white border rounded-xl hover:bg-slate-50 cursor-pointer transition"
                         >
                           <div className="flex items-center gap-2">

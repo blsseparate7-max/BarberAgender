@@ -792,9 +792,9 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 </div>
               ) : (
                 <div className="space-y-2.5">
-                  {filteredClientes.map((cliente) => (
+                  {filteredClientes.map((cliente, cIdx) => (
                     <div 
-                      key={cliente.uid}
+                      key={`cli-item-${cliente.uid || cIdx}-${cIdx}`}
                       className="bg-white border border-slate-200/80 p-4 rounded-3xl shadow-sm flex flex-col gap-3"
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -1188,11 +1188,11 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {transactionsList.map((item) => {
+                  {transactionsList.map((item, idx) => {
                     const isComm = item.type === 'comissao';
                     return (
                       <div 
-                        key={`${item.type}-${item.id}`}
+                        key={`${item.type}-${item.id || idx}-${idx}`}
                         className="bg-white border border-slate-200/80 p-3.5 rounded-2xl shadow-sm flex items-center justify-between hover:border-indigo-100 transition-colors duration-150"
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -1298,11 +1298,11 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-2.5">
-                  {filteredProducts.map((prod) => {
+                  {filteredProducts.map((prod, idx) => {
                     const isLow = prod.currentStock <= prod.minStock;
                     return (
                       <div 
-                        key={prod.id}
+                        key={`barber-prod-${prod.id || idx}-${idx}`}
                         className="bg-white border border-slate-200/80 p-3.5 rounded-2xl shadow-sm flex items-center justify-between gap-3"
                       >
                         <div className="space-y-0.5">
@@ -1357,7 +1357,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                         const score = reviews.length > 0 ? (reviews.reduce((acc, r) => acc + (r.rating || 0), 0) / reviews.length) : 0;
                         return (
                           <Star 
-                            key={i} 
+                            key={`score-star-${i}`} 
                             size={16} 
                             fill={i < Math.round(score) ? 'currentColor' : 'none'} 
                             className={i < Math.round(score) ? 'text-amber-500' : 'text-slate-300'} 
@@ -1378,7 +1378,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   const count = reviews.filter((r) => r.rating === stars).length;
                   const pct = reviews.length > 0 ? (count / reviews.length) * 100 : 0;
                   return (
-                    <div key={stars} className="flex items-center gap-3 text-xs font-bold text-slate-600">
+                    <div key={`star-dist-${stars}`} className="flex items-center gap-3 text-xs font-bold text-slate-600">
                       <span className="w-3 text-right">{stars}</span>
                       <Star size={10} fill="currentColor" className="text-amber-500" />
                       <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -1404,8 +1404,8 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 </div>
               ) : reviews.length > 0 ? (
                 <div className="space-y-3">
-                  {reviews.map((review) => (
-                    <div key={review.id} className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm space-y-2.5">
+                  {reviews.map((review, revIdx) => (
+                    <div key={`review-item-${review.id || revIdx}-${revIdx}`} className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm space-y-2.5">
                       <div className="flex items-center justify-between">
                         <div>
                           <h5 className="font-bold text-xs text-slate-800">{review.cliente_name}</h5>
@@ -1418,7 +1418,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                         <div className="flex text-amber-500">
                           {Array.from({ length: 5 }).map((_, i) => (
                             <Star 
-                              key={i} 
+                              key={`rev-item-star-${review.id || revIdx}-${i}`} 
                               size={12} 
                               fill={i < review.rating ? 'currentColor' : 'none'} 
                               className={i < review.rating ? 'text-amber-500' : 'text-slate-200'} 
@@ -1519,8 +1519,8 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
               {profile.horario_de_trabalho && profile.horario_de_trabalho.length > 0 ? (
                 <div className="grid grid-cols-2 gap-2">
-                  {profile.horario_de_trabalho.map((wh) => (
-                    <div key={wh.dayOfWeek} className="bg-slate-50 border p-2.5 rounded-xl text-center">
+                  {profile.horario_de_trabalho.map((wh, whIdx) => (
+                    <div key={`wh-day-${wh.dayOfWeek || whIdx}-${whIdx}`} className="bg-slate-50 border p-2.5 rounded-xl text-center">
                       <p className="text-[9px] text-slate-400 font-black uppercase">
                         {wh.dayOfWeek === 1 ? 'Segunda' :
                          wh.dayOfWeek === 2 ? 'Terça' :

@@ -1769,8 +1769,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
                 >
                   <option value="all">Todos os Planos</option>
-                  {plans.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                  {plans.map((p, pIdx) => (
+                    <option key={`sub-plan-opt-${p.id || pIdx}-${pIdx}`} value={p.id}>{p.name}</option>
                   ))}
                 </select>
               </div>
@@ -1848,9 +1848,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       {/* TAB 1: Planos de Assinatura (Cadastro e Venda) */}
       {activeTab === 'assinaturas_planos' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {plans.map(plan => (
+          {plans.map((plan, planIdx) => (
             <PlanCard 
-              key={plan.id} 
+              key={`plan-card-tab1-${plan.id || planIdx}-${planIdx}`} 
               plan={plan} 
               isAdmin={canManage}
               onEdit={() => { setEditingPlan(plan); setShowPlanModal(true); }}
@@ -1891,14 +1891,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-xs">
-                        {paginatedSubscriptions.map(sub => {
+                        {paginatedSubscriptions.map((sub, subIdx) => {
                           const plan = plans.find(p => p.id === sub.plano_id);
                           const matchedClient = clients.find(c => c.uid === sub.cliente_id);
                           const clientPhone = matchedClient?.telefone || matchedClient?.whatsapp || '';
                           
                           return (
                             <SubscriptionTableRow 
-                              key={sub.id}
+                              key={`sub-table-row-${sub.id || subIdx}-${subIdx}`}
                               sub={sub}
                               plan={plan}
                               clientPhone={clientPhone}
@@ -1924,12 +1924,12 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {paginatedSubscriptions.map(sub => {
+                  {paginatedSubscriptions.map((sub, subIdx) => {
                     const matchedClient = clients.find(c => c.uid === sub.cliente_id);
                     const clientPhone = matchedClient?.telefone || matchedClient?.whatsapp || '';
                     return (
                       <SubscriptionCard 
-                        key={sub.id} 
+                        key={`sub-grid-card-${sub.id || subIdx}-${subIdx}`} 
                         sub={sub} 
                         plan={plans.find(p => p.id === sub.plano_id)}
                         clientPhone={clientPhone}
@@ -1977,7 +1977,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         const prevP = arr[idx - 1];
                         const showEllipsis = prevP && p - prevP > 1;
                         return (
-                          <React.Fragment key={p}>
+                          <React.Fragment key={`page-num-${p}-${idx}`}>
                             {showEllipsis && <span className="px-1 text-slate-400 font-bold">...</span>}
                             <button
                               type="button"
@@ -2061,8 +2061,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       const label = format(d, 'MMMM yyyy', { locale: ptBR });
                       list.push({ value: `${year}-${month}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
                     }
-                    return list.map(m => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
+                    return list.map((m, mIdx) => (
+                      <option key={`mth-opt-comm-${m.value}-${mIdx}`} value={m.value}>{m.label}</option>
                     ));
                   })()}
                 </select>
@@ -2091,8 +2091,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 className="bg-white border border-slate-200 outline-none rounded-xl py-2 px-3 text-xs font-bold text-slate-700 cursor-pointer shadow-sm"
               >
                 <option value="all">Todos os Barbeiros</option>
-                {barbeiros.map(b => (
-                  <option key={b.uid} value={b.uid}>{b.nome || b.displayName || 'Barbeiro'}</option>
+                {barbeiros.map((b, bIdx) => (
+                  <option key={`comm-barber-opt-${b.uid || bIdx}-${bIdx}`} value={b.uid}>{b.nome || b.displayName || 'Barbeiro'}</option>
                 ))}
               </select>
 
@@ -2200,9 +2200,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {calculatedCommissionsData.barberPots.map(barberPot => (
+              {calculatedCommissionsData.barberPots.map((barberPot, bpIdx) => (
                 <div 
-                  key={barberPot.uid} 
+                  key={`barber-pot-${barberPot.uid || bpIdx}-${bpIdx}`} 
                   className="bg-white border border-slate-200/90 rounded-[2rem] p-6 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between space-y-5"
                 >
                   <div className="space-y-4">
@@ -2453,8 +2453,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   id="history_barber_filter"
                 >
                   <option value="all">Todos os Profissionais</option>
-                  {barbeiros.map(b => (
-                    <option key={b.uid} value={b.uid}>{b.nome || b.displayName || 'Barbeiro'}</option>
+                  {barbeiros.map((b, bIdx) => (
+                    <option key={`hist-barber-opt-${b.uid || bIdx}-${bIdx}`} value={b.uid}>{b.nome || b.displayName || 'Barbeiro'}</option>
                   ))}
                 </select>
               </div>
@@ -2522,9 +2522,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                                 <div className="flex flex-col items-end gap-1">
                                   {run.barbersBreakdown && Array.isArray(run.barbersBreakdown) && run.barbersBreakdown.length > 0 ? (
                                     <div className="flex flex-wrap justify-end gap-1 max-w-[300px]">
-                                      {run.barbersBreakdown.map((item: any) => (
+                                      {run.barbersBreakdown.map((item: any, itemIdx: number) => (
                                         <span 
-                                          key={item.profissional_id} 
+                                          key={`barber-bd-${item.profissional_id || itemIdx}-${itemIdx}`} 
                                           className="bg-indigo-50 border border-indigo-100/60 text-indigo-700 text-[9px] font-bold px-2 py-0.5 rounded-md uppercase"
                                           title={item.profissional_name}
                                         >
@@ -2583,8 +2583,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     const label = format(d, 'MMMM yyyy', { locale: ptBR });
                     list.push({ value: `${year}-${month}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
                   }
-                  return list.map(m => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
+                  return list.map((m, mIdx) => (
+                    <option key={`mth-opt-rend-${m.value}-${mIdx}`} value={m.value}>{m.label}</option>
                   ));
                 })()}
               </select>
@@ -2792,7 +2792,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       const isHighUser = client.totalVisits >= 3;
 
                       return (
-                        <tr key={client.clientId || idx} className="hover:bg-slate-50/50 transition">
+                        <tr key={`client-stat-${client.clientId || 'c'}-${idx}`} className="hover:bg-slate-50/50 transition">
                           <td className="p-5">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-full bg-slate-100 border overflow-hidden flex items-center justify-center shrink-0">
@@ -2884,9 +2884,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {subscriptions.map(sub => (
+              {subscriptions.map((sub, sIdx) => (
                 <SubscriptionCard 
-                  key={sub.id} 
+                  key={`sub-card-client-${sub.id || sIdx}-${sIdx}`} 
                   sub={sub} 
                   plan={plans.find(p => p.id === sub.plano_id)}
                   isAdmin={false}
@@ -2908,9 +2908,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               NOSSOS PLANOS DISPONÍVEIS
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {plans.filter(p => p.status === 'active' && p.showInPortal !== false).map(plan => (
+              {plans.filter(p => p.status === 'active' && p.showInPortal !== false).map((plan, pIdx) => (
                 <PlanCard 
-                  key={plan.id} 
+                  key={`plan-card-available-${plan.id || pIdx}-${pIdx}`} 
                   plan={plan} 
                   isAdmin={false}
                   onEdit={() => {}}
@@ -3272,8 +3272,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
                       {planServices.length > 0 ? (
                         <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                          {planServices.map((ps) => (
-                            <div key={ps.serviceId} className="flex flex-col md:flex-row items-start md:items-center justify-between p-3 bg-white border border-slate-100 rounded-xl gap-2 shadow-sm">
+                          {planServices.map((ps, psIdx) => (
+                            <div key={`plan-svc-${ps.serviceId || psIdx}-${psIdx}`} className="flex flex-col md:flex-row items-start md:items-center justify-between p-3 bg-white border border-slate-100 rounded-xl gap-2 shadow-sm">
                               <span className="text-[11px] font-bold text-slate-700">{ps.name}</span>
                               
                               <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
@@ -3402,10 +3402,10 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           
                           {planServices.length > 0 ? (
                             <div className="max-h-48 overflow-y-auto border border-slate-150 rounded-xl divide-y divide-slate-100 bg-white shadow-sm">
-                              {planServices.map(ps => {
+                              {planServices.map((ps, psIdx) => {
                                 const currentPoints = planPontosServicos[ps.serviceId] !== undefined ? planPontosServicos[ps.serviceId] : 1;
                                 return (
-                                  <div key={ps.serviceId} className="flex items-center justify-between p-2.5 hover:bg-slate-50 transition-colors">
+                                  <div key={`plan-svc-pts-${ps.serviceId || psIdx}-${psIdx}`} className="flex items-center justify-between p-2.5 hover:bg-slate-50 transition-colors">
                                     <span className="text-[11px] font-bold text-slate-700">{ps.name}</span>
                                     <div className="flex items-center gap-1.5">
                                       <input 
@@ -3512,9 +3512,9 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
                       {planDiscounts.length > 0 ? (
                         <div className="space-y-2 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
-                          {planDiscounts.map((discount) => (
+                          {planDiscounts.map((discount, dIdx) => (
                             <div
-                              key={discount.itemId}
+                              key={`discount-item-${discount.itemId || dIdx}-${dIdx}`}
                               className="bg-white border border-slate-150 p-2.5 rounded-xl flex items-center justify-between hover:border-slate-300 transition-colors font-bold text-xs"
                             >
                               <div className="flex items-center gap-2">
@@ -4199,7 +4199,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                             : (inv.dueDate ? format(parseISO(inv.dueDate), 'dd/MM/yyyy') : (inv.date ? format(parseISO(inv.date), 'dd/MM/yyyy') : '-'));
 
                           return (
-                            <tr key={inv.id || idx} className="hover:bg-slate-50/70 transition">
+                            <tr key={`inv-${inv.id || 'i'}-${idx}`} className="hover:bg-slate-50/70 transition">
                               <td className="p-3.5 font-bold text-slate-900 whitespace-nowrap">
                                 {dateFormatted}
                               </td>
@@ -4479,9 +4479,9 @@ function PlanCard({ plan, isAdmin, onEdit, onAssign }: PlanCardProps) {
 
       <div className="space-y-4 flex-1 mb-8">
         {plan.services && plan.services.length > 0 ? (
-          plan.services.map((ps) => (
+          plan.services.map((ps, psIdx) => (
             <BenefitItem 
-              key={ps.serviceId} 
+              key={`plan-benefit-${ps.serviceId || psIdx}-${psIdx}`} 
               icon={<Scissors size={14} />} 
               text={ps.isUnlimited ? `${ps.name} Ilimitados` : `${ps.limit} ${ps.name} por mês`} 
             />
@@ -4495,7 +4495,7 @@ function PlanCard({ plan, isAdmin, onEdit, onAssign }: PlanCardProps) {
           </>
         )}
         {plan.extraBenefits.map((benefit, i) => (
-          <BenefitItem key={i} icon={<CheckCircle2 size={14} />} text={benefit} />
+          <BenefitItem key={`extra-benefit-${i}`} icon={<CheckCircle2 size={14} />} text={benefit} />
         ))}
       </div>
 
@@ -4710,12 +4710,12 @@ function SubscriptionCard({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {plan.services && plan.services.length > 0 ? (
-            plan.services.map((ps) => {
+            plan.services.map((ps, psIdx) => {
               const used = (sub.serviceUsages && sub.serviceUsages[ps.serviceId]) || 0;
               const typeLabel = ps.name.toLowerCase().includes('corte') || ps.name.toLowerCase().includes('cabelo') || ps.name.toLowerCase().includes('hair') ? 'haircut' : (ps.name.toLowerCase().includes('barba') || ps.name.toLowerCase().includes('beard') ? 'beard' : 'other');
               return (
                 <UsageIndicator 
-                  key={ps.serviceId} 
+                  key={`sub-usage-${ps.serviceId || psIdx}-${psIdx}`} 
                   label={ps.name} 
                   used={used} 
                   total={ps.isUnlimited ? 999 : ps.limit} 
@@ -5106,11 +5106,11 @@ function SubscriptionTableRow({
       <td className="p-4">
         <div className="space-y-1 max-w-[160px]">
           {plan.services && plan.services.length > 0 ? (
-            plan.services.map((ps) => {
+            plan.services.map((ps, psIdx) => {
               const used = (sub.serviceUsages && sub.serviceUsages[ps.serviceId]) || 0;
               const typeLabel = ps.name.toLowerCase().includes('corte') || ps.name.toLowerCase().includes('cabelo') || ps.name.toLowerCase().includes('hair') ? 'haircut' : (ps.name.toLowerCase().includes('barba') || ps.name.toLowerCase().includes('beard') ? 'beard' : 'other');
               return (
-                <div key={ps.serviceId} className="flex items-center justify-between text-[10px] font-bold bg-slate-50 border border-slate-100 rounded px-1.5 py-0.5">
+                <div key={`sub-cell-${ps.serviceId || psIdx}-${psIdx}`} className="flex items-center justify-between text-[10px] font-bold bg-slate-50 border border-slate-100 rounded px-1.5 py-0.5">
                   <span className="truncate text-slate-600 max-w-[80px]">{ps.name}</span>
                   <div className="flex items-center gap-1">
                     <span className="text-slate-800 font-black">{used}/{ps.isUnlimited ? '∞' : ps.limit}</span>

@@ -15,37 +15,52 @@ import { PagePlaceholder } from './components/PagePlaceholder';
 import { OnboardingWelcome } from './components/OnboardingWelcome';
 import { MobileBottomNav } from './components/MobileBottomNav';
 
-// Code-split dynamic page imports with React.lazy
-const Dashboard = React.lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
-const Agenda = React.lazy(() => import('./pages/Agenda').then(m => ({ default: m.Agenda })));
-const Clientes = React.lazy(() => import('./pages/Clientes').then(m => ({ default: m.Clientes })));
-const Barbeiros = React.lazy(() => import('./pages/Barbeiros').then(m => ({ default: m.Barbeiros })));
-const Servicos = React.lazy(() => import('./pages/Servicos').then(m => ({ default: m.Servicos })));
-const Comandas = React.lazy(() => import('./pages/Comandas').then(m => ({ default: m.Comandas })));
-const Financeiro = React.lazy(() => import('./pages/Financeiro').then(m => ({ default: m.Financeiro })));
-const Comissoes = React.lazy(() => import('./pages/Comissoes').then(m => ({ default: m.Comissoes })));
-const Relatorios = React.lazy(() => import('./pages/Relatorios').then(m => ({ default: m.Relatorios })));
-const Estoque = React.lazy(() => import('./pages/Estoque').then(m => ({ default: m.Estoque })));
-const Assinaturas = React.lazy(() => import('./pages/Assinaturas').then(m => ({ default: m.Assinaturas })));
-const Pacotes = React.lazy(() => import('./pages/Pacotes').then(m => ({ default: m.Pacotes })));
-const Fidelidade = React.lazy(() => import('./pages/Fidelidade').then(m => ({ default: m.Fidelidade })));
-const Marketing = React.lazy(() => import('./pages/Marketing').then(m => ({ default: m.Marketing })));
-const Insights = React.lazy(() => import('./pages/Insights').then(m => ({ default: m.Insights })));
-const Configuracoes = React.lazy(() => import('./pages/Configuracoes').then(m => ({ default: m.Configuracoes })));
-const LoginPage = React.lazy(() => import('./pages/Login').then(m => ({ default: m.LoginPage })));
-const RegisterPage = React.lazy(() => import('./pages/Register').then(m => ({ default: m.RegisterPage })));
-const ForgotPasswordPage = React.lazy(() => import('./pages/ForgotPassword').then(m => ({ default: m.ForgotPasswordPage })));
-const Tipos = React.lazy(() => import('./pages/Tipos').then(m => ({ default: m.Tipos })));
-const Combos = React.lazy(() => import('./pages/Combos').then(m => ({ default: m.Combos })));
-const MensagensUsuarios = React.lazy(() => import('./pages/MensagensUsuarios').then(m => ({ default: m.MensagensUsuarios })));
-const NoticiasPromocoes = React.lazy(() => import('./pages/NoticiasPromocoes').then(m => ({ default: m.NoticiasPromocoes })));
-const PesquisaSatisfacao = React.lazy(() => import('./pages/PesquisaSatisfacao').then(m => ({ default: m.PesquisaSatisfacao })));
-const Lembretes = React.lazy(() => import('./pages/Lembretes').then(m => ({ default: m.Lembretes })));
-const CuponsDesconto = React.lazy(() => import('./pages/CuponsDesconto').then(m => ({ default: m.CuponsDesconto })));
-const LandingPage = React.lazy(() => import('./pages/LandingPage').then(m => ({ default: m.LandingPage })));
-const PortalCliente = React.lazy(() => import('./pages/PortalCliente').then(m => ({ default: m.PortalCliente })));
-const PortalBarbeiro = React.lazy(() => import('./pages/PortalBarbeiro').then(m => ({ default: m.PortalBarbeiro })));
-const PortalSaaSAdmin = React.lazy(() => import('./pages/PortalSaaSAdmin'));
+// Code-split dynamic page imports with React.lazy and fallback retry
+const lazyWithRetry = (factory: () => Promise<any>) =>
+  React.lazy(async () => {
+    try {
+      return await factory();
+    } catch (error) {
+      console.warn('Dynamic import failed, retrying once...', error);
+      try {
+        return await factory();
+      } catch (retryError) {
+        console.error('Dynamic import failed twice:', retryError);
+        throw retryError;
+      }
+    }
+  });
+
+const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Agenda = lazyWithRetry(() => import('./pages/Agenda').then(m => ({ default: m.Agenda })));
+const Clientes = lazyWithRetry(() => import('./pages/Clientes').then(m => ({ default: m.Clientes })));
+const Barbeiros = lazyWithRetry(() => import('./pages/Barbeiros').then(m => ({ default: m.Barbeiros })));
+const Servicos = lazyWithRetry(() => import('./pages/Servicos').then(m => ({ default: m.Servicos })));
+const Comandas = lazyWithRetry(() => import('./pages/Comandas').then(m => ({ default: m.Comandas })));
+const Financeiro = lazyWithRetry(() => import('./pages/Financeiro').then(m => ({ default: m.Financeiro })));
+const Comissoes = lazyWithRetry(() => import('./pages/Comissoes').then(m => ({ default: m.Comissoes })));
+const Relatorios = lazyWithRetry(() => import('./pages/Relatorios').then(m => ({ default: m.Relatorios })));
+const Estoque = lazyWithRetry(() => import('./pages/Estoque').then(m => ({ default: m.Estoque })));
+const Assinaturas = lazyWithRetry(() => import('./pages/Assinaturas').then(m => ({ default: m.Assinaturas })));
+const Pacotes = lazyWithRetry(() => import('./pages/Pacotes').then(m => ({ default: m.Pacotes })));
+const Fidelidade = lazyWithRetry(() => import('./pages/Fidelidade').then(m => ({ default: m.Fidelidade })));
+const Marketing = lazyWithRetry(() => import('./pages/Marketing').then(m => ({ default: m.Marketing })));
+const Insights = lazyWithRetry(() => import('./pages/Insights').then(m => ({ default: m.Insights })));
+const Configuracoes = lazyWithRetry(() => import('./pages/Configuracoes').then(m => ({ default: m.Configuracoes })));
+const LoginPage = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.LoginPage })));
+const RegisterPage = lazyWithRetry(() => import('./pages/Register').then(m => ({ default: m.RegisterPage })));
+const ForgotPasswordPage = lazyWithRetry(() => import('./pages/ForgotPassword').then(m => ({ default: m.ForgotPasswordPage })));
+const Tipos = lazyWithRetry(() => import('./pages/Tipos').then(m => ({ default: m.Tipos })));
+const Combos = lazyWithRetry(() => import('./pages/Combos').then(m => ({ default: m.Combos })));
+const MensagensUsuarios = lazyWithRetry(() => import('./pages/MensagensUsuarios').then(m => ({ default: m.MensagensUsuarios })));
+const NoticiasPromocoes = lazyWithRetry(() => import('./pages/NoticiasPromocoes').then(m => ({ default: m.NoticiasPromocoes })));
+const PesquisaSatisfacao = lazyWithRetry(() => import('./pages/PesquisaSatisfacao').then(m => ({ default: m.PesquisaSatisfacao })));
+const Lembretes = lazyWithRetry(() => import('./pages/Lembretes').then(m => ({ default: m.Lembretes })));
+const CuponsDesconto = lazyWithRetry(() => import('./pages/CuponsDesconto').then(m => ({ default: m.CuponsDesconto })));
+const LandingPage = lazyWithRetry(() => import('./pages/LandingPage').then(m => ({ default: m.LandingPage })));
+const PortalCliente = lazyWithRetry(() => import('./pages/PortalCliente').then(m => ({ default: m.PortalCliente })));
+const PortalBarbeiro = lazyWithRetry(() => import('./pages/PortalBarbeiro').then(m => ({ default: m.PortalBarbeiro })));
+const PortalSaaSAdmin = lazyWithRetry(() => import('./pages/PortalSaaSAdmin').then(m => ({ default: m.PortalSaaSAdmin })));
 
 const PageLoadingFallback = () => (
   <div className="flex items-center justify-center min-h-[350px] w-full p-8">

@@ -40,8 +40,7 @@ export const dashboardService = {
       getDocs(
         query(
           collection(db, 'appointments'),
-          where('date', '>=', startStr),
-          where('date', '<=', endStr)
+          where('tenantId', '==', activeTenantId)
         )
       ).catch(err => {
         console.error("Dashboard Query Error [appointments]:", err);
@@ -50,8 +49,7 @@ export const dashboardService = {
       getDocs(
         query(
           collection(db, 'financial_transactions'),
-          where('date', '>=', startStr),
-          where('date', '<=', endStr)
+          where('tenantId', '==', activeTenantId)
         )
       ).catch(err => {
         console.error("Dashboard Query Error [financial_transactions]:", err);
@@ -60,8 +58,7 @@ export const dashboardService = {
       getDocs(
         query(
           collection(db, 'commissions'),
-          where('date', '>=', startStr),
-          where('date', '<=', endStr)
+          where('tenantId', '==', activeTenantId)
         )
       ).catch(err => {
         console.error("Dashboard Query Error [commissions]:", err);
@@ -92,8 +89,7 @@ export const dashboardService = {
       getDocs(
         query(
           collection(db, 'client_debts'),
-          where('tenantId', '==', activeTenantId),
-          where('status', 'in', ['pendente', 'parcial', 'vencido'])
+          where('tenantId', '==', activeTenantId)
         )
       ).catch(err => {
         console.error("Dashboard Query Error [client_debts]:", err);
@@ -137,7 +133,9 @@ export const dashboardService = {
       return p.currentStock <= p.minStock && p.status === 'active';
     }).length;
 
-    const debtsDocs = (debtsSnap.docs as any[]).map(d => (typeof d.data === 'function' ? d.data() : d));
+    const debtsDocs = (debtsSnap.docs as any[])
+      .map(d => (typeof d.data === 'function' ? d.data() : d))
+      .filter((d: any) => ['pendente', 'parcial', 'vencido'].includes(d.status));
     const totalDebts = debtsDocs.reduce((acc: number, d: any) => acc + (d?.remainingAmount || 0), 0);
     const debtorClientsCount = new Set(debtsDocs.map((d: any) => d?.cliente_id)).size;
 

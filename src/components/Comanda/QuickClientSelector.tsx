@@ -99,9 +99,9 @@ export function QuickClientSelector({ currentClientId, onSelect, onClose }: Quic
               <div className="py-8 flex justify-center">
                 <Loader2 size={16} className="animate-spin text-slate-300" />
               </div>
-            ) : filteredClients.map(c => (
+            ) : filteredClients.map((c, cIdx) => (
               <button 
-                key={c.uid}
+                key={`qcli-opt-${c.uid || cIdx}-${cIdx}`}
                 onClick={() => onSelect({ id: c.uid, name: c.nome })}
                 className="w-full flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-50 text-left transition-colors"
               >

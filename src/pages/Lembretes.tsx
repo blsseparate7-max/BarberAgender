@@ -421,9 +421,9 @@ export function Lembretes() {
 
           {activeTab === 'lembretes' ? (
             <div className="flex bg-slate-50 border border-slate-100 rounded-xl p-1 gap-1 w-full sm:w-auto shrink-0">
-              {(['all', 'pending', 'completed'] as const).map(option => (
+              {(['all', 'pending', 'completed'] as const).map((option, optIdx) => (
                 <button
-                  key={option}
+                  key={`rem-flt-${option}-${optIdx}`}
                   onClick={() => setReminderFilter(option)}
                   className={`px-3.5 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${
                     reminderFilter === option 
@@ -444,8 +444,8 @@ export function Lembretes() {
                 onChange={e => setSelectedBirthMonth(Number(e.target.value))}
                 className="w-full sm:w-44 bg-white border border-slate-200 outline-none focus:ring-4 focus:ring-slate-50 focus:border-slate-500 rounded-2xl py-2 px-3 text-xs font-black uppercase tracking-wider text-primary shadow-sm transition cursor-pointer"
               >
-                {MONTHS_LIST.map(m => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
+                {MONTHS_LIST.map((m, mIdx) => (
+                  <option key={`month-opt-${m.value}-${mIdx}`} value={m.value}>{m.label}</option>
                 ))}
               </select>
             </div>
@@ -471,7 +471,7 @@ export function Lembretes() {
               </p>
             </div>
           ) : (
-            filteredReminders.map(rem => {
+            filteredReminders.map((rem, remIdx) => {
               const parsedDate = new Date(rem.date);
               const formattedDate = isNaN(parsedDate.getTime()) ? rem.date : parsedDate.toLocaleDateString('pt-BR');
               
@@ -491,7 +491,7 @@ export function Lembretes() {
               return (
                 <motion.div 
                   layout
-                  key={rem.id} 
+                  key={`rem-card-${rem.id || remIdx}-${remIdx}`} 
                   className={`bg-white border rounded-[2rem] p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative ${
                     rem.completed ? 'opacity-65 border-slate-200 bg-slate-50/10' : 'border-slate-200'
                   }`}

@@ -41,7 +41,8 @@ import {
   BarChart3,
   Key,
   Palette,
-  FileText
+  FileText,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -67,7 +68,7 @@ const formatToBRDate = (isoString?: string) => {
   }
 };
 
-export default function PortalSaaSAdmin() {
+export function PortalSaaSAdmin() {
   const { signOut, profile } = useAuth();
   
   // Data States
@@ -209,6 +210,11 @@ export default function PortalSaaSAdmin() {
   const [editTenantTrialStartDate, setEditTenantTrialStartDate] = useState('');
   const [editTenantTrialEndDate, setEditTenantTrialEndDate] = useState('');
   const [editTenantSubscriptionsEnabled, setEditTenantSubscriptionsEnabled] = useState(false);
+  const [editTenantAsaasApiKey, setEditTenantAsaasApiKey] = useState('');
+
+  // Raio-X Tenant Support Modal State
+  const [raioXTenant, setRaioXTenant] = useState<TenantProfile | null>(null);
+  const [raioXTab, setRaioXTab] = useState<'professionals' | 'users' | 'integration'>('professionals');
 
   // Admin Asaas Payment Modal State
   const [showAdminChargeModal, setShowAdminChargeModal] = useState(false);
@@ -335,6 +341,7 @@ export default function PortalSaaSAdmin() {
     setEditTenantTrialStartDate(tenant.trialStartDate ? tenant.trialStartDate.substring(0, 10) : '');
     setEditTenantTrialEndDate(tenant.trialEndDate ? tenant.trialEndDate.substring(0, 10) : '');
     setEditTenantSubscriptionsEnabled(tenant.subscriptions_enabled ?? false);
+    setEditTenantAsaasApiKey(tenant.asaas?.apiKey || '');
   };
 
   // Toggle Subscriptions Module Quick Action
@@ -394,7 +401,11 @@ export default function PortalSaaSAdmin() {
         ownerEmail: editTenantOwnerEmail,
         ownerPhone: editTenantOwnerPhone,
         dueDateDay: Number(editTenantDueDateDay),
-        notes: editTenantNotes
+        notes: editTenantNotes,
+        asaas: {
+          ...(editingTenant.asaas || {}),
+          apiKey: editTenantAsaasApiKey.trim()
+        }
       }, { allowAsaasUpdate: true });
       toast.dismiss(toastId);
       toast.success(`Barbearia ${editTenantName} atualizada com sucesso!`);
@@ -827,7 +838,7 @@ export default function PortalSaaSAdmin() {
             <Loader2 className="animate-spin text-emerald-600" size={40} />
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             
             {/* Metric 1: MRR */}
             <div className="bg-gradient-to-br from-emerald-900 to-emerald-950 p-6 rounded-[2rem] text-white shadow-xl shadow-emerald-900/5 relative overflow-hidden group">
@@ -836,7 +847,7 @@ export default function PortalSaaSAdmin() {
               </div>
               <p className="text-[10px] font-black uppercase text-emerald-400 tracking-widest">MRR Total SaaS</p>
               <h3 className="text-3xl font-black mt-2">R$ {calculatedMRR.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
-              <p className="text-[10px] text-emerald-300/80 font-bold mt-2">Faturamento por profissional ativo</p>
+              <p className="text-[10px] text-emerald-300/80 font-bold mt-2">Faturamento recorrente ativo</p>
             </div>
 
             {/* Metric 2: Total Tenants */}
@@ -854,31 +865,14 @@ export default function PortalSaaSAdmin() {
               </p>
             </div>
 
-            {/* Metric 3: Active Professionals System Wide */}
-            <div className="bg-white border border-slate-200 p-6 rounded-[2rem] shadow-sm relative overflow-hidden group">
-              <div className="absolute right-[-10px] bottom-[-15px] opacity-5 group-hover:scale-110 transition-transform duration-500 text-slate-800">
-                <Users size={120} strokeWidth={1} />
-              </div>
-              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Profissionais no Sistema</p>
-              <h3 className="text-3xl font-black mt-2 text-slate-900">
-                {users.filter(u => (u.tipo === 'barbeiro' || u.tipo === 'gerente') && u.ativo !== false).length}
-              </h3>
-              <p className="text-[10px] font-semibold text-slate-500 mt-2">Barbeiros e gestores ativos</p>
-            </div>
-
-            {/* Metric 4: Total Users */}
+            {/* Metric 3: Active Subscriptions */}
             <div className="bg-white border border-slate-200 p-6 rounded-[2rem] shadow-sm relative overflow-hidden group">
               <div className="absolute right-[-10px] bottom-[-15px] opacity-5 group-hover:scale-110 transition-transform duration-500 text-slate-800">
                 <CreditCard size={120} strokeWidth={1} />
               </div>
-              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Usuários do Ecossistema</p>
-              <h3 className="text-3xl font-black mt-2 text-slate-900">{totalUsersCount}</h3>
-              <p className="text-[10px] font-semibold text-slate-500 mt-2 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-                {activeUsersCount} Ativos
-                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block ml-2"></span>
-                {suspendedUsersCount} Suspensos
-              </p>
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Assinaturas SaaS Ativas</p>
+              <h3 className="text-3xl font-black mt-2 text-slate-900">{totalActiveSubsCount}</h3>
+              <p className="text-[10px] font-semibold text-slate-500 mt-2">Contratos vigentes no sistema</p>
             </div>
 
           </div>
@@ -1027,7 +1021,7 @@ export default function PortalSaaSAdmin() {
                         if (tenantStatusFilter === 'suspended') return matchSearch && (t.isActive === false || t.planStatus === 'suspended');
                         return matchSearch;
                       })
-                      .map((tenant) => {
+                      .map((tenant, tIdx) => {
                         const activeProfs = getTenantProfsCount(tenant.id);
                         const maxLimit = tenant.maxProfessionals ?? 5;
                         const pricePerProf = tenant.pricePerProfessional ?? 39.90;
@@ -1040,7 +1034,7 @@ export default function PortalSaaSAdmin() {
                           : (Math.max(1, activeProfs) * pricePerProf);
 
                         return (
-                          <tr key={tenant.id} className="hover:bg-slate-50/50 transition-colors">
+                          <tr key={`saas-tenant-${tenant.id || tIdx}-${tIdx}`} className="hover:bg-slate-50/50 transition-colors">
                             <td className="py-4 px-6">
                               <div className="flex items-center gap-3">
                                 <div 
@@ -1119,6 +1113,17 @@ export default function PortalSaaSAdmin() {
 
                             <td className="py-4 px-6 text-right">
                               <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    setRaioXTenant(tenant);
+                                    setRaioXTab('professionals');
+                                  }}
+                                  title="Raio-X / Suporte: Ver Profissionais, Usuários e Integração Asaas desta Barbearia"
+                                  className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 transition border border-amber-200/50 flex items-center gap-1 font-bold text-xs"
+                                >
+                                  <Eye size={15} />
+                                  <span className="hidden xl:inline">Raio-X</span>
+                                </button>
                                 <button
                                   onClick={() => handleToggleSubscriptionsModule(tenant)}
                                   title={tenant.subscriptions_enabled ? "Desativar Módulo de Assinaturas/Clubes para esta Barbearia" : "Ativar Módulo de Assinaturas/Clubes para esta Barbearia"}
@@ -1258,10 +1263,10 @@ export default function PortalSaaSAdmin() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                        {filteredUsers.map((u) => {
+                        {filteredUsers.map((u, uIdx) => {
                           const isActive = u.ativo !== false;
                           return (
-                            <tr key={u.uid} className="hover:bg-slate-50/50 transition-colors font-medium">
+                            <tr key={`saas-user-${u.uid || uIdx}-${uIdx}`} className="hover:bg-slate-50/50 transition-colors font-medium">
                               <td className="p-5">
                                 <div className="flex items-center gap-3">
                                   <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs uppercase shadow-sm">
@@ -1414,13 +1419,13 @@ export default function PortalSaaSAdmin() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                        {filteredSubscriptions.map((s) => {
+                        {filteredSubscriptions.map((s, sIdx) => {
                           const today = new Date();
                           const end = s.endDate ? new Date(s.endDate) : null;
                           const isNearExpiry = end && s.status === 'active' && ((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24) <= 10);
                           
                           return (
-                            <tr key={s.id} className="hover:bg-slate-50/50 transition-colors font-medium">
+                            <tr key={`saas-sub-${s.id || sIdx}-${sIdx}`} className="hover:bg-slate-50/50 transition-colors font-medium">
                               <td className="p-5">
                                 <h5 className="font-bold text-slate-900">{s.cliente_name || 'Cliente de Assinatura'}</h5>
                                 <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Tenant: {s.tenantId}</p>
@@ -1603,9 +1608,9 @@ export default function PortalSaaSAdmin() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {plans.map((p) => (
+                  {plans.map((p, pIdx) => (
                     <div 
-                      key={p.id} 
+                      key={`saas-plan-${p.id || pIdx}-${pIdx}`} 
                       className={`border p-6 rounded-[2rem] flex flex-col justify-between transition-all relative ${
                         p.popular 
                           ? 'border-emerald-500 bg-emerald-50/10 shadow-lg shadow-emerald-500/5' 
@@ -2477,6 +2482,18 @@ export default function PortalSaaSAdmin() {
                           <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                         </label>
                       </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Chave de API do Asaas (ApiKey da Barbearia)</label>
+                      <input 
+                        type="text"
+                        placeholder="Ex: $aact_YTU5Y... ou similar"
+                        value={editTenantAsaasApiKey}
+                        onChange={(e) => setEditTenantAsaasApiKey(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500 font-medium ml-1">Insira a chave de API da conta Asaas deste estabelecimento específico para isolar os recebimentos e webhooks.</p>
                     </div>
 
                     <div className="space-y-1">
@@ -3393,6 +3410,200 @@ export default function PortalSaaSAdmin() {
         }}
       />
 
+      {/* MODAL: RAIO-X / SUPORTE POR TENANT */}
+      <AnimatePresence>
+        {raioXTenant && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setRaioXTenant(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-3xl bg-white rounded-[2rem] p-6 md:p-8 shadow-2xl border border-slate-100 z-10 space-y-6 max-h-[92vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-3">
+                  <div 
+                    className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-white text-lg shadow-md"
+                    style={{ backgroundColor: raioXTenant.accentColor || '#10B981' }}
+                  >
+                    {raioXTenant.name.substring(0, 2).toUpperCase()}
+                  </div>
+                  <div>
+                    <h4 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                      <span>{raioXTenant.name}</span>
+                      <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg font-mono font-bold">
+                        slug: {raioXTenant.id}
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Painel de Raio-X & Suporte • Resp: {raioXTenant.ownerName || 'N/A'} ({raioXTenant.ownerEmail || 'Sem e-mail'})
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setRaioXTenant(null)}
+                  className="p-2 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Raio-X Subtabs */}
+              <div className="flex border-b border-slate-200 gap-4">
+                <button
+                  onClick={() => setRaioXTab('professionals')}
+                  className={`pb-3 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    raioXTab === 'professionals' 
+                      ? 'border-emerald-600 text-emerald-700' 
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Users size={16} />
+                  Profissionais ({users.filter(u => u.tenantId === raioXTenant.id && (u.tipo === 'barbeiro' || u.tipo === 'gerente')).length})
+                </button>
+                <button
+                  onClick={() => setRaioXTab('users')}
+                  className={`pb-3 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    raioXTab === 'users' 
+                      ? 'border-emerald-600 text-emerald-700' 
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <UserCheck size={16} />
+                  Clientes / Usuários ({users.filter(u => u.tenantId === raioXTenant.id).length})
+                </button>
+                <button
+                  onClick={() => setRaioXTab('integration')}
+                  className={`pb-3 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 ${
+                    raioXTab === 'integration' 
+                      ? 'border-emerald-600 text-emerald-700' 
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  <Key size={16} />
+                  Integração & Status
+                </button>
+              </div>
+
+              {/* Subtab Content */}
+              <div className="space-y-4">
+                {raioXTab === 'professionals' && (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-500 font-medium">Profissionais cadastrados exclusivamente nesta barbearia:</p>
+                    <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                      {users.filter(u => u.tenantId === raioXTenant.id && (u.tipo === 'barbeiro' || u.tipo === 'gerente')).length === 0 ? (
+                        <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                          <Users size={32} className="mx-auto text-slate-300 mb-2" />
+                          <p className="text-xs font-bold text-slate-500">Nenhum profissional cadastrado neste tenant.</p>
+                        </div>
+                      ) : (
+                        users.filter(u => u.tenantId === raioXTenant.id && (u.tipo === 'barbeiro' || u.tipo === 'gerente')).map((prof, pIdx) => (
+                          <div key={`raio-prof-${prof.uid || pIdx}`} className="bg-slate-50 border border-slate-200 p-4 rounded-2xl flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 font-black flex items-center justify-center text-sm">
+                                {(prof.nome || prof.email || 'P').substring(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <h5 className="font-extrabold text-slate-900 text-xs">{prof.nome || 'Sem Nome'}</h5>
+                                <p className="text-[11px] text-slate-500 font-medium">{prof.email}</p>
+                                <span className="inline-block mt-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase">
+                                  {prof.tipo}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className={`px-2 py-1 rounded-full text-[10px] font-black ${prof.ativo !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                {prof.ativo !== false ? 'Ativo' : 'Inativo'}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {raioXTab === 'users' && (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-500 font-medium">Todos os usuários (clientes e perfis) vinculados a este tenant:</p>
+                    <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                      {users.filter(u => u.tenantId === raioXTenant.id).length === 0 ? (
+                        <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                          <Users size={32} className="mx-auto text-slate-300 mb-2" />
+                          <p className="text-xs font-bold text-slate-500">Nenhum usuário encontrado para este tenant.</p>
+                        </div>
+                      ) : (
+                        users.filter(u => u.tenantId === raioXTenant.id).map((usr, uIdx) => (
+                          <div key={`raio-usr-${usr.uid || uIdx}`} className="bg-slate-50 border border-slate-200 p-3.5 rounded-2xl flex items-center justify-between">
+                            <div>
+                              <p className="font-bold text-slate-900 text-xs">{usr.nome || 'Usuário Sem Nome'}</p>
+                              <p className="text-[11px] text-slate-500">{usr.email || usr.telefone || 'Sem contato'}</p>
+                            </div>
+                            <span className="px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-black uppercase">
+                              {usr.tipo || 'cliente'}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {raioXTab === 'integration' && (
+                  <div className="space-y-4 bg-slate-50 p-6 rounded-2xl border border-slate-200">
+                    <h5 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                      <Key size={16} className="text-emerald-600" />
+                      Status da Integração Asaas & Configurações
+                    </h5>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-semibold">
+                      <div className="bg-white p-4 rounded-xl border border-slate-200">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Chave API (Asaas)</p>
+                        <p className="font-mono text-slate-800 mt-1 break-all">
+                          {raioXTenant.asaas?.apiKey ? `${raioXTenant.asaas.apiKey.substring(0, 10)}... (Configurada)` : 'Usando chave padrão do servidor / Não configurada'}
+                        </p>
+                      </div>
+                      <div className="bg-white p-4 rounded-xl border border-slate-200">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Módulo de Clubes</p>
+                        <p className="font-bold text-slate-800 mt-1">
+                          {raioXTenant.subscriptions_enabled ? '✅ Ativado para Clientes' : '❌ Desativado'}
+                        </p>
+                      </div>
+                      <div className="bg-white p-4 rounded-xl border border-slate-200">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Limite de Profissionais</p>
+                        <p className="font-bold text-slate-800 mt-1">{raioXTenant.maxProfessionals ?? 5} barbeiros permitidos</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-xl border border-slate-200">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Status do Plano</p>
+                        <p className="font-bold text-slate-800 mt-1 uppercase">{raioXTenant.planStatus || 'Ativo'}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-4 border-t border-slate-100">
+                <button
+                  onClick={() => setRaioXTenant(null)}
+                  className="px-6 py-2.5 rounded-xl bg-slate-900 text-white font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition"
+                >
+                  Fechar Raio-X
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
+
+export default PortalSaaSAdmin;

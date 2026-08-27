@@ -138,10 +138,10 @@ export function CuponsDesconto() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {coupons.map(cp => {
+          {coupons.map((cp, cpIdx) => {
             const isExpired = new Date(cp.expiresAt) < new Date();
             return (
-              <div key={cp.id} className="relative bg-white border border-slate-200 p-6 rounded-[2rem] shadow-sm flex flex-col justify-between hover:border-accent/15 transition-all">
+              <div key={`coupon-${cp.id || cpIdx}-${cpIdx}`} className="relative bg-white border border-slate-200 p-6 rounded-[2rem] shadow-sm flex flex-col justify-between hover:border-accent/15 transition-all">
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
                     <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full ${

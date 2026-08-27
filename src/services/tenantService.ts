@@ -79,6 +79,27 @@ export interface TenantProfile {
     cpfCnpj?: string;
     createdAt?: string;
   };
+
+  // Conta Bancária Homologada para Saque (Same-Ownership Payout Account)
+  payoutAccount?: TenantPayoutAccount;
+}
+
+export interface TenantPayoutAccount {
+  type: 'PIX' | 'TED';
+  pixKeyType?: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'EVP';
+  pixKey?: string;
+  bankCode?: string;
+  bankName?: string;
+  agency?: string;
+  account?: string;
+  accountDigit?: string;
+  bankAccountType?: 'CONTA_CORRENTE' | 'CONTA_POUPANCA';
+  holderName: string;
+  holderDocument: string; // Imutável - Mesmo CPF/CNPJ da barbearia
+  status: 'APPROVED' | 'PENDING' | 'REJECTED';
+  approvedAt?: string;
+  updatedAt?: string;
+  rejectionReason?: string;
 }
 
 export function getActiveTenantId(): string {
@@ -166,8 +187,12 @@ export const tenantService = {
     try {
       const docRef = doc(db, 'tenants', tenantId);
       
-      const updateData: any = { ...data };
-      delete updateData.id;
+      const updateData: any = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (key !== 'id' && value !== undefined) {
+          updateData[key] = value;
+        }
+      }
 
       // Security Protection: If not explicitly authorized by Master Admin, preserve existing asaas subaccount credentials & cnpjCpf
       if (!options?.allowAsaasUpdate) {
@@ -337,6 +362,39 @@ export const tenantService = {
     } catch (error) {
       console.error('Error saving platform settings:', error);
       throw error;
+    }
+  },
+
+  async getPayoutAccount(tenantId: string): Promise<TenantPayoutAccount | null> {
+    if (!tenantId) return null;
+    try {
+      const docRef = doc(db, 'tenants', tenantId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data() as TenantProfile;
+        return data.payoutAccount || null;
+      }
+      return null;
+    } catch (err) {
+      console.error(`Error fetching payout account for tenant ${tenantId}:`, err);
+      return null;
+    }
+  },
+
+  async savePayoutAccount(tenantId: string, accountData: TenantPayoutAccount): Promise<void> {
+    if (!tenantId) throw new Error("tenantId é obrigatório");
+    try {
+      const docRef = doc(db, 'tenants', tenantId);
+      await setDoc(docRef, {
+        payoutAccount: {
+          ...accountData,
+          updatedAt: new Date().toISOString()
+        },
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (err) {
+      console.error(`Error saving payout account for tenant ${tenantId}:`, err);
+      throw err;
     }
   }
 };

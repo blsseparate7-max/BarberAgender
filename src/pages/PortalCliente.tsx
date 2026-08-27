@@ -1167,9 +1167,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   </div>
 
                   <div className="flex gap-3 overflow-x-auto pb-2 pt-1 scrollbar-none">
-                    {announcements.map((item) => (
+                    {announcements.map((item, idx) => (
                       <div
-                        key={item.id}
+                        key={`announcement-${item.id || idx}-${idx}`}
                         onClick={() => setAnnouncementModalData(item)}
                         className="min-w-[260px] max-w-[280px] bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 rounded-2xl border border-slate-700/60 shadow-sm flex flex-col justify-between cursor-pointer hover:border-amber-500/50 transition-all shrink-0 group"
                       >
@@ -1338,8 +1338,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                     {/* Active Subscriptions */}
-                    {subscriptions.map(sub => (
-                      <div key={sub.id} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
+                    {subscriptions.map((sub, sIdx) => (
+                      <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
                         <div>
                           <p className="text-xs font-black text-emerald-800">{sub.planName}</p>
                           <p className="text-[10px] text-emerald-600/80 font-bold mt-1">Cortes: {sub.haircutsUsed} usados / Barbas: {sub.beardsUsed} usadas</p>
@@ -1350,8 +1350,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     ))}
 
                     {/* Active Packages */}
-                    {packages.map(pkg => (
-                      <div key={pkg.id} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
+                    {packages.map((pkg, pIdx) => (
+                      <div key={`active-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
                         <div>
                           <p className="text-xs font-black text-amber-800">{pkg.packageName || 'Combo de Serviços'}</p>
                           <p className="text-[10px] text-amber-600/80 font-bold mt-1">
@@ -1393,8 +1393,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                 
                 {futureAppointments.length > 0 ? (
                   <div className="divide-y divide-slate-100">
-                    {futureAppointments.map(app => (
-                      <div key={app.id} className="py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
+                    {futureAppointments.map((app, appIdx) => (
+                      <div key={`next-app-${app.id || appIdx}-${appIdx}`} className="py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3.5">
                           <div className="bg-slate-100 p-2.5 rounded-xl text-slate-700 flex flex-col items-center min-w-[50px]">
                             <span className="text-[9px] font-black uppercase text-slate-500">
@@ -1543,12 +1543,12 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {barbers.map(b => {
+                      {barbers.map((b, bIdx) => {
                         const isSelected = selectedBarber?.uid === b.uid;
                         const isVirtual = b.uid === 'any';
                         return (
                           <button
-                            key={b.uid}
+                            key={`barber-item-${b.uid || bIdx}-${bIdx}`}
                             type="button"
                             onClick={() => {
                               setSelectedBarber(b);
@@ -1644,11 +1644,11 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {services.map(s => {
+                          {services.map((s, sIdx) => {
                             const isSelected = selectedService?.id === s.id;
                             return (
                               <button
-                                key={s.id}
+                                key={`srv-item-${s.id || sIdx}-${sIdx}`}
                                 type="button"
                                 onClick={() => {
                                   setSelectedService(s);
@@ -1703,12 +1703,12 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                           3. Escolha o Dia do Atendimento (Próximos 30 dias)
                         </label>
                         <div className="flex gap-2 overflow-x-auto pb-3 pt-1 scrollbar-none custom-scrollbar-thin">
-                          {dateOptions.map(opt => {
+                          {dateOptions.map((opt, dIdx) => {
                             const isSelected = selectedDate === opt.dateStr;
                             const [dayWeek, dayNum] = opt.dayLabel.split(', ');
                             return (
                               <button
-                                key={opt.dateStr}
+                                key={`date-item-${opt.dateStr || dIdx}-${dIdx}`}
                                 type="button"
                                 onClick={() => {
                                   setSelectedDate(opt.dateStr);
@@ -1766,9 +1766,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                         <span>🌅</span> Período da Manhã (até 12h)
                                       </p>
                                       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-                                        {morning.map(time => (
+                                        {morning.map((time, tIdx) => (
                                           <button
-                                            key={time}
+                                            key={`morning-slot-${time}-${tIdx}`}
                                             type="button"
                                             onClick={() => setSelectedTime(time)}
                                             className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
@@ -1791,9 +1791,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                         <span>☀️</span> Período da Tarde (12h às 18h)
                                       </p>
                                       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-                                        {afternoon.map(time => (
+                                        {afternoon.map((time, tIdx) => (
                                           <button
-                                            key={time}
+                                            key={`afternoon-slot-${time}-${tIdx}`}
                                             type="button"
                                             onClick={() => setSelectedTime(time)}
                                             className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
@@ -1816,9 +1816,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                         <span>🌙</span> Período da Noite (após 18h)
                                       </p>
                                       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-                                        {evening.map(time => (
+                                        {evening.map((time, tIdx) => (
                                           <button
-                                            key={time}
+                                            key={`evening-slot-${time}-${tIdx}`}
                                             type="button"
                                             onClick={() => setSelectedTime(time)}
                                             className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
@@ -1959,8 +1959,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                 
                 {futureAppointments.length > 0 ? (
                   <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/30">
-                    {futureAppointments.map(app => (
-                      <div key={app.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white hover:bg-slate-50/50 transition-colors">
+                    {futureAppointments.map((app, appIdx) => (
+                      <div key={`fut-app-card-${app.id || appIdx}-${appIdx}`} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white hover:bg-slate-50/50 transition-colors">
                         <div className="flex items-center gap-3.5">
                           <div className="bg-indigo-50 p-2.5 rounded-xl text-indigo-700 flex flex-col items-center min-w-[50px] font-black border border-indigo-100/40">
                             <span className="text-[8px] uppercase text-indigo-500">
@@ -2023,9 +2023,9 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
                 {pastAppointments.length > 0 ? (
                   <div className="space-y-4">
-                    {pastAppointments.map(app => (
+                    {pastAppointments.map((app, appIdx) => (
                       <div 
-                        key={app.id} 
+                        key={`past-app-card-${app.id || appIdx}-${appIdx}`} 
                         className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                       >
                         <div className="flex items-start gap-3.5">
@@ -2151,12 +2151,12 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
                 {packages.filter(p => (p.remainingCuts || 0) > 0).length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {packages.filter(p => (p.remainingCuts || 0) > 0).map(pkg => {
+                    {packages.filter(p => (p.remainingCuts || 0) > 0).map((pkg, pIdx) => {
                       const total = pkg.totalCuts || 5;
                       const remaining = pkg.remainingCuts || 0;
                       const percentage = (remaining / total) * 100;
                       return (
-                        <div key={pkg.id} className="bg-gradient-to-br from-indigo-50/50 to-indigo-100/20 border border-indigo-100/80 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm">
+                        <div key={`pkg-rem-${pkg.id || pIdx}-${pIdx}`} className="bg-gradient-to-br from-indigo-50/50 to-indigo-100/20 border border-indigo-100/80 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm">
                           <div>
                             <div className="flex justify-between items-start gap-2">
                               <h4 className="text-sm font-black text-indigo-950 truncate">{pkg.packageName || 'Combo de Serviços'}</h4>
@@ -2220,7 +2220,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
                 {availablePackages.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {availablePackages.map(pkg => {
+                    {availablePackages.map((pkg, pIdx) => {
                       const discount = pkg.originalPrice - pkg.promotionalPrice;
                       const pricePerCut = pkg.promotionalPrice / pkg.cutsCount;
                       const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
@@ -2228,7 +2228,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                       const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
 
                       return (
-                        <div key={pkg.id} className="border border-slate-100 bg-slate-50/50 hover:bg-slate-50 hover:border-indigo-200 p-6 rounded-2xl flex flex-col justify-between transition-all group">
+                        <div key={`pkg-avail-${pkg.id || pIdx}-${pIdx}`} className="border border-slate-100 bg-slate-50/50 hover:bg-slate-50 hover:border-indigo-200 p-6 rounded-2xl flex flex-col justify-between transition-all group">
                           <div>
                             <div className="flex justify-between items-start">
                               <h4 className="text-sm font-black text-slate-800 group-hover:text-indigo-950 transition-colors">{pkg.name}</h4>
@@ -2352,7 +2352,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
                 {subscriptions.length > 0 ? (
                   <div className="space-y-4">
-                    {subscriptions.map(sub => {
+                    {subscriptions.map((sub, sIdx) => {
                       const isActive = sub.status === 'active';
                       const isPending = sub.status === 'pending';
                       const isOverdue = sub.status === 'overdue' || sub.status === 'expired' || sub.status === 'suspended';
@@ -2370,7 +2370,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                       const beardsPercent = beardsUnlimited ? 100 : Math.min(100, (sub.beardsUsed / (maxBeards || 1)) * 100);
 
                       return (
-                        <div key={sub.id} className="bg-gradient-to-br from-slate-50 to-indigo-50/20 border border-slate-200 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm space-y-5">
+                        <div key={`sub-card-${sub.id || sIdx}-${sIdx}`} className="bg-gradient-to-br from-slate-50 to-indigo-50/20 border border-slate-200 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm space-y-5">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/50 pb-4">
                             <div>
                               <div className="flex items-center gap-2">
@@ -2567,8 +2567,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   </div>
 
                   <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
-                    {subscriptionInvoices.map((inv) => (
-                      <div key={inv.id} className="p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 transition-colors">
+                    {subscriptionInvoices.map((inv, invIdx) => (
+                      <div key={`inv-item-${inv.id || invIdx}-${invIdx}`} className="p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 transition-colors">
                         <div className="flex items-center gap-3">
                           <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
                             <CheckCircle size={18} />
@@ -2616,13 +2616,13 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
                   {availablePlans.filter(p => p.status === 'active' || p.status === undefined).length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {availablePlans.filter(p => p.status === 'active' || p.status === undefined).map(plan => {
+                      {availablePlans.filter(p => p.status === 'active' || p.status === undefined).map((plan, planIdx) => {
                         const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
                         const waText = encodeURIComponent(`Olá! Sou o cliente ${profile.nome} e tenho muito interesse em fazer parte do Clube de Assinatura assinando o plano "${plan.name}" (R$ ${plan.price.toFixed(2)}/mês) na Barbearia!`);
                         const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
 
                         return (
-                          <div key={plan.id} className="border border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-emerald-200 p-6 rounded-2xl flex flex-col justify-between transition-all group relative overflow-hidden">
+                          <div key={`plan-opt-${plan.id || planIdx}-${planIdx}`} className="border border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-emerald-200 p-6 rounded-2xl flex flex-col justify-between transition-all group relative overflow-hidden">
                             <div>
                               <h4 className="text-base font-black text-slate-800 group-hover:text-emerald-950 transition-colors">{plan.name}</h4>
                               <p className="text-xs text-slate-500 font-semibold mt-1">{plan.description || 'Plano de assinatura completo'}</p>

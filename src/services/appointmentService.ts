@@ -198,16 +198,20 @@ export const appointmentService = {
   async checkConflict(profissional_id: string, date: string, startTime: string, endTime: string, excludeId?: string) {
     const q = query(
       collection(db, COLLECTION),
-      where('tenantId', '==', getActiveTenantId()),
-      where('profissional_id', '==', profissional_id),
-      where('date', '==', date),
-      where('status', 'in', ['agendado', 'confirmado', 'em_atendimento', 'concluído'])
+      where('tenantId', '==', getActiveTenantId())
     );
 
     const querySnapshot = await getDocs(q);
     const appointments = querySnapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(app => app.id !== excludeId);
+      .filter(app => {
+        if (app.id === excludeId) return false;
+        if (app.profissional_id !== profissional_id) return false;
+        if (app.date !== date) return false;
+        const status = app.status || 'agendado';
+        if (!['agendado', 'confirmado', 'em_atendimento', 'concluído'].includes(status)) return false;
+        return true;
+      });
 
     const newStart = parse(startTime, 'HH:mm', new Date());
     const newEnd = parse(endTime, 'HH:mm', new Date());
@@ -223,33 +227,21 @@ export const appointmentService = {
 
   async getAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }) {
     const activeTenantId = getActiveTenantId();
-    let q;
-    if (filters.date) {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('date', '==', filters.date));
-    } else if (filters.startDate && filters.endDate) {
-      q = query(collection(db, COLLECTION), 
-        where('tenantId', '==', activeTenantId),
-        where('date', '>=', filters.startDate), 
-        where('date', '<=', filters.endDate)
-      );
-    } else if (filters.cliente_id) {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('cliente_id', '==', filters.cliente_id));
-    } else if (filters.profissional_id) {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('profissional_id', '==', filters.profissional_id));
-    } else {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
-    }
+    const q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
 
     const querySnapshot = await getDocs(q);
     const rawAppointments = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
     
     const appointments = rawAppointments.filter(app => {
-      if (app.tenantId !== activeTenantId) return false;
+      if (app.tenantId && app.tenantId !== activeTenantId) return false;
       if (filters.date && app.date !== filters.date) return false;
       if (filters.startDate && app.date < filters.startDate) return false;
       if (filters.endDate && app.date > filters.endDate) return false;
       if (filters.profissional_id && app.profissional_id !== filters.profissional_id) return false;
-      if (filters.cliente_id && app.cliente_id !== filters.cliente_id) return false;
+      if (filters.cliente_id) {
+        const appClientId = app.cliente_id || (app as any).client_id || (app as any).cliente_uid;
+        if (appClientId !== filters.cliente_id) return false;
+      }
       if (filters.status && app.status !== filters.status) return false;
       return true;
     });
@@ -263,38 +255,22 @@ export const appointmentService = {
 
   subscribeToAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }, callback: (appointments: Appointment[]) => void) {
     const activeTenantId = getActiveTenantId();
-    let q;
-    if (filters.date) {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('date', '==', filters.date));
-    } else if (filters.startDate && filters.endDate) {
-      q = query(collection(db, COLLECTION), 
-        where('tenantId', '==', activeTenantId),
-        where('date', '>=', filters.startDate), 
-        where('date', '<=', filters.endDate)
-      );
-    } else if (filters.cliente_id) {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('cliente_id', '==', filters.cliente_id));
-    } else if (filters.profissional_id) {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId), where('profissional_id', '==', filters.profissional_id));
-    } else {
-      q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
-    }
+    const q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
 
     return onSnapshot(q, (snapshot) => {
       const rawAppointments = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
       const activeTenantId = getActiveTenantId();
       
       const appointments = rawAppointments.filter(app => {
+        if (app.tenantId && app.tenantId !== activeTenantId) return false;
         if (filters.cliente_id) {
           const appClientId = app.cliente_id || (app as any).client_id || (app as any).cliente_uid;
           if (appClientId !== filters.cliente_id) return false;
-        } else if (activeTenantId) {
-          if (app.tenantId && app.tenantId !== activeTenantId) return false;
         }
+        if (filters.profissional_id && app.profissional_id !== filters.profissional_id) return false;
         if (filters.date && app.date !== filters.date) return false;
         if (filters.startDate && app.date < filters.startDate) return false;
         if (filters.endDate && app.date > filters.endDate) return false;
-        if (filters.profissional_id && app.profissional_id !== filters.profissional_id) return false;
         if (filters.status && app.status !== filters.status) return false;
         return true;
       });
@@ -306,8 +282,12 @@ export const appointmentService = {
       });
 
       callback(appointments);
+    }, (error) => {
+      console.error("Error in subscribeToAppointments:", error);
+      callback([]);
     });
   },
+
 
   async startService(id: string) {
     await this.updateStatus(id, 'em_atendimento');

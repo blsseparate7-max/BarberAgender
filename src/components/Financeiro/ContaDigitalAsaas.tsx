@@ -105,11 +105,30 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
   });
   const [transactions, setTransactions] = useState<DigitalAccountTransaction[]>([]);
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
-  const [activeSubSection, setActiveSubSection] = useState<'statement' | 'transfers'>('statement');
+  const [activeSubSection, setActiveSubSection] = useState<'statement' | 'transfers' | 'payout_account'>('statement');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'refunded' | 'fee' | 'transfer'>('all');
+
+  // Payout Account (Homologação de Conta de Saque - Mesma Titularidade)
+  const [payoutAccount, setPayoutAccount] = useState<any | null>(null);
+  const [officialCnpjCpf, setOfficialCnpjCpf] = useState<string>('');
+  const [officialName, setOfficialName] = useState<string>('');
+  const [loadingPayout, setLoadingPayout] = useState(false);
+  const [savingPayout, setSavingPayout] = useState(false);
+
+  // Form Payout State
+  const [payoutFormType, setPayoutFormType] = useState<'PIX' | 'TED'>('PIX');
+  const [payoutFormPixType, setPayoutFormPixType] = useState<'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'EVP'>('CPF');
+  const [payoutFormPixKey, setPayoutFormPixKey] = useState('');
+  const [payoutFormBankCode, setPayoutFormBankCode] = useState('260');
+  const [payoutFormBankName, setPayoutFormBankName] = useState('Nubank (Nu Pagamentos)');
+  const [payoutFormAgency, setPayoutFormAgency] = useState('');
+  const [payoutFormAccount, setPayoutFormAccount] = useState('');
+  const [payoutFormAccountDigit, setPayoutFormAccountDigit] = useState('0');
+  const [payoutFormBankAccountType, setPayoutFormBankAccountType] = useState<'CONTA_CORRENTE' | 'CONTA_POUPANCA'>('CONTA_CORRENTE');
+  const [payoutFormHolderName, setPayoutFormHolderName] = useState('');
 
   // Payment Details Modal
   const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
@@ -140,6 +159,94 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
   const [adminPin, setAdminPin] = useState('');
   const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
 
+  const loadPayoutAccount = async () => {
+    if (!tenantId) return;
+    setLoadingPayout(true);
+    try {
+      const res = await fetch(`/api/saas/gateway/digital-account/payout-account?tenantId=${encodeURIComponent(tenantId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setOfficialCnpjCpf(data.officialCnpjCpf || '');
+        setOfficialName(data.officialName || data.tenantName || '');
+        if (data.payoutAccount) {
+          setPayoutAccount(data.payoutAccount);
+          setPayoutFormType(data.payoutAccount.type || 'PIX');
+          if (data.payoutAccount.pixKeyType) setPayoutFormPixType(data.payoutAccount.pixKeyType);
+          if (data.payoutAccount.pixKey) setPayoutFormPixKey(data.payoutAccount.pixKey);
+          if (data.payoutAccount.bankCode) setPayoutFormBankCode(data.payoutAccount.bankCode);
+          if (data.payoutAccount.bankName) setPayoutFormBankName(data.payoutAccount.bankName);
+          if (data.payoutAccount.agency) setPayoutFormAgency(data.payoutAccount.agency);
+          if (data.payoutAccount.account) setPayoutFormAccount(data.payoutAccount.account);
+          if (data.payoutAccount.accountDigit) setPayoutFormAccountDigit(data.payoutAccount.accountDigit);
+          if (data.payoutAccount.bankAccountType) setPayoutFormBankAccountType(data.payoutAccount.bankAccountType);
+          setPayoutFormHolderName(data.payoutAccount.holderName || data.officialName || '');
+        } else {
+          setPayoutFormHolderName(data.officialName || '');
+          if (data.officialCnpjCpf) {
+            const cleanDoc = data.officialCnpjCpf.replace(/\D/g, '');
+            setPayoutFormPixType(cleanDoc.length > 11 ? 'CNPJ' : 'CPF');
+            setPayoutFormPixKey(cleanDoc);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao consultar conta de saque:", err);
+    } finally {
+      setLoadingPayout(false);
+    }
+  };
+
+  const handleSavePayoutAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenantId) {
+      toast.error("Barbearia (tenantId) não identificada.");
+      return;
+    }
+
+    setSavingPayout(true);
+    try {
+      const payload: any = {
+        tenantId,
+        type: payoutFormType,
+        holderName: payoutFormHolderName || officialName || 'Titular',
+        holderDocument: officialCnpjCpf
+      };
+
+      if (payoutFormType === 'PIX') {
+        payload.pixKeyType = payoutFormPixType;
+        payload.pixKey = payoutFormPixKey;
+      } else {
+        const bankObj = COMMON_BANKS.find(b => b.code === payoutFormBankCode);
+        payload.bankCode = payoutFormBankCode;
+        payload.bankName = bankObj ? bankObj.name : payoutFormBankName;
+        payload.agency = payoutFormAgency;
+        payload.account = payoutFormAccount;
+        payload.accountDigit = payoutFormAccountDigit || '0';
+        payload.bankAccountType = payoutFormBankAccountType;
+      }
+
+      const res = await fetch(`/api/saas/gateway/digital-account/payout-account`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao salvar conta de saque.");
+        return;
+      }
+
+      toast.success("Conta bancária de saque cadastrada e homologada com sucesso!");
+      setPayoutAccount(data.payoutAccount);
+    } catch (err: any) {
+      console.error("Erro ao salvar conta de saque:", err);
+      toast.error(err.message || "Erro de comunicação ao salvar conta.");
+    } finally {
+      setSavingPayout(false);
+    }
+  };
+
   const loadData = async (isManualRefresh = false) => {
     if (isManualRefresh) setRefreshing(true);
     else setLoading(true);
@@ -166,8 +273,11 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
         setTransfers(transfersData.transfers || []);
       }
 
+      // 4. Fetch Payout Account
+      await loadPayoutAccount();
+
       if (isManualRefresh) {
-        toast.success("Dados e transferências atualizados com o Asaas!");
+        toast.success("Dados e conta de saque sincronizados!");
       }
     } catch (err) {
       console.error("Erro ao carregar dados da conta digital:", err);
@@ -176,6 +286,30 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  const handleOpenTransferModal = () => {
+    if (payoutAccount && payoutAccount.status === 'APPROVED') {
+      setTransferType(payoutAccount.type || 'PIX');
+      if (payoutAccount.type === 'PIX') {
+        if (payoutAccount.pixKeyType) setPixKeyType(payoutAccount.pixKeyType);
+        if (payoutAccount.pixKey) setPixKey(payoutAccount.pixKey);
+      } else {
+        if (payoutAccount.bankCode) setBankCode(payoutAccount.bankCode);
+        if (payoutAccount.agency) setAgency(payoutAccount.agency);
+        if (payoutAccount.account) setAccount(payoutAccount.account);
+        if (payoutAccount.accountDigit) setAccountDigit(payoutAccount.accountDigit);
+        if (payoutAccount.bankAccountType) setBankAccountType(payoutAccount.bankAccountType);
+        if (payoutAccount.holderName) setOwnerName(payoutAccount.holderName);
+        if (payoutAccount.holderDocument) setCpfCnpj(payoutAccount.holderDocument);
+      }
+    } else if (officialCnpjCpf) {
+      const cleanDoc = officialCnpjCpf.replace(/\D/g, '');
+      setPixKeyType(cleanDoc.length > 11 ? 'CNPJ' : 'CPF');
+      setPixKey(cleanDoc);
+      setCpfCnpj(cleanDoc);
+    }
+    setIsTransferModalOpen(true);
   };
 
   useEffect(() => {
@@ -284,14 +418,54 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
       return;
     }
 
-    if (transferType === 'PIX' && !pixKey.trim()) {
-      toast.error("Informe a chave PIX de destino.");
-      return;
+    // Sanitize and validate transfer inputs
+    let cleanPixKey = pixKey.trim();
+    let cleanCpfCnpj = cpfCnpj.replace(/\D/g, '');
+    let cleanAgency = agency.replace(/\D/g, '');
+    let cleanAccount = account.replace(/[^\d-]/g, '');
+    let cleanAccountDigit = accountDigit.replace(/[^\w]/g, '') || '0';
+
+    if (transferType === 'PIX') {
+      if (!cleanPixKey) {
+        toast.error("Informe a chave PIX de destino.");
+        return;
+      }
+
+      if (pixKeyType === 'CPF') {
+        cleanPixKey = cleanPixKey.replace(/\D/g, '');
+        if (cleanPixKey.length !== 11) {
+          toast.error("A chave PIX do tipo CPF deve conter 11 dígitos.");
+          return;
+        }
+      } else if (pixKeyType === 'CNPJ') {
+        cleanPixKey = cleanPixKey.replace(/\D/g, '');
+        if (cleanPixKey.length !== 14) {
+          toast.error("A chave PIX do tipo CNPJ deve conter 14 dígitos.");
+          return;
+        }
+      } else if (pixKeyType === 'PHONE') {
+        const phoneDigits = cleanPixKey.replace(/\D/g, '');
+        if (phoneDigits.length < 10 || phoneDigits.length > 13) {
+          toast.error("O telefone para PIX deve conter DDD + Número (ex: 11999999999).");
+          return;
+        }
+        cleanPixKey = phoneDigits.startsWith('55') ? `+${phoneDigits}` : `+55${phoneDigits}`;
+      } else if (pixKeyType === 'EMAIL') {
+        cleanPixKey = cleanPixKey.toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanPixKey)) {
+          toast.error("Informe um e-mail válido para a chave PIX.");
+          return;
+        }
+      }
     }
 
     if (transferType === 'TED') {
-      if (!ownerName.trim() || !cpfCnpj.trim() || !agency.trim() || !account.trim()) {
+      if (!ownerName.trim() || !cleanCpfCnpj || !cleanAgency || !cleanAccount) {
         toast.error("Preencha todos os dados bancários obrigatórios.");
+        return;
+      }
+      if (cleanCpfCnpj.length !== 11 && cleanCpfCnpj.length !== 14) {
+        toast.error("O CPF deve ter 11 dígitos ou o CNPJ deve ter 14 dígitos.");
         return;
       }
     }
@@ -302,20 +476,21 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
       const payload: any = {
         value: numericVal,
         operationType: transferType,
-        description: transferDescription || "Saque via Conta Digital"
+        description: transferDescription || "Saque via Conta Digital",
+        tenantId: tenantId || ''
       };
 
       if (transferType === 'PIX') {
-        payload.pixAddressKey = pixKey.trim();
+        payload.pixAddressKey = cleanPixKey;
         payload.pixAddressKeyType = pixKeyType;
       } else {
         payload.bankAccount = {
           bankCode,
           ownerName: ownerName.trim(),
-          cpfCnpj: cpfCnpj.trim(),
-          agency: agency.trim(),
-          account: account.trim(),
-          accountDigit: accountDigit.trim() || '0',
+          cpfCnpj: cleanCpfCnpj,
+          agency: cleanAgency,
+          account: cleanAccount,
+          accountDigit: cleanAccountDigit,
           bankAccountType
         };
       }
@@ -335,13 +510,27 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
         setPixKey('');
         setAdminPin('');
         setActiveSubSection('transfers');
-        await loadData();
+        try {
+          await loadData();
+        } catch (loadErr) {
+          console.warn("Aviso ao recarregar dados pós-transferência:", loadErr);
+        }
       } else {
-        toast.error(data.error || "Não foi possível processar a transferência no Asaas.");
+        const errorMsg = data.error || "Não foi possível processar a transferência no Asaas.";
+        if (errorMsg.includes("pattern") || errorMsg.includes("The string did not match")) {
+          toast.error("Formato inválido dos dados de transferência. Verifique a chave PIX ou conta bancária.");
+        } else {
+          toast.error(errorMsg);
+        }
       }
     } catch (err: any) {
       console.error("Erro ao solicitar transferência:", err);
-      toast.error("Erro de comunicação com o servidor.");
+      const message = err?.message || '';
+      if (message.includes("pattern") || message.includes("The string did not match")) {
+        toast.error("Formato inválido de dados da transferência. Verifique a chave PIX ou os dados bancários.");
+      } else {
+        toast.error("Erro de comunicação com o servidor ao solicitar transferência.");
+      }
     } finally {
       setIsSubmittingTransfer(false);
     }
@@ -466,7 +655,7 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
           <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs text-emerald-100">
             <span>Liberado em conta para saque</span>
             <button 
-              onClick={() => setIsTransferModalOpen(true)}
+              onClick={handleOpenTransferModal}
               className="font-bold text-emerald-900 bg-white hover:bg-emerald-50 px-3 py-1 rounded-xl transition-all cursor-pointer shadow-2xs"
             >
               Sacar Agora
@@ -537,7 +726,23 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
               }`}
             >
               <Send size={16} />
-              <span>Histórico de Saques / PIX ({transfers.length})</span>
+              <span>Histórico de Saques ({transfers.length})</span>
+            </button>
+            <button
+              onClick={() => setActiveSubSection('payout_account')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer ${
+                activeSubSection === 'payout_account'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <ShieldCheck size={16} />
+              <span>Conta de Saque (Homologação)</span>
+              {payoutAccount?.status === 'APPROVED' ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+              )}
             </button>
           </div>
 
@@ -840,6 +1045,351 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
                 </tbody>
               </table>
             )}
+          </div>
+        )}
+
+        {/* Content 3: Homologação de Conta Bancária de Saque (Mesma Titularidade) */}
+        {activeSubSection === 'payout_account' && (
+          <div className="space-y-6">
+            {/* Header / Security Banner */}
+            <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 rounded-3xl p-6 text-white shadow-md relative overflow-hidden">
+              <div className="absolute right-0 top-0 translate-x-4 -translate-y-4 text-white/5 pointer-events-none">
+                <ShieldCheck size={180} />
+              </div>
+
+              <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-2 max-w-2xl">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30 text-[11px] font-extrabold uppercase tracking-wider">
+                    <Lock size={12} className="text-blue-400" />
+                    <span>Proteção Antifraude Ativa</span>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-black tracking-tight">
+                    Homologação de Conta para Saque (Mesma Titularidade)
+                  </h3>
+                  <p className="text-slate-300 text-xs leading-relaxed">
+                    Por regulamentação do Banco Central e diretrizes do Asaas, todos os saques de recebíveis da sua barbearia devem ser destinados a uma conta bancária ou chave PIX de <strong>mesma titularidade</strong> (mesmo CPF/CNPJ cadastrado no Portal SaaS: <span className="font-mono text-white bg-white/10 px-1.5 py-0.5 rounded">{officialCnpjCpf || 'Não informado'}</span>).
+                  </p>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/15 shrink-0 text-center min-w-[200px]">
+                  <div className="text-[10px] text-blue-200 uppercase font-black tracking-wider">Status da Homologação</div>
+                  <div className="mt-1 flex items-center justify-center gap-1.5">
+                    {payoutAccount?.status === 'APPROVED' ? (
+                      <>
+                        <CheckCircle2 size={18} className="text-emerald-400" />
+                        <span className="font-black text-emerald-300 text-sm">HOMOLOGADA</span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle size={18} className="text-amber-400" />
+                        <span className="font-black text-amber-300 text-sm">PENDENTE</span>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-300 mt-1">
+                    {payoutAccount?.status === 'APPROVED' ? 'Conta pronta para recebimento de saques' : 'Configure os dados abaixo'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Main Content Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: Account Details & Status */}
+              <div className="lg:col-span-5 space-y-6">
+                <div className="bg-slate-50 border border-slate-200/80 rounded-3xl p-6 space-y-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                      <Building2 size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-sm">Dados Oficiais da Barbearia</h4>
+                      <p className="text-slate-500 text-xs">Proprietário / Titular do Contrato SaaS</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-2 text-xs">
+                    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/60">
+                      <span className="text-slate-400 text-[10px] font-bold uppercase block">Razão Social / Nome</span>
+                      <span className="font-black text-slate-900 text-sm mt-0.5 block">
+                        {officialName || 'Barbearia'}
+                      </span>
+                    </div>
+
+                    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/60 flex items-center justify-between">
+                      <div>
+                        <span className="text-slate-400 text-[10px] font-bold uppercase block">CPF / CNPJ Imutável</span>
+                        <span className="font-mono font-black text-slate-900 text-sm mt-0.5 block">
+                          {officialCnpjCpf || 'Pendente no cadastro'}
+                        </span>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[10px] font-bold">
+                        <Lock size={12} />
+                        Titularidade Protegida
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Homologated Account Summary Card */}
+                  {payoutAccount && (
+                    <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200/80 rounded-2xl p-5 space-y-3">
+                      <div className="flex items-center justify-between border-b border-emerald-200/60 pb-2.5">
+                        <span className="text-emerald-900 text-xs font-black flex items-center gap-1.5">
+                          <CheckCircle2 size={16} className="text-emerald-600" />
+                          Conta de Saque Atual
+                        </span>
+                        <span className="bg-emerald-600 text-white text-[10px] font-black px-2 py-0.5 rounded-lg uppercase">
+                          {payoutAccount.type}
+                        </span>
+                      </div>
+
+                      {payoutAccount.type === 'PIX' ? (
+                        <div className="space-y-1.5 text-xs text-emerald-950">
+                          <div>
+                            <span className="text-emerald-700 font-medium">Chave PIX ({payoutAccount.pixKeyType}):</span>{' '}
+                            <strong className="font-mono">{payoutAccount.pixKey}</strong>
+                          </div>
+                          <div>
+                            <span className="text-emerald-700 font-medium">Titular:</span>{' '}
+                            <strong>{payoutAccount.holderName}</strong>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 text-xs text-emerald-950">
+                          <div>
+                            <span className="text-emerald-700 font-medium">Banco:</span>{' '}
+                            <strong>{payoutAccount.bankName || payoutAccount.bankCode}</strong>
+                          </div>
+                          <div>
+                            <span className="text-emerald-700 font-medium">Agência / Conta:</span>{' '}
+                            <strong className="font-mono">Ag {payoutAccount.agency} | Cc {payoutAccount.account}-{payoutAccount.accountDigit}</strong>
+                          </div>
+                          <div>
+                            <span className="text-emerald-700 font-medium">Titular:</span>{' '}
+                            <strong>{payoutAccount.holderName}</strong> ({payoutAccount.holderDocument})
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Form to Edit / Homologate */}
+              <div className="lg:col-span-7">
+                <form onSubmit={handleSavePayoutAccount} className="bg-slate-50 border border-slate-200/80 rounded-3xl p-6 sm:p-7 space-y-5">
+                  <div>
+                    <h4 className="font-black text-slate-900 text-base">Cadastrar / Atualizar Conta de Saque</h4>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      Selecione a forma de recebimento de preferências para os saques via Asaas.
+                    </p>
+                  </div>
+
+                  {/* Type Selector (PIX vs TED) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">Modalidade de Recebimento</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setPayoutFormType('PIX')}
+                        className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                          payoutFormType === 'PIX'
+                            ? 'bg-emerald-500 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/20'
+                            : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <QrCode size={22} className={payoutFormType === 'PIX' ? 'text-white' : 'text-emerald-600'} />
+                          <div>
+                            <div className="font-extrabold text-sm">Chave PIX</div>
+                            <div className={`text-[11px] ${payoutFormType === 'PIX' ? 'text-emerald-100' : 'text-slate-500'}`}>Instantâneo (Recomendado)</div>
+                          </div>
+                        </div>
+                        {payoutFormType === 'PIX' && <CheckCircle2 size={18} className="text-white shrink-0" />}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPayoutFormType('TED')}
+                        className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                          payoutFormType === 'TED'
+                            ? 'bg-blue-600 text-white border-blue-700 shadow-md ring-2 ring-blue-600/20'
+                            : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Landmark size={22} className={payoutFormType === 'TED' ? 'text-white' : 'text-blue-600'} />
+                          <div>
+                            <div className="font-extrabold text-sm">TED Bancária</div>
+                            <div className={`text-[11px] ${payoutFormType === 'TED' ? 'text-blue-100' : 'text-slate-500'}`}>Até 1 dia útil</div>
+                          </div>
+                        </div>
+                        {payoutFormType === 'TED' && <CheckCircle2 size={18} className="text-white shrink-0" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* PIX Form Fields */}
+                  {payoutFormType === 'PIX' && (
+                    <div className="space-y-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80">
+                      <div>
+                        <label className="block font-bold text-slate-800 mb-1.5 text-xs">Tipo de Chave PIX</label>
+                        <select
+                          value={payoutFormPixType}
+                          onChange={(e) => {
+                            const newType = e.target.value as any;
+                            setPayoutFormPixType(newType);
+                            if (newType === 'CPF' || newType === 'CNPJ') {
+                              setPayoutFormPixKey(officialCnpjCpf ? officialCnpjCpf.replace(/\D/g, '') : '');
+                            }
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                        >
+                          <option value="CPF">CPF (Mesmo do Cadastro)</option>
+                          <option value="CNPJ">CNPJ (Mesmo do Cadastro)</option>
+                          <option value="EMAIL">E-mail do Titular</option>
+                          <option value="PHONE">Telefone Celular do Titular</option>
+                          <option value="EVP">Chave Aleatória (EVP)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block font-bold text-slate-800 mb-1.5 text-xs">Chave PIX de Destino</label>
+                        <input
+                          type="text"
+                          placeholder={
+                            payoutFormPixType === 'CPF' ? '000.000.000-00' :
+                            payoutFormPixType === 'CNPJ' ? '00.000.000/0000-00' :
+                            payoutFormPixType === 'EMAIL' ? 'seuemail@exemplo.com' :
+                            payoutFormPixType === 'PHONE' ? '(11) 99999-9999' : 'Chave aleatória'
+                          }
+                          value={payoutFormPixKey}
+                          onChange={(e) => setPayoutFormPixKey(e.target.value)}
+                          readOnly={payoutFormPixType === 'CPF' || payoutFormPixType === 'CNPJ'}
+                          required
+                          className={`w-full px-3.5 py-2.5 border rounded-xl font-mono font-bold text-slate-900 text-xs ${
+                            payoutFormPixType === 'CPF' || payoutFormPixType === 'CNPJ'
+                              ? 'bg-slate-100 border-slate-200 text-slate-600 cursor-not-allowed'
+                              : 'bg-slate-50 border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20'
+                          }`}
+                        />
+                        {(payoutFormPixType === 'CPF' || payoutFormPixType === 'CNPJ') && (
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            🔒 Chave fixada com o CPF/CNPJ oficial do contrato para garantir a mesma titularidade.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TED Form Fields */}
+                  {payoutFormType === 'TED' && (
+                    <div className="space-y-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80">
+                      <div>
+                        <label className="block font-bold text-slate-800 mb-1.5 text-xs">Banco de Destino</label>
+                        <select
+                          value={payoutFormBankCode}
+                          onChange={(e) => {
+                            setPayoutFormBankCode(e.target.value);
+                            const bObj = COMMON_BANKS.find(b => b.code === e.target.value);
+                            if (bObj) setPayoutFormBankName(bObj.name);
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        >
+                          {COMMON_BANKS.map((b, idx) => (
+                            <option key={`payout-bank-${b.code}-${idx}`} value={b.code}>
+                              {b.code} - {b.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-bold text-slate-800 mb-1.5 text-xs">Agência (sem dígito)</label>
+                          <input
+                            type="text"
+                            placeholder="0001"
+                            value={payoutFormAgency}
+                            onChange={(e) => setPayoutFormAgency(e.target.value)}
+                            required
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-bold text-slate-800 mb-1.5 text-xs">Conta e Dígito</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="123456"
+                              value={payoutFormAccount}
+                              onChange={(e) => setPayoutFormAccount(e.target.value)}
+                              required
+                              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-xs"
+                            />
+                            <input
+                              type="text"
+                              placeholder="0"
+                              value={payoutFormAccountDigit}
+                              onChange={(e) => setPayoutFormAccountDigit(e.target.value)}
+                              className="w-14 px-2 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-center text-slate-900 text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-bold text-slate-800 mb-1.5 text-xs">Tipo de Conta</label>
+                          <select
+                            value={payoutFormBankAccountType}
+                            onChange={(e) => setPayoutFormBankAccountType(e.target.value as any)}
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 text-xs"
+                          >
+                            <option value="CONTA_CORRENTE">Conta Corrente</option>
+                            <option value="CONTA_POUPANCA">Conta Poupança</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-bold text-slate-800 mb-1.5 text-xs">CPF/CNPJ do Titular (Fixo)</label>
+                          <input
+                            type="text"
+                            value={officialCnpjCpf || ''}
+                            readOnly
+                            className="w-full px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl font-mono font-bold text-slate-600 text-xs cursor-not-allowed"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Holder Name */}
+                  <div>
+                    <label className="block font-bold text-slate-800 mb-1.5 text-xs">Nome Completo do Titular da Conta</label>
+                    <input
+                      type="text"
+                      placeholder="Nome completo ou Razão Social"
+                      value={payoutFormHolderName}
+                      onChange={(e) => setPayoutFormHolderName(e.target.value)}
+                      required
+                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="pt-2 flex items-center justify-end">
+                    <button
+                      type="submit"
+                      disabled={savingPayout}
+                      className="flex items-center gap-2 px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-2xl transition-all shadow-md active:scale-95 disabled:opacity-50 cursor-pointer text-xs"
+                    >
+                      <ShieldCheck size={16} className={savingPayout ? 'animate-spin' : 'text-emerald-400'} />
+                      <span>{savingPayout ? 'Salavando e Homologando...' : 'Salvar e Homologar Conta de Saque'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
           </div>
         )}
       </div>

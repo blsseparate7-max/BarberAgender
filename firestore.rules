@@ -103,9 +103,9 @@ service cloud.firestore {
     // Rules for Tenants (Multi-tenant units)
     match /tenants/{tenantId} {
       allow read, get, list: if true;
-      allow create: if true; // Allows guest/unauthenticated visitors to auto-create missing tenants
-      allow update: if isStaff();
-      allow delete: if isAdmin();
+      allow create: if true; // Allows initial setup and SaaS registration
+      allow update: if isStaff() || isSaaSAdmin();
+      allow delete: if isSaaSAdmin();
     }
 
     // Rules for Usuarios collection
@@ -282,12 +282,24 @@ service cloud.firestore {
 
     // --- Assinaturas ---
     match /subscription_plans/{planId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isStaff() || isSaaSAdmin();
     }
     
     match /subscriptions/{subscriptionId} {
-      allow read, create, update: if true;
-      allow delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isSaaSAdmin() ||
+        isBarbeiro() || 
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isStaff() || 
+        isSaaSAdmin() ||
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
+      );
+      allow delete: if isStaff() || isSaaSAdmin();
     }
     
     match /subscription_usage/{usageId} {

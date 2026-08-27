@@ -240,7 +240,7 @@ export function AgendaGeneral({
                     <span className="text-xs font-bold text-muted">{time}</span>
                   </div>
                   <div className="flex-1 flex">
-                    {barbers.map(barber => {
+                    {barbers.map((barber, bIdx) => {
                       const apps = getBarberAppointments(barber, time);
                       const block = getBarberBlock(barber, time);
                       const isBlockStart = block && (() => {
@@ -252,7 +252,7 @@ export function AgendaGeneral({
 
                       return (
                         <div 
-                          key={barber.uid || barber.id} 
+                          key={`barber-col-${barber.uid || barber.id || bIdx}-${bIdx}`} 
                           onClick={() => {
                             if (apps.length === 0 && !block) {
                               onNewAppointment(time, barber.uid || barber.id || '');
@@ -264,8 +264,8 @@ export function AgendaGeneral({
                     >
                       {isBlockStart && (
                         <motion.div
-                          key={block.id}
-                          layoutId={block.id}
+                          key={`block-start-${block.id || 'block'}-${time}`}
+                          layoutId={block.id ? `block-layout-${block.id}` : undefined}
                           onClick={(e) => {
                             e.stopPropagation();
                             if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
@@ -320,7 +320,7 @@ export function AgendaGeneral({
                         </motion.div>
                       )}
 
-                      {apps.map(app => {
+                      {apps.map((app, appIdx) => {
                         const isStart = (() => {
                           const appStart = parse(app.startTime, 'HH:mm', new Date());
                           const slotStart = parse(time, 'HH:mm', new Date());
@@ -349,8 +349,8 @@ export function AgendaGeneral({
 
                         return (
                           <motion.div
-                            key={app.id}
-                            layoutId={app.id}
+                            key={`app-start-${app.id || 'app'}-${time}-${appIdx}`}
+                            layoutId={app.id ? `app-layout-${app.id}` : undefined}
                             onClick={(e) => {
                               e.stopPropagation();
                               onOpenAppointment(app);
@@ -389,9 +389,9 @@ export function AgendaGeneral({
                                     Comanda #{app.comanda_number}
                                   </span>
                                 )}
-                                {getClientClassification(app.cliente_id, app.cliente_name).map((badge, idx) => (
+                                {getClientClassification(app.cliente_id, app.cliente_name).map((badge, bIdx) => (
                                   <span 
-                                    key={idx} 
+                                    key={`badge-${badge.label}-${bIdx}`} 
                                     title={badge.label}
                                     className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${badge.className}`}
                                   >

@@ -429,8 +429,8 @@ export function RecurringAppointments() {
             className="bg-white border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent shadow-sm transition-all cursor-pointer"
           >
             <option value="all">Todos os Barbeiros</option>
-            {barbers.map(b => (
-              <option key={b.uid} value={b.uid}>{b.nome}</option>
+            {barbers.map((b, bIdx) => (
+              <option key={`rec-flt-barber-${b.uid || bIdx}-${bIdx}`} value={b.uid}>{b.nome}</option>
             ))}
           </select>
         </div>
@@ -464,12 +464,12 @@ export function RecurringAppointments() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredRecurring.map(rec => {
+          {filteredRecurring.map((rec, recIdx) => {
             const template = rec.appointmentTemplate;
             const isInactive = (rec as any).status === 'inactive';
             return (
               <motion.div
-                key={rec.id}
+                key={`rec-item-${rec.id || recIdx}-${recIdx}`}
                 layout
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -761,9 +761,9 @@ export function RecurringAppointments() {
                       {filteredClientsForSearch.length === 0 ? (
                         <div className="p-4 text-xs text-muted font-medium text-center">Nenhum cliente cadastrado encontrado</div>
                       ) : (
-                        filteredClientsForSearch.map(client => (
+                        filteredClientsForSearch.map((client, cIdx) => (
                           <button
-                            key={client.uid}
+                            key={`rec-cli-opt-${client.uid || cIdx}-${cIdx}`}
                             type="button"
                             onClick={() => handleClientSelect(client)}
                             className="w-full text-left p-3 hover:bg-slate-50 text-xs font-medium border-b border-slate-100 flex items-center justify-between text-primary transition-colors"
@@ -791,8 +791,8 @@ export function RecurringAppointments() {
                       className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium shadow-inner cursor-pointer"
                     >
                       <option value="">Selecione o Serviço</option>
-                      {services.map(service => (
-                        <option key={service.id} value={service.id}>
+                      {services.map((service, sIdx) => (
+                        <option key={`rec-srv-opt-${service.id || sIdx}-${sIdx}`} value={service.id}>
                           {service.nome} - {service.duracao_minutos} min ({(service.preco || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})
                         </option>
                       ))}
@@ -808,8 +808,8 @@ export function RecurringAppointments() {
                       className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium shadow-inner cursor-pointer"
                     >
                       <option value="">Selecione o Profissional</option>
-                      {barbers.map(barber => (
-                        <option key={barber.uid} value={barber.uid}>{barber.nome}</option>
+                      {barbers.map((barber, bIdx) => (
+                        <option key={`rec-barber-opt-${barber.uid || bIdx}-${bIdx}`} value={barber.uid}>{barber.nome}</option>
                       ))}
                     </select>
                   </div>
@@ -907,9 +907,9 @@ export function RecurringAppointments() {
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-2">
                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Horários Livres no Profissional ({format(parse(startDate, 'yyyy-MM-dd', new Date()), 'dd/MM')}):</p>
                       <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1 custom-scrollbar">
-                        {availableSlots.map(slot => (
+                        {availableSlots.map((slot, sIdx) => (
                           <button
-                            key={slot}
+                            key={`rec-slot-${slot}-${sIdx}`}
                             type="button"
                             onClick={() => setStartTime(slot)}
                             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
@@ -950,8 +950,8 @@ export function RecurringAppointments() {
                           Conflito em {seriesConflicts.length} data(s) da série para o horário {startTime}:
                         </h5>
                         <ul className="text-[11px] text-red-800 space-y-1 list-disc pl-4 max-h-24 overflow-y-auto">
-                          {seriesConflicts.map(c => (
-                            <li key={c.date}>
+                          {seriesConflicts.map((c, cIdx) => (
+                            <li key={`rec-conflict-${c.date}-${cIdx}`}>
                               <strong>{format(parse(c.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')}</strong>: {c.reason}
                             </li>
                           ))}

@@ -322,9 +322,9 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
 
                 {hasSubItems && isExpanded && (
                   <div className="ml-10 space-y-1 border-l-2 border-slate-100 pl-5 py-1">
-                    {item.subItems?.filter(sub => profile && sub.roles.includes(profile.tipo)).map(sub => (
+                    {item.subItems?.filter(sub => profile && sub.roles.includes(profile.tipo)).map((sub, sIdx) => (
                       <button
-                        key={sub.id}
+                        key={`sub-item-${sub.id || sIdx}-${sIdx}`}
                         onClick={() => handleNavItemClick(sub.id)}
                         className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-[0.98] ${
                           activeTab === sub.id

@@ -621,8 +621,8 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                           className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
                         >
                           <option value="">Equipe Inteira (Todos os Barbeiros)</option>
-                          {barbersList.map(b => (
-                            <option key={b.uid} value={b.uid}>{b.name || b.nome}</option>
+                          {barbersList.map((b, bIdx) => (
+                            <option key={`barber-opt-${b.uid || bIdx}-${bIdx}`} value={b.uid}>{b.name || b.nome}</option>
                           ))}
                         </select>
                       </div>
@@ -1824,11 +1824,11 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
               </div>
 
               <div className="p-6 overflow-y-auto space-y-4 max-h-[50vh] custom-scrollbar">
-                {tenantsList.map((unit) => {
+                {tenantsList.map((unit, uIdx) => {
                   const isActive = unit.id === tenant?.id;
                   return (
                     <div 
-                      key={unit.id} 
+                      key={`unit-card-${unit.id || uIdx}-${uIdx}`} 
                       className={`p-5 border rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all ${
                         isActive 
                           ? 'border-emerald-500 bg-emerald-500/5 shadow-sm' 

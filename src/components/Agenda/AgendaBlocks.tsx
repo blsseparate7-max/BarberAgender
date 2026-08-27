@@ -207,7 +207,7 @@ export function AgendaBlocks({ selectedDate }: AgendaBlocksProps = {}) {
                       className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3 px-4 text-sm text-primary focus:outline-none focus:border-accent/50 transition-all font-medium"
                     >
                       <option value="">Selecione um profissional</option>
-                      {barbers.map(b => <option key={b.uid} value={b.uid}>{b.nome}</option>)}
+                      {barbers.map((b, bIdx) => <option key={`block-barber-${b.uid || bIdx}-${bIdx}`} value={b.uid}>{b.nome}</option>)}
                     </select>
                   </div>
                 )}

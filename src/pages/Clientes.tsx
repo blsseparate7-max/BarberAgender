@@ -1783,7 +1783,7 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                         </div>
                         <div className="space-y-3">
                           {debts.filter(d => d.status !== 'quitado' && d.status !== 'pago').map((debt, index) => (
-                            <div key={`pending-debt-${debt.id || index}`} className="bg-red-50/50 border border-red-200 p-5 rounded-2xl flex items-center justify-between group transition-all shadow-sm">
+                            <div key={`pending-debt-${debt.id || 'debt'}-${index}`} className="bg-red-50/50 border border-red-200 p-5 rounded-2xl flex items-center justify-between group transition-all shadow-sm">
                               <div className="flex items-center gap-4">
                                 <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center border border-red-200">
                                   <AlertCircle size={20} />
@@ -1932,7 +1932,7 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                           ? format(new Date(note.createdAt.seconds * 1000), "dd/MM/yyyy 'às' HH:mm") 
                           : 'Recentemente';
                         return (
-                          <div key={note.id || idx} className="relative bg-white border border-slate-200 p-5 rounded-2xl shadow-sm group hover:border-accent/10 transition-all">
+                          <div key={`client-note-${note.id || 'n'}-${idx}`} className="relative bg-white border border-slate-200 p-5 rounded-2xl shadow-sm group hover:border-accent/10 transition-all">
                             <div className="absolute -left-[30px] top-6 w-3 h-3 bg-accent border-2 border-white rounded-full group-hover:scale-125 transition-transform" />
                             
                             <div className="flex justify-between items-start mb-2">
@@ -2151,7 +2151,7 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                       ]
                       .sort((a, b) => b.timestamp - a.timestamp)
                       .map((row, i) => (
-                        <tr key={`print-row-${row.id || i}`} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                        <tr key={`print-row-${row.id || 'r'}-${i}`} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
                           <td className="p-3 border-r border-slate-200 font-mono">
                             {row.dateStr ? format(new Date(row.dateStr), 'dd/MM/yyyy') : '-'}
                           </td>

@@ -18,23 +18,25 @@ import {
   Gift,
   Zap,
   ShieldCheck,
-  Search
+  Search,
+  Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
 import { loyaltyService } from '../services/loyaltyService';
 import { userService } from '../services/userService';
-import { LoyaltyConfig, LoyaltyPoints, LoyaltyHistory, UserProfile } from '../types';
+import { LoyaltyConfig, LoyaltyPoints, LoyaltyHistory, UserProfile, LoyaltyVoucher } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 
 export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
-  const [activeTab, setActiveTab] = useState<'meu_saldo' | 'clientes' | 'configuracoes' | 'historico'>('meu_saldo');
+  const [activeTab, setActiveTab] = useState<'meu_saldo' | 'clientes' | 'cupons' | 'configuracoes' | 'historico'>('meu_saldo');
   const [config, setConfig] = useState<LoyaltyConfig | null>(null);
   const [clientPoints, setClientPoints] = useState<LoyaltyPoints | null>(null);
   const [history, setHistory] = useState<LoyaltyHistory[]>([]);
   const [clients, setClients] = useState<UserProfile[]>([]);
+  const [vouchers, setVouchers] = useState<LoyaltyVoucher[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Modals
@@ -75,16 +77,21 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
       setConfig(c);
 
       if (profile?.tipo === 'cliente') {
-        const [p, h] = await Promise.all([
+        const [p, h, v] = await Promise.all([
           loyaltyService.getClientPoints(user!.uid),
-          loyaltyService.getHistory(user!.uid)
+          loyaltyService.getHistory(user!.uid),
+          loyaltyService.getClientVouchers(user!.uid)
         ]);
         setClientPoints(p);
         setHistory(h);
+        setVouchers(v);
       } else {
         if (activeTab === 'clientes') {
           const cls = await userService.getAllClients();
           setClients(cls);
+        } else if (activeTab === 'cupons') {
+          const v = await loyaltyService.getAllVouchers();
+          setVouchers(v);
         } else if (activeTab === 'historico') {
           const h = await loyaltyService.getHistory();
           setHistory(h);
@@ -175,6 +182,7 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
         {(isAdmin || isGerente) && (
           <TabButton active={activeTab === 'clientes'} onClick={() => setActiveTab('clientes')} label="Clientes" icon={<Users size={16} />} />
         )}
+        <TabButton active={activeTab === 'cupons'} onClick={() => setActiveTab('cupons')} label="Vouchers de Resgate" icon={<Tag size={16} />} />
         <TabButton active={activeTab === 'historico'} onClick={() => setActiveTab('historico')} label="Histórico" icon={<History size={16} />} />
       </div>
 
@@ -253,6 +261,85 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
                   onRedeem={() => { setSelectedClient(client); setShowRedeemModal(true); }}
                 />
               ))}
+            </div>
+          </motion.div>
+        )}
+
+        {activeTab === 'cupons' && (
+          <motion.div 
+            key="cupons"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
+          >
+            <div className="bg-surface border border-border rounded-2xl overflow-hidden shadow-sm">
+              <div className="p-5 border-b border-border flex items-center justify-between bg-slate-50/50">
+                <div>
+                  <h3 className="text-sm font-bold text-primary">Vouchers / Cupons de Resgate de Pontos</h3>
+                  <p className="text-xs text-muted">Tokens gerados pelos clientes para trocar pontos por cortes ou produtos.</p>
+                </div>
+                <span className="text-xs font-bold text-muted bg-white px-2.5 py-1 rounded-lg border border-border">
+                  {vouchers.length} {vouchers.length === 1 ? 'voucher' : 'vouchers'}
+                </span>
+              </div>
+
+              {vouchers.length > 0 ? (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/30 border-b border-border">
+                      <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Token</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Cliente</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Item Resgatado</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest text-center">Pontos Gastos</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Status</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-widest">Data</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {vouchers.map((v, index) => (
+                      <tr key={`voucher-row-${v.id || index}`} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4 font-mono font-bold text-xs text-indigo-600 tracking-wider">
+                          {v.token}
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-xs font-bold text-primary">{v.clientName}</p>
+                          {v.clientPhone && <p className="text-[10px] text-muted">{v.clientPhone}</p>}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs font-semibold text-slate-800">{v.itemName}</span>
+                          <span className="ml-2 text-[9px] font-bold text-muted uppercase tracking-widest px-1.5 py-0.5 bg-slate-100 rounded">
+                            {v.itemType === 'service' ? 'Serviço' : 'Produto'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs font-black text-center text-indigo-600">
+                          {v.pointsCost} pts
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2.5 py-1 text-[9px] font-bold uppercase tracking-widest rounded-lg border ${
+                            v.status === 'active' 
+                              ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
+                              : v.status === 'used'
+                              ? 'bg-slate-100 text-slate-500 border-slate-200'
+                              : 'bg-red-50 text-red-600 border-red-100'
+                          }`}>
+                            {v.status === 'active' ? 'Disponível' : v.status === 'used' ? 'Utilizado na Comanda' : 'Expirado'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-muted">
+                          {v.createdAt ? v.createdAt.split('T')[0] : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="py-12 text-center text-muted space-y-2">
+                  <Tag className="mx-auto text-slate-300" size={32} />
+                  <p className="text-xs font-bold">Nenhum voucher de resgate gerado ainda.</p>
+                  <p className="text-[10px]">Quando os clientes resgatarem pontos no portal, os tokens aparecerão aqui.</p>
+                </div>
+              )}
             </div>
           </motion.div>
         )}

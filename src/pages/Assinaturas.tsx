@@ -41,7 +41,9 @@ import {
   SkipForward,
   Wallet,
   FileText,
-  CheckCheck
+  CheckCheck,
+  Sparkles,
+  Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO, isBefore, startOfDay, addMonths } from 'date-fns';
@@ -178,6 +180,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [discountPercentage, setDiscountPercentage] = useState<number>(10);
 
   const [deleteSubId, setDeleteSubId] = useState<string | null>(null);
+  const [deletePlanTarget, setDeletePlanTarget] = useState<SubscriptionPlan | null>(null);
   const [assignActivationType, setAssignActivationType] = useState<'manual' | 'asaas'>('manual');
   
   // State for Asaas Charge Result Modal (Pix QR Code, Copy/Paste, Payment Link)
@@ -1012,6 +1015,24 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     } catch (error: any) {
       console.error("Erro ao excluir assinatura:", error);
       toast.error(error.message || "Erro ao excluir assinatura.");
+    }
+  };
+
+  // Action to delete subscription plan with safety confirm
+  const handleConfirmDeletePlan = async () => {
+    if (!deletePlanTarget) return;
+    try {
+      await subscriptionService.deletePlan(deletePlanTarget.id);
+      toast.success(`Plano "${deletePlanTarget.name}" excluído com sucesso.`);
+      setDeletePlanTarget(null);
+      if (editingPlan?.id === deletePlanTarget.id) {
+        setShowPlanModal(false);
+        setEditingPlan(null);
+      }
+      loadData();
+    } catch (error: any) {
+      console.error("Erro ao excluir plano:", error);
+      toast.error(error.message || "Erro ao excluir plano de assinatura.");
     }
   };
 
@@ -1854,6 +1875,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               plan={plan} 
               isAdmin={canManage}
               onEdit={() => { setEditingPlan(plan); setShowPlanModal(true); }}
+              onDelete={() => setDeletePlanTarget(plan)}
               onAssign={() => { setSelectedPlan(plan); setShowAssignModal(true); }}
             />
           ))}
@@ -2931,6 +2953,18 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         description="Deseja realmente excluir esta assinatura permanentemente do banco de dados? O cliente perderá o acesso imediato ao Clube de Benefícios."
       />
 
+      <ConfirmationModal
+        isOpen={!!deletePlanTarget}
+        onClose={() => setDeletePlanTarget(null)}
+        onConfirm={handleConfirmDeletePlan}
+        title="Excluir Plano de Assinatura"
+        description={
+          deletePlanTarget && subscriptions.filter(s => s.plano_id === deletePlanTarget.id && (s.status === 'active' || s.status === 'pending')).length > 0
+            ? `Atenção: Existem ${subscriptions.filter(s => s.plano_id === deletePlanTarget.id && (s.status === 'active' || s.status === 'pending')).length} assinante(s) ativo(s) neste plano (${deletePlanTarget.name}). Deseja realmente excluir este plano?`
+            : `Deseja realmente excluir o plano "${deletePlanTarget?.name}"? Esta ação removerá o plano permanentemente.`
+        }
+      />
+
       {showComandaModal && comandaInitialData && (
         <ComandaModal
           initialData={comandaInitialData}
@@ -3194,365 +3228,481 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       {/* MODAL: CADASTRO / EDIÇÃO DE PLANO */}
       <AnimatePresence>
         {showPlanModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/50 backdrop-blur-sm overflow-y-auto">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white border rounded-[2rem] w-full max-w-2xl overflow-hidden shadow-2xl my-8 text-primary outline-none"
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              className="bg-white border border-slate-200 rounded-[2rem] w-full max-w-3xl overflow-hidden shadow-2xl my-auto text-primary outline-none flex flex-col max-h-[90vh]"
             >
-              <div className="p-6 border-b flex items-center justify-between bg-slate-50/50">
-                <div>
-                  <h2 className="text-xl font-bold text-primary">
-                    {editingPlan ? `Editar Plano: ${editingPlan.name}` : 'Criar Novo Plano de Assinatura'}
-                  </h2>
-                  <p className="text-muted text-xs font-bold uppercase tracking-widest mt-1">Configurar regras de faturamento recorrente</p>
+              {/* Modal Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-600 flex items-center justify-center font-black shrink-0">
+                    <Star size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900 leading-tight">
+                      {editingPlan ? `Editar Plano: ${editingPlan.name}` : 'Criar Novo Plano de Assinatura'}
+                    </h2>
+                    <p className="text-muted text-xs font-bold uppercase tracking-wider mt-0.5">
+                      Configurar regras de faturamento recorrente, serviços inclusos e comissões
+                    </p>
+                  </div>
                 </div>
-                <button type="button" onClick={() => setShowPlanModal(false)} className="p-2 text-slate-400 hover:text-primary transition-colors">
+                <button 
+                  type="button" 
+                  onClick={() => setShowPlanModal(false)} 
+                  className="p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 rounded-xl transition-colors cursor-pointer"
+                >
                   <X size={20} />
                 </button>
               </div>
 
-              <form onSubmit={handleSavePlan} className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-bold text-sm">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-550 uppercase tracking-widest ml-1">Nome do Plano</label>
-                      <input required type="text" name="name" defaultValue={editingPlan?.name || ''} placeholder="Ex: Clube do Cabelo Premium" className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none font-semibold" />
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-550 uppercase tracking-widest ml-1">Descrição Comercial</label>
-                      <textarea required name="description" defaultValue={editingPlan?.description || ''} placeholder="Ex: Cortes de cabelo ilimitados e descontos exclusivos em produtos." rows={3} className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none font-semibold resize-none" />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-550 uppercase tracking-widest ml-1">Valor Mensal (R$)</label>
-                        <input required type="number" name="price" step="0.01" defaultValue={editingPlan?.price || ''} placeholder="99.90" className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none font-extrabold" />
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-550 uppercase tracking-widest ml-1">Status</label>
-                        <select name="status" defaultValue={editingPlan?.status || 'active'} className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold">
-                          <option value="active">Ativo / Disponível</option>
-                          <option value="inactive">Inativo / Oculto</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 border border-slate-150 p-4 rounded-2xl bg-slate-50/40">
-                      <div>
-                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-1.5">
-                          <Scissors size={14} className="text-indigo-600" />
-                          Serviços Inclusos na Assinatura
-                        </h4>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-1">Selecione os serviços que fazem parte da assinatura.</p>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <select
-                          value={selectedPlanServiceId}
-                          onChange={(e) => setSelectedPlanServiceId(e.target.value)}
-                          className="flex-1 bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-primary outline-none cursor-pointer font-bold"
-                        >
-                          <option value="">Selecione um serviço...</option>
-                          {services.map(s => (
-                            <option key={s.id} value={s.id}>{s.nome} - R$ {s.preco?.toFixed(2)}</option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={handleAddPlanService}
-                          className="px-4 py-2 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-800 transition shadow-sm"
-                        >
-                          Adicionar
-                        </button>
-                      </div>
-
-                      {planServices.length > 0 ? (
-                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                          {planServices.map((ps, psIdx) => (
-                            <div key={`plan-svc-${ps.serviceId || psIdx}-${psIdx}`} className="flex flex-col md:flex-row items-start md:items-center justify-between p-3 bg-white border border-slate-100 rounded-xl gap-2 shadow-sm">
-                              <span className="text-[11px] font-bold text-slate-700">{ps.name}</span>
-                              
-                              <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
-                                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={ps.isUnlimited}
-                                    onChange={(e) => handleUpdatePlanService(ps.serviceId, { isUnlimited: e.target.checked })}
-                                    className="accent-accent w-4 h-4 rounded cursor-pointer"
-                                  />
-                                  <span>Atendimento Ilimitado</span>
-                                </label>
-
-                                {!ps.isUnlimited && (
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      value={ps.limit}
-                                      onChange={(e) => handleUpdatePlanService(ps.serviceId, { limit: Number(e.target.value) })}
-                                      className="w-12 bg-slate-50 border border-slate-150 rounded-lg py-1 px-1.5 text-xs text-center font-bold text-primary outline-none"
-                                    />
-                                    <span className="text-[9px] font-semibold text-slate-400">/mês</span>
-                                  </div>
-                                )}
-
-                                <div className="flex items-center gap-1" title="Pontos / Peso do serviço (ex: 1 ou 0.5)">
-                                  <input
-                                    type="text"
-                                    placeholder="1"
-                                    value={ps.points !== undefined ? ps.points : 1}
-                                    onChange={(e) => {
-                                      const val = e.target.value.replace(',', '.');
-                                      const num = val === '' ? 1 : Number(val);
-                                      const finalNum = isNaN(num) ? 1 : num;
-                                      handleUpdatePlanService(ps.serviceId, { points: finalNum });
-                                      setPlanPontosServicos(prev => ({ ...prev, [ps.serviceId]: finalNum }));
-                                    }}
-                                    className="w-14 bg-slate-50 border border-slate-150 rounded-lg py-1 px-1.5 text-xs text-center font-bold text-primary outline-none"
-                                  />
-                                  <span className="text-[9px] font-semibold text-slate-400">pts</span>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemovePlanService(ps.serviceId)}
-                                  className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="p-4 bg-white border border-dashed border-slate-200 rounded-xl text-center text-[10px] text-slate-400 font-bold uppercase tracking-wider italic">
-                          Nenhum serviço adicionado ainda.
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-550 uppercase tracking-widest ml-1">Benefícios Extras (Separar por vírgula)</label>
-                      <input type="text" name="extraBenefits" defaultValue={editingPlan?.extraBenefits.join(', ') || ''} placeholder="Ex: Cafezinho cortesia, 10% off em pomadas" className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none font-semibold" />
+              {/* Form Body */}
+              <form onSubmit={handleSavePlan} className="flex-1 overflow-y-auto p-6 space-y-6">
+                
+                {/* SEÇÃO 1: DADOS BÁSICOS & PREÇO */}
+                <div className="bg-slate-50/60 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-200/60 pb-3">
+                    <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                      <Sparkles size={16} className="text-amber-500" />
+                      1. Identificação & Preço do Plano
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Status:</span>
+                      <select 
+                        name="status" 
+                        defaultValue={editingPlan?.status || 'active'} 
+                        className="bg-white border border-slate-200 rounded-xl py-1 px-3 text-xs font-extrabold text-primary outline-none cursor-pointer focus:border-accent"
+                      >
+                        <option value="active">🟢 Ativo / Disponível</option>
+                        <option value="inactive">🔴 Inativo / Oculto</option>
+                      </select>
                     </div>
                   </div>
 
-                  <div className="space-y-4">
-                    {/* CONFIGURAÇÃO DE COMISSIONAMENTO DO PLANO */}
-                    <div className="border border-indigo-150 p-5 rounded-2xl bg-indigo-50/20 space-y-4">
-                      <div className="flex items-center gap-2">
-                        <Percent className="text-indigo-600" size={18} />
-                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest">Modelo de Comissão para Profissionais</h4>
-                      </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">
+                        Nome do Plano *
+                      </label>
+                      <input 
+                        required 
+                        type="text" 
+                        name="name" 
+                        defaultValue={editingPlan?.name || ''} 
+                        placeholder="Ex: Clube do Cabelo & Barba Premium" 
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-4 text-sm font-bold text-slate-900 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 transition-all placeholder:text-slate-350" 
+                      />
+                    </div>
 
-                      <div>
-                        <label className="text-[9px] font-bold text-indigo-800 uppercase tracking-widest">Forma de Comissão por Atendimento</label>
-                        <select 
-                          value={planComissaoTipo} 
-                          onChange={(e: any) => setPlanComissaoTipo(e.target.value)}
-                          className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-primary outline-none cursor-pointer mt-1 font-bold"
+                    <div>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">
+                        Valor Mensal (R$) *
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3.5 top-2.5 text-xs font-black text-slate-400">R$</span>
+                        <input 
+                          required 
+                          type="number" 
+                          name="price" 
+                          step="0.01" 
+                          defaultValue={editingPlan?.price || ''} 
+                          placeholder="99.90" 
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-extrabold text-emerald-700 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 transition-all font-mono placeholder:text-slate-350" 
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">
+                      Descrição Comercial *
+                    </label>
+                    <textarea 
+                      required 
+                      name="description" 
+                      defaultValue={editingPlan?.description || ''} 
+                      placeholder="Ex: Cortes e barbas ilimitados durante todo o mês com direito a descontos exclusivos em pomadas e bebidas." 
+                      rows={2} 
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-4 text-xs font-semibold text-slate-800 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 transition-all resize-none placeholder:text-slate-350" 
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">
+                      Benefícios Extras (Separar por vírgula)
+                    </label>
+                    <input 
+                      type="text" 
+                      name="extraBenefits" 
+                      defaultValue={editingPlan?.extraBenefits.join(', ') || ''} 
+                      placeholder="Ex: Chopp cortesia, 10% off em produtos, Atendimento VIP" 
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2 px-4 text-xs font-semibold text-slate-800 focus:outline-none focus:border-accent transition-all placeholder:text-slate-350" 
+                    />
+                  </div>
+                </div>
+
+                {/* SEÇÃO 2: SERVIÇOS INCLUSOS NA ASSINATURA */}
+                <div className="bg-slate-50/60 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                    <div>
+                      <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                        <Scissors size={16} className="text-indigo-600" />
+                        2. Serviços Inclusos no Plano
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                        Adicione os serviços que o assinante tem direito e configure limites ou peso para repasses
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-extrabold bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-1 rounded-full self-start sm:self-auto">
+                      {planServices.length} {planServices.length === 1 ? 'serviço incluso' : 'serviços inclusos'}
+                    </span>
+                  </div>
+
+                  {/* Seletor para Adicionar Serviço */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex-1">
+                      <select
+                        value={selectedPlanServiceId}
+                        onChange={(e) => setSelectedPlanServiceId(e.target.value)}
+                        className="w-full bg-transparent border-0 py-2 px-3 text-xs font-bold text-slate-800 outline-none cursor-pointer"
+                      >
+                        <option value="">Selecione um serviço do catálogo para adicionar...</option>
+                        {services.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.nome} — R$ {(s.preco ?? s.price ?? 0).toFixed(2)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddPlanService}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <Plus size={16} />
+                      <span>Incluir no Plano</span>
+                    </button>
+                  </div>
+
+                  {/* Lista de Serviços Inclusos */}
+                  {planServices.length > 0 ? (
+                    <div className="space-y-3">
+                      {planServices.map((ps, psIdx) => (
+                        <div 
+                          key={`plan-svc-card-${ps.serviceId || psIdx}-${psIdx}`} 
+                          className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm hover:border-slate-300 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
                         >
-                          <option value="fixo">Comissão Fixa (Valor fixo por atendimento)</option>
-                          <option value="pool_atendimentos">Rateio no Pool de Atendimentos (Por quantidade)</option>
-                          <option value="pool_pontos">Rateio no Pool de Pontos (Por peso do serviço)</option>
-                        </select>
-                      </div>
+                          {/* Nome e Preço Referência */}
+                          <div className="flex items-center gap-3 min-w-[200px]">
+                            <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 font-bold shrink-0">
+                              <Scissors size={18} />
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-black text-slate-900 leading-tight">{ps.name}</h4>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                                {services.find(s => s.id === ps.serviceId)?.preco ? `Avulso: R$ ${services.find(s => s.id === ps.serviceId)?.preco.toFixed(2)}` : 'Serviço cadastrado'}
+                              </p>
+                            </div>
+                          </div>
 
-                      {planComissaoTipo === 'fixo' && (
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-indigo-800 uppercase tracking-widest">Valor Fixo Pago por Serviço (R$)</label>
+                          {/* Controles de Limite & Peso */}
+                          <div className="flex flex-wrap items-center gap-4 w-full md:w-auto justify-between md:justify-end">
+                            
+                            {/* Toggle Ilimitado / Quantidade */}
+                            <div className="flex items-center gap-3 bg-slate-50 border border-slate-200/80 px-3 py-1.5 rounded-xl">
+                              <label className="flex items-center gap-2 text-xs font-black text-slate-700 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={ps.isUnlimited}
+                                  onChange={(e) => handleUpdatePlanService(ps.serviceId, { isUnlimited: e.target.checked })}
+                                  className="accent-indigo-600 w-4 h-4 rounded cursor-pointer"
+                                />
+                                <span>Ilimitado</span>
+                              </label>
+
+                              {!ps.isUnlimited && (
+                                <div className="flex items-center gap-1 pl-2 border-l border-slate-200">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={ps.limit}
+                                    onChange={(e) => handleUpdatePlanService(ps.serviceId, { limit: Math.max(1, Number(e.target.value)) })}
+                                    className="w-12 bg-white border border-slate-200 rounded-lg py-1 px-1 text-xs text-center font-black text-slate-900 outline-none focus:border-indigo-500"
+                                  />
+                                  <span className="text-[10px] font-bold text-slate-500 uppercase">/mês</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Pontos / Peso */}
+                            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200/80 px-3 py-1.5 rounded-xl" title="Peso de pontos para cálculo em comissão por rateio (pool)">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Peso:</span>
+                              <input
+                                type="text"
+                                placeholder="1"
+                                value={ps.points !== undefined ? ps.points : 1}
+                                onChange={(e) => {
+                                  const val = e.target.value.replace(',', '.');
+                                  const num = val === '' ? 1 : Number(val);
+                                  const finalNum = isNaN(num) ? 1 : num;
+                                  handleUpdatePlanService(ps.serviceId, { points: finalNum });
+                                  setPlanPontosServicos(prev => ({ ...prev, [ps.serviceId]: finalNum }));
+                                }}
+                                className="w-12 bg-white border border-slate-200 rounded-lg py-1 px-1 text-xs text-center font-black text-indigo-700 outline-none focus:border-indigo-500"
+                              />
+                              <span className="text-[10px] font-bold text-slate-400">pts</span>
+                            </div>
+
+                            {/* Botão Remover */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePlanService(ps.serviceId)}
+                              title="Remover serviço da assinatura"
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-6 bg-white border border-dashed border-slate-200 rounded-2xl text-center space-y-1">
+                      <Scissors size={24} className="mx-auto text-slate-300 mb-2" />
+                      <p className="text-xs text-slate-600 font-bold">Nenhum serviço incluso ainda</p>
+                      <p className="text-[10px] text-slate-400 font-medium">Selecione os serviços acima que farão parte deste plano de assinatura.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* SEÇÃO 3: COMISSIONAMENTO & REPASSE DOS PROFISSIONAIS */}
+                <div className="bg-slate-50/60 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                  <div className="border-b border-slate-200/60 pb-3">
+                    <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                      <Percent size={16} className="text-indigo-600" />
+                      3. Modelo de Comissão para os Barbeiros
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                      Como o valor da assinatura será repassado para a equipe quando realizarem os atendimentos
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPlanComissaoTipo('fixo')}
+                      className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                        planComissaoTipo === 'fixo'
+                          ? 'bg-white border-indigo-600 ring-2 ring-indigo-600/10 shadow-sm'
+                          : 'bg-white/60 border-slate-200 hover:bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="text-xs font-black text-slate-900 mb-1">Comissão Fixa</div>
+                      <div className="text-[10px] text-slate-500 font-medium leading-snug">
+                        Valor fixo em R$ pago por cada atendimento realizado.
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPlanComissaoTipo('pool_atendimentos')}
+                      className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                        planComissaoTipo === 'pool_atendimentos'
+                          ? 'bg-white border-indigo-600 ring-2 ring-indigo-600/10 shadow-sm'
+                          : 'bg-white/60 border-slate-200 hover:bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="text-xs font-black text-slate-900 mb-1">Pool por Quantidade</div>
+                      <div className="text-[10px] text-slate-500 font-medium leading-snug">
+                        % da mensalidade rateada pela soma total de atendimentos do ciclo.
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPlanComissaoTipo('pool_pontos')}
+                      className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                        planComissaoTipo === 'pool_pontos'
+                          ? 'bg-white border-indigo-600 ring-2 ring-indigo-600/10 shadow-sm'
+                          : 'bg-white/60 border-slate-200 hover:bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="text-xs font-black text-slate-900 mb-1">Pool por Pontos (Peso)</div>
+                      <div className="text-[10px] text-slate-500 font-medium leading-snug">
+                        Rateio proporcional ao peso de cada serviço realizado no ciclo.
+                      </div>
+                    </button>
+                  </div>
+
+                  {planComissaoTipo === 'fixo' ? (
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest block">
+                        Valor Fixo Pago por Serviço ao Barbeiro (R$)
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <div className="relative w-48">
+                          <span className="absolute left-3.5 top-2 text-xs font-black text-slate-400">R$</span>
                           <input 
                             type="number" 
                             step="0.01" 
                             value={planComissaoFixaValor} 
                             onChange={(e) => setPlanComissaoFixaValor(Number(e.target.value))}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-primary outline-none font-bold" 
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-3 text-sm font-black text-slate-900 outline-none focus:bg-white focus:border-indigo-500 font-mono" 
                           />
-                          <p className="text-[8px] text-slate-400 font-bold uppercase tracking-widest mt-1">O profissional ganha este valor a cada corte/barba realizado do assinante.</p>
                         </div>
-                      )}
-
-                      {planComissaoTipo !== 'fixo' && (
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-indigo-800 uppercase tracking-widest">% do Faturamento do Plano Destinado ao Pool</label>
+                        <span className="text-[11px] text-slate-500 font-semibold">
+                          O profissional recebe este valor creditado em sua ficha a cada serviço do assinante.
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest block">
+                        % da Mensalidade Destinado ao Fundo de Rateio (Pool)
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <div className="relative w-36">
                           <input 
                             type="number" 
                             min="1" 
                             max="100" 
                             value={planComissaoPoolPorcentagem} 
                             onChange={(e) => setPlanComissaoPoolPorcentagem(Number(e.target.value))}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-primary outline-none font-bold" 
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-sm font-black text-slate-900 outline-none focus:bg-white focus:border-indigo-500 font-mono text-center" 
                           />
-                          <p className="text-[8px] text-slate-400 font-bold uppercase tracking-widest mt-1">Este percentual da mensalidade do assinante será acumulado num fundo para rateio mensal.</p>
+                          <span className="absolute right-3.5 top-2 text-xs font-black text-slate-400">%</span>
                         </div>
-                      )}
+                        <span className="text-[11px] text-slate-500 font-semibold">
+                          Ex: Se o plano custa R$ 100,00 com 50%, R$ 50,00 serão divididos entre os barbeiros que atenderam o cliente no ciclo.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
-                      {planComissaoTipo === 'pool_pontos' && (
-                        <div className="space-y-4 pt-2 border-t">
-                          <div className="flex flex-col">
-                            <p className="text-[10px] font-black uppercase text-indigo-950 tracking-wider">Peso de Pontuação dos Atendimentos</p>
-                            <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                              Defina o peso/pontuação para cada serviço que compõe esta assinatura.
-                            </span>
-                          </div>
-                          
-                          {planServices.length > 0 ? (
-                            <div className="max-h-48 overflow-y-auto border border-slate-150 rounded-xl divide-y divide-slate-100 bg-white shadow-sm">
-                              {planServices.map((ps, psIdx) => {
-                                const currentPoints = planPontosServicos[ps.serviceId] !== undefined ? planPontosServicos[ps.serviceId] : 1;
-                                return (
-                                  <div key={`plan-svc-pts-${ps.serviceId || psIdx}-${psIdx}`} className="flex items-center justify-between p-2.5 hover:bg-slate-50 transition-colors">
-                                    <span className="text-[11px] font-bold text-slate-700">{ps.name}</span>
-                                    <div className="flex items-center gap-1.5">
-                                      <input 
-                                        type="number"
-                                        placeholder="1"
-                                        step="0.1"
-                                        min="0"
-                                        value={currentPoints}
-                                        onChange={(e) => {
-                                          const rawVal = e.target.value;
-                                          setPlanPontosServicos(prev => {
-                                            const updated = { ...prev };
-                                            if (rawVal === '') {
-                                              delete updated[ps.serviceId];
-                                            } else {
-                                              updated[ps.serviceId] = Number(rawVal);
-                                            }
-                                            return updated;
-                                          });
-                                        }}
-                                        className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-primary text-center font-bold focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                                      />
-                                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">pts</span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-[10px] text-slate-400 font-bold uppercase tracking-wider italic">
-                              Adicione primeiro os serviços inclusos na assinatura acima para configurar seus pontos.
-                            </div>
-                          )}
-                        </div>
-                      )}
+                {/* SEÇÃO 4: DESCONTOS EXTRAS PARA ASSINANTES */}
+                <div className="bg-slate-50/60 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                  <div className="border-b border-slate-200/60 pb-3">
+                    <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                      <Tag size={16} className="text-indigo-600" />
+                      4. Descontos Exclusivos para Assinantes deste Plano
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                      Descontos especiais em produtos do estoque ou outros serviços avulsos
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                        Item ou Categoria
+                      </label>
+                      <select
+                        value={discountItemId}
+                        onChange={(e) => setDiscountItemId(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 outline-none cursor-pointer focus:border-accent"
+                      >
+                        <option value="">Selecione um item ou categoria...</option>
+                        <optgroup label="Categorias Gerais">
+                          <option value="all_services">Todos os Serviços</option>
+                          <option value="all_products">Todos os Produtos</option>
+                        </optgroup>
+                        <optgroup label="Serviços Individuais">
+                          {services.map(s => (
+                            <option key={`servico_${s.id}`} value={`servico_${s.id}`}>
+                              Serviço: {s.nome} (R$ {(s.preco ?? s.price ?? 0).toFixed(2)})
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Produtos Individuais">
+                          {products.map(p => (
+                            <option key={`product_${p.id}`} value={`product_${p.id}`}>
+                              Produto: {p.name} (R$ {(p.salePrice ?? p.preco ?? 0).toFixed(2)})
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
                     </div>
 
-                    {/* CONFIGURAÇÃO DE DESCONTOS DA ASSINATURA */}
-                    <div className="border border-slate-150 p-5 rounded-2xl bg-indigo-50/20 space-y-4">
-                      <div className="flex items-center gap-2">
-                        <Percent className="text-indigo-600" size={18} />
-                        <h4 className="text-xs font-black text-indigo-900 uppercase tracking-widest font-black">Regulamento de Descontos Adicionais</h4>
+                    <div>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                        % Desconto
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={discountPercentage}
+                          onChange={(e) => setDiscountPercentage(Number(e.target.value))}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-3 pr-7 text-xs font-black text-slate-900 outline-none focus:border-accent text-center font-mono"
+                          placeholder="10"
+                        />
+                        <span className="absolute right-3 top-2 text-xs font-black text-slate-400">%</span>
                       </div>
+                    </div>
 
-                      <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                        Defina quais itens (serviços ou produtos) possuem desconto para os assinantes deste plano. Você pode selecionar itens específicos ou categorias gerais ("Todos os Serviços", "Todos os Produtos").
-                      </p>
+                    <button
+                      type="button"
+                      onClick={handleAddDiscount}
+                      className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    >
+                      <Plus size={16} />
+                      <span>Adicionar</span>
+                    </button>
+                  </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                        <div className="space-y-1.5 sm:col-span-2">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Item / Categoria</label>
-                          <select
-                            value={discountItemId}
-                            onChange={(e) => setDiscountItemId(e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs text-primary outline-none cursor-pointer font-bold"
-                          >
-                            <option value="">-- Selecione o item ou categoria --</option>
-                            <optgroup label="Categorias Gerais">
-                              <option value="all_services">Todos os Serviços</option>
-                              <option value="all_products">Todos os Produtos</option>
-                            </optgroup>
-                            <optgroup label="Serviços Individuais">
-                              {services.map(s => (
-                                <option key={`servico_${s.id}`} value={`servico_${s.id}`}>
-                                  Serviço: {s.nome} (R$ {(s.preco ?? s.price ?? 0).toFixed(2)})
-                                </option>
-                              ))}
-                            </optgroup>
-                            <optgroup label="Produtos Individuais">
-                              {products.map(p => (
-                                <option key={`product_${p.id}`} value={`product_${p.id}`}>
-                                  Produto: {p.name} (R$ {(p.salePrice ?? p.preco ?? 0).toFixed(2)})
-                                </option>
-                              ))}
-                            </optgroup>
-                          </select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">% Desconto</label>
-                          <div className="flex gap-2">
-                            <div className="relative flex-1">
-                              <input
-                                type="number"
-                                min="1"
-                                max="100"
-                                value={discountPercentage}
-                                onChange={(e) => setDiscountPercentage(Number(e.target.value))}
-                                className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-primary outline-none font-bold"
-                                placeholder="10"
-                              />
-                              <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400">%</span>
-                            </div>
+                  {planDiscounts.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
+                      {planDiscounts.map((discount, dIdx) => (
+                        <div
+                          key={`discount-item-${discount.itemId || dIdx}-${dIdx}`}
+                          className="bg-white border border-slate-200 p-2.5 rounded-xl flex items-center justify-between shadow-xs font-bold text-xs"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="text-[9px] uppercase font-black px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-100 text-indigo-700 shrink-0">
+                              {discount.itemType === 'all_services' || discount.itemType === 'servico' ? 'Serviço' : 'Produto'}
+                            </span>
+                            <span className="text-slate-800 text-xs truncate">{discount.itemName}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-emerald-700 font-black text-xs">
+                              {discount.percentage}% OFF
+                            </span>
                             <button
                               type="button"
-                              onClick={handleAddDiscount}
-                              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3.5 rounded-xl text-sm transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer"
+                              onClick={() => handleRemoveDiscount(discount.itemId)}
+                              className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
                             >
-                              <Plus size={18} />
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </div>
-                      </div>
-
-                      {planDiscounts.length > 0 ? (
-                        <div className="space-y-2 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
-                          {planDiscounts.map((discount, dIdx) => (
-                            <div
-                              key={`discount-item-${discount.itemId || dIdx}-${dIdx}`}
-                              className="bg-white border border-slate-150 p-2.5 rounded-xl flex items-center justify-between hover:border-slate-300 transition-colors font-bold text-xs"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-md tracking-wider bg-indigo-50 border border-indigo-150 text-indigo-700 font-black">
-                                  {discount.itemType === 'all_services' || discount.itemType === 'servico' ? 'Serviço' : 'Produto'}
-                                </span>
-                                <span className="text-slate-700">{discount.itemName}</span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="text-emerald-600 font-black">
-                                  {discount.percentage}% de Desconto
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveDiscount(discount.itemId)}
-                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="border border-dashed border-slate-200 rounded-xl p-4 text-center">
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Nenhum desconto configurado para esta assinatura</p>
-                        </div>
-                      )}
+                      ))}
                     </div>
+                  )}
+                </div>
 
-                    {/* Formas de Pagamento Aceitas */}
-                    <div className="bg-slate-50 border border-slate-150 p-4 rounded-xl space-y-3 shadow-sm">
-                      <div>
-                        <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Formas de Pagamento Permitidas</h5>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Selecione as opções de pagamento disponíveis para este plano</p>
-                      </div>
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-xs font-extrabold text-slate-700">
-                        <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 px-3 py-2 rounded-xl flex-1 hover:border-slate-300 transition-colors">
+                {/* SEÇÃO 5: CONFIGURAÇÕES DE PAGAMENTO & PORTAL */}
+                <div className="bg-slate-50/60 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                  <div className="border-b border-slate-200/60 pb-3">
+                    <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                      <CreditCard size={16} className="text-indigo-600" />
+                      5. Pagamento & Exibição no Portal
+                    </h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Formas de Pagamento */}
+                    <div className="bg-white border border-slate-200 p-4 rounded-xl space-y-2.5">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
+                        Formas de Pagamento Permitidas
+                      </span>
+                      <div className="flex flex-col gap-2 text-xs font-bold text-slate-700">
+                        <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={planAllowedPaymentMethods.includes('PIX')}
@@ -3571,7 +3721,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           />
                           <span>⚡ PIX (Instantâneo)</span>
                         </label>
-                        <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 px-3 py-2 rounded-xl flex-1 hover:border-slate-300 transition-colors">
+                        <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={planAllowedPaymentMethods.includes('CREDIT_CARD')}
@@ -3593,46 +3743,77 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       </div>
                     </div>
 
-                    {/* Permitir Cancelamento pelo Cliente */}
-                    <div className="bg-slate-50 border border-slate-150 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                      <div>
-                        <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Permitir Exclusão/Cancelamento pelo Cliente</h5>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Exibir botão para o cliente cancelar/excluir a assinatura no Portal do Cliente</p>
+                    {/* Exibição e Cancelamento */}
+                    <div className="bg-white border border-slate-200 p-4 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block">Exibir no Portal do Cliente</span>
+                          <span className="text-[9px] text-slate-400 font-medium block">Visível para contratação online</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPlanShowInPortal(!planShowInPortal)}
+                          className={`w-11 h-6 rounded-full transition relative shrink-0 cursor-pointer ${planShowInPortal ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${planShowInPortal ? 'left-6' : 'left-1'}`} />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setPlanAllowClientCancel(!planAllowClientCancel)}
-                        className={`w-12 h-6 rounded-full transition relative shrink-0 cursor-pointer ${planAllowClientCancel ? 'bg-emerald-600' : 'bg-slate-350'}`}
-                      >
-                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${planAllowClientCancel ? 'left-7' : 'left-1'}`} />
-                      </button>
-                    </div>
 
-                    <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                      <div>
-                        <h5 className="text-xs font-bold text-primary uppercase tracking-wider">Disponível no Portal do Cliente</h5>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Exibir este plano para assinatura online</p>
+                      <div className="flex items-center justify-between border-t border-slate-100 pt-2.5">
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block">Cancelamento pelo Cliente</span>
+                          <span className="text-[9px] text-slate-400 font-medium block">Permite o cliente cancelar no app</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPlanAllowClientCancel(!planAllowClientCancel)}
+                          className={`w-11 h-6 rounded-full transition relative shrink-0 cursor-pointer ${planAllowClientCancel ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${planAllowClientCancel ? 'left-6' : 'left-1'}`} />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setPlanShowInPortal(!planShowInPortal)}
-                        className={`w-12 h-6 rounded-full transition relative shrink-0 cursor-pointer ${planShowInPortal ? 'bg-emerald-600' : 'bg-slate-350'}`}
-                      >
-                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${planShowInPortal ? 'left-7' : 'left-1'}`} />
-                      </button>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex gap-3 pt-4 font-bold">
-                  <button type="button" onClick={() => setShowPlanModal(false)} className="flex-1 py-4 border border-slate-200 rounded-xl text-sm text-muted uppercase tracking-widest hover:bg-slate-50 transition-all cursor-pointer">Cancelar</button>
-                  <button 
-                    type="submit" 
-                    disabled={isSavingPlan}
-                    className="flex-[2] py-4 bg-primary text-white rounded-xl text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
-                  >
-                    {isSavingPlan ? <Loader2 className="animate-spin" size={18} /> : 'Salvar Plano'}
-                  </button>
+                {/* Modal Footer Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-100 font-bold shrink-0">
+                  {editingPlan && canManage ? (
+                    <button 
+                      type="button" 
+                      onClick={() => setDeletePlanTarget(editingPlan)} 
+                      className="w-full sm:w-auto px-4 py-3 text-red-600 hover:bg-red-50 border border-red-200 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Trash2 size={16} />
+                      <span>Excluir este Plano</span>
+                    </button>
+                  ) : (
+                    <div className="hidden sm:block" />
+                  )}
+
+                  <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowPlanModal(false)} 
+                      className="flex-1 sm:flex-none px-6 py-3.5 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 uppercase tracking-wider hover:bg-slate-100 transition-all cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      type="submit" 
+                      disabled={isSavingPlan}
+                      className="flex-1 sm:flex-none px-8 py-3.5 bg-primary text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-md flex items-center justify-center gap-2 active:scale-95 cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingPlan ? (
+                        <>
+                          <Loader2 className="animate-spin" size={16} />
+                          <span>Salvando...</span>
+                        </>
+                      ) : (
+                        <span>Salvar Plano</span>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </form>
             </motion.div>
@@ -4442,10 +4623,11 @@ interface PlanCardProps {
   plan: SubscriptionPlan;
   isAdmin: boolean;
   onEdit: () => void;
+  onDelete?: () => void;
   onAssign: () => void;
 }
 
-function PlanCard({ plan, isAdmin, onEdit, onAssign }: PlanCardProps) {
+function PlanCard({ plan, isAdmin, onEdit, onDelete, onAssign }: PlanCardProps) {
   return (
     <div className="bg-white border border-slate-200 rounded-[2rem] p-8 flex flex-col h-full group hover:border-accent/30 transition-all shadow-sm relative overflow-hidden">
       <div className="flex items-start justify-between mb-6">
@@ -4453,13 +4635,26 @@ function PlanCard({ plan, isAdmin, onEdit, onAssign }: PlanCardProps) {
           <Star size={28} />
         </div>
         {isAdmin && (
-          <button 
-            type="button"
-            onClick={onEdit} 
-            className="p-2 text-slate-300 hover:text-primary hover:bg-slate-50 rounded-xl transition-all cursor-pointer"
-          >
-            <Edit2 size={18} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button 
+              type="button"
+              onClick={onEdit} 
+              title="Editar Plano"
+              className="p-2 text-slate-400 hover:text-primary hover:bg-slate-50 rounded-xl transition-all cursor-pointer"
+            >
+              <Edit2 size={18} />
+            </button>
+            {onDelete && (
+              <button 
+                type="button"
+                onClick={onDelete} 
+                title="Excluir Plano"
+                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+              >
+                <Trash2 size={18} />
+              </button>
+            )}
+          </div>
         )}
       </div>
 

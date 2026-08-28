@@ -51,6 +51,11 @@ export const subscriptionService = {
     });
   },
 
+  async deletePlan(id: string) {
+    const docRef = doc(db, PLANS_COLLECTION, id);
+    await deleteDoc(docRef);
+  },
+
   // Subscriptions
   async getSubscriptions(cliente_id?: string) {
     let q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('tenantId', '==', getActiveTenantId()));

@@ -125,6 +125,66 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [couponInput, setCouponInput] = useState('');
   const [availableCoupons, setAvailableCoupons] = useState<{ id: string; code: string; discount: number; expiresAt: string; active?: boolean }[]>([]);
 
+  // States for loyalty voucher token redemption
+  const [voucherTokenInput, setVoucherTokenInput] = useState('');
+  const [isValidatingVoucher, setIsValidatingVoucher] = useState(false);
+
+  const handleApplyLoyaltyVoucher = async () => {
+    if (!comanda) return;
+    const token = voucherTokenInput.trim().toUpperCase();
+    if (!token) {
+      toast.error("Informe o código/token do voucher de resgate.");
+      return;
+    }
+
+    setIsValidatingVoucher(true);
+    try {
+      const voucher = await loyaltyService.getVoucherByToken(token);
+      if (!voucher) {
+        toast.error("Voucher/Token não encontrado ou inválido.");
+        return;
+      }
+
+      if (voucher.status !== 'disponivel') {
+        toast.error(`Este voucher já foi ${voucher.status === 'utilizado' ? 'utilizado' : 'cancelado'}.`);
+        return;
+      }
+
+      // Check if item exists in comanda
+      const matchingItem = comanda.items.find(item => 
+        (voucher.item_id && item.id === voucher.item_id) || 
+        item.name?.toLowerCase().trim() === voucher.item_name?.toLowerCase().trim()
+      );
+
+      if (!matchingItem) {
+        toast.error(`O item "${voucher.item_name}" precisa estar lançado na comanda para ser resgatado com o voucher.`);
+        return;
+      }
+
+      // Calculate item price to discount
+      const itemDiscount = matchingItem.price || 0;
+      
+      // Mark voucher as used in comanda
+      await loyaltyService.useVoucherInComanda(
+        voucher.id, 
+        comanda.id, 
+        comanda.comanda_number || comanda.id
+      );
+
+      // Add the discount to comanda
+      const currentDiscount = comanda.discount || 0;
+      await updateFinancials({ discount: currentDiscount + itemDiscount });
+
+      toast.success(`Voucher de fidelidade aplicado com sucesso! "${voucher.item_name}" com 100% de desconto (R$ ${itemDiscount.toFixed(2)}).`);
+      setVoucherTokenInput('');
+    } catch (err: any) {
+      console.error("Erro ao aplicar voucher:", err);
+      toast.error(err.message || "Erro ao aplicar voucher de fidelidade.");
+    } finally {
+      setIsValidatingVoucher(false);
+    }
+  };
+
   useEffect(() => {
     const tenantId = getActiveTenantId();
     if (!tenantId) return;
@@ -2351,6 +2411,38 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Resgate de Voucher de Pontos (Token) */}
+                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-indigo-700 uppercase tracking-widest ml-1 flex items-center gap-1">
+                      <Sparkles size={11} className="text-indigo-600" />
+                      <span>Resgate de Fidelidade (Token / Voucher)</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Award className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-500" size={13} />
+                        <input 
+                          type="text"
+                          value={voucherTokenInput}
+                          disabled={loading || isValidatingVoucher}
+                          onChange={(e) => setVoucherTokenInput(e.target.value.toUpperCase())}
+                          className="w-full bg-white border border-indigo-200 rounded-xl py-2 pl-8 pr-3 text-xs text-indigo-950 font-mono font-bold uppercase placeholder:normal-case placeholder:font-sans focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-2xs"
+                          placeholder="Ex: RESG-ABC123"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={loading || isValidatingVoucher || !voucherTokenInput.trim()}
+                        onClick={handleApplyLoyaltyVoucher}
+                        className="px-3.5 py-2 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm flex items-center gap-1"
+                      >
+                        <Sparkles size={12} />
+                        <span>Validar Token</span>
+                      </button>
+                    </div>
                   </div>
                 )}
 

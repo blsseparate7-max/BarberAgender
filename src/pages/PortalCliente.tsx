@@ -50,9 +50,10 @@ import { appointmentService } from '../services/appointmentService';
 import { serviceService } from '../services/serviceService';
 import { loyaltyService } from '../services/loyaltyService';
 import { subscriptionService } from '../services/subscriptionService';
+import { inventoryService } from '../services/inventoryService';
 import { getActiveTenantId, tenantService, TenantProfile } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
-import { UserProfile, Appointment, Service, LoyaltyPoints, LoyaltyHistory, Subscription } from '../types';
+import { UserProfile, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher } from '../types';
 import { format, parse, addMinutes, isAfter, isBefore, isEqual } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -147,9 +148,14 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loyalty, setLoyalty] = useState<LoyaltyPoints | null>(null);
   const [loyaltyHistory, setLoyaltyHistory] = useState<LoyaltyHistory[]>([]);
+  const [clientVouchers, setClientVouchers] = useState<LoyaltyVoucher[]>([]);
+  const [selectedItemToRedeem, setSelectedItemToRedeem] = useState<{ id: string; name: string; type: 'service' | 'product'; points: number; price: number } | null>(null);
+  const [isRedeemingVoucher, setIsRedeemingVoucher] = useState(false);
+  const [generatedVoucher, setGeneratedVoucher] = useState<LoyaltyVoucher | null>(null);
   const [totalSpent, setTotalSpent] = useState<number>(0);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [packages, setPackages] = useState<any[]>([]);
@@ -253,6 +259,45 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       toast.error("Erro ao cancelar assinatura.");
     } finally {
       setIsCancelingSub(false);
+    }
+  };
+
+  const handleRedeemRewardToken = async (item: { id: string; name: string; type: 'service' | 'product'; points: number; price: number }) => {
+    if (!profile?.uid) return;
+    if ((loyalty?.points || 0) < item.points) {
+      toast.error(`Você precisa de ${item.points} pontos para resgatar este item. Seu saldo atual é de ${loyalty?.points || 0} pts.`);
+      return;
+    }
+
+    setIsRedeemingVoucher(true);
+    try {
+      const voucher = await loyaltyService.redeemRewardToken({
+        cliente_id: profile.uid,
+        cliente_name: profile.nome || 'Cliente',
+        item_type: item.type === 'service' ? 'servico' : 'produto',
+        item_id: item.id,
+        item_name: item.name,
+        points_spent: item.points
+      });
+
+      setGeneratedVoucher(voucher);
+      setSelectedItemToRedeem(null);
+      toast.success(`Token de resgate gerado com sucesso: ${voucher.token}!`);
+
+      // Refresh loyalty and vouchers
+      const [updatedPoints, updatedHistory, updatedVouchers] = await Promise.all([
+        loyaltyService.getClientPoints(profile.uid),
+        loyaltyService.getHistory(profile.uid),
+        loyaltyService.getClientVouchers(profile.uid)
+      ]);
+      setLoyalty(updatedPoints);
+      setLoyaltyHistory(updatedHistory);
+      setClientVouchers(updatedVouchers);
+    } catch (error: any) {
+      console.error("Erro ao resgatar item:", error);
+      toast.error(error.message || "Erro ao resgatar recompensa.");
+    } finally {
+      setIsRedeemingVoucher(false);
     }
   };
 
@@ -684,6 +729,14 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         console.warn("Could not load services list:", err);
       }
 
+      // Load active products
+      try {
+        const allProducts = await inventoryService.getProducts();
+        setProducts(allProducts.filter(p => p.status !== 'inactive' && p.showInPortal !== false));
+      } catch (err) {
+        console.warn("Could not load products list:", err);
+      }
+
       // Load client's appointments
       try {
         const clientApps = await appointmentService.getAppointments({ cliente_id: profile.uid });
@@ -693,12 +746,14 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         console.warn("Could not load client appointments list:", err);
       }
 
-      // Load loyalty points & cashback
+      // Load loyalty points & cashback & vouchers
       try {
         const loyaltyPoints = await loyaltyService.getClientPoints(profile.uid);
         setLoyalty(loyaltyPoints);
         const history = await loyaltyService.getHistory(profile.uid);
         setLoyaltyHistory(history);
+        const vouchers = await loyaltyService.getClientVouchers(profile.uid);
+        setClientVouchers(vouchers);
       } catch (err) {
         console.warn("Could not load client loyalty points & history:", err);
       }
@@ -2867,6 +2922,179 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         </div>
                       </div>
                     </div>
+
+                    {/* REDEMPTION SECTION (ONLY WHEN MODE IS PONTOS AND PROGRAM IS ACTIVE) */}
+                    {mode === 'pontos' && isEnabled && (
+                      <div className="bg-white rounded-[32px] border border-slate-100 p-6 md:p-8 space-y-6 shadow-sm">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                              <Award size={22} />
+                            </div>
+                            <div>
+                              <h3 className="text-base font-black text-slate-800 tracking-tight flex items-center gap-2">
+                                <span>Catálogo de Resgate por Pontos</span>
+                                <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[9px] font-black uppercase tracking-widest rounded-full border border-indigo-100">
+                                  {currentPoints} pts disponíveis
+                                </span>
+                              </h3>
+                              <p className="text-xs text-slate-400 font-medium">
+                                Escolha um serviço ou produto para trocar por pontos e gere seu cupom/token de gratuidade.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* List of Redeemable Services & Products */}
+                        {(() => {
+                          const redeemableServices = services
+                            .filter(s => s.active !== false && (s.pontos_resgate || 0) > 0)
+                            .map(s => ({
+                              id: s.id,
+                              name: s.nome || s.name,
+                              type: 'service' as const,
+                              points: s.pontos_resgate || 0,
+                              price: s.preco ?? s.price ?? 0,
+                              category: s.categoria || 'Serviço'
+                            }));
+
+                          const redeemableProducts = products
+                            .filter(p => p.status !== 'inactive' && (p.pontos_resgate || 0) > 0)
+                            .map(p => ({
+                              id: p.id,
+                              name: p.name,
+                              type: 'product' as const,
+                              points: p.pontos_resgate || 0,
+                              price: p.salePrice ?? p.preco ?? 0,
+                              category: p.categoryName || 'Produto'
+                            }));
+
+                          const allRedeemable = [...redeemableServices, ...redeemableProducts];
+
+                          if (allRedeemable.length === 0) {
+                            return (
+                              <div className="py-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                                <Award className="mx-auto text-slate-300" size={32} />
+                                <p className="text-xs text-slate-600 font-bold">Nenhum item configurado para resgate no momento.</p>
+                                <p className="text-[10px] text-slate-400">A barbearia disponibilizará serviços e produtos para troca em breve.</p>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {allRedeemable.map((item) => {
+                                const canAfford = currentPoints >= item.points;
+                                return (
+                                  <div 
+                                    key={`redeem-item-${item.type}-${item.id}`}
+                                    className={`p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-4 ${
+                                      canAfford 
+                                        ? 'bg-gradient-to-b from-white to-indigo-50/30 border-indigo-150 hover:shadow-md hover:border-indigo-300' 
+                                        : 'bg-slate-50/50 border-slate-200/80 opacity-75'
+                                    }`}
+                                  >
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-wider rounded-md">
+                                          {item.type === 'service' ? '💈 Serviço' : '🧴 Produto'}
+                                        </span>
+                                        <span className="text-xs font-bold text-slate-400 line-through">
+                                          R$ {item.price.toFixed(2)}
+                                        </span>
+                                      </div>
+                                      <h4 className="text-sm font-black text-slate-800 leading-snug">{item.name}</h4>
+                                      <div className="flex items-baseline gap-1">
+                                        <span className="text-xl font-black text-indigo-600">{item.points}</span>
+                                        <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">pontos</span>
+                                      </div>
+                                    </div>
+
+                                    <div>
+                                      {canAfford ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRedeemRewardToken(item)}
+                                          disabled={isRedeemingVoucher}
+                                          className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2"
+                                        >
+                                          <Sparkles size={14} />
+                                          <span>Resgatar Cupom Grátis</span>
+                                        </button>
+                                      ) : (
+                                        <div className="w-full py-2 px-3 bg-slate-100 text-slate-400 rounded-xl text-[10px] font-bold uppercase tracking-wider text-center">
+                                          Faltam {item.points - currentPoints} pts
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+
+                        {/* ACTIVE VOUCHERS / TOKENS ISSUED TO THIS CLIENT */}
+                        {clientVouchers.length > 0 && (
+                          <div className="pt-4 border-t border-slate-100 space-y-3">
+                            <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                              <Tag size={14} className="text-indigo-600" />
+                              <span>Seus Vouchers / Cupons Gerados ({clientVouchers.filter(v => v.status === 'disponivel').length} Ativos)</span>
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {clientVouchers.map((voucher) => {
+                                const isActive = voucher.status === 'disponivel';
+                                return (
+                                  <div 
+                                    key={`voucher-${voucher.id}`}
+                                    className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                                      isActive 
+                                        ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950 shadow-sm' 
+                                        : 'bg-slate-50 border-slate-200 text-slate-400 opacity-60'
+                                    }`}
+                                  >
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-md ${
+                                          isActive ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-600'
+                                        }`}>
+                                          {isActive ? 'Disponível' : voucher.status === 'utilizado' ? 'Utilizado' : 'Cancelado'}
+                                        </span>
+                                        <span className="text-[10px] font-bold text-slate-500">
+                                          {voucher.item_type === 'servico' ? 'Serviço' : 'Produto'}
+                                        </span>
+                                      </div>
+                                      <p className="text-xs font-black text-slate-900 leading-tight">{voucher.item_name}</p>
+                                      <div className="flex items-center gap-2 pt-1">
+                                        <span className="text-[11px] font-mono font-black tracking-widest bg-white/80 px-2 py-0.5 rounded border border-emerald-300 text-emerald-700">
+                                          {voucher.token}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(voucher.token);
+                                            toast.success("Código copiado!");
+                                          }}
+                                          className="p-1 hover:bg-white rounded text-slate-500 hover:text-slate-800 transition"
+                                          title="Copiar token"
+                                        >
+                                          <Copy size={12} />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    <div className="text-right flex-shrink-0">
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Desconto</span>
+                                      <span className="text-xs font-black text-emerald-600">100% OFF</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Statement / History Section */}
                     <div className="bg-white rounded-[32px] border border-slate-100 p-6 md:p-8 space-y-4 shadow-sm">

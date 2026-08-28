@@ -36,18 +36,25 @@ import { ptBR } from 'date-fns/locale';
 import { Commission, CommissionPayout, CommissionStatus, ProfessionalAdvance, UserProfile } from '../types';
 import { commissionService } from '../services/commissionService';
 import { userService } from '../services/userService';
+import { calculateProfessionalLedger } from '../services/ledgerService';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../firebase';
 import { ProfessionalCommissionsDetail } from '../components/Financeiro/ProfessionalCommissionsDetail';
 
 export function Comissoes() {
   const { user, profile, isAdmin, isGerente } = useAuth();
+  const { tenantId } = useTenant();
   const [activeTab, setActiveTab] = useState<'overview' | 'commissions' | 'payouts'>('overview');
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ pending: 0, paid: 0, total: 0, totalBase: 0, count: 0 });
   const [commissions, setCommissions] = useState<Commission[]>([]);
+  const [allCommissionsLive, setAllCommissionsLive] = useState<Commission[]>([]);
   const [payouts, setPayouts] = useState<CommissionPayout[]>([]);
   const [advances, setAdvances] = useState<ProfessionalAdvance[]>([]);
+  const [allAdvancesLive, setAllAdvancesLive] = useState<ProfessionalAdvance[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   
   // Drill-down state
@@ -69,9 +76,31 @@ export function Comissoes() {
     loadBarbers();
   }, []);
 
+  // Live Subscription for all commissions and advances of the tenant
+  useEffect(() => {
+    if (!tenantId) return;
+    
+    const qCom = query(collection(db, 'commissions'), where('tenantId', '==', tenantId));
+    const unsubCom = onSnapshot(qCom, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+      setAllCommissionsLive(docs);
+    });
+
+    const qAdv = query(collection(db, 'professional_advances'), where('tenantId', '==', tenantId));
+    const unsubAdv = onSnapshot(qAdv, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
+      setAllAdvancesLive(docs);
+    });
+
+    return () => {
+      unsubCom();
+      unsubAdv();
+    };
+  }, [tenantId]);
+
   useEffect(() => {
     loadData();
-  }, [dateRange.start, dateRange.end, selectedBarber, selectedStatus]);
+  }, [dateRange.start, dateRange.end, selectedBarber, selectedStatus, tenantId]);
 
   const loadBarbers = async () => {
     try {
@@ -208,31 +237,23 @@ export function Comissoes() {
     );
   }
 
-  // Calculate roster summary dynamically in memory based on loaded data for perfect real-time feedback
+  // Calculate roster summary with unified ledger - 100% synchronized with Barbeiros and Financeiro
+  const effectiveCommissions = allCommissionsLive.length > 0 ? allCommissionsLive : commissions;
+  const effectiveAdvances = allAdvancesLive.length > 0 ? allAdvancesLive : advances;
+
   const teamRoster = barbers.map(barber => {
-    const barberComms = commissions.filter(c => c.profissional_id === barber.uid);
-    const barberAdvs = advances.filter(a => a.profissional_id === barber.uid && (a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido')));
-    
-    const grossPending = barberComms.filter(c => c.status === 'pendente').reduce((acc, c) => acc + (c.commission_value || 0), 0);
-    const pendingAdvances = barberAdvs.reduce((acc, a) => acc + (a.amount || 0), 0);
-    const pending = grossPending - pendingAdvances;
-
-    const paid = barberComms.filter(c => c.status === 'pago').reduce((acc, c) => acc + (c.commission_value || 0), 0);
-    const totalBase = barberComms
-      .filter(c => c.commission_type !== 'assinatura')
-      .reduce((acc, c) => acc + (c.base_value || 0), 0);
-    const count = barberComms.length;
-
+    const ledger = calculateProfessionalLedger(barber, effectiveCommissions, effectiveAdvances);
     return {
       uid: barber.uid,
       nome: barber.nome,
       email: barber.email,
-      grossPending,
-      pendingAdvances,
-      pending,
-      paid,
-      totalBase,
-      count
+      grossPending: ledger.comissaoPendenteBruta,
+      pendingAdvances: ledger.valesPendentes,
+      pending: ledger.saldoPendenteLiquido,
+      paid: ledger.comissaoRepassadaMes,
+      totalBase: ledger.faturamentoBrutoMes,
+      comissaoGeradaMes: ledger.comissaoGeradaMes,
+      count: ledger.totalAtendimentosMes
     };
   });
 
@@ -420,42 +441,37 @@ export function Comissoes() {
                         </div>
                       </div>
 
-                      {/* Barber Mini stats */}
-                      <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-5 text-left">
-                        <div className="flex flex-col justify-between">
-                          <div>
-                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                              {barber.pendingAdvances > 0 ? 'Pendente Líquido' : 'Pendente'}
-                            </span>
-                            <span className={`text-base font-black font-mono ${isPending ? 'text-amber-600' : 'text-slate-500'}`}>
-                              R$ {barber.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </span>
-                          </div>
-                          {barber.pendingAdvances > 0 && (
-                            <div className="text-[9px] text-slate-400 font-extrabold mt-1.5 leading-none bg-amber-500/10 border border-amber-500/20 px-1.5 py-1 rounded-lg">
-                              Bruto: <span className="font-mono">R$ {barber.grossPending.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
-                              <br />
-                              Vales: <span className="font-mono text-red-600">-R$ {barber.pendingAdvances.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
-                            </div>
-                          )}
+                      {/* Barber Mini stats - 100% Reconciled with Barbeiros */}
+                      <div className="grid grid-cols-2 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-5 text-center divide-x divide-slate-200/60">
+                        <div>
+                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block">Ganhos do Mês</span>
+                          <span className="text-base font-black text-slate-900 block mt-0.5">
+                            R$ {barber.comissaoGeradaMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-[8px] text-slate-400 font-bold block mt-0.5">
+                            {barber.count} atendimentos
+                          </span>
                         </div>
-                        <div className="border-l border-slate-200 pl-4 flex flex-col justify-center">
-                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Repassado</span>
-                          <span className="text-base font-black font-mono text-emerald-600">
-                            R$ {barber.paid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        <div className="pl-3">
+                          <span className="text-[8px] font-black text-emerald-600 uppercase tracking-wider block">Saldo a Pagar</span>
+                          <span className="text-base font-extrabold text-emerald-600 block mt-0.5">
+                            R$ {barber.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-[8px] text-emerald-700/80 font-bold block mt-0.5 truncate">
+                            {barber.pendingAdvances > 0 ? `-R$ ${barber.pendingAdvances.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} vales` : 'Pendente líquido'}
                           </span>
                         </div>
                       </div>
 
                       {/* Quick Ratios */}
-                      <div className="space-y-3 mb-5 text-xs text-slate-650 font-semibold">
+                      <div className="space-y-2 mb-5 text-xs text-slate-600 font-semibold bg-slate-50/50 p-3 rounded-xl border border-slate-100/60">
                         <div className="flex justify-between items-center">
-                          <span className="text-slate-400">Faturamento gerado:</span>
-                          <span className="font-extrabold text-slate-800">R$ {barber.totalBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-slate-400 text-[11px]">Faturamento gerado:</span>
+                          <span className="font-bold text-slate-800 text-[11px]">R$ {barber.totalBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-slate-400">Atendimentos feitos:</span>
-                          <span className="font-extrabold text-slate-800">{barber.count} serviços</span>
+                          <span className="text-slate-400 text-[11px]">Repassado no período:</span>
+                          <span className="font-bold text-emerald-600 text-[11px]">R$ {barber.paid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       </div>
 

@@ -80,6 +80,8 @@ export interface UserProfile {
   tipoContrato?: string;
   fotoUrl?: string;
   avatarUrl?: string;
+  avatar?: string;
+  foto?: string;
   showInPortal?: boolean;
   bloqueadoParaAgendar?: boolean;
   
@@ -96,6 +98,7 @@ export interface Service {
   preco: number; // price
   active: boolean; // status
   permite_cortesia: boolean; // novo
+  pontos_resgate?: number; // Pontos necessários para resgatar como recompensa
   tipo_comissao?: 'padrao' | 'percentual' | 'fixo';
   valor_comissao?: number;
   comissoes_por_profissional?: Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>;
@@ -567,6 +570,7 @@ export interface Product {
   fornecedor_id?: string;
   fornecedor_name?: string;
   showInPortal?: boolean;
+  pontos_resgate?: number; // Pontos necessários para resgatar como recompensa
   createdAt: any;
   updatedAt: any;
 }
@@ -758,6 +762,24 @@ export interface LoyaltyHistory {
   description: string;
   date: string;
   createdAt: any;
+}
+
+export interface LoyaltyVoucher {
+  id: string;
+  token: string; // ex: FID-8A2F
+  tenantId: string;
+  cliente_id: string;
+  cliente_name: string;
+  item_type: 'servico' | 'produto';
+  item_id: string;
+  item_name: string;
+  points_spent: number;
+  status: 'disponivel' | 'utilizado' | 'cancelado';
+  comanda_id?: string;
+  comanda_number?: string;
+  usedAt?: any;
+  createdAt: any;
+  updatedAt?: any;
 }
 
 export interface Automation {

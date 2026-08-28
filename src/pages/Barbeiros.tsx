@@ -34,6 +34,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { userService } from '../services/userService';
 import { UserProfile, WorkingHours } from '../types';
+import { calculateProfessionalLedger } from '../services/ledgerService';
 import { useAuth } from '../contexts/AuthContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { Edit2 } from 'lucide-react';
@@ -94,6 +95,7 @@ export function Barbeiros() {
   const { tenant, tenantId } = useTenant();
   const [barbeiros, setBarbeiros] = useState<UserProfile[]>([]);
   const [commissions, setCommissions] = useState<any[]>([]);
+  const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('active');
@@ -203,7 +205,22 @@ export function Barbeiros() {
       console.error("Erro ao carregar banco de comissões:", error);
     });
 
-    return () => unsubscribeCom();
+    // Live Subscription for Advances to accurately calculate pending net payouts
+    const qAdv = query(
+      collection(db, 'professional_advances'),
+      where('tenantId', '==', tenantId)
+    );
+    const unsubscribeAdv = onSnapshot(qAdv, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAdvances(docs);
+    }, (error) => {
+      console.error("Erro ao carregar banco de adiantamentos:", error);
+    });
+
+    return () => {
+      unsubscribeCom();
+      unsubscribeAdv();
+    };
   }, [tenantId]);
 
   const handleToggleAtivo = async (uid: string, currentAtivo: boolean) => {
@@ -428,6 +445,7 @@ export function Barbeiros() {
               key={`barber-${barber.uid || index}-${index}`} 
               barber={barber} 
               commissions={commissions}
+              advances={advances}
               onEdit={() => {
                 setEditingBarber(barber);
                 setIsModalOpen(true);
@@ -478,13 +496,14 @@ interface BarberCardProps {
   key?: string;
   barber: UserProfile;
   commissions: any[];
+  advances: any[];
   onEdit: () => void;
   onToggleAtivo: (uid: string, currentAtivo: boolean) => void | Promise<void>;
   onDelete: () => void;
   canEdit: boolean;
 }
 
-function BarberCard({ barber, commissions, onEdit, onToggleAtivo, onDelete, canEdit }: BarberCardProps) {
+function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDelete, canEdit }: BarberCardProps) {
   const [showOptions, setShowOptions] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
 
@@ -495,15 +514,9 @@ function BarberCard({ barber, commissions, onEdit, onToggleAtivo, onDelete, canE
   const gestor = barber.is_gestor ?? barber.is_manager ?? false;
   const telefone = barber.telefone || barber.phone;
 
-  // Real-time metrics from actual month commissions
-  const currentMonthYear = new Date().toISOString().substring(0, 7); // "YYYY-MM"
-  const barberCommissions = commissions.filter(c => c.profissional_id === barber.uid && c.date && c.date.startsWith(currentMonthYear));
-  
-  const totalFaturamento = barberCommissions.filter(c => c.commission_type !== 'assinatura').reduce((acc, curr) => acc + (curr.base_value || 0), 0);
-  const totalComissaoGanho = barberCommissions.reduce((acc, curr) => acc + (curr.commission_value || 0), 0);
-  const totalAtendimentos = barberCommissions.length;
-
-  const goalPercentage = meta > 0 ? Math.min(Math.round((totalFaturamento / meta) * 100), 100) : 0;
+  // Unified financial ledger calculation - 100% synchronized with Comissoes and Financeiro
+  const ledger = calculateProfessionalLedger(barber, commissions, advances);
+  const goalPercentage = meta > 0 ? Math.min(Math.round((ledger.faturamentoBrutoMes / meta) * 100), 100) : 0;
 
   // Extract work schedule array
   const activeHours = barber.horario_de_trabalho ?? DEFAULT_WORKING_HOURS;
@@ -606,16 +619,20 @@ function BarberCard({ barber, commissions, onEdit, onToggleAtivo, onDelete, canE
         </div>
       </div>
 
-      {/* Real-time statistics board */}
-      <div className="bg-slate-50/70 border border-slate-100 p-4 rounded-3xl mb-5 space-y-3.5">
-        <div className="grid grid-cols-2 gap-3.5 text-center divide-x divide-slate-200/60">
+      {/* Real-time statistics board - Clean & 100% Reconciled */}
+      <div className="bg-slate-50/70 border border-slate-100 p-3.5 rounded-3xl mb-5 space-y-3">
+        <div className="grid grid-cols-2 gap-3 text-center divide-x divide-slate-200/60">
           <div>
-            <p className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Serviços ({currentMonthYear})</p>
-            <p className="text-base font-black text-primary mt-0.5">{totalAtendimentos}</p>
+            <p className="text-[8px] font-black uppercase text-slate-400 tracking-wider truncate">Ganhos do Mês</p>
+            <p className="text-base font-black text-slate-900 mt-0.5">R$ {ledger.comissaoGeradaMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            <p className="text-[8px] text-slate-400 font-bold truncate">{ledger.totalAtendimentosMes} atendimentos</p>
           </div>
           <div>
-            <p className="text-[8px] font-black uppercase text-slate-400 tracking-wider">A Pagar / Comissões</p>
-            <p className="text-base font-extrabold text-emerald-600 mt-0.5">R$ {totalComissaoGanho.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            <p className="text-[8px] font-black uppercase text-emerald-600 tracking-wider truncate">Saldo a Pagar</p>
+            <p className="text-base font-extrabold text-emerald-600 mt-0.5">R$ {ledger.saldoPendenteLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            <p className="text-[8px] text-emerald-700/80 font-bold truncate">
+              {ledger.valesPendentes > 0 ? `-R$ ${ledger.valesPendentes.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} vales` : 'Pendente líquido'}
+            </p>
           </div>
         </div>
 

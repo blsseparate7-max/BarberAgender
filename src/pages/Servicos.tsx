@@ -371,6 +371,13 @@ function ServiceCard({ service, canManage, onEdit, onToggleStatus, onDelete }: S
                     <span>Cortesia</span>
                   </span>
                 )}
+
+                {service.pontos_resgate && service.pontos_resgate > 0 ? (
+                  <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[8px] font-black uppercase tracking-widest rounded-md flex items-center gap-0.5">
+                    <Award size={8} className="text-indigo-600" />
+                    <span>{service.pontos_resgate} pts</span>
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>
@@ -488,6 +495,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
   const [activeTab, setActiveTab] = useState<'dados' | 'comissao'>('dados');
   const [permiteCortesia, setPermiteCortesia] = useState(service?.permite_cortesia || false);
   const [showInPortal, setShowInPortal] = useState(service?.showInPortal ?? true);
+  const [pontosResgate, setPontosResgate] = useState<number | ''>(service?.pontos_resgate ?? '');
   const [tipoComissao, setTipoComissao] = useState<'padrao' | 'percentual' | 'fixo'>(service?.tipo_comissao || 'padrao');
   const [valorComissao, setValorComissao] = useState<number>(service?.valor_comissao || 0);
 
@@ -560,6 +568,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
       categoria,
       category: categoria,
       permite_cortesia: permiteCortesia,
+      pontos_resgate: pontosResgate !== '' && Number(pontosResgate) > 0 ? Number(pontosResgate) : 0,
       tipo_comissao: tipoComissao,
       valor_comissao: tipoComissao === 'padrao' ? 0 : valorComissao,
       comissoes_por_profissional: comissoesPorProfissional,
@@ -741,6 +750,32 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                         <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${showInPortal ? 'left-5.5' : 'left-0.5'}`} />
                       </div>
                     </button>
+                  </div>
+
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-indigo-600 uppercase tracking-wider ml-1 flex items-center gap-1">
+                        <Award size={13} className="text-indigo-600" />
+                        Pontos para Resgate (Programa de Fidelidade)
+                      </label>
+                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Opcional (Deixe 0 para desativar resgate)</span>
+                    </div>
+                    <div className="relative">
+                      <Award className="absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-500" size={16} />
+                      <input 
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={pontosResgate === '' ? '' : pontosResgate}
+                        onFocus={(e) => e.target.select()}
+                        onChange={e => setPontosResgate(e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0))}
+                        placeholder="Ex: 30 (Cliente troca 30 pontos por este serviço grátis)"
+                        className="w-full bg-indigo-50/40 border border-indigo-200/80 focus:bg-white focus:ring-4 focus:ring-indigo-100 focus:border-indigo-600 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-indigo-950 outline-none transition"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-medium ml-1">
+                      Quando o cliente acumular esses pontos, ele poderá gerar um cupom/token no portal para resgatar este serviço com 100% de desconto.
+                    </p>
                   </div>
 
                   <div className="sm:col-span-2 space-y-3 bg-slate-50 p-4.5 rounded-3xl border border-slate-100">

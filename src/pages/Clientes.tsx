@@ -13,6 +13,8 @@ import {
   deleteDoc,
   increment,
   setDoc,
+  runTransaction,
+  getDocs,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, Appointment, ClientDebt, DebtPayment, PaymentMethod } from '../types';
@@ -55,6 +57,9 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Receipt,
+  Ban,
+  ShieldCheck,
+  Clock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -227,45 +232,109 @@ export function Clientes() {
 
       {/* METRICS DASHBOARD CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white border border-slate-200 p-6 rounded-[2rem] flex items-center justify-between shadow-sm hover:border-slate-300 transition-all">
+        <button 
+          type="button"
+          onClick={() => { setFilterStatus('all'); setFilterTier('all'); setSearchTerm(''); }}
+          title="Clique para ver todos os clientes"
+          className={`text-left bg-white border p-6 rounded-[2rem] flex items-center justify-between shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-95 ${
+            filterTier === 'all' && filterStatus === 'all' 
+              ? 'ring-2 ring-indigo-500 border-indigo-400 bg-indigo-50/30 shadow-md' 
+              : 'border-slate-200 hover:border-slate-300'
+          }`}
+        >
           <div>
-            <p className="text-[10px] text-muted font-black uppercase tracking-widest mb-1">Total de Clientes</p>
+            <div className="flex items-center gap-1.5 mb-1">
+              <p className="text-[10px] text-muted font-black uppercase tracking-widest">Total de Clientes</p>
+              {filterTier === 'all' && filterStatus === 'all' && (
+                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
+              )}
+            </div>
             <h3 className="text-2xl font-black text-primary">{totalClients}</h3>
+            <p className="text-[10px] text-slate-400 font-bold mt-1">Ver todos na lista</p>
           </div>
-          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center border border-indigo-100">
+          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center border border-indigo-100 shrink-0">
             <UserIcon size={20} />
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white border border-slate-200 p-6 rounded-[2rem] flex items-center justify-between shadow-sm hover:border-slate-300 transition-all">
+        <button 
+          type="button"
+          onClick={() => { setFilterStatus('active'); setFilterTier('all'); }}
+          title="Clique para filtrar apenas clientes ativos"
+          className={`text-left bg-white border p-6 rounded-[2rem] flex items-center justify-between shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-95 ${
+            filterStatus === 'active' && filterTier === 'all' 
+              ? 'ring-2 ring-emerald-500 border-emerald-400 bg-emerald-50/30 shadow-md' 
+              : 'border-slate-200 hover:border-slate-300'
+          }`}
+        >
           <div>
-            <p className="text-[10px] text-muted font-black uppercase tracking-widest mb-1">Clientes Ativos</p>
+            <div className="flex items-center gap-1.5 mb-1">
+              <p className="text-[10px] text-muted font-black uppercase tracking-widest">Clientes Ativos</p>
+              {filterStatus === 'active' && filterTier === 'all' && (
+                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+              )}
+            </div>
             <h3 className="text-2xl font-black text-emerald-600">{activeClients}</h3>
+            <p className="text-[10px] text-emerald-600/80 font-bold mt-1">Filtrar apenas ativos</p>
           </div>
-          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center border border-emerald-100">
+          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center border border-emerald-100 shrink-0">
             <UserCheck size={20} />
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white border border-slate-200 p-6 rounded-[2rem] flex items-center justify-between shadow-sm hover:border-slate-300 transition-all">
+        <button 
+          type="button"
+          onClick={() => { setFilterTier('vvip'); setSortBy('spent'); }}
+          title="Clique para filtrar clientes VIPs (maior faturamento)"
+          className={`text-left bg-white border p-6 rounded-[2rem] flex items-center justify-between shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-95 ${
+            filterTier === 'vvip' 
+              ? 'ring-2 ring-blue-500 border-blue-400 bg-blue-50/30 shadow-md' 
+              : 'border-slate-200 hover:border-slate-300'
+          }`}
+        >
           <div>
-            <p className="text-[10px] text-muted font-black uppercase tracking-widest mb-1">Faturamento Estimado</p>
+            <div className="flex items-center gap-1.5 mb-1">
+              <p className="text-[10px] text-muted font-black uppercase tracking-widest">Faturamento Estimado</p>
+              {filterTier === 'vvip' && (
+                <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+              )}
+            </div>
             <h3 className="text-2xl font-black text-primary">R$ {totalSpentByAll.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+            <p className="text-[10px] text-blue-600/80 font-bold mt-1">Filtrar clientes VIPs</p>
           </div>
-          <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center border border-blue-100">
+          <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center border border-blue-100 shrink-0">
             <TrendingUp size={20} />
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white border border-slate-200 p-6 rounded-[2rem] flex items-center justify-between shadow-sm hover:border-slate-300 transition-all">
+        <button 
+          type="button"
+          onClick={() => { setFilterTier('debtor'); setSortBy('debt'); }}
+          title="Clique para filtrar imediatamente todos com pendências (Fiado)"
+          className={`text-left bg-white border p-6 rounded-[2rem] flex items-center justify-between shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-95 ${
+            filterTier === 'debtor' 
+              ? 'ring-2 ring-red-500 border-red-500 bg-red-50/50 shadow-md' 
+              : 'border-slate-200 hover:border-red-200'
+          }`}
+        >
           <div>
-            <p className="text-[10px] text-muted font-black uppercase tracking-widest mb-1">Pendências (Fiado)</p>
+            <div className="flex items-center gap-1.5 mb-1">
+              <p className="text-[10px] text-red-600 font-black uppercase tracking-widest flex items-center gap-1">
+                <AlertCircle size={12} /> Pendências (Fiado)
+              </p>
+              {filterTier === 'debtor' && (
+                <span className="w-2 h-2 rounded-full bg-red-600 animate-ping" />
+              )}
+            </div>
             <h3 className="text-2xl font-black text-red-600">R$ {totalDebt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+            <p className="text-[10px] text-red-600 font-black mt-1 uppercase tracking-wider flex items-center gap-0.5">
+              <span>⚡ Clique para listar devedores</span>
+            </p>
           </div>
-          <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center border border-red-100">
+          <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center border border-red-100 shrink-0">
             <AlertCircle size={20} />
           </div>
-        </div>
+        </button>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-center">
@@ -280,36 +349,6 @@ export function Clientes() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {/* View Mode Toggle */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-inner">
-            <button
-              type="button"
-              onClick={() => setViewMode('list')}
-              className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all ${
-                viewMode === 'list' 
-                  ? 'bg-white text-primary shadow-sm border border-slate-200/50' 
-                  : 'text-slate-500 hover:text-primary'
-              }`}
-              title="Visualização em Lista (Modo otimizado para grande volume)"
-            >
-              <List size={16} />
-              <span className="hidden sm:inline">Lista</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('grid')}
-              className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all ${
-                viewMode === 'grid' 
-                  ? 'bg-white text-primary shadow-sm border border-slate-200/50' 
-                  : 'text-slate-500 hover:text-primary'
-              }`}
-              title="Visualização em Cards"
-            >
-              <LayoutGrid size={16} />
-              <span className="hidden sm:inline">Cards</span>
-            </button>
-          </div>
-
           {/* Status Filter */}
           <div className="relative">
             <select 
@@ -333,7 +372,7 @@ export function Clientes() {
             >
               <option value="all">Segmento: Todos</option>
               <option value="vvip">💎 VIPs (&gt; R$300)</option>
-              <option value="debtor">⚠️ Com Pendências</option>
+              <option value="debtor">⚠️ Com Pendências (Fiado)</option>
               <option value="new">✨ Novos (Últimos 30d)</option>
             </select>
             <Filter className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={16} />
@@ -372,47 +411,33 @@ export function Clientes() {
         </div>
       ) : (
         <div className="space-y-6">
-          {viewMode === 'list' ? (
-            <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                      <th className="py-4 px-6">Cliente</th>
-                      <th className="py-4 px-6">Contato</th>
-                      <th className="py-4 px-6">Gasto Total</th>
-                      <th className="py-4 px-6">Pendência / Saldo</th>
-                      <th className="py-4 px-6">Status</th>
-                      <th className="py-4 px-6 text-right">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {paginatedCustomers.map((customer, index) => (
-                      <CustomerTableRow
-                        key={`customer-row-${customer.uid || index}-${index}`}
-                        customer={customer}
-                        onViewDetails={() => handleViewDetails(customer)}
-                        onEdit={() => handleEditCustomer(customer)}
-                        onLinkAccount={() => handleLinkAccount(customer)}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                    <th className="py-4 px-6">Cliente</th>
+                    <th className="py-4 px-6">Contato & WhatsApp</th>
+                    <th className="py-4 px-6">Pendência / Saldo</th>
+                    <th className="py-4 px-6">Última Visita</th>
+                    <th className="py-4 px-6">Status</th>
+                    <th className="py-4 px-6 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {paginatedCustomers.map((customer, index) => (
+                    <CustomerTableRow
+                      key={`customer-row-${customer.uid || index}-${index}`}
+                      customer={customer}
+                      onViewDetails={() => handleViewDetails(customer)}
+                      onEdit={() => handleEditCustomer(customer)}
+                      onLinkAccount={() => handleLinkAccount(customer)}
+                    />
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {paginatedCustomers.map((customer, index) => (
-                <CustomerCard 
-                  key={`customer-card-${customer.uid || index}-${index}`} 
-                  customer={customer} 
-                  onViewDetails={() => handleViewDetails(customer)}
-                  onEdit={() => handleEditCustomer(customer)}
-                  onLinkAccount={() => handleLinkAccount(customer)}
-                />
-              ))}
-            </div>
-          )}
+          </div>
 
           {/* Pagination Controls */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 px-2">
@@ -537,6 +562,19 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
     return false;
   })();
 
+  const formatLastVisit = (lastVisit?: string) => {
+    if (!lastVisit) return 'Sem visitas';
+    try {
+      const parts = lastVisit.split('T')[0].split('-');
+      if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return lastVisit;
+    } catch {
+      return 'Sem visitas';
+    }
+  };
+
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50/80 transition-colors group">
       {/* Cliente */}
@@ -580,7 +618,7 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
         </div>
       </td>
 
-      {/* Contato */}
+      {/* Contato & WhatsApp */}
       <td className="py-4 px-6">
         <div className="space-y-1 text-xs font-semibold text-slate-600">
           {telefone ? (
@@ -589,14 +627,15 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
               <span>{telefone}</span>
               {cleanPhone && (
                 <a 
-                  href={`https://wa.me/55${cleanPhone}`}
+                  href={`https://wa.me/55${cleanPhone}?text=${encodeURIComponent(`Olá, ${customer.nome}! Tudo bem?`)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title="Abrir WhatsApp"
-                  className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                  title="Chamar no WhatsApp"
+                  className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold border border-emerald-200"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <MessageCircle size={14} />
+                  <MessageCircle size={12} />
+                  <span>Whats</span>
                 </a>
               )}
             </div>
@@ -610,11 +649,6 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
             </div>
           ) : null}
         </div>
-      </td>
-
-      {/* Gasto Total */}
-      <td className="py-4 px-6 font-mono text-sm font-bold text-slate-800">
-        R$ {totalSpent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
       </td>
 
       {/* Pendência / Saldo */}
@@ -636,12 +670,27 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
         )}
       </td>
 
+      {/* Última Visita */}
+      <td className="py-4 px-6 text-xs font-semibold text-slate-600">
+        <div className="flex items-center gap-1.5">
+          <Calendar size={13} className="text-slate-400 shrink-0" />
+          <span className="font-mono text-slate-700 font-bold">{formatLastVisit(customer.lastVisit)}</span>
+        </div>
+      </td>
+
       {/* Status */}
       <td className="py-4 px-6">
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${customer.ativo ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${customer.ativo ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-          {customer.ativo ? 'Ativo' : 'Inativo'}
-        </span>
+        {customer.bloqueadoParaAgendar ? (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-100">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+            Bloqueado
+          </span>
+        ) : (
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${customer.ativo ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${customer.ativo ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+            {customer.ativo ? 'Ativo' : 'Inativo'}
+          </span>
+        )}
       </td>
 
       {/* Ações */}
@@ -649,8 +698,8 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
         <div className="flex items-center justify-end gap-1.5">
           <button
             onClick={onViewDetails}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-accent hover:text-white text-slate-700 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
-            title="Ver Ficha Completa"
+            className="px-3.5 py-1.5 bg-accent/10 hover:bg-accent hover:text-white text-accent rounded-xl text-xs font-black transition-all flex items-center gap-1.5 active:scale-95 shadow-sm border border-accent/20"
+            title="Ver Ficha Completa do Cliente"
           >
             <span>Ficha</span>
             <ArrowRight size={14} />
@@ -682,6 +731,7 @@ function CustomerCard({ customer, onViewDetails, onEdit, onLinkAccount }: Custom
   const saldo = customer.saldo_atual ?? customer.balance ?? 0;
   const emAberto = customer.total_em_aberto ?? 0;
   const telefone = customer.telefone || customer.phone || 'Sem telefone';
+  const cleanPhone = telefone.replace(/\D/g, '');
 
   const isVvip = (customer.total_gasto || customer.totalSpent || 0) > 300;
   const isNew = (() => {
@@ -701,6 +751,19 @@ function CustomerCard({ customer, onViewDetails, onEdit, onLinkAccount }: Custom
     }
     return false;
   })();
+
+  const formatLastVisit = (lastVisit?: string) => {
+    if (!lastVisit) return 'Sem visitas';
+    try {
+      const parts = lastVisit.split('T')[0].split('-');
+      if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return lastVisit;
+    } catch {
+      return 'Sem visitas';
+    }
+  };
 
   return (
     <motion.div 
@@ -765,29 +828,44 @@ function CustomerCard({ customer, onViewDetails, onEdit, onLinkAccount }: Custom
         </div>
       </div>
 
-      <div className="space-y-3 mb-8">
-        <div className="flex items-center gap-3 text-xs text-muted font-bold">
-          <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center border border-slate-100">
-            <Phone size={14} className="text-slate-400" />
+      <div className="space-y-3 mb-6">
+        <div className="flex items-center justify-between text-xs text-muted font-bold">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center border border-slate-100">
+              <Phone size={14} className="text-slate-400" />
+            </div>
+            <span>{telefone}</span>
           </div>
-          <span>{telefone}</span>
+          {cleanPhone && (
+            <a 
+              href={`https://wa.me/55${cleanPhone}?text=${encodeURIComponent(`Olá, ${customer.nome}! Tudo bem?`)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Abrir WhatsApp"
+              className="p-1.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white rounded-lg transition-all flex items-center gap-1 text-[11px] font-bold border border-emerald-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <MessageCircle size={14} />
+              <span>WhatsApp</span>
+            </a>
+          )}
         </div>
         <div className="flex items-center gap-3 text-xs text-muted font-bold">
           <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center border border-slate-100">
-            <Mail size={14} className="text-slate-400" />
+            <Calendar size={14} className="text-slate-400" />
           </div>
-          <span className="truncate">{customer.email}</span>
+          <span>Última visita: <strong className="text-slate-700">{formatLastVisit(customer.lastVisit)}</strong></span>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 pt-6 border-t border-slate-50 mt-auto">
-        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner">
+      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50 mt-auto">
+        <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 shadow-inner">
           <p className="text-[10px] text-muted uppercase font-black tracking-widest mb-1">Dívidas</p>
           <p className={`text-sm font-black ${emAberto > 0 ? 'text-red-700' : 'text-slate-400'}`}>
             R$ {emAberto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </p>
         </div>
-        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner">
+        <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 shadow-inner">
           <p className="text-[10px] text-muted uppercase font-black tracking-widest mb-1">Saldo Líquido</p>
           <p className={`text-sm font-black ${saldo >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
             R$ {saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -797,9 +875,9 @@ function CustomerCard({ customer, onViewDetails, onEdit, onLinkAccount }: Custom
 
       <button 
         onClick={onViewDetails}
-        className="w-full mt-6 py-4 bg-slate-100 hover:bg-slate-200 text-primary rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-3 shadow-sm active:scale-95 uppercase tracking-widest"
+        className="w-full mt-5 py-3.5 bg-accent/10 hover:bg-accent text-accent hover:text-white rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 uppercase tracking-wider border border-accent/20"
       >
-        <span>Ver Perfil Completo</span>
+        <span>Abrir Ficha Completa</span>
         <ArrowRight size={16} />
       </button>
     </motion.div>
@@ -1008,6 +1086,8 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
 
 function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile, onClose: () => void, onEdit: () => void }) {
   const { user } = useAuth();
+  const { tenantId } = useTenant();
+  const [dontAddToCash, setDontAddToCash] = useState(false);
   const [history, setHistory] = useState<Appointment[]>([]);
   const [debts, setDebts] = useState<ClientDebt[]>([]);
   const [payments, setPayments] = useState<DebtPayment[]>([]);
@@ -1201,33 +1281,197 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
     }
     setSubmittingCredit(true);
     try {
-      const currentBal = customer.saldo_atual ?? customer.balance ?? 0;
-      const newBal = currentBal + amt;
+      const today = new Date().toISOString().split('T')[0];
+
+      // 1. Fetch pending debts to be paid off
+      const qDebts = query(
+        collection(db, 'client_debts'),
+        where('cliente_id', '==', customer.uid),
+        where('status', 'in', ['pendente', 'parcial'])
+      );
+      const debtsSnap = await getDocs(qDebts);
+      const pendingDebts = debtsSnap.docs.map(doc => ({ 
+        id: doc.id, 
+        ref: doc.ref, 
+        ...doc.data() 
+      } as ClientDebt & { ref: any }));
+
+      // Sort oldest first
+      pendingDebts.sort((a, b) => {
+        const tA = a.createdAt?.seconds || 0;
+        const tB = b.createdAt?.seconds || 0;
+        return tA - tB;
+      });
+
+      // 2. Query open/reopened cash session if not skipping cash registration
+      let cashDoc = null;
+      if (!dontAddToCash) {
+        const cashQuery = query(
+          collection(db, 'cash_sessions'),
+          where('tenantId', '==', tenantId),
+          where('status', 'in', ['open', 'reopened'])
+        );
+        const cashDocs = await getDocs(cashQuery);
+        if (!cashDocs.empty) {
+          const sortedDocs = [...cashDocs.docs].sort((a, b) => {
+            const tA = a.data().openedAt?.seconds || 0;
+            const tB = b.data().openedAt?.seconds || 0;
+            return tB - tA;
+          });
+          cashDoc = sortedDocs[0];
+        }
+      }
 
       const clientRef = doc(db, 'usuarios', customer.uid);
-      await updateDoc(clientRef, {
-        saldo_atual: newBal,
-        balance: newBal,
-        total_pago: increment(amt),
-        totalPaid: increment(amt),
-        updatedAt: serverTimestamp()
+      let totalDebtPaidOuter = 0;
+
+      await runTransaction(db, async (transaction) => {
+        // Reads first
+        const clientSnap = await transaction.get(clientRef);
+        const clientData = clientSnap.exists() ? clientSnap.data() : {};
+        const currentBal = clientData.saldo_atual ?? clientData.balance ?? 0;
+        const currentEmAberto = clientData.total_em_aberto ?? clientData.saldo_devedor ?? 0;
+
+        // Fetch latest state for debts in transaction
+        const latestDebts = [];
+        for (const debt of pendingDebts) {
+          const latestDebtSnap = await transaction.get(debt.ref);
+          if (latestDebtSnap.exists()) {
+            latestDebts.push({
+              ...debt,
+              ...latestDebtSnap.data() as ClientDebt
+            });
+          }
+        }
+
+        let remainingPayment = amt;
+        totalDebtPaidOuter = 0;
+
+        // Process payments against pending debts
+        for (const debt of latestDebts) {
+          if (remainingPayment <= 0.001) break;
+          const currentDebtRemaining = debt.remainingAmount;
+          if (currentDebtRemaining <= 0) continue;
+
+          const paymentToThisDebt = Math.min(remainingPayment, currentDebtRemaining);
+          remainingPayment -= paymentToThisDebt;
+          totalDebtPaidOuter += paymentToThisDebt;
+
+          // Update individual debt
+          transaction.update(debt.ref, {
+            remainingAmount: currentDebtRemaining - paymentToThisDebt,
+            status: (currentDebtRemaining - paymentToThisDebt) <= 0.001 ? 'pago' : 'parcial',
+            updatedAt: serverTimestamp()
+          });
+
+          // Create payment record inside transaction
+          const pRef = doc(collection(db, 'debt_payments'));
+          transaction.set(pRef, {
+            id: pRef.id,
+            cliente_id: customer.uid,
+            divida_id: debt.id,
+            amount: paymentToThisDebt,
+            paymentMethod: creditMethod,
+            date: today,
+            createdAt: serverTimestamp(),
+            is_deposit: false,
+            description: `Abatimento parcial/total de débito: ${debt.description || ''}`
+          });
+        }
+
+        // If there is any remaining payment left, record it as a prepayment deposit
+        if (remainingPayment > 0.001) {
+          const depositRef = doc(collection(db, 'debt_payments'));
+          transaction.set(depositRef, {
+            id: depositRef.id,
+            cliente_id: customer.uid,
+            amount: remainingPayment,
+            paymentMethod: creditMethod,
+            date: today,
+            createdAt: serverTimestamp(),
+            is_deposit: true,
+            description: 'Adição de crédito pré-pago (Sobra/Saldo)'
+          });
+        }
+
+        // Update Client profile
+        const newBal = currentBal + amt;
+        const newEmAberto = Math.max(0, currentEmAberto - totalDebtPaidOuter);
+
+        transaction.update(clientRef, {
+          saldo_atual: newBal,
+          balance: newBal,
+          total_pago: increment(amt),
+          totalPaid: increment(amt),
+          total_em_aberto: newEmAberto,
+          saldo_devedor: newEmAberto,
+          updatedAt: serverTimestamp()
+        });
+
+        // Add to Cash / Caixa if requested
+        if (!dontAddToCash && cashDoc) {
+          const caixa_id = cashDoc.id;
+          const movementRef = doc(collection(db, 'cash_movements'));
+          transaction.set(movementRef, {
+            id: movementRef.id,
+            tenantId,
+            caixa_id,
+            type: 'income',
+            category: totalDebtPaidOuter > 0 ? 'Recebimento de Dívida' : 'Adição de Crédito',
+            description: totalDebtPaidOuter > 0 
+              ? `Recebimento Dívida - ${customer.nome}` 
+              : `Adição de Crédito - ${customer.nome}`,
+            amount: amt,
+            paymentMethod: creditMethod,
+            is_receivable: false,
+            referencia_id: customer.uid,
+            usuario_id: user?.uid || '',
+            usuario_name: user?.displayName || 'Admin',
+            date: today,
+            createdAt: serverTimestamp()
+          });
+
+          const cashRef = doc(db, 'cash_sessions', caixa_id);
+          transaction.update(cashRef, {
+            total_income: increment(amt),
+            totalIncome: increment(amt),
+            expected_balance: increment(amt),
+            expectedBalance: increment(amt),
+            updatedAt: serverTimestamp()
+          });
+        }
+
+        // Financial accounting (for Dashboard)
+        if (!dontAddToCash) {
+          const finRef = doc(collection(db, 'financial_transactions'));
+          transaction.set(finRef, {
+            id: finRef.id,
+            tenantId,
+            type: 'income',
+            status: 'pago',
+            category: totalDebtPaidOuter > 0 ? 'Recebimento Fiado' : 'Crédito Cliente',
+            amount: amt,
+            description: totalDebtPaidOuter > 0 
+              ? `Recebimento Fiado - ${customer.nome}` 
+              : `Adição de Crédito - ${customer.nome}`,
+            date: today,
+            paymentMethod: creditMethod,
+            cliente_id: customer.uid,
+            cliente_name: customer.nome,
+            created_at: serverTimestamp(),
+            createdAt: serverTimestamp()
+          });
+        }
       });
 
-      const paymentRef = doc(collection(db, 'debt_payments'));
-      await setDoc(paymentRef, {
-        id: paymentRef.id,
-        cliente_id: customer.uid,
-        amount: amt,
-        paymentMethod: creditMethod,
-        date: new Date().toISOString().split('T')[0],
-        createdAt: serverTimestamp(),
-        is_deposit: true,
-        description: 'Adição de crédito pré-pago'
-      });
-
-      toast.success(`Crédito de R$ ${amt.toFixed(2)} adicionado!`);
+      toast.success(
+        totalDebtPaidOuter > 0 
+          ? `Lançamento de R$ ${amt.toFixed(2)} registrado! Dívida de R$ ${totalDebtPaidOuter.toFixed(2)} quitada/abatida.`
+          : `Crédito de R$ ${amt.toFixed(2)} adicionado!`
+      );
       setCreditAmount('');
       setShowCreditForm(false);
+      setDontAddToCash(false); // Reset checkbox
     } catch (err) {
       console.error("Erro ao depositar crédito:", err);
       toast.error('Erro ao adicionar crédito.');
@@ -1254,6 +1498,31 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
       toast.error('Erro ao registrar anotação.');
     } finally {
       setSavingNote(false);
+    }
+  };
+
+  const [isTogglingBlock, setIsTogglingBlock] = useState(false);
+
+  const handleToggleBlock = async () => {
+    const newBlockedState = !customer.bloqueadoParaAgendar;
+    const actionText = newBlockedState ? 'bloquear os agendamentos pelo app de' : 'liberar os agendamentos de';
+    
+    if (window.confirm(`Tem certeza que deseja ${actionText} ${customer.nome}?`)) {
+      setIsTogglingBlock(true);
+      try {
+        await userService.updateUserProfile(customer.uid, {
+          bloqueadoParaAgendar: newBlockedState
+        });
+        toast.success(newBlockedState 
+          ? `Cliente ${customer.nome} bloqueado para novos agendamentos!` 
+          : `Agendamentos do cliente ${customer.nome} liberados com sucesso!`
+        );
+      } catch (err) {
+        console.error("Erro ao alterar permissão de agendamento:", err);
+        toast.error("Erro ao atualizar status do cliente.");
+      } finally {
+        setIsTogglingBlock(false);
+      }
     }
   };
 
@@ -1325,71 +1594,107 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
   const pontosFidelidade = customer.pontos ?? customer.points ?? 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm overflow-hidden">
       <motion.div 
         initial={{ x: '100%' }}
         animate={{ x: 0 }}
         exit={{ x: '100%' }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-        className="bg-surface border-l border-border w-full max-w-xl h-full overflow-y-auto flex flex-col custom-scrollbar shadow-2xl"
+        className="bg-surface border-l border-border w-full max-w-xl h-screen max-h-screen overflow-y-auto flex flex-col custom-scrollbar shadow-2xl relative"
       >
-        <div className="p-8 border-b border-border flex items-center justify-between sticky top-0 bg-surface/90 backdrop-blur-md z-10">
-          <div className="flex items-center gap-6">
+        <div className="p-6 border-b border-border flex flex-wrap items-center justify-between gap-4 sticky top-0 bg-surface/90 backdrop-blur-md z-10">
+          <div className="flex items-center gap-4">
             <button onClick={onClose} className="p-2.5 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100 shadow-sm">
               <X size={20} />
             </button>
-            <h2 className="text-2xl font-black text-primary tracking-tight">Ficha do Cliente</h2>
+            <h2 className="text-xl font-black text-primary tracking-tight">Ficha do Cliente</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button 
+              onClick={handleToggleBlock}
+              disabled={isTogglingBlock}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-black text-xs transition-all border shadow-sm active:scale-95 ${
+                customer.bloqueadoParaAgendar 
+                  ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200' 
+                  : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200'
+              }`}
+              title={customer.bloqueadoParaAgendar ? "Desbloquear agendamentos pelo app" : "Bloquear cliente para agendamentos"}
+            >
+              {isTogglingBlock ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : customer.bloqueadoParaAgendar ? (
+                <>
+                  <ShieldCheck size={15} />
+                  <span>DESBLOQUEAR</span>
+                </>
+              ) : (
+                <>
+                  <Ban size={15} />
+                  <span>BLOQUEAR</span>
+                </>
+              )}
+            </button>
             <button 
               onClick={onEdit}
-              className="flex items-center gap-2 bg-amber-50 text-amber-700 hover:bg-amber-100 px-5 py-2.5 rounded-xl font-black text-xs transition-all border border-amber-100 active:scale-95 animate-pulse"
+              className="flex items-center gap-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 px-3.5 py-2 rounded-xl font-black text-xs transition-all border border-amber-100 active:scale-95"
             >
-              <Edit2 size={16} />
+              <Edit2 size={15} />
               <span>EDITAR</span>
             </button>
             <button 
               onClick={handleDelete}
-              className="flex items-center gap-2 bg-red-50 text-red-600 hover:bg-red-100 px-5 py-2.5 rounded-xl font-black text-xs transition-all border border-red-100 active:scale-95"
+              className="flex items-center gap-1.5 bg-red-50 text-red-600 hover:bg-red-100 px-3.5 py-2 rounded-xl font-black text-xs transition-all border border-red-100 active:scale-95"
             >
-              <Trash2 size={16} />
+              <Trash2 size={15} />
               <span>EXCLUIR</span>
             </button>
           </div>
         </div>
 
-        <div className="p-10 space-y-10">
-          <section className="flex flex-col items-center text-center space-y-6">
-            <div className="w-32 h-32 bg-accent rounded-[2.5rem] flex items-center justify-center text-white font-black text-5xl shadow-2xl shadow-accent/20 border-4 border-white">
+        <div className="p-8 space-y-8">
+          <section className="flex flex-col items-center text-center space-y-5">
+            <div className="w-28 h-28 bg-accent rounded-[2.5rem] flex items-center justify-center text-white font-black text-4xl shadow-2xl shadow-accent/20 border-4 border-white relative">
               {customer.nome.charAt(0).toUpperCase()}
+              {customer.bloqueadoParaAgendar && (
+                <div className="absolute -top-1 -right-1 bg-rose-600 text-white p-1.5 rounded-full border-2 border-white shadow-md" title="Cliente Bloqueado">
+                  <Ban size={16} />
+                </div>
+              )}
             </div>
             <div className="space-y-2">
-              <h3 className="text-3xl font-black text-primary tracking-tight">{customer.nome}</h3>
-              <p className="text-muted text-sm font-bold">{customer.email}</p>
+              <h3 className="text-2xl font-black text-primary tracking-tight">{customer.nome}</h3>
+              <p className="text-muted text-sm font-bold">{customer.email || 'Sem e-mail cadastrado'}</p>
               
-              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-                <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full shadow-inner border text-xs font-black ${
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                <div className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full shadow-inner border text-[11px] font-black ${
                   customer.ativo ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-slate-50 text-slate-500 border-slate-100'
                 }`}>
                   <div className={`w-2 h-2 rounded-full ${customer.ativo ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
                   <span>{customer.ativo ? 'CLIENTE ATIVO' : 'INATIVO'}</span>
                 </div>
 
-                <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full shadow-inner border text-xs font-black ${
+                {customer.bloqueadoParaAgendar && (
+                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-full shadow-inner text-[11px] font-black">
+                    <Ban size={12} />
+                    <span>AGENDAMENTO BLOQUEADO</span>
+                  </div>
+                )}
+
+                <div className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full shadow-inner border text-[11px] font-black ${
                   temLogin ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-amber-50 text-amber-600 border-amber-100'
                 }`}>
                   <span>{temLogin ? '🟢 USUÁRIO COM LOGIN' : '🔴 SEM LOGIN CLIENTE'}</span>
                 </div>
 
-                <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-full shadow-inner text-xs font-black">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-blue-50 text-blue-700 border border-blue-100 rounded-full shadow-inner text-[11px] font-black">
                   ⭐ {pontosFidelidade} PONTOS FIDELIDADE
                 </div>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-3">
                 <button
                   onClick={handleWhatsApp}
-                  className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-600/10 active:scale-95 transition-all w-full md:w-auto"
+                  className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-600/10 active:scale-95 transition-all w-full md:w-auto"
                 >
                   <MessageCircle size={16} />
                   <span>Chamar no WhatsApp</span>
@@ -1405,7 +1710,15 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
               <span className="text-[10px] font-black uppercase text-accent tracking-[0.2em]">Dashboard Elite</span>
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-md col-span-2 md:col-span-1 flex flex-col justify-between">
+                <p className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <TrendingUp size={13} className="text-indigo-400" /> Gasto Total Acumulado
+                </p>
+                <p className="text-2xl font-black text-white font-mono tracking-tight mt-1">
+                  R$ {totalGastoFinal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
               <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
                 <p className="text-[10px] text-muted font-bold uppercase tracking-wider mb-1">Total de Agendamentos</p>
                 <p className="text-xl font-black text-primary">{totalAgendamentos} visitas</p>
@@ -1414,11 +1727,11 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                 <p className="text-[10px] text-muted font-bold uppercase tracking-wider mb-1">Serviços Concluídos</p>
                 <p className="text-xl font-black text-primary">{quantidadeServicos} cortes</p>
               </div>
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm col-span-2 md:col-span-1">
                 <p className="text-[10px] text-muted font-bold uppercase tracking-wider mb-1">Mais Realizado</p>
                 <p className="text-xs font-black text-accent truncate">{maisServicoFeito}</p>
               </div>
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm col-span-2 md:col-span-2">
                 <p className="text-[10px] text-muted font-bold uppercase tracking-wider mb-1">Profissional Preferido</p>
                 <p className="text-xs font-black text-emerald-600 truncate">{profissionalMaisAtendido}</p>
               </div>
@@ -1514,6 +1827,20 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                       </select>
                     </div>
                   </div>
+                  
+                  <div className="flex items-center gap-2 py-2">
+                    <input 
+                      type="checkbox"
+                      id="dontAddToCash"
+                      checked={dontAddToCash}
+                      onChange={(e) => setDontAddToCash(e.target.checked)}
+                      className="w-4 h-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <label htmlFor="dontAddToCash" className="text-[10px] font-black text-emerald-800 cursor-pointer select-none">
+                      Não adicionar valor ao caixa (Apenas ajuste manual / correção de saldo)
+                    </label>
+                  </div>
+
                   <button 
                     type="submit" 
                     disabled={submittingCredit}

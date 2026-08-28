@@ -24,7 +24,8 @@ import {
   MinusCircle,
   RefreshCw,
   Tag,
-  Info
+  Info,
+  Award
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -97,6 +98,7 @@ export function Estoque() {
   const [valorComissao, setValorComissao] = useState<number>(0);
   const [comissoesPorProfissional, setComissoesPorProfissional] = useState<Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>>({});
   const [showInPortal, setShowInPortal] = useState(true);
+  const [pontosResgate, setPontosResgate] = useState<number | ''>('');
 
   // Custom Alert / Confirm Modal States
   const [alertModal, setAlertModal] = useState<{
@@ -129,6 +131,7 @@ export function Estoque() {
         setValorComissao((editingProduct as any).valor_comissao || 0);
         setComissoesPorProfissional((editingProduct as any).comissoes_por_profissional || {});
         setShowInPortal(editingProduct.showInPortal ?? true);
+        setPontosResgate(editingProduct.pontos_resgate ?? '');
       } else {
         const hasValidCategory = categories.some(c => c.id === selectedCategoryId);
         if (!hasValidCategory && categories.length > 0) {
@@ -140,6 +143,7 @@ export function Estoque() {
         setValorComissao(0);
         setComissoesPorProfissional({});
         setShowInPortal(true);
+        setPontosResgate('');
       }
     } else {
       setSelectedCategoryId('');
@@ -301,6 +305,7 @@ export function Estoque() {
       valor_comissao: tipoComissao === 'padrao' ? 0 : Number(valorComissao),
       comissoes_por_profissional: comissoesPorProfissional,
       showInPortal,
+      pontos_resgate: pontosResgate !== '' && Number(pontosResgate) > 0 ? Number(pontosResgate) : 0,
     };
 
     try {
@@ -1060,6 +1065,32 @@ export function Estoque() {
                           </button>
                         </div>
                       </div>
+
+                      <div className="space-y-1.5 md:col-span-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black text-indigo-600 uppercase tracking-wider ml-1 flex items-center gap-1">
+                            <Award size={13} className="text-indigo-600" />
+                            Pontos para Resgate (Programa de Fidelidade)
+                          </label>
+                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Opcional (Deixe 0 para desativar resgate)</span>
+                        </div>
+                        <div className="relative">
+                          <Award className="absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-500" size={16} />
+                          <input 
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={pontosResgate === '' ? '' : pontosResgate}
+                            onFocus={(e) => e.target.select()}
+                            onChange={e => setPontosResgate(e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0))}
+                            placeholder="Ex: 50 (Cliente troca 50 pontos por este produto)"
+                            className="w-full bg-indigo-50/40 border border-indigo-200/80 focus:bg-white focus:ring-4 focus:ring-indigo-100 focus:border-indigo-600 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-indigo-950 outline-none transition"
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-medium ml-1">
+                          Pontos necessários para o cliente resgatar este produto no Portal do Cliente.
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -1709,6 +1740,12 @@ function ProductCard({ product, onEdit, onMovement, onDelete, isAdmin }: Product
                 <span className="text-[10px] text-muted font-bold uppercase tracking-widest">{product.categoryName}</span>
                 <span className={`w-1.5 h-1.5 rounded-full ${product.status === 'active' ? 'bg-emerald-500' : 'bg-red-400'}`} />
                 <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{product.status === 'active' ? 'Ativo' : 'Inativo'}</span>
+                {product.pontos_resgate && product.pontos_resgate > 0 ? (
+                  <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[8px] font-black uppercase tracking-widest rounded-md flex items-center gap-0.5">
+                    <Award size={8} className="text-indigo-600" />
+                    <span>{product.pontos_resgate} pts</span>
+                  </span>
+                ) : null}
               </div>
               {product.fornecedor_name && (
                 <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">

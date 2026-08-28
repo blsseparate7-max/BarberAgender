@@ -519,8 +519,8 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
     const qProf = query(collection(db, 'usuarios'), orderBy('nome', 'asc'));
     const unsubscribeProf = onSnapshot(qProf, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
-      // Show only active barbers/managers
-      const barbersOnly = docs.filter(u => (u.tipo === 'barbeiro' || u.tipo === 'gerente') && u.ativo !== false);
+      // Show only active barbers/managers/admins
+      const barbersOnly = docs.filter(u => (u.tipo === 'barbeiro' || u.tipo === 'gerente' || u.tipo === 'admin') && u.ativo !== false);
       setProfessionals(barbersOnly);
 
       // Default to all active barbers if service is new or has no saved barbeiros_ids yet

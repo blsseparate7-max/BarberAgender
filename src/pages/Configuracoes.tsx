@@ -100,6 +100,10 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [state, setState] = useState(tenant?.address?.state || '');
   const [zipCode, setZipCode] = useState(tenant?.address?.zipCode || '');
 
+  // Agenda slot configurations
+  const [slotInterval, setSlotInterval] = useState<number>(tenant?.slot_interval || 15);
+  const [slotStrategy, setSlotStrategy] = useState<'fixed' | 'dynamic'>(tenant?.slot_calculation_strategy || 'fixed');
+
   // Personal profile states
   const [userProfileName, setUserProfileName] = useState(profile?.nome || '');
   const [userProfilePhone, setUserProfilePhone] = useState(profile?.telefone || profile?.phone || '');
@@ -122,6 +126,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       setCity(tenant.address?.city || '');
       setState(tenant.address?.state || '');
       setZipCode(tenant.address?.zipCode || '');
+      setSlotInterval(tenant.slot_interval || 15);
+      setSlotStrategy(tenant.slot_calculation_strategy || 'fixed');
 
       const tPlan = (tenant as any).plan || tenant.planName || tenant.planId;
       if (tPlan) {
@@ -491,6 +497,25 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     }
   };
 
+  const [isSavingAgendaSlots, setIsSavingAgendaSlots] = useState(false);
+
+  const handleSaveAgendaSlots = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingAgendaSlots(true);
+    try {
+      await updateTenantProfile({
+        slot_interval: Number(slotInterval),
+        slot_calculation_strategy: slotStrategy,
+      });
+      toast.success("Configuração de visualização da agenda salva com sucesso!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao salvar configuração da agenda.");
+    } finally {
+      setIsSavingAgendaSlots(false);
+    }
+  };
+
   const handleSaveRules = (e: React.FormEvent) => {
     e.preventDefault();
     toast.success("Regras estratégicas de rodízio atualizadas!");
@@ -559,6 +584,12 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             label="Funcionamento" 
             active={activeSection === 'hours'} 
             onClick={() => setActiveSection('hours')}
+          />
+          <ConfigSidebarItem 
+            icon={<Sliders size={18} />} 
+            label="Customizar Agenda" 
+            active={activeSection === 'agenda_slots'} 
+            onClick={() => setActiveSection('agenda_slots')}
           />
           <ConfigSidebarItem 
             icon={<Sliders size={18} />} 
@@ -1052,6 +1083,124 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                   >
                     {isSavingProfile ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
                     Salvar Alterações
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Customizar Agenda (Geração de Horários Livres) */}
+            {activeSection === 'agenda_slots' && (
+              <form onSubmit={handleSaveAgendaSlots} className="space-y-8 animate-fadeIn">
+                <div>
+                  <h3 className="text-xl font-black text-primary tracking-tight">Customização da Agenda</h3>
+                  <p className="text-xs text-muted font-semibold mt-1">Configure o intervalo entre as vagas e a estratégia de cálculo dos horários livres exibidos aos clientes.</p>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Estratégia de Cálculo */}
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Estratégia de Exibição dos Horários Livres</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setSlotStrategy('fixed')}
+                        className={`p-6 rounded-3xl border-2 text-left transition-all flex flex-col justify-between gap-3 ${
+                          slotStrategy === 'fixed'
+                            ? 'bg-indigo-50/40 border-indigo-500 shadow-sm ring-4 ring-indigo-500/10'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-2xl">🗓️</span>
+                          <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                            slotStrategy === 'fixed' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {slotStrategy === 'fixed' ? 'Ativo' : 'Selecionar'}
+                          </span>
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-slate-800">Grade de Horários Fixa</h4>
+                          <p className="text-xs text-slate-500 mt-1 leading-relaxed font-semibold">
+                            Exibe horários livres de forma padronizada em intervalos fixos (ex: a cada 15, 30 ou 60 minutos), 
+                            independentemente da duração do serviço.
+                          </p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSlotStrategy('dynamic')}
+                        className={`p-6 rounded-3xl border-2 text-left transition-all flex flex-col justify-between gap-3 ${
+                          slotStrategy === 'dynamic'
+                            ? 'bg-indigo-50/40 border-indigo-500 shadow-sm ring-4 ring-indigo-500/10'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-2xl">⚡</span>
+                          <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                            slotStrategy === 'dynamic' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {slotStrategy === 'dynamic' ? 'Ativo' : 'Selecionar'}
+                          </span>
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-slate-800">Grade Dinâmica por Serviço</h4>
+                          <p className="text-xs text-slate-500 mt-1 leading-relaxed font-semibold">
+                            Calcula os horários livres sequencialmente a partir do tempo de duração do serviço escolhido. 
+                            Minimiza lacunas na agenda e maximiza a produtividade do profissional.
+                          </p>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Intervalo de Tempo (Apenas se estratégia for fixed) */}
+                  {slotStrategy === 'fixed' && (
+                    <div className="space-y-3 p-6 bg-slate-50 border border-slate-150 rounded-3xl animate-fadeIn">
+                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Tamanho do Intervalo (Intervalo das Vagas)</label>
+                      <select
+                        value={slotInterval}
+                        onChange={(e) => setSlotInterval(Number(e.target.value))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-xs cursor-pointer"
+                      >
+                        <option value={10}>Cada 10 minutos (Altíssima densidade)</option>
+                        <option value={15}>Cada 15 minutos (Padrão de mercado)</option>
+                        <option value={20}>Cada 20 minutos</option>
+                        <option value={30}>Cada 30 minutos (Recomendado para serviços rápidos)</option>
+                        <option value={40}>Cada 40 minutos</option>
+                        <option value={45}>Cada 45 minutos</option>
+                        <option value={60}>Cada 60 minutos / 1 hora (Ideal para cortes complexos ou barba e cabelo)</option>
+                      </select>
+                      <p className="text-[10px] text-muted ml-1 leading-relaxed font-semibold">
+                        Define os incrementos de tempo exibidos. Ex: Com intervalo de 30 minutos, o cliente poderá escolher 09:00, 09:30, 10:00, etc.
+                      </p>
+                    </div>
+                  )}
+
+                  {slotStrategy === 'dynamic' && (
+                    <div className="p-6 bg-indigo-50/50 border border-indigo-100 rounded-3xl animate-fadeIn text-xs text-indigo-900 leading-relaxed space-y-2">
+                      <p className="font-black uppercase tracking-wider text-[10px] text-indigo-850">ℹ️ Como funciona a grade dinâmica?</p>
+                      <p className="font-semibold text-indigo-700/90">
+                        O sistema calculará as opções de horários livres considerando que um novo agendamento pode começar exatamente 
+                        após o término de outro agendamento, ou a cada intervalo mínimo padrão de 15 minutos, adaptando-se em tempo real 
+                        à duração do serviço solicitado.
+                      </p>
+                      <p className="font-bold text-indigo-800">
+                        Isso impede atrasos, ajusta a duração baseando-se no tempo de cada profissional para o serviço, e evita "buracos" ineficientes na agenda.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end pt-6 border-t border-slate-100">
+                  <button 
+                    type="submit"
+                    disabled={isSavingAgendaSlots}
+                    className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-lg active:scale-95 uppercase tracking-widest flex items-center gap-3 disabled:opacity-50"
+                  >
+                    {isSavingAgendaSlots ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                    Salvar Configurações da Agenda
                   </button>
                 </div>
               </form>

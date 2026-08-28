@@ -175,7 +175,7 @@ export function Barbeiros() {
     setLoading(true);
     const q = query(
       collection(db, 'usuarios'),
-      where('tipo', 'in', ['barbeiro', 'gerente']),
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
       where('tenantId', '==', tenantId)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -288,7 +288,7 @@ export function Barbeiros() {
 
         await userService.updateUserProfile(editingBarber.uid, {
           ...data,
-          tipo: data.is_gestor ? 'gerente' : 'barbeiro'
+          tipo: editingBarber.tipo === 'admin' ? 'admin' : (data.is_gestor ? 'gerente' : 'barbeiro')
         });
         toast.success(`Perfil de ${data.nome} atualizado em tempo real!`);
       } else {
@@ -372,25 +372,7 @@ export function Barbeiros() {
         </div>
       </header>
 
-      {barbeiros.filter(b => (b.nome && b.nome.toLowerCase().includes('gabriel')) || (b.email && b.email.toLowerCase() === 'barbeariagbcortes7@gmail.com')).length > 1 && (
-        <div className="bg-amber-50 border border-amber-200 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="text-amber-600 shrink-0" size={24} />
-            <div>
-              <h4 className="font-extrabold text-amber-900 text-sm">Duplicidade Detectada (Gabriel Alexandre)</h4>
-              <p className="text-xs text-amber-700 font-medium">Detectamos múltiplos cadastros para o mesmo profissional. Você pode unificar os registros para migrar todos os agendamentos e comissões para o perfil principal.</p>
-            </div>
-          </div>
-          <button
-            onClick={handleResolveDuplicates}
-            disabled={isMerging}
-            className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition shrink-0 shadow-sm flex items-center gap-2 disabled:opacity-50"
-          >
-            {isMerging && <Loader2 className="animate-spin" size={14} />}
-            <span>Unificar Cadastros Agora</span>
-          </button>
-        </div>
-      )}
+
 
       {/* Control filters bar */}
       <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
@@ -821,7 +803,34 @@ interface BarberModalProps {
 }
 
 function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
-  const [activeTab, setActiveTab] = useState<'cadastro' | 'pessoais' | 'agenda'>('cadastro');
+  const [activeTab, setActiveTab] = useState<'cadastro' | 'pessoais' | 'agenda' | 'servicos_duracoes'>('cadastro');
+  const [servicosDuracoes, setServicosDuracoes] = useState<Record<string, number>>(barber?.servicos_duracoes || {});
+  const { tenantId } = useTenant();
+  const [services, setServices] = useState<any[]>([]);
+  const [loadingServices, setLoadingServices] = useState(false);
+
+  useEffect(() => {
+    const fetchServices = async () => {
+      setLoadingServices(true);
+      try {
+        const q = query(
+          collection(db, 'services'),
+          where('tenantId', '==', tenantId),
+          where('active', '==', true)
+        );
+        const snapshot = await getDocs(q);
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setServices(list);
+      } catch (err) {
+        console.error("Erro ao carregar serviços no modal de profissional:", err);
+      } finally {
+        setLoadingServices(false);
+      }
+    };
+    if (tenantId) {
+      fetchServices();
+    }
+  }, [tenantId]);
   
   // Campos de Foto do Profissional (somente jpeg)
   const [fotoUrl, setFotoUrl] = useState(barber?.fotoUrl ?? barber?.avatarUrl ?? '');
@@ -1047,6 +1056,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
       showInPortal,
       fotoUrl: fotoUrl.trim(),
       avatarUrl: fotoUrl.trim(),
+      servicos_duracoes: servicosDuracoes,
     };
 
     if (!barber) {
@@ -1126,6 +1136,17 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
             }`}
           >
             ⏰ 3. Horários & Escala
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('servicos_duracoes')}
+            className={`flex-1 py-3 text-[10px] sm:text-xs uppercase font-black tracking-widest text-center border-b-2 transition ${
+              activeTab === 'servicos_duracoes' 
+                ? 'border-indigo-600 text-indigo-600 bg-white' 
+                : 'border-transparent text-slate-450 hover:text-slate-700 hover:bg-slate-50/40'
+            }`}
+          >
+            ✂️ 4. Tempos de Serviço
           </button>
         </div>
 
@@ -1707,6 +1728,75 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {/* TAB 4: TEMPOS DE SERVICO PERSONALIZADOS */}
+            {activeTab === 'servicos_duracoes' && (
+              <div className="space-y-5 animate-fadeIn">
+                <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-2xl">
+                  <h4 className="text-xs font-black uppercase text-indigo-850 flex items-center gap-2 mb-1">
+                    ⏱️ Tempos de Execução Customizados
+                  </h4>
+                  <p className="text-[10px] text-indigo-700 font-bold leading-relaxed">
+                    Defina tempos de execução específicos para este profissional. Se deixado em branco ou 0, 
+                    o sistema utilizará o tempo padrão cadastrado na aba de Serviços.
+                  </p>
+                </div>
+
+                {loadingServices ? (
+                  <div className="py-8 flex items-center justify-center gap-2 text-slate-400">
+                    <Loader2 className="animate-spin" size={16} />
+                    <span className="text-xs font-bold uppercase tracking-wider">Buscando serviços...</span>
+                  </div>
+                ) : services.length === 0 ? (
+                  <div className="py-8 text-center text-slate-450 text-xs font-bold uppercase tracking-wider bg-slate-50 border border-dashed rounded-2xl">
+                    Nenhum serviço cadastrado na barbearia.
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
+                    {services.map((service) => {
+                      const value = servicosDuracoes[service.id] || '';
+                      return (
+                        <div key={service.id} className="p-4 bg-slate-50 hover:bg-slate-100/50 border border-slate-200/60 rounded-2xl flex items-center justify-between gap-4 transition-colors">
+                          <div className="flex-1 min-w-0">
+                            <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider mb-1 inline-block">
+                              {service.categoria || 'Geral'}
+                            </span>
+                            <h5 className="text-sm font-black text-primary truncate">{service.nome}</h5>
+                            <p className="text-[10px] text-slate-450 font-bold uppercase tracking-wide">
+                              Tempo Padrão: {service.duracao_minutos} min
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <input
+                              type="number"
+                              min="5"
+                              max="360"
+                              value={value}
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                setServicosDuracoes(prev => {
+                                  const copy = { ...prev };
+                                  if (val === '' || val <= 0) {
+                                    delete copy[service.id];
+                                  } else {
+                                    copy[service.id] = val;
+                                  }
+                                  return copy;
+                                });
+                              }}
+                              className="w-20 bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2 px-3 text-center text-xs font-black text-primary outline-none transition"
+                              placeholder={`${service.duracao_minutos}`}
+                            />
+                            <span className="text-xs font-black text-slate-500 uppercase">min</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 

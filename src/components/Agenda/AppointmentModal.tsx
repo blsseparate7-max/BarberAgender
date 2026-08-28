@@ -154,7 +154,7 @@ export function AppointmentModal({
     if (!service) return;
 
     try {
-      const slots = await appointmentService.getAvailableSlots(formData.profissional_id, formData.date, service.duration);
+      const slots = await appointmentService.getAvailableSlots(formData.profissional_id, formData.date, service.duration, formData.servico_id);
       if (formData.startTime && !slots.includes(formData.startTime)) {
         slots.push(formData.startTime);
         slots.sort();
@@ -200,8 +200,17 @@ export function AppointmentModal({
         throw new Error('Cliente não encontrado. Por favor, selecione novamente.');
       }
 
+      // Check for professional custom service duration override
+      let finalDuration = service.duration;
+      if (barber && (barber as any).servicos_duracoes && (barber as any).servicos_duracoes[service.id]) {
+        const overrideVal = (barber as any).servicos_duracoes[service.id];
+        if (overrideVal && overrideVal > 0) {
+          finalDuration = overrideVal;
+        }
+      }
+
       const start = parse(formData.startTime, 'HH:mm', new Date());
-      const endTime = format(addMinutes(start, service.duration), 'HH:mm');
+      const endTime = format(addMinutes(start, finalDuration), 'HH:mm');
 
       const appointmentData = {
         cliente_id: client.uid,
@@ -213,7 +222,7 @@ export function AppointmentModal({
         date: formData.date,
         startTime: formData.startTime,
         endTime,
-        duration: service.duration,
+        duration: finalDuration,
         price: service.price,
         status: formData.status,
         origin: formData.origin,

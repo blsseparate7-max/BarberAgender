@@ -870,7 +870,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         const realBarbers = barbers.filter(b => b.uid !== 'any');
         if (realBarbers.length > 0) {
           const allSlotsPromises = realBarbers.map(b => 
-            appointmentService.getAvailableSlots(b.uid, selectedDate, duration)
+            appointmentService.getAvailableSlots(b.uid, selectedDate, duration, selectedService.id)
           );
           const results = await Promise.all(allSlotsPromises);
           // Get the union of all available slots and sort them
@@ -880,7 +880,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         slots = await appointmentService.getAvailableSlots(
           selectedBarber.uid,
           selectedDate,
-          duration
+          duration,
+          selectedService.id
         );
       }
 
@@ -923,11 +924,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
     setIsSubmitting(true);
     try {
-      const duration = selectedService.duracao_minutos || selectedService.duration || 30;
-      const startParsed = parse(selectedTime, 'HH:mm', new Date());
-      const endParsed = addMinutes(startParsed, duration);
-      const endTimeStr = format(endParsed, 'HH:mm');
-
+      let duration = selectedService.duracao_minutos || selectedService.duration || 30;
       let assignedBarberId = selectedBarber.uid;
       let assignedBarberName = selectedBarber.nome;
 
@@ -936,7 +933,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         const realBarbers = barbers.filter(b => b.uid !== 'any');
         let foundBarber = null;
         for (const b of realBarbers) {
-          const slots = await appointmentService.getAvailableSlots(b.uid, selectedDate, duration);
+          const slots = await appointmentService.getAvailableSlots(b.uid, selectedDate, duration, selectedService.id);
           if (slots.includes(selectedTime)) {
             foundBarber = b;
             break;
@@ -954,6 +951,19 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           assignedBarberName = 'Profissional da Casa';
         }
       }
+
+      // Check if selected or assigned professional has custom duration override for this service
+      const chosenBarber = barbers.find(b => b.uid === assignedBarberId);
+      if (chosenBarber && chosenBarber.servicos_duracoes && chosenBarber.servicos_duracoes[selectedService.id]) {
+        const overrideVal = chosenBarber.servicos_duracoes[selectedService.id];
+        if (overrideVal && overrideVal > 0) {
+          duration = overrideVal;
+        }
+      }
+
+      const startParsed = parse(selectedTime, 'HH:mm', new Date());
+      const endParsed = addMinutes(startParsed, duration);
+      const endTimeStr = format(endParsed, 'HH:mm');
 
       const newApp = {
         cliente_id: profile.uid,

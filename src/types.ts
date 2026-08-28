@@ -84,6 +84,7 @@ export interface UserProfile {
   foto?: string;
   showInPortal?: boolean;
   bloqueadoParaAgendar?: boolean;
+  servicos_duracoes?: Record<string, number>;
   
   createdAt: any;
   updatedAt: any;

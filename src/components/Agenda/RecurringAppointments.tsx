@@ -144,7 +144,7 @@ export function RecurringAppointments() {
       const duration = service ? (service.duracao_minutos || 30) : 30;
       
       setLoadingSlots(true);
-      appointmentService.getAvailableSlots(selectedBarberId, startDate, duration)
+      appointmentService.getAvailableSlots(selectedBarberId, startDate, duration, selectedServiceId)
         .then(slots => {
           setAvailableSlots(slots);
           if (slots.length > 0 && !slots.includes(startTime)) {

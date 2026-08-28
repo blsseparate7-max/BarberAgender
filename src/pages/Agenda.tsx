@@ -112,13 +112,42 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedBarberFilter, setSelectedBarberFilter] = useState<string>('all');
+  const [selectedBarberIds, setSelectedBarberIds] = useState<string[]>([]);
   const [currentCash, setCurrentCash] = useState<any>(null);
 
+  // Automatically select all barbers initially when they are loaded
+  useEffect(() => {
+    if (barbers.length > 0 && selectedBarberIds.length === 0) {
+      setSelectedBarberIds(barbers.map(b => b.uid || b.id));
+    }
+  }, [barbers]);
+
   const filteredBarbersForGrid = React.useMemo(() => {
-    if (selectedBarberFilter === 'all') return barbers;
-    return barbers.filter(b => b.uid === selectedBarberFilter || b.id === selectedBarberFilter);
-  }, [barbers, selectedBarberFilter]);
+    if (selectedBarberIds.length === 0) return [];
+    return barbers.filter(b => selectedBarberIds.includes(b.uid) || selectedBarberIds.includes(b.id));
+  }, [barbers, selectedBarberIds]);
+
+  const dailySummary = React.useMemo(() => {
+    const filteredApps = appointments.filter(app => {
+      if (selectedBarberIds.length === 0) return false;
+      return selectedBarberIds.includes(app.profissional_id);
+    });
+
+    const total = filteredApps.length;
+    const completed = filteredApps.filter(a => a.status === 'concluído').length;
+    const canceled = filteredApps.filter(a => a.status === 'cancelado').length;
+    
+    // Average 16 slots per barber per day
+    const totalPossibleSlots = Math.max(1, selectedBarberIds.length * 16);
+    const activeAppointments = total - canceled;
+    const occupancyPercent = Math.min(100, Math.round((activeAppointments / totalPossibleSlots) * 100));
+
+    return {
+      total,
+      completed,
+      occupancyPercent: isNaN(occupancyPercent) ? 0 : occupancyPercent
+    };
+  }, [appointments, selectedBarberIds]);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -451,30 +480,6 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                     }
                   </h2>
                 </div>
-
-                {viewType !== 'month' && barbers.length > 0 && (
-                  <>
-                    <div className="h-8 w-px bg-slate-200 hidden xl:block" />
-                    <div className="relative w-52">
-                      <Users className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                      <select
-                        value={selectedBarberFilter}
-                        onChange={(e) => setSelectedBarberFilter(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 pl-9 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner appearance-none font-bold cursor-pointer"
-                      >
-                        <option value="all">Todos Profissionais</option>
-                        {barbers.map((barber, idx) => (
-                          <option key={`agenda-barber-opt-${barber.uid || barber.id || idx}-${idx}`} value={barber.uid || barber.id}>
-                            {barber.nome}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                        <ChevronDown size={12} />
-                      </div>
-                    </div>
-                  </>
-                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-4 w-full xl:w-auto">
@@ -514,6 +519,101 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                 </button>
               </div>
             </header>
+          )}
+
+          {/* 💈 CARROSSEL DE QUADRADOS DE BARBEIROS (Multi-Seleção) */}
+          {activeTab === 'main' && barbers.length > 0 && (
+            <div className="bg-white border border-slate-200/80 p-6 rounded-[2rem] shadow-xs flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Scissors size={15} className="text-accent" />
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-700">Selecione os Profissionais</span>
+                  <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full font-bold text-slate-500">
+                    {selectedBarberIds.length} de {barbers.length} ativos
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setSelectedBarberIds(barbers.map(b => b.uid || b.id))}
+                    className="text-[10px] font-black text-accent uppercase tracking-wider hover:underline"
+                  >
+                    Selecionar Todos
+                  </button>
+                  <span className="text-slate-300 hidden sm:inline">|</span>
+                  <button
+                    onClick={() => setSelectedBarberIds([])}
+                    className="text-[10px] font-black text-rose-500 uppercase tracking-wider hover:underline"
+                  >
+                    Limpar Seleção
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar scroll-smooth">
+                {barbers.map((barber) => {
+                  const bId = barber.uid || barber.id;
+                  const isSelected = selectedBarberIds.includes(bId);
+                  return (
+                    <button
+                      key={`desktop-barber-square-${bId}`}
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedBarberIds(selectedBarberIds.filter(id => id !== bId));
+                        } else {
+                          setSelectedBarberIds([...selectedBarberIds, bId]);
+                        }
+                      }}
+                      className={`p-4 rounded-2xl border-2 text-left transition-all shrink-0 w-[140px] sm:w-[160px] flex flex-col justify-between h-[100px] relative ${
+                        isSelected
+                          ? 'border-accent bg-accent/5 shadow-xs'
+                          : 'border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-200'
+                      }`}
+                    >
+                      {/* Square Checkbox Indicator */}
+                      <div className="flex justify-between items-start w-full">
+                        <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${
+                          isSelected ? 'bg-accent border-accent text-white' : 'border-slate-300 bg-white'
+                        }`}>
+                          {isSelected && <div className="w-1.5 h-1.5 bg-white rounded-xs" />}
+                        </div>
+                        <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-primary font-black text-xs uppercase border border-slate-200/50">
+                          {barber.nome.charAt(0)}
+                        </div>
+                      </div>
+                      
+                      <div className="mt-2 w-full overflow-hidden">
+                        <p className="text-xs font-black text-primary truncate w-full">{barber.nome}</p>
+                        <p className="text-[9px] text-muted font-bold truncate">Barbeiro Parceiro</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 📊 RESUMO DO DIA RESPONSIVO (Topo no Mobile) */}
+          {activeTab === 'main' && (
+            <div className="lg:hidden bg-slate-900 text-white p-6 rounded-[2rem] shadow-lg flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <CalendarCheck size={16} className="text-accent" />
+                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Resumo Rápido do Dia</span>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Total</p>
+                  <p className="text-2xl font-black">{dailySummary.total}</p>
+                </div>
+                <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl text-center">
+                  <p className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Concluídos</p>
+                  <p className="text-2xl font-black text-emerald-400">{dailySummary.completed}</p>
+                </div>
+                <div className="bg-accent/10 border border-accent/20 p-4 rounded-2xl text-center">
+                  <p className="text-[9px] font-bold text-accent uppercase tracking-wider mb-1">Ocupação</p>
+                  <p className="text-2xl font-black text-accent">{dailySummary.occupancyPercent}%</p>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Dynamic Content */}
@@ -585,8 +685,8 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
         {/* Right Sidebar (Only for Main Agenda View) */}
         {activeTab === 'main' && (
           <aside className="w-full lg:w-80 flex flex-col gap-8">
-            {/* Mini Summary */}
-            <div className="bg-white border border-slate-200 p-8 rounded-[2rem] shadow-sm space-y-6">
+            {/* Mini Summary (Exibido apenas no Desktop, pois no Mobile já aparece no topo) */}
+            <div className="hidden lg:block bg-white border border-slate-200 p-8 rounded-[2rem] shadow-sm space-y-6">
               <h3 className="font-black text-primary flex items-center gap-2">
                 <CalendarCheck size={18} className="text-accent" />
                 Resumo do Dia
@@ -594,22 +694,22 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 shadow-inner">
                   <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1.5">Total</p>
-                  <p className="text-3xl font-black text-primary tracking-tighter">{appointments.length}</p>
+                  <p className="text-3xl font-black text-primary tracking-tighter">{dailySummary.total}</p>
                 </div>
                 <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-100 shadow-inner">
                   <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1.5">Concluídos</p>
                   <p className="text-3xl font-black text-emerald-600 tracking-tighter">
-                    {appointments.filter(a => a.status === 'concluído').length}
+                    {dailySummary.completed}
                   </p>
                 </div>
               </div>
               <div className="pt-4 border-t border-slate-100">
                 <div className="flex justify-between items-center text-xs font-bold mb-2">
                   <span className="text-muted uppercase tracking-widest">Ocupação</span>
-                  <span className="text-primary">75%</span>
+                  <span className="text-primary">{dailySummary.occupancyPercent}%</span>
                 </div>
                 <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-accent w-3/4 rounded-full" />
+                  <div className="h-full bg-accent rounded-full transition-all duration-500" style={{ width: `${dailySummary.occupancyPercent}%` }} />
                 </div>
               </div>
             </div>

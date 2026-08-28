@@ -27,7 +27,7 @@ import { professionalScheduleService } from './professionalScheduleService';
 import { agendaBlockService } from './agendaBlockService';
 import { cashService } from './cashService';
 import { serviceService } from './serviceService';
-import { getActiveTenantId } from './tenantService';
+import { getActiveTenantId, tenantService } from './tenantService';
 import { comandaService } from './comandaService';
 
 const COLLECTION = 'appointments';
@@ -551,7 +551,24 @@ export const appointmentService = {
     }
   },
 
-  async getAvailableSlots(profissional_id: string, date: string, duration: number) {
+  async getAvailableSlots(profissional_id: string, date: string, duration: number, servico_id?: string) {
+    let finalDuration = duration;
+
+    // 1. Resolve custom service duration for the professional
+    if (servico_id && profissional_id) {
+      try {
+        const barberProfile = await userService.getUserProfile(profissional_id);
+        if (barberProfile && barberProfile.servicos_duracoes && barberProfile.servicos_duracoes[servico_id]) {
+          const overrideVal = barberProfile.servicos_duracoes[servico_id];
+          if (overrideVal && overrideVal > 0) {
+            finalDuration = overrideVal;
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load custom service duration for barber:", err);
+      }
+    }
+
     let schedule = await professionalScheduleService.getSchedule(profissional_id);
     if (!schedule) {
       // Fallback default schedule if none exists yet, so the professional is immediately bookable
@@ -619,7 +636,32 @@ export const appointmentService = {
       agendaBlockService.getBlocks({ date, profissional_id })
     ]);
 
-    const interval = 15;
+    // 2. Fetch tenant-wide slot configurations
+    let interval = 15; // default
+    let strategy = 'fixed';
+    
+    try {
+      const activeTenantId = getActiveTenantId();
+      if (activeTenantId) {
+        const tenantData = await tenantService.getTenant(activeTenantId);
+        if (tenantData) {
+          if (tenantData.slot_interval) {
+            interval = tenantData.slot_interval;
+          }
+          if (tenantData.slot_calculation_strategy) {
+            strategy = tenantData.slot_calculation_strategy;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch slot interval/strategy:", err);
+    }
+
+    // If strategy is dynamic, use service duration (minimum 15 mins) as the slot increment step
+    if (strategy === 'dynamic') {
+      interval = Math.max(15, finalDuration);
+    }
+
     const slots: string[] = [];
     let current = parse(startTime, 'HH:mm', new Date());
     const end = parse(endTime, 'HH:mm', new Date());
@@ -627,7 +669,7 @@ export const appointmentService = {
     while (isBefore(current, end)) {
       const timeStr = format(current, 'HH:mm');
       const slotStart = parse(timeStr, 'HH:mm', new Date());
-      const slotEnd = addMinutes(slotStart, duration);
+      const slotEnd = addMinutes(slotStart, finalDuration);
       
       if (isAfter(slotEnd, end)) break;
 

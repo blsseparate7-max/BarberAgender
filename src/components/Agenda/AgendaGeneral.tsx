@@ -68,6 +68,7 @@ export function AgendaGeneral({
 }: AgendaGeneralProps) {
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [nowTime, setNowTime] = useState<Date>(new Date());
+  const displayedBarbers = barbers;
 
   // Update real-time clock indicator every 30 seconds
   useEffect(() => {
@@ -399,7 +400,7 @@ export function AgendaGeneral({
       {/* 🗓️ QUADRO DA GRADE DE HORÁRIOS */}
       <div className="bg-surface border border-border rounded-2xl overflow-hidden flex flex-col flex-1 shadow-sm relative">
         <div className="flex-1 overflow-auto custom-scrollbar relative">
-          <div className="min-w-max flex flex-col min-h-full relative">
+          <div className="min-w-max lg:min-w-0 flex flex-col min-h-full relative">
             
             {/* Header with Barbers */}
             <div className="flex border-b border-border bg-slate-50/95 sticky top-0 z-30 backdrop-blur-sm shadow-sm">
@@ -408,13 +409,16 @@ export function AgendaGeneral({
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Hora</span>
               </div>
               <div className="flex-1 flex">
-                {barbers.map(barber => {
+                {displayedBarbers.map(barber => {
                   const bUid = barber.uid || barber.id;
                   const currentApp = dayApps.find(app => app.profissional_id === bUid && app.status === 'em_atendimento');
                   const totalBarberCuts = dayApps.filter(app => app.profissional_id === bUid && app.status !== 'cancelado').length;
+                  const columnWidthClass = displayedBarbers.length <= 2
+                    ? 'min-w-0 flex-1'
+                    : 'min-w-[180px] sm:min-w-[220px] flex-1';
 
                   return (
-                    <div key={barber.uid} className="min-w-[220px] flex-1 border-r border-border p-3 flex items-center justify-between gap-3 bg-slate-50/95">
+                    <div key={barber.uid} className={`${columnWidthClass} border-r border-border p-3 flex items-center justify-between gap-3 bg-slate-50/95`}>
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 bg-accent rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-sm border border-accent/20">
                           {barber.nome.charAt(0).toUpperCase()}
@@ -476,7 +480,7 @@ export function AgendaGeneral({
                       <span className="text-xs font-black text-slate-600 font-mono">{time}</span>
                     </div>
                     <div className="flex-1 flex">
-                      {barbers.map((barber, bIdx) => {
+                      {displayedBarbers.map((barber, bIdx) => {
                         const apps = getBarberAppointments(barber, time);
                         const block = getBarberBlock(barber, time);
                         const isBlockStart = block && (() => {
@@ -485,6 +489,9 @@ export function AgendaGeneral({
                           const slotEnd = addMinutes(slotStart, 30);
                           return (isEqual(bStart, slotStart) || isAfter(bStart, slotStart)) && isBefore(bStart, slotEnd);
                         })();
+                        const columnWidthClass = displayedBarbers.length <= 2
+                          ? 'min-w-0 flex-1'
+                          : 'min-w-[180px] sm:min-w-[220px] flex-1';
 
                         return (
                           <div 
@@ -494,7 +501,7 @@ export function AgendaGeneral({
                                 onNewAppointment(time, barber.uid || barber.id || '');
                               }
                             }}
-                            className={`min-w-[220px] flex-1 p-1 h-[72px] border-r border-slate-100/80 transition-all relative ${
+                            className={`${columnWidthClass} p-1 h-[72px] border-r border-slate-100/80 transition-all relative ${
                               block ? 'bg-rose-50/40 cursor-not-allowed' : apps.length > 0 ? 'bg-slate-50/30 cursor-pointer' : 'hover:bg-accent/5 cursor-pointer'
                             }`}
                           >

@@ -80,6 +80,10 @@ export interface TenantProfile {
     createdAt?: string;
   };
 
+  // Configurações de Agenda e Horários Livres
+  slot_interval?: number; // ex: 15, 30, 45, 60 (padrão é 15)
+  slot_calculation_strategy?: 'fixed' | 'dynamic'; // 'fixed' ou 'dynamic'
+
   // Conta Bancária Homologada para Saque (Same-Ownership Payout Account)
   payoutAccount?: TenantPayoutAccount;
 }

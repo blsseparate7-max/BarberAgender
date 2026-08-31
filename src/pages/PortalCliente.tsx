@@ -45,8 +45,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
-import { signOut } from 'firebase/auth';
-import { collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp, getDoc, onSnapshot } from 'firebase/firestore';
+import { signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, setDoc, serverTimestamp, getDoc, onSnapshot } from 'firebase/firestore';
 import { userService } from '../services/userService';
 import { appointmentService } from '../services/appointmentService';
 import { serviceService } from '../services/serviceService';
@@ -58,6 +58,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher } from '../types';
 import { format, parse, addMinutes, isAfter, isBefore, isEqual } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+
+function formatPhone(value: string) {
+  const digits = value.replace(/\D/g, '').slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
+}
 import { toast } from 'sonner';
 
 // Haversine formula to compute straight-line distance in km between two coordinate points
@@ -95,10 +103,12 @@ function getTenantCoords(tenant: TenantProfile): { lat: number; lng: number } {
 }
 
 interface PortalClienteProps {
-  profile: UserProfile;
+  profile?: UserProfile | null;
+  onLoginClick?: () => void;
+  onBackToLanding?: () => void;
 }
 
-export function PortalCliente({ profile }: PortalClienteProps) {
+export function PortalCliente({ profile, onLoginClick, onBackToLanding }: PortalClienteProps) {
   const { isSaaSAdminUser, setOverrideRole } = useAuth();
   // Navigation
   const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'fidelidade' | 'pacotes' | 'assinaturas' | 'perfil'>(() => {
@@ -107,7 +117,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     if (tabParam && ['home', 'schedule', 'history', 'fidelidade', 'pacotes', 'assinaturas', 'perfil'].includes(tabParam)) {
       return tabParam as any;
     }
-    return 'home';
+    return profile ? 'home' : 'schedule';
   });
   
   // Data State
@@ -121,6 +131,14 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [selectedCityFilter, setSelectedCityFilter] = useState<string>('all');
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [loadingLocation, setLoadingLocation] = useState(false);
+
+  // Guest-First Booking states (agendamento antes de cadastrar)
+  const [guestMode, setGuestMode] = useState<'register' | 'login'>('register');
+  const [guestName, setGuestName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestPassword, setGuestPassword] = useState('');
+  const [guestCreatedAppointment, setGuestCreatedAppointment] = useState<any | null>(null);
 
   // Proximity & Geolocation helpers
   const handleRequestLocation = () => {
@@ -169,10 +187,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [showPortfolioModal, setShowPortfolioModal] = useState(false);
 
   // Profile Edit States
-  const [editNome, setEditNome] = useState(profile.nome || '');
-  const [editTelefone, setEditTelefone] = useState(profile.telefone || profile.phone || '');
-  const [editObservacoes, setEditObservacoes] = useState(profile.observacoes || profile.observations || '');
-  const [editCpf, setEditCpf] = useState(profile.cpf || (profile as any).cpfCnpj || '');
+  const [editNome, setEditNome] = useState(profile?.nome || '');
+  const [editTelefone, setEditTelefone] = useState(profile?.telefone || profile?.phone || '');
+  const [editObservacoes, setEditObservacoes] = useState(profile?.observacoes || profile?.observations || '');
+  const [editCpf, setEditCpf] = useState(profile?.cpf || (profile as any)?.cpfCnpj || '');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   // Reviews & Ratings States
@@ -611,6 +629,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!profile) {
+      toast.error('Você precisa estar conectado para editar o perfil.');
+      return;
+    }
     if (!editNome.trim()) {
       toast.error('O nome não pode estar vazio.');
       return;
@@ -716,6 +738,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   useEffect(() => {
     loadData();
 
+    if (!profile?.uid) return;
+
     // Sincronização em tempo real entre os painéis (Dono, Barbeiro e Cliente)
     const unsubscribeAppointments = appointmentService.subscribeToAppointments(
       { cliente_id: profile.uid },
@@ -736,7 +760,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       unsubscribeAppointments();
       unsubscribeSubscriptions();
     };
-  }, [profile.uid, profile?.tenantId]);
+  }, [profile?.uid, profile?.tenantId]);
 
   // Load available time slots when scheduling inputs change
   useEffect(() => {
@@ -875,49 +899,6 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         console.warn("Could not load products list:", err);
       }
 
-      // Load client's appointments
-      try {
-        const clientApps = await appointmentService.getAppointments({ cliente_id: profile.uid });
-        setAppointments(clientApps);
-        syncClientAppointmentsWithComandas(profile.uid, clientApps);
-      } catch (err) {
-        console.warn("Could not load client appointments list:", err);
-      }
-
-      // Load loyalty points & cashback & vouchers
-      try {
-        const loyaltyPoints = await loyaltyService.getClientPoints(profile.uid);
-        setLoyalty(loyaltyPoints);
-        const history = await loyaltyService.getHistory(profile.uid);
-        setLoyaltyHistory(history);
-        const vouchers = await loyaltyService.getClientVouchers(profile.uid);
-        setClientVouchers(vouchers);
-      } catch (err) {
-        console.warn("Could not load client loyalty points & history:", err);
-      }
-
-      // Calculate total spent in barbearia and load all client comandas
-      try {
-        const qComandas = query(
-          collection(db, 'comandas'),
-          where('cliente_id', '==', profile.uid)
-        );
-        const comSnap = await getDocs(qComandas);
-        const allComs = comSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setClientComandas(allComs);
-
-        let sum = 0;
-        allComs.forEach((data: any) => {
-          if (data.status === 'fechada') {
-            sum += Number(data.paidAmount || data.totalAmount || 0);
-          }
-        });
-        setTotalSpent(sum);
-      } catch (err) {
-        console.warn("Could not calculate total spent or load client comandas:", err);
-        setTotalSpent(profile.total_pago || profile.total_gasto || 0);
-      }
-
       // Load announcements/news & promotions
       try {
         const qNews = query(collection(db, 'announcements'));
@@ -929,37 +910,91 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         console.warn("Could not load announcements:", err);
       }
 
-      // Load subscriptions
-      try {
-        const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
-        setSubscriptions(clientSubs);
-      } catch (err) {
-        console.warn("Could not load client subscriptions list:", err);
-      }
+      if (profile?.uid) {
+        // Load client's appointments
+        try {
+          const clientApps = await appointmentService.getAppointments({ cliente_id: profile.uid });
+          setAppointments(clientApps);
+          syncClientAppointmentsWithComandas(profile.uid, clientApps);
+        } catch (err) {
+          console.warn("Could not load client appointments list:", err);
+        }
 
-      // Load subscription invoices / financial history
-      try {
-        const qInvoices = query(
-          collection(db, 'financial_transactions'),
-          where('cliente_id', '==', profile.uid),
-          where('category', '==', 'Assinaturas')
-        );
-        const invSnap = await getDocs(qInvoices);
-        const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        invList.sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
-        setSubscriptionInvoices(invList);
-      } catch (err) {
-        console.warn("Could not load subscription financial history:", err);
-      }
+        // Load loyalty points & cashback & vouchers
+        try {
+          const loyaltyPoints = await loyaltyService.getClientPoints(profile.uid);
+          setLoyalty(loyaltyPoints);
+          const history = await loyaltyService.getHistory(profile.uid);
+          setLoyaltyHistory(history);
+          const vouchers = await loyaltyService.getClientVouchers(profile.uid);
+          setClientVouchers(vouchers);
+        } catch (err) {
+          console.warn("Could not load client loyalty points & history:", err);
+        }
 
-      // Load package sales
-      try {
-        const pkgQuery = query(collection(db, 'pacotes_vendas'), where('clientId', '==', profile.uid));
-        const pkgSnap = await getDocs(pkgQuery);
-        const clientPkgs = pkgSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setPackages(clientPkgs);
-      } catch (err) {
-        console.warn("Could not load client packages sales:", err);
+        // Calculate total spent in barbearia and load all client comandas
+        try {
+          const qComandas = query(
+            collection(db, 'comandas'),
+            where('cliente_id', '==', profile.uid)
+          );
+          const comSnap = await getDocs(qComandas);
+          const allComs = comSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setClientComandas(allComs);
+
+          let sum = 0;
+          allComs.forEach((data: any) => {
+            if (data.status === 'fechada') {
+              sum += Number(data.paidAmount || data.totalAmount || 0);
+            }
+          });
+          setTotalSpent(sum);
+        } catch (err) {
+          console.warn("Could not calculate total spent or load client comandas:", err);
+          setTotalSpent(profile.total_pago || profile.total_gasto || 0);
+        }
+
+        // Load subscriptions
+        try {
+          const clientSubs = await subscriptionService.getSubscriptions(profile.uid);
+          setSubscriptions(clientSubs);
+        } catch (err) {
+          console.warn("Could not load client subscriptions list:", err);
+        }
+
+        // Load subscription invoices / financial history
+        try {
+          const qInvoices = query(
+            collection(db, 'financial_transactions'),
+            where('cliente_id', '==', profile.uid),
+            where('category', '==', 'Assinaturas')
+          );
+          const invSnap = await getDocs(qInvoices);
+          const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          invList.sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
+          setSubscriptionInvoices(invList);
+        } catch (err) {
+          console.warn("Could not load subscription financial history:", err);
+        }
+
+        // Load package sales
+        try {
+          const pkgQuery = query(collection(db, 'pacotes_vendas'), where('clientId', '==', profile.uid));
+          const pkgSnap = await getDocs(pkgQuery);
+          const clientPkgs = pkgSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setPackages(clientPkgs);
+        } catch (err) {
+          console.warn("Could not load client packages sales:", err);
+        }
+      } else {
+        setAppointments([]);
+        setLoyalty(null);
+        setLoyaltyHistory([]);
+        setClientVouchers([]);
+        setClientComandas([]);
+        setSubscriptions([]);
+        setSubscriptionInvoices([]);
+        setPackages([]);
       }
 
     } catch (err) {
@@ -1056,12 +1091,41 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     }
 
     if (!selectedBarber || !selectedService || !selectedTime) {
-      toast.error("Por favor, preencha todos os dados.");
+      toast.error("Por favor, preencha todos os dados da reserva.");
       return;
+    }
+
+    // Validações no fluxo Guest (sem login prévio)
+    if (!profile) {
+      if (guestMode === 'register') {
+        if (!guestName.trim()) {
+          toast.error("Por favor, informe seu nome completo.");
+          return;
+        }
+        const cleanPhone = guestPhone.replace(/\D/g, '');
+        if (!cleanPhone || cleanPhone.length < 10) {
+          toast.error("Por favor, informe um WhatsApp válido com DDD.");
+          return;
+        }
+        if (!guestPassword || guestPassword.length < 6) {
+          toast.error("Defina uma senha com no mínimo 6 dígitos para acompanhar seu horário.");
+          return;
+        }
+      } else {
+        if (!guestEmail.trim()) {
+          toast.error("Por favor, informe seu e-mail de acesso.");
+          return;
+        }
+        if (!guestPassword) {
+          toast.error("Por favor, informe sua senha.");
+          return;
+        }
+      }
     }
 
     setIsSubmitting(true);
     try {
+      let activeTenantId = (tenantInfo?.id || getActiveTenantId() || 'default').toLowerCase();
       let duration = selectedService.duracao_minutos || selectedService.duration || 30;
       let assignedBarberId = selectedBarber.uid;
       let assignedBarberName = selectedBarber.nome;
@@ -1103,10 +1167,71 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       const endParsed = addMinutes(startParsed, duration);
       const endTimeStr = format(endParsed, 'HH:mm');
 
+      let clientId = profile?.uid;
+      let clientName = profile?.nome || guestName.trim();
+      let clientPhone = profile?.telefone || profile?.phone || guestPhone.trim();
+
+      // Fluxo Guest: Criar conta ou realizar login transparente
+      if (!profile) {
+        if (guestMode === 'register') {
+          const cleanPhone = guestPhone.replace(/\D/g, '');
+          const resolvedEmail = guestEmail.trim() ? guestEmail.trim().toLowerCase() : `cli_${cleanPhone}_${activeTenantId}@barberelite.app`;
+
+          let userCred;
+          try {
+            userCred = await createUserWithEmailAndPassword(auth, resolvedEmail, guestPassword);
+          } catch (authErr: any) {
+            if (authErr.code === 'auth/email-already-in-use') {
+              try {
+                userCred = await signInWithEmailAndPassword(auth, resolvedEmail, guestPassword);
+              } catch (loginErr) {
+                throw new Error("Este e-mail/telefone já está cadastrado. Alterne para a opção 'Já Tenho Conta' para entrar.");
+              }
+            } else if (authErr.code === 'auth/weak-password') {
+              throw new Error("A senha deve ter pelo menos 6 caracteres.");
+            } else {
+              throw authErr;
+            }
+          }
+
+          clientId = userCred.user.uid;
+
+          // Criar/atualizar perfil do usuário no Firestore
+          await setDoc(doc(db, 'usuarios', clientId), {
+            uid: clientId,
+            nome: guestName.trim(),
+            email: resolvedEmail,
+            telefone: guestPhone.trim(),
+            phone: guestPhone.trim(),
+            tipo: 'cliente',
+            ativo: true,
+            tenantId: activeTenantId,
+            saldo_atual: 0,
+            total_gasto: 0,
+            total_pago: 0,
+            total_em_aberto: 0,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+
+        } else {
+          // Já tem conta: login com e-mail e senha
+          const userCred = await signInWithEmailAndPassword(auth, guestEmail.trim(), guestPassword);
+          clientId = userCred.user.uid;
+
+          const snap = await getDoc(doc(db, 'usuarios', clientId));
+          if (snap.exists()) {
+            const data = snap.data();
+            clientName = data.nome || clientName;
+            clientPhone = data.telefone || data.phone || clientPhone;
+          }
+        }
+      }
+
       const newApp = {
-        cliente_id: profile.uid,
-        cliente_name: profile.nome,
-        cliente_telefone: profile.telefone || profile.phone || '',
+        cliente_id: clientId!,
+        cliente_name: clientName,
+        cliente_telefone: clientPhone,
         profissional_id: assignedBarberId,
         profissional_name: assignedBarberName,
         servico_id: selectedService.id,
@@ -1117,22 +1242,40 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         duration: duration,
         price: selectedService.preco || selectedService.price || 0,
         status: 'agendado' as const,
-        origin: 'cliente' as const,
-        notes: 'Agendado via Portal do Cliente'
+        origin: (profile ? 'cliente' : 'guest_first') as any,
+        tenantId: activeTenantId,
+        notes: profile ? 'Agendado via Portal do Cliente' : 'Agendamento Online Rápido (Guest-First Booking)'
       };
 
-      await appointmentService.createAppointment(newApp);
+      const createdApp = await appointmentService.createAppointment(newApp);
       
       toast.success("Agendamento realizado com sucesso!");
-      
-      // Reset Scheduling Form
-      setSelectedBarber(null);
-      setSelectedService(null);
-      setSelectedTime(null);
-      
-      // Reload Data and Go to Home
-      await loadData();
-      setActiveTab('home');
+
+      const confirmedData = {
+        id: typeof createdApp === 'string' ? createdApp : (createdApp as any)?.id || '',
+        serviceName: selectedService.nome || selectedService.name || 'Serviço',
+        barberName: assignedBarberName,
+        date: selectedDate,
+        time: selectedTime,
+        duration: duration,
+        price: selectedService.preco || selectedService.price || 0,
+        tenantName: tenantInfo?.name || 'Barbearia',
+        tenantPhone: tenantInfo?.phone || tenantInfo?.whatsapp || '',
+        clientName: clientName
+      };
+
+      if (!profile) {
+        setGuestCreatedAppointment(confirmedData);
+      } else {
+        // Reset Scheduling Form
+        setSelectedBarber(null);
+        setSelectedService(null);
+        setSelectedTime(null);
+        
+        // Reload Data and Go to Home
+        await loadData();
+        setActiveTab('home');
+      }
     } catch (err: any) {
       console.error("Error scheduling appointment:", err);
       toast.error(err.message || "Erro ao agendar horário.");
@@ -1314,27 +1457,56 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         <div className="max-w-4xl mx-auto px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-lg">
-              {(profile?.nome || 'Cliente').substring(0, 2).toUpperCase()}
+              {profile ? (profile.nome || 'Cliente').substring(0, 2).toUpperCase() : <Scissors size={22} />}
             </div>
             <div>
-              <p className="text-[10px] text-amber-400 font-extrabold uppercase tracking-widest">Seja bem-vindo!</p>
-              <h2 className="text-base font-black tracking-tight">{profile.nome}</h2>
+              <p className="text-[10px] text-amber-400 font-extrabold uppercase tracking-widest">
+                {profile ? 'Seja bem-vindo!' : 'Agendamento Online 24h'}
+              </p>
+              <h2 className="text-base font-black tracking-tight">
+                {profile?.nome || tenantInfo?.name || 'Barbearia'}
+              </h2>
               <div className="mt-1 flex items-center gap-1.5">
                 <MapPin size={11} className="text-amber-500 flex-shrink-0" />
                 <span className="text-amber-100 bg-slate-800 text-[11px] font-black tracking-wide px-2.5 py-1 rounded-lg border border-slate-700/60 shadow-sm">
-                  {tenantInfo?.name || 'Barbearia'}
+                  {tenantInfo?.name || 'Unidade Principal'}
                 </span>
               </div>
             </div>
           </div>
           
-          <button 
-            onClick={handleLogout}
-            className="p-3 bg-white/5 hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 rounded-2xl border border-white/5 hover:border-rose-500/20 transition-all flex items-center gap-1.5 text-xs font-bold"
-          >
-            <LogOut size={16} />
-            <span className="hidden sm:inline">Sair</span>
-          </button>
+          {profile ? (
+            <button 
+              onClick={handleLogout}
+              className="p-3 bg-white/5 hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 rounded-2xl border border-white/5 hover:border-rose-500/20 transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+            >
+              <LogOut size={16} />
+              <span className="hidden sm:inline">Sair</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              {onLoginClick && (
+                <button
+                  type="button"
+                  onClick={onLoginClick}
+                  className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md shadow-amber-500/10 flex items-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <User size={14} />
+                  <span>Já Tenho Conta</span>
+                </button>
+              )}
+              {onBackToLanding && (
+                <button
+                  type="button"
+                  onClick={onBackToLanding}
+                  className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl border border-white/10 text-xs font-bold transition-all cursor-pointer"
+                  title="Voltar à página inicial"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -2159,13 +2331,133 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         </div>
                       </div>
 
+                      {/* Guest Identification Section when user is not logged in */}
+                      {!profile && (
+                        <div className="p-6 bg-slate-950 border-t border-slate-800 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className="text-[9px] font-black uppercase tracking-wider text-amber-400">Identificação</span>
+                              <h5 className="text-sm font-black text-white">Preencha seus dados para finalizar</h5>
+                            </div>
+                            <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
+                              <button
+                                type="button"
+                                onClick={() => setGuestMode('register')}
+                                className={`px-3 py-1 text-[10px] font-black uppercase rounded-lg transition-all ${
+                                  guestMode === 'register' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                Novo Cliente
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setGuestMode('login')}
+                                className={`px-3 py-1 text-[10px] font-black uppercase rounded-lg transition-all ${
+                                  guestMode === 'login' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                Já Tenho Conta
+                              </button>
+                            </div>
+                          </div>
+
+                          {guestMode === 'register' ? (
+                            <div className="space-y-3">
+                              <div>
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  Seu Nome Completo *
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="Ex: João da Silva"
+                                  value={guestName}
+                                  onChange={(e) => setGuestName(e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none transition-all"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                    WhatsApp (DDD + Número) *
+                                  </label>
+                                  <input
+                                    type="tel"
+                                    placeholder="(11) 99999-9999"
+                                    value={guestPhone}
+                                    onChange={(e) => setGuestPhone(formatPhone(e.target.value))}
+                                    className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none transition-all"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                    Crie uma Senha (mín. 6 dígitos) *
+                                  </label>
+                                  <input
+                                    type="password"
+                                    placeholder="••••••"
+                                    value={guestPassword}
+                                    onChange={(e) => setGuestPassword(e.target.value)}
+                                    className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none transition-all"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  E-mail (Opcional)
+                                </label>
+                                <input
+                                  type="email"
+                                  placeholder="seuemail@exemplo.com"
+                                  value={guestEmail}
+                                  onChange={(e) => setGuestEmail(e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none transition-all"
+                                />
+                              </div>
+
+                              <p className="text-[10px] text-slate-400 font-medium leading-relaxed bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/80">
+                                🔒 Seu cadastro será salvo automaticamente e seu horário ficará confirmado no sistema da barbearia.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div>
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  E-mail de Acesso *
+                                </label>
+                                <input
+                                  type="email"
+                                  placeholder="seuemail@exemplo.com"
+                                  value={guestEmail}
+                                  onChange={(e) => setGuestEmail(e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none transition-all"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                                  Sua Senha *
+                                </label>
+                                <input
+                                  type="password"
+                                  placeholder="••••••"
+                                  value={guestPassword}
+                                  onChange={(e) => setGuestPassword(e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none transition-all"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Action Button */}
-                      <div className="p-6 bg-slate-950/60 border-t border-slate-850">
+                      <div className="p-6 bg-slate-950/80 border-t border-slate-850">
                         <button
                           type="button"
                           disabled={isSubmitting}
                           onClick={handleCreateAppointment}
-                          className="w-full bg-amber-500 hover:bg-amber-600 active:scale-[0.99] text-slate-950 font-black text-xs py-4 rounded-xl transition-all shadow-lg shadow-amber-500/10 uppercase tracking-wider flex items-center justify-center gap-2"
+                          className="w-full bg-amber-500 hover:bg-amber-600 active:scale-[0.99] text-slate-950 font-black text-xs py-4 rounded-xl transition-all shadow-lg shadow-amber-500/10 uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                         >
                           {isSubmitting ? (
                             <>
@@ -2175,7 +2467,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                           ) : (
                             <>
                               <Check size={14} className="stroke-[3]" />
-                              Finalizar e Agendar Agora
+                              {profile ? 'Finalizar e Agendar Agora' : 'Confirmar Reserva e Agendar'}
                             </>
                           )}
                         </button>
@@ -3507,55 +3799,69 @@ export function PortalCliente({ profile }: PortalClienteProps) {
           <span className="text-[8px] font-black uppercase tracking-wider">Reservar</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'history' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <History size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Histórico</span>
-        </button>
+        {profile ? (
+          <>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+                activeTab === 'history' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <History size={18} />
+              <span className="text-[8px] font-black uppercase tracking-wider">Histórico</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('fidelidade')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'fidelidade' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <Award size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Fidelidade</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('fidelidade')}
+              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+                activeTab === 'fidelidade' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Award size={18} />
+              <span className="text-[8px] font-black uppercase tracking-wider">Fidelidade</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('pacotes')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'pacotes' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <Briefcase size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Pacotes</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('pacotes')}
+              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+                activeTab === 'pacotes' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Briefcase size={18} />
+              <span className="text-[8px] font-black uppercase tracking-wider">Pacotes</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('assinaturas')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'assinaturas' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <Sparkles size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Assinar</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('assinaturas')}
+              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+                activeTab === 'assinaturas' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Sparkles size={18} />
+              <span className="text-[8px] font-black uppercase tracking-wider">Assinar</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('perfil')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'perfil' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <User size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Perfil</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('perfil')}
+              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
+                activeTab === 'perfil' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <User size={18} />
+              <span className="text-[8px] font-black uppercase tracking-wider">Perfil</span>
+            </button>
+          </>
+        ) : (
+          onLoginClick && (
+            <button
+              onClick={onLoginClick}
+              className="flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] text-amber-600 hover:text-amber-700"
+            >
+              <User size={18} />
+              <span className="text-[8px] font-black uppercase tracking-wider">Entrar</span>
+            </button>
+          )
+        )}
       </nav>
 
       {/* PORTFOLIO / LANDING PAGE MODAL */}
@@ -4804,6 +5110,95 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               >
                 Fechar Recibo
               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Confirmação de Agendamento Guest */}
+      <AnimatePresence>
+        {guestCreatedAppointment && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 text-white max-w-md w-full rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 border border-slate-800 relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-40 h-40 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/10">
+                  <CheckCircle2 size={36} />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">Reserva Garantida</span>
+                  <h3 className="text-xl font-black text-white tracking-tight mt-0.5">Agendamento Confirmado!</h3>
+                  <p className="text-xs text-slate-400 font-medium mt-1">
+                    Olá <strong className="text-white">{guestCreatedAppointment.clientName}</strong>, seu horário já está reservado na barbearia.
+                  </p>
+                </div>
+              </div>
+
+              {/* Ticket Card */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-3 text-xs font-semibold">
+                <div className="flex justify-between border-b border-slate-800/80 pb-2.5">
+                  <span className="text-slate-400 font-bold">Unidade:</span>
+                  <span className="text-white font-black">{guestCreatedAppointment.tenantName}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-800/80 pb-2.5">
+                  <span className="text-slate-400 font-bold">Serviço:</span>
+                  <span className="text-white font-black">{guestCreatedAppointment.serviceName}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-800/80 pb-2.5">
+                  <span className="text-slate-400 font-bold">Profissional:</span>
+                  <span className="text-white font-black">{guestCreatedAppointment.barberName}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-800/80 pb-2.5">
+                  <span className="text-slate-400 font-bold">Data e Horário:</span>
+                  <span className="text-amber-400 font-black">
+                    {format(parse(guestCreatedAppointment.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')} às {guestCreatedAppointment.time}
+                  </span>
+                </div>
+                <div className="flex justify-between pt-1 text-sm font-black">
+                  <span className="text-slate-300 font-bold">Valor Total:</span>
+                  <span className="text-emerald-400">R$ {Number(guestCreatedAppointment.price || 0).toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div className="space-y-2.5">
+                {guestCreatedAppointment.tenantPhone && (
+                  <a
+                    href={`https://wa.me/${guestCreatedAppointment.tenantPhone.replace(/\D/g, '')}?text=${encodeURIComponent(
+                      `Olá! Acabei de agendar um horário para ${guestCreatedAppointment.serviceName} com ${guestCreatedAppointment.barberName} em ${guestCreatedAppointment.date} às ${guestCreatedAppointment.time}.`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    <Phone size={14} />
+                    <span>Avisar Barbearia no WhatsApp</span>
+                  </a>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGuestCreatedAppointment(null);
+                    // Reset form and go to home
+                    setSelectedBarber(null);
+                    setSelectedService(null);
+                    setSelectedTime(null);
+                    setBookingStep(1);
+                    setActiveTab('home');
+                  }}
+                  className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Sparkles size={14} />
+                  <span>Acessar Meu Painel</span>
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

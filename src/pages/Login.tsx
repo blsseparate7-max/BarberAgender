@@ -9,9 +9,10 @@ interface LoginPageProps {
   onRegisterClick: () => void;
   onForgotClick: () => void;
   onBackToLanding?: () => void;
+  onGuestBookingClick?: () => void;
 }
 
-export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding }: LoginPageProps) {
+export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding, onGuestBookingClick }: LoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -224,6 +225,19 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding }: L
             )}
           </button>
 
+
+          {onGuestBookingClick && (
+            <div className="pt-2">
+              <button 
+                type="button"
+                onClick={onGuestBookingClick}
+                className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Scissors size={15} />
+                Agendar Horário Online (Sem Login Prévio)
+              </button>
+            </div>
+          )}
 
           <div className="text-center pt-4 space-y-4">
             <p className="text-xs text-zinc-500">

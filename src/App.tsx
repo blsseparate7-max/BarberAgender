@@ -85,7 +85,7 @@ function MainApp() {
   const { tenant, loading: tenantLoading } = useTenant();
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [authView, setAuthView] = useState<'login' | 'register' | 'forgot'>('login');
+  const [authView, setAuthView] = useState<'login' | 'register' | 'forgot' | 'guest-booking'>('login');
   const [showLanding, setShowLanding] = useState(true);
   const [initialRegisterRole, setInitialRegisterRole] = useState<'cliente' | 'admin'>('cliente');
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -95,6 +95,9 @@ function MainApp() {
     if (params.get('link_client_id') || params.get('link_id')) {
       setShowLanding(false);
       setAuthView('register');
+    } else if (params.get('agendar') === 'true' || params.get('booking') === 'true' || params.get('tab') === 'schedule') {
+      setShowLanding(false);
+      setAuthView('guest-booking');
     }
   }, []);
 
@@ -165,7 +168,7 @@ function MainApp() {
                 setShowLanding(false);
               } else if (roleType === 'cliente') {
                 setInitialRegisterRole('cliente');
-                setAuthView('login');
+                setAuthView('guest-booking');
                 setShowLanding(false);
               } else if (roleType === 'cliente-registro') {
                 setInitialRegisterRole('cliente');
@@ -177,6 +180,12 @@ function MainApp() {
                 setShowLanding(false);
               }
             }}
+          />
+        ) : authView === 'guest-booking' ? (
+          <PortalCliente 
+            profile={null as any}
+            onLoginClick={() => setAuthView('login')}
+            onBackToLanding={() => setShowLanding(true)}
           />
         ) : authView === 'register' ? (
           <RegisterPage 
@@ -194,6 +203,7 @@ function MainApp() {
             }} 
             onForgotClick={() => setAuthView('forgot')}
             onBackToLanding={() => setShowLanding(true)}
+            onGuestBookingClick={() => setAuthView('guest-booking')}
           />
         )}
       </Suspense>

@@ -240,13 +240,14 @@ export default async function handler(req: any, res: any) {
 
     let payData: any = null;
     const isRealCustomerId = customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_');
+    const selectedBillingType = (billingType === 'CREDIT_CARD' || billingType === 'PIX') ? billingType : 'PIX';
 
-    if ((billingType === 'CREDIT_CARD' || isSubscription) && isRealCustomerId) {
+    if ((selectedBillingType === 'CREDIT_CARD' || isSubscription) && isRealCustomerId) {
       payData = await fetchAsaasApi('/subscriptions', {
         method: 'POST',
         body: JSON.stringify({
           customer: customerId,
-          billingType: billingType || 'CREDIT_CARD',
+          billingType: selectedBillingType,
           value: Number(amount),
           nextDueDate: dueDateStr,
           cycle: 'MONTHLY',
@@ -254,19 +255,34 @@ export default async function handler(req: any, res: any) {
           externalReference: externalReference || tenantId
         })
       });
-    } else {
-      // Default Pix / Charge
-      payData = await fetchAsaasApi('/payments', {
-        method: 'POST',
-        body: JSON.stringify({
-          customer: customerId || 'cus_000008558135',
-          billingType: billingType || 'PIX',
-          value: Number(amount),
-          dueDate: dueDateStr,
-          description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
-          externalReference: externalReference || tenantId
-        })
-      });
+    } else if (isRealCustomerId) {
+      // Default Pix or Charge with explicit PIX billingType
+      if (isSubscription || req.body?.isSubscription) {
+        payData = await fetchAsaasApi('/subscriptions', {
+          method: 'POST',
+          body: JSON.stringify({
+            customer: customerId,
+            billingType: selectedBillingType,
+            value: Number(amount),
+            nextDueDate: dueDateStr,
+            cycle: 'MONTHLY',
+            description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
+            externalReference: externalReference || tenantId
+          })
+        });
+      } else {
+        payData = await fetchAsaasApi('/payments', {
+          method: 'POST',
+          body: JSON.stringify({
+            customer: customerId || 'cus_000008558135',
+            billingType: selectedBillingType,
+            value: Number(amount),
+            dueDate: dueDateStr,
+            description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
+            externalReference: externalReference || tenantId
+          })
+        });
+      }
     }
 
     if (payData?.errors) {

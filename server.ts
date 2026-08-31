@@ -796,19 +796,20 @@ async function safeJsonFetch(response: any): Promise<any> {
         };
 
         const isRealCustomerId = customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_');
+        const selectedBillingType = (billingType === 'CREDIT_CARD' || billingType === 'PIX') ? billingType : 'PIX';
 
         // If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
-        if ((billingType === 'CREDIT_CARD' || req.body?.isSubscription) && isRealCustomerId) {
+        if ((selectedBillingType === 'CREDIT_CARD' || req.body?.isSubscription) && isRealCustomerId) {
           try {
             const createSub = async () => fetchAsaasApi('/subscriptions', {
               method: 'POST',
               body: JSON.stringify({
                 customer: customerId,
-                billingType: billingType || 'CREDIT_CARD',
+                billingType: selectedBillingType,
                 value: Number(amount),
                 nextDueDate: dueDateStr,
                 cycle: 'MONTHLY',
-                description: `Assinatura Rull - Plano ${planName || 'Mensal'} (${tenantId})`,
+                description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
                 externalReference: finalExternalRef
               })
             });
@@ -831,25 +832,43 @@ async function safeJsonFetch(response: any): Promise<any> {
           }
         }
 
-        // Fallback to single payment charge if subscription was not created or billingType is PIX
+        // Create single payment charge or subscription if selectedBillingType is PIX or fallback needed
         if ((!payData || payData?.errors) && isRealCustomerId) {
-          const createPayment = async () => fetchAsaasApi('/payments', {
-            method: 'POST',
-            body: JSON.stringify({
-              customer: customerId,
-              billingType: billingType || 'PIX',
-              value: Number(amount),
-              dueDate: dueDateStr,
-              description: `Assinatura Rull - Plano ${planName || 'Mensal'} (${tenantId})`,
-              externalReference: finalExternalRef
-            })
-          });
+          // If PIX, we create a recurring subscription if requested or a charge with explicit PIX billingType
+          const createPaymentOrSub = async () => {
+            if (isClientSubscription || req.body?.isSubscription) {
+              return fetchAsaasApi('/subscriptions', {
+                method: 'POST',
+                body: JSON.stringify({
+                  customer: customerId,
+                  billingType: selectedBillingType,
+                  value: Number(amount),
+                  nextDueDate: dueDateStr,
+                  cycle: 'MONTHLY',
+                  description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
+                  externalReference: finalExternalRef
+                })
+              });
+            } else {
+              return fetchAsaasApi('/payments', {
+                method: 'POST',
+                body: JSON.stringify({
+                  customer: customerId,
+                  billingType: selectedBillingType,
+                  value: Number(amount),
+                  dueDate: dueDateStr,
+                  description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
+                  externalReference: finalExternalRef
+                })
+              });
+            }
+          };
 
-          payData = await createPayment();
+          payData = await createPaymentOrSub();
 
           if (payData?.errors && isSandboxMode) {
             await ensureCustomerCpfCnpjValid(true);
-            payData = await createPayment();
+            payData = await createPaymentOrSub();
           }
         }
 

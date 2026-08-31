@@ -295,6 +295,20 @@ export const paymentMethodService = {
         description: 'Recebimento em D+30'
       },
       { 
+        nome: 'Pagamento Online', 
+        tipo: 'pagamento_online', 
+        status: 'active', 
+        taxa_percentual: 0, 
+        prazo_recebimento: 0, 
+        recebe_na_hora: true,
+        entra_no_caixa: true,
+        vai_para_recebiveis: false,
+        vai_para_conta_cliente: false,
+        permite_parcial: true,
+        permite_split: true,
+        description: 'Pagamento online via Asaas / PIX'
+      },
+      { 
         nome: 'Fiado', 
         tipo: 'fiado', 
         status: 'active', 

@@ -29,6 +29,8 @@ export interface UserProfile {
   preferences?: string;
   tenantId?: string;
   onboardingCompleted?: boolean;
+  isLinked?: boolean;
+  linkedAt?: any;
   
   // Cliente specific
   saldo_atual: number; // Substituindo balance
@@ -236,7 +238,7 @@ export interface Appointment {
   updatedAt: any;
 }
 
-export type PaymentMethod = 'pix' | 'dinheiro' | 'debito' | 'credito' | 'fiado' | 'assinatura' | 'resgate' | 'outros';
+export type PaymentMethod = 'pix' | 'dinheiro' | 'debito' | 'credito' | 'fiado' | 'assinatura' | 'resgate' | 'outros' | 'pagamento_online' | 'Pagamento Online';
 
 export interface PaymentMethodConfig {
   id: string; // metodo_pagamento_id
@@ -348,6 +350,11 @@ export interface CashMovement {
   description: string;
   amount: number;
   paymentMethod: PaymentMethod;
+  payment_method?: string;
+  subscription_amount?: number;
+  service_amount?: number;
+  product_amount?: number;
+  package_amount?: number;
   is_receivable: boolean;
   settlement_date?: string;
   referencia_id?: string;

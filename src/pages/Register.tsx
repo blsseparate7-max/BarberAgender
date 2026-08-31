@@ -102,6 +102,8 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       nome: resolvedName,
       email: resolvedEmail.toLowerCase().trim(),
       tipo: 'cliente',
+      isLinked: true,
+      linkedAt: serverTimestamp(),
       ativo: true,
       tenantId: activeTenantId || null,
       updatedAt: serverTimestamp(),
@@ -365,6 +367,8 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             email: user.email?.toLowerCase().trim() || email.toLowerCase().trim(),
             nome: name,
             tipo: role, // 'admin' or 'cliente'
+            isLinked: true,
+            linkedAt: serverTimestamp(),
             ativo: true,
             tenantId: tenantIdValue,
             indicadoPor: refCode || null,

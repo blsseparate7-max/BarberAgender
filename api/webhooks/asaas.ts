@@ -62,6 +62,131 @@ function getClientDb() {
   }
 }
 
+function parseFirestoreFields(fields: any): any {
+  const result: any = {};
+  if (!fields || typeof fields !== 'object') return result;
+  for (const key of Object.keys(fields)) {
+    const valObj = fields[key];
+    if (!valObj || typeof valObj !== 'object') continue;
+    if ('stringValue' in valObj) result[key] = valObj.stringValue;
+    else if ('integerValue' in valObj) result[key] = Number(valObj.integerValue);
+    else if ('doubleValue' in valObj) result[key] = Number(valObj.doubleValue);
+    else if ('booleanValue' in valObj) result[key] = valObj.booleanValue;
+    else if ('mapValue' in valObj && valObj.mapValue?.fields) result[key] = parseFirestoreFields(valObj.mapValue.fields);
+    else if ('arrayValue' in valObj) result[key] = (valObj.arrayValue?.values || []).map((v: any) => parseFirestoreFields({ temp: v }).temp);
+    else if ('nullValue' in valObj) result[key] = null;
+  }
+  return result;
+}
+
+function encodeFirestoreFields(data: any): any {
+  const fields: any = {};
+  for (const key of Object.keys(data)) {
+    const val = data[key];
+    if (val === null || val === undefined) fields[key] = { nullValue: null };
+    else if (typeof val === 'boolean') fields[key] = { booleanValue: val };
+    else if (typeof val === 'number') {
+      if (Number.isInteger(val)) fields[key] = { integerValue: String(val) };
+      else fields[key] = { doubleValue: val };
+    }
+    else if (typeof val === 'string') fields[key] = { stringValue: val };
+    else if (typeof val === 'object' && !Array.isArray(val)) {
+      fields[key] = { mapValue: { fields: encodeFirestoreFields(val) } };
+    }
+  }
+  return fields;
+}
+
+const PROJ_ID = process.env.FIREBASE_PROJECT_ID || "gbagender";
+
+async function restGetDocById(collName: string, docId: string) {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${PROJ_ID}/databases/(default)/documents/${collName}/${docId}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.fields) {
+        return { id: docId, data: parseFirestoreFields(json.fields), type: 'rest' };
+      }
+    }
+  } catch (err) {
+    console.warn(`REST getDoc error on ${collName}/${docId}:`, err);
+  }
+  return null;
+}
+
+async function restQueryCollection(collName: string, field: string, op: any, value: any) {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${PROJ_ID}/databases/(default)/documents:runQuery`;
+    const body = {
+      structuredQuery: {
+        from: [{ collectionId: collName }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath: field },
+            op: "EQUAL",
+            value: typeof value === 'number' ? { doubleValue: value } : { stringValue: String(value) }
+          }
+        }
+      }
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) {
+      const list = await res.json();
+      const results: any[] = [];
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          if (item.document && item.document.fields) {
+            const parts = item.document.name.split('/');
+            const docId = parts[parts.length - 1];
+            results.push({ id: docId, data: parseFirestoreFields(item.document.fields), type: 'rest' });
+          }
+        }
+      }
+      return results;
+    }
+  } catch (err) {
+    console.warn(`REST queryCollection error on ${collName}.${field}:`, err);
+  }
+  return [];
+}
+
+async function restUpdateDocById(collName: string, docId: string, updateFields: any) {
+  try {
+    const keys = Object.keys(updateFields);
+    const updateMask = keys.map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    const url = `https://firestore.googleapis.com/v1/projects/${PROJ_ID}/databases/(default)/documents/${collName}/${docId}?${updateMask}`;
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: encodeFirestoreFields(updateFields) })
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn(`REST updateDoc error on ${collName}/${docId}:`, err);
+  }
+  return false;
+}
+
+async function restAddDocToCollection(collName: string, docData: any) {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${PROJ_ID}/databases/(default)/documents/${collName}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: encodeFirestoreFields(docData) })
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn(`REST addDoc error on ${collName}:`, err);
+  }
+  return false;
+}
+
 async function getDocById(collName: string, docId: string) {
   const adminDb = getAdminDb();
   if (adminDb) {
@@ -85,7 +210,8 @@ async function getDocById(collName: string, docId: string) {
       console.error(`Client getDoc error on ${collName}/${docId}:`, e);
     }
   }
-  return null;
+
+  return await restGetDocById(collName, docId);
 }
 
 async function queryCollection(collName: string, field: string, op: any, value: any) {
@@ -111,7 +237,8 @@ async function queryCollection(collName: string, field: string, op: any, value: 
       console.error(`Client query error on ${collName}.${field}:`, e);
     }
   }
-  return [];
+
+  return await restQueryCollection(collName, field, op, value);
 }
 
 async function updateDocById(collName: string, docId: string, updateFields: any) {
@@ -135,7 +262,8 @@ async function updateDocById(collName: string, docId: string, updateFields: any)
       console.error(`Client updateDoc error on ${collName}/${docId}:`, e);
     }
   }
-  return false;
+
+  return await restUpdateDocById(collName, docId, updateFields);
 }
 
 async function addDocToCollection(collName: string, docData: any) {
@@ -158,7 +286,8 @@ async function addDocToCollection(collName: string, docData: any) {
       console.error(`Client addDoc error on ${collName}:`, e);
     }
   }
-  return false;
+
+  return await restAddDocToCollection(collName, docData);
 }
 
 export default async function handler(req: any, res: any) {
@@ -347,25 +476,62 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        if (value > 0) {
+        const finalVal = value || subData.amount || 0;
+        if (finalVal > 0) {
           await addDocToCollection('financial_transactions', {
             tenantId,
             type: 'income',
-            amount: value || subData.amount || 0,
+            amount: finalVal,
+            subscription_amount: finalVal,
+            service_amount: 0,
+            product_amount: 0,
+            package_amount: 0,
             date: todayStr,
             category: 'Assinaturas',
             description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
-            paymentMethod: payment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+            paymentMethod: 'Pagamento Online',
             status: 'pago',
             cliente_id: subData.cliente_id || 'N/A',
             cliente_name: subData.cliente_name || 'Cliente',
             responsavel_id: subData.cliente_id || 'N/A',
             responsavel_name: subData.cliente_name || 'Cliente',
-            net_amount: value || subData.amount || 0,
+            net_amount: finalVal,
             settlement_date: todayStr,
             is_settled: true,
             createdAt: new Date().toISOString()
           });
+
+          // Sync with open cash session
+          try {
+            const openSessions = await queryCollection('cash_sessions', 'tenantId', '==', tenantId);
+            const activeCash = openSessions.find((s: any) => s.data?.status === 'open' || s.data?.status === 'reopened');
+            if (activeCash) {
+              await addDocToCollection('cash_movements', {
+                tenantId,
+                caixa_id: activeCash.id,
+                type: 'income',
+                category: 'Assinaturas',
+                description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                amount: finalVal,
+                subscription_amount: finalVal,
+                payment_method: 'pagamento_online',
+                paymentMethod: 'Pagamento Online',
+                date: todayStr,
+                createdAt: new Date().toISOString()
+              });
+
+              const cData = activeCash.data || {};
+              await updateDocById('cash_sessions', activeCash.id, {
+                total_income: (cData.total_income || cData.totalIncome || 0) + finalVal,
+                totalIncome: (cData.totalIncome || cData.total_income || 0) + finalVal,
+                expected_balance: (cData.expected_balance || cData.expectedBalance || 0) + finalVal,
+                expectedBalance: (cData.expectedBalance || cData.expected_balance || 0) + finalVal,
+                updatedAt: new Date().toISOString()
+              });
+            }
+          } catch (cErr) {
+            console.warn("⚠️ [ASAAS WEBHOOK] Error syncing cash session:", cErr);
+          }
         }
 
         console.log(`✅ [ASAAS WEBHOOK] Client subscription ${targetSubDoc.id} activated successfully!`);

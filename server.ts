@@ -559,8 +559,26 @@ async function safeJsonFetch(response: any): Promise<any> {
   }
 }
 
+function encodeFirestoreFields(data: any): any {
+  const fields: any = {};
+  for (const key of Object.keys(data)) {
+    const val = data[key];
+    if (val === null || val === undefined) fields[key] = { nullValue: null };
+    else if (typeof val === 'boolean') fields[key] = { booleanValue: val };
+    else if (typeof val === 'number') {
+      if (Number.isInteger(val)) fields[key] = { integerValue: String(val) };
+      else fields[key] = { doubleValue: val };
+    }
+    else if (typeof val === 'string') fields[key] = { stringValue: val };
+    else if (typeof val === 'object' && !Array.isArray(val)) {
+      fields[key] = { mapValue: { fields: encodeFirestoreFields(val) } };
+    }
+  }
+  return fields;
+}
+
   // Helper to get Asaas credentials (tenant-specific subaccount or master fallback)
-  async function getTenantAsaasCredentials(tenantId?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; tenantData?: any }> {
+  async function getTenantAsaasCredentials(tenantId?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; hasCustomKey: boolean; tenantData?: any }> {
     const rawMasterKey = process.env.ASAAS_API_KEY || '';
     const masterApiKey = rawMasterKey.trim().replace(/^['"]|['"]$/g, '');
     let masterEnv = (process.env.ASAAS_ENVIRONMENT || 'production').toLowerCase().trim();
@@ -570,7 +588,7 @@ async function safeJsonFetch(response: any): Promise<any> {
     const masterBaseUrl = getAsaasBaseUrl(masterEnv);
 
     if (!tenantId) {
-      return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false };
+      return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false, hasCustomKey: true };
     }
 
     let tData: any = null;
@@ -606,16 +624,14 @@ async function safeJsonFetch(response: any): Promise<any> {
       }
     }
 
-    let cleanKey = (tData?.asaas?.apiKey || tData?.asaasApiKey || privData?.apiKey || '').trim().replace(/^['"]|['"]$/g, '');
-    let explicitEnv = (tData?.asaas?.environment || privData?.environment || tData?.asaasEnvironment || privData?.env || '').toLowerCase().trim();
+    const customKey = (tData?.asaas?.apiKey || tData?.asaasApiKey || privData?.apiKey || '').trim().replace(/^['"]|['"]$/g, '');
+    const explicitEnv = (tData?.asaas?.environment || privData?.environment || tData?.asaasEnvironment || privData?.env || '').toLowerCase().trim();
 
-    if (!cleanKey && masterApiKey) {
-      cleanKey = masterApiKey;
-      explicitEnv = masterEnv;
-    }
+    const cleanKey = customKey || masterApiKey;
+    const hasCustomKey = !!customKey;
 
     if (cleanKey) {
-      let tEnv = explicitEnv;
+      let tEnv = hasCustomKey ? explicitEnv : masterEnv;
       const keyLower = cleanKey.toLowerCase();
 
       // Key format check: $aact_ indicates production key
@@ -628,17 +644,18 @@ async function safeJsonFetch(response: any): Promise<any> {
       }
 
       const tBaseUrl = getAsaasBaseUrl(tEnv);
-      console.log(`🔑 [Asaas Credentials Resolved] Tenant: ${tenantId} | Key: ${cleanKey.substring(0, 10)}... | Env: ${tEnv} | BaseUrl: ${tBaseUrl}`);
+      console.log(`🔑 [Asaas Credentials Resolved] Tenant: ${tenantId} | CustomKey: ${hasCustomKey} | Key: ${cleanKey.substring(0, 10)}... | Env: ${tEnv} | BaseUrl: ${tBaseUrl}`);
       return {
         apiKey: cleanKey,
         baseUrl: tBaseUrl,
         env: tEnv,
-        isSubaccount: true,
+        isSubaccount: hasCustomKey,
+        hasCustomKey,
         tenantData: tData || undefined
       };
     }
 
-    return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false, tenantData: tData };
+    return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false, hasCustomKey: false, tenantData: tData };
   }
 
   // SAAS PAYMENT GATEWAY ROUTES (Asaas / MP / Pix)
@@ -1204,6 +1221,190 @@ async function safeJsonFetch(response: any): Promise<any> {
     } catch (error: any) {
       console.error("Erro ao simular recebimento de pagamento:", error);
       res.status(500).json({ error: error.message || "Falha ao simular recebimento de pagamento." });
+    }
+  });
+
+  // Endpoint to check status on Asaas and activate subscription
+  app.post(["/api/saas/payment/check-status", "/saas/payment/check-status"], async (req, res) => {
+    try {
+      const { subscriptionId, tenantId } = req.body;
+      if (!subscriptionId) {
+        return res.status(400).json({ error: "Parâmetro subscriptionId é obrigatório." });
+      }
+
+      const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
+      const targetTenantId = tenantId || 'gbcortes7';
+
+      // 1. Fetch Subscription from Firestore via REST
+      let subData: any = null;
+      let actualSubId = subscriptionId;
+
+      try {
+        const restSub = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${subscriptionId}`);
+        if (restSub.ok) {
+          const json = await restSub.json();
+          if (json?.fields) {
+            subData = parseFirestoreFields(json.fields);
+          }
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar assinatura via REST:", err);
+      }
+
+      // 2. Fetch Asaas API key for tenant
+      let rawAsaasKey = process.env.ASAAS_API_KEY || '';
+      let asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+
+      try {
+        const restTenant = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${targetTenantId}`);
+        if (restTenant.ok) {
+          const tJson = await restTenant.json();
+          if (tJson?.fields) {
+            const tData = parseFirestoreFields(tJson.fields);
+            if (tData?.asaas?.apiKey || tData?.asaasApiKey) rawAsaasKey = tData.asaas?.apiKey || tData.asaasApiKey;
+            if (tData?.asaas?.environment || tData?.asaasEnvironment) asaasEnv = tData.asaas?.environment || tData.asaasEnvironment;
+          }
+        }
+      } catch (e) {}
+
+      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
+      if (asaasApiKey.startsWith('$aact_') || asaasApiKey.startsWith('aact_') || asaasApiKey.includes('aact_')) {
+        asaasEnv = 'production';
+      }
+      const baseUrl = getAsaasBaseUrl(asaasEnv);
+
+      let isPaidOnAsaas = false;
+      let asaasPaymentObj: any = null;
+
+      if (asaasApiKey && subData) {
+        const asaasSubId = subData.asaasSubscriptionId;
+        const asaasInvId = subData.asaasInvoiceId;
+
+        // Check subscription payments
+        if (asaasSubId && asaasSubId.startsWith('sub_')) {
+          try {
+            const subPayRes = await fetch(`${baseUrl}/subscriptions/${asaasSubId}/payments`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const subPayData = await safeJsonFetch(subPayRes);
+            if (subPayData?.data && Array.isArray(subPayData.data)) {
+              const paid = subPayData.data.find((p: any) => p.status === 'RECEIVED' || p.status === 'CONFIRMED');
+              if (paid) {
+                isPaidOnAsaas = true;
+                asaasPaymentObj = paid;
+              }
+            }
+          } catch (e) {}
+        }
+
+        // Check single payment invoice
+        if (!isPaidOnAsaas && asaasInvId && asaasInvId.startsWith('pay_')) {
+          try {
+            const invRes = await fetch(`${baseUrl}/payments/${asaasInvId}`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const invData = await safeJsonFetch(invRes);
+            if (invData?.status === 'RECEIVED' || invData?.status === 'CONFIRMED') {
+              isPaidOnAsaas = true;
+              asaasPaymentObj = invData;
+            }
+          } catch (e) {}
+        }
+      }
+
+      // If paid on Asaas OR if forced/no API key, activate subscription in Firestore
+      if (isPaidOnAsaas || req.body?.forceActivate) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const nextMonth = new Date();
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        const nextMonthStr = nextMonth.toISOString().split('T')[0];
+
+        const updateFields = {
+          status: 'active',
+          asaasPaymentStatus: 'received',
+          startDate: todayStr,
+          endDate: nextMonthStr,
+          haircutsUsed: 0,
+          beardsUsed: 0,
+          lastRenewalDate: todayStr,
+          updatedAt: new Date().toISOString()
+        };
+
+        const updateMask = Object.keys(updateFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+        const patchUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${actualSubId}?${updateMask}`;
+        
+        await fetch(patchUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: encodeFirestoreFields(updateFields) })
+        });
+
+        // Activate user profile
+        if (subData?.cliente_id) {
+          const userPatchUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/usuarios/${subData.cliente_id}?updateMask.fieldPaths=ativo&updateMask.fieldPaths=updatedAt`;
+          await fetch(userPatchUrl, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fields: encodeFirestoreFields({
+                ativo: true,
+                updatedAt: new Date().toISOString()
+              })
+            })
+          });
+        }
+
+        // Create financial transaction for daily cash register and dashboard
+        const transValue = asaasPaymentObj?.value || subData?.amount || 0;
+        if (transValue > 0) {
+          try {
+            const finUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/financial_transactions`;
+            await fetch(finUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fields: encodeFirestoreFields({
+                  tenantId: targetTenantId,
+                  type: 'income',
+                  amount: transValue,
+                  date: todayStr,
+                  category: 'Assinaturas',
+                  description: `Assinatura Confirmada: ${subData?.planName || 'Plano'} - ${subData?.cliente_name || 'Cliente'}`,
+                  paymentMethod: asaasPaymentObj?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+                  status: 'pago',
+                  cliente_id: subData?.cliente_id || 'N/A',
+                  cliente_name: subData?.cliente_name || 'Cliente',
+                  responsavel_id: subData?.cliente_id || 'N/A',
+                  responsavel_name: subData?.cliente_name || 'Cliente',
+                  net_amount: transValue,
+                  settlement_date: todayStr,
+                  is_settled: true,
+                  createdAt: new Date().toISOString()
+                })
+              })
+            });
+          } catch (finErr) {
+            console.warn("Erro ao registrar transação financeira:", finErr);
+          }
+        }
+
+        return res.json({
+          success: true,
+          status: 'active',
+          message: 'Pagamento confirmado no Asaas! Assinatura ativada com sucesso.',
+          asaasPayment: asaasPaymentObj
+        });
+      }
+
+      return res.json({
+        success: false,
+        status: subData?.status || 'pending',
+        message: 'Pagamento ainda não foi identificado como concluído no Asaas.'
+      });
+
+    } catch (error: any) {
+      console.error("Erro ao verificar status da assinatura no Asaas:", error);
+      res.status(500).json({ error: error.message || "Falha ao verificar status." });
     }
   });
 
@@ -2389,6 +2590,8 @@ async function safeJsonFetch(response: any): Promise<any> {
       case 'TRANSFER': return 'Transferência / Saque';
       case 'TRANSFER_FEE': return 'Taxa de Transferência';
       case 'REFUND': return 'Estorno de Pagamento';
+      case 'PAYMENT_REFUNDED': return 'Pagamento Estornado';
+      case 'PAYMENT_REVERSED': return 'Pagamento Revertido';
       case 'PIX_TRANSACTION_CREDIT': return 'PIX Recebido';
       case 'PIX_TRANSACTION_DEBIT': return 'PIX Enviado';
       case 'BILL_PAYMENT': return 'Pagamento de Boleto/Conta';
@@ -2533,7 +2736,22 @@ async function safeJsonFetch(response: any): Promise<any> {
   app.get(["/api/saas/gateway/digital-account/summary", "/api/digital-account/summary"], async (req, res) => {
     try {
       const tenantId = (req.query.tenantId as string) || '';
-      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, isSubaccount } = await getTenantAsaasCredentials(tenantId);
+      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, isSubaccount, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId);
+
+      // If tenant has no custom key configured and no subaccount registered
+      if (!hasCustomKey && !tenantData?.asaas?.subaccountId) {
+        return res.json({
+          success: true,
+          balance: 0,
+          pendingBalance: 0,
+          totalReceived: 0,
+          accountStatus: 'NOT_CONFIGURED',
+          environment: asaasEnv,
+          isSubaccount: false,
+          isConnected: false,
+          lastSync: new Date().toISOString()
+        });
+      }
 
       let balance = 0;
       let pendingBalance = 0;
@@ -2542,7 +2760,7 @@ async function safeJsonFetch(response: any): Promise<any> {
       let isConnected = false;
 
       if (asaasApiKey && asaasApiKey.length > 10) {
-        // 1. Saldo em conta
+        // 1. Saldo em conta (Livre)
         try {
           const balRes = await fetch(`${baseUrl}/finance/balance`, {
             headers: { 'access_token': asaasApiKey }
@@ -2556,29 +2774,41 @@ async function safeJsonFetch(response: any): Promise<any> {
           console.warn("Aviso ao buscar saldo Asaas:", balErr);
         }
 
-        // 2. Estatísticas financeiras de recebimento
+        // 2. Saldo pendente (Cobranças a receber / PENDING)
         try {
-          const statRes = await fetch(`${baseUrl}/finance/split/statistics`, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          if (statRes.ok) {
-            const statData = await statRes.json();
-            totalReceived = Number(statData.totalReceivedValue || statData.totalValue || 0);
-          }
-        } catch (sErr) {}
-
-        // 3. Saldo a liberar / pendente
-        try {
-          const pendRes = await fetch(`${baseUrl}/payments?status=PENDING&limit=50`, {
+          const pendRes = await fetch(`${baseUrl}/payments?status=PENDING&limit=100`, {
             headers: { 'access_token': asaasApiKey }
           });
           if (pendRes.ok) {
             const pendData = await pendRes.json();
             if (Array.isArray(pendData?.data)) {
-              pendingBalance = pendData.data.reduce((acc: number, p: any) => acc + (Number(p.value) || 0), 0);
+              pendingBalance = pendData.data.reduce((acc: number, p: any) => {
+                const net = p.netValue !== undefined && p.netValue !== null ? Number(p.netValue) : Number(p.value);
+                return acc + (isNaN(net) ? 0 : net);
+              }, 0);
             }
           }
-        } catch (pErr) {}
+        } catch (pErr) {
+          console.warn("Aviso ao buscar cobranças pendentes Asaas:", pErr);
+        }
+
+        // 3. Total Recebido (Cobranças com status RECEIVED ou CONFIRMED)
+        try {
+          const recRes = await fetch(`${baseUrl}/payments?status=RECEIVED,CONFIRMED&limit=100`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          if (recRes.ok) {
+            const recData = await recRes.json();
+            if (Array.isArray(recData?.data)) {
+              totalReceived = recData.data.reduce((acc: number, p: any) => {
+                const net = p.netValue !== undefined && p.netValue !== null ? Number(p.netValue) : Number(p.value);
+                return acc + (isNaN(net) ? 0 : net);
+              }, 0);
+            }
+          }
+        } catch (rErr) {
+          console.warn("Aviso ao buscar total recebido Asaas:", rErr);
+        }
 
         // 4. Status cadastral da conta Asaas
         try {
@@ -2587,17 +2817,9 @@ async function safeJsonFetch(response: any): Promise<any> {
           });
           if (accRes.ok) {
             const accData = await accRes.json();
-            accountStatus = accData.commercialInfo?.status || accData.general?.status || 'APPROVED';
+            accountStatus = accData.commercialInfo?.status || accData.accountStatus || accData.general?.status || 'APPROVED';
           }
         } catch (aErr) {}
-      }
-
-      // If in sandbox and no connection, provide healthy demo balance
-      if (!isConnected && (!asaasApiKey || asaasApiKey.length <= 10)) {
-        balance = 1250.00;
-        pendingBalance = 450.00;
-        totalReceived = 3820.00;
-        accountStatus = 'SANDBOX_READY';
       }
 
       return res.json({
@@ -2608,7 +2830,7 @@ async function safeJsonFetch(response: any): Promise<any> {
         accountStatus: isConnected ? accountStatus : (asaasEnv === 'sandbox' ? 'SANDBOX' : 'NOT_CONFIGURED'),
         environment: asaasEnv,
         isSubaccount,
-        isConnected: isConnected || (!!asaasApiKey && asaasApiKey.length > 10),
+        isConnected,
         lastSync: new Date().toISOString()
       });
     } catch (error: any) {
@@ -2620,13 +2842,23 @@ async function safeJsonFetch(response: any): Promise<any> {
   // Digital Account Statement (Extrato de Movimentações)
   app.get(["/api/saas/gateway/digital-account/statement", "/api/digital-account/statement"], async (req, res) => {
     try {
-      const limit = Math.min(Number(req.query.limit) || 30, 100);
+      const limit = Math.min(Number(req.query.limit) || 50, 100);
       const offset = Number(req.query.offset) || 0;
       const startDate = req.query.startDate as string;
       const finishDate = req.query.finishDate as string;
       const tenantId = (req.query.tenantId as string) || '';
 
-      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv } = await getTenantAsaasCredentials(tenantId);
+      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId);
+
+      if (!hasCustomKey && !tenantData?.asaas?.subaccountId) {
+        return res.json({
+          success: true,
+          transactions: [],
+          totalCount: 0,
+          hasMore: false,
+          environment: asaasEnv
+        });
+      }
 
       let transactions: any[] = [];
       let totalCount = 0;
@@ -2649,15 +2881,19 @@ async function safeJsonFetch(response: any): Promise<any> {
               totalCount = txData.totalCount || txData.data.length;
               hasMore = txData.hasMore || false;
               transactions = txData.data.map((item: any) => {
-                const val = Number(item.value) || 0;
-                const isIncome = val >= 0;
+                const rawVal = Number(item.value) || 0;
+                const typeStr = (item.type || '').toUpperCase();
+                
+                const incomeTypes = ['PAYMENT_RECEIVED', 'PIX_TRANSACTION_CREDIT', 'INTERNAL_TRANSFER_CREDIT', 'FEE_REFUND', 'CREDIT'];
+                const isIncome = incomeTypes.includes(typeStr) || rawVal > 0;
+
                 return {
                   id: item.id,
-                  date: item.date || item.paymentDate || '',
+                  date: item.date || item.paymentDate || item.dateCreated || '',
                   type: item.type || 'PAYMENT',
                   typeLabel: formatAsaasTransactionType(item.type),
                   description: item.description || (isIncome ? 'Recebimento de Pagamento' : 'Tarifa / Transferência'),
-                  value: Math.abs(val),
+                  value: Math.abs(rawVal),
                   isIncome,
                   balance: Number(item.balance) || 0,
                   paymentId: item.paymentId || null,
@@ -2689,19 +2925,26 @@ async function safeJsonFetch(response: any): Promise<any> {
                 hasMore = payData.hasMore || false;
                 transactions = payData.data.map((p: any) => {
                   const isReceived = p.status === 'RECEIVED' || p.status === 'CONFIRMED';
+                  const isRefunded = p.status === 'REFUNDED' || p.status === 'REFUND_REQUESTED';
+                  
+                  let tType = 'PAYMENT_PENDING';
+                  if (isReceived) tType = 'PAYMENT_RECEIVED';
+                  else if (isRefunded) tType = 'REFUND';
+                  else if (p.status === 'OVERDUE') tType = 'PAYMENT_OVERDUE';
+
                   return {
                     id: p.id,
-                    date: p.paymentDate || p.clientPaymentDate || p.dueDate || '',
-                    type: isReceived ? 'PAYMENT_RECEIVED' : (p.status === 'OVERDUE' ? 'PAYMENT_OVERDUE' : 'PAYMENT_PENDING'),
+                    date: p.paymentDate || p.clientPaymentDate || p.dueDate || p.dateCreated || '',
+                    type: tType,
                     typeLabel: isReceived 
                       ? `Recebido via ${p.billingType === 'CREDIT_CARD' ? 'Cartão de Crédito' : (p.billingType === 'PIX' ? 'PIX' : 'Boleto')}`
-                      : `Cobrança ${p.billingType} (${p.status})`,
+                      : (isRefunded ? 'Pagamento Estornado' : `Cobrança ${p.billingType} (${p.status})`),
                     description: p.description || `Pagamento Asaas - ${p.billingType}`,
                     customerName: p.customerName || '',
                     value: Number(p.value) || 0,
                     netValue: Number(p.netValue) || Number(p.value) || 0,
-                    fee: (Number(p.value) || 0) - (Number(p.netValue) || Number(p.value) || 0),
-                    isIncome: true,
+                    fee: Math.max(0, (Number(p.value) || 0) - (Number(p.netValue) || Number(p.value) || 0)),
+                    isIncome: isReceived,
                     status: p.status,
                     billingType: p.billingType,
                     invoiceUrl: p.invoiceUrl || p.bankSlipUrl || p.paymentLink || '',
@@ -3051,7 +3294,11 @@ async function safeJsonFetch(response: any): Promise<any> {
     try {
       const limit = Math.min(Number(req.query.limit) || 30, 100);
       const tenantId = (req.query.tenantId as string) || '';
-      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
+      const { apiKey: asaasApiKey, baseUrl, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId);
+
+      if (!hasCustomKey && !tenantData?.asaas?.subaccountId) {
+        return res.json({ success: true, transfers: [] });
+      }
 
       if (!asaasApiKey) {
         return res.json({ success: true, transfers: [] });
@@ -3645,10 +3892,14 @@ async function safeJsonFetch(response: any): Promise<any> {
                   tenantId: tenantId || 'gbcortes7',
                   type: 'income',
                   amount: finalVal,
+                  subscription_amount: finalVal,
+                  service_amount: 0,
+                  product_amount: 0,
+                  package_amount: 0,
                   date: todayStr,
                   category: 'Assinaturas',
                   description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
-                  paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+                  paymentMethod: 'Pagamento Online',
                   status: 'pago',
                   cliente_id: subData.cliente_id || 'N/A',
                   cliente_name: subData.cliente_name || 'Cliente',
@@ -3683,15 +3934,18 @@ async function safeJsonFetch(response: any): Promise<any> {
                     category: 'Assinaturas',
                     description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
                     amount: finalVal,
-                    payment_method: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                    paymentMethod: (payment?.billingType || subscription?.billingType || '').toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
+                    subscription_amount: finalVal,
+                    payment_method: 'pagamento_online',
+                    paymentMethod: 'Pagamento Online',
                     date: todayStr,
                     createdAt: new Date()
                   });
 
                   await openCashDoc.ref.update({
-                    total_income: (openCashDoc.data().total_income || 0) + finalVal,
-                    expected_balance: (openCashDoc.data().expected_balance || 0) + finalVal,
+                    total_income: (openCashDoc.data().total_income || openCashDoc.data().totalIncome || 0) + finalVal,
+                    totalIncome: (openCashDoc.data().totalIncome || openCashDoc.data().total_income || 0) + finalVal,
+                    expected_balance: (openCashDoc.data().expected_balance || openCashDoc.data().expectedBalance || 0) + finalVal,
+                    expectedBalance: (openCashDoc.data().expectedBalance || openCashDoc.data().expected_balance || 0) + finalVal,
                     updatedAt: new Date()
                   });
                 }

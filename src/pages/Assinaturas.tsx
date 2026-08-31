@@ -525,7 +525,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.isPaid || data.status === 'RECEIVED' || data.status === 'CONFIRMED' || data.status === 'ACTIVE') {
+          const currentStatus = String(data.status || '').toUpperCase();
+          if (data.isPaid || data.success || currentStatus === 'ACTIVE' || currentStatus === 'RECEIVED' || currentStatus === 'CONFIRMED' || currentStatus === 'RECEIVED_IN_CASH') {
             setCreatedChargeData(prev => prev ? { ...prev, status: 'active' } : null);
             toast.success("Pagamento identificado no Asaas! Assinatura ativada com sucesso.");
             await loadData();
@@ -2409,7 +2410,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
-                {usagesByPlan.map((item) => {
+                {usagesByPlan.map((item, itemIdx) => {
                   const isExpanded = expandedPlanId === item.planId;
                   
                   const barberBreakdown: Record<string, number> = {};
@@ -2419,7 +2420,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   });
 
                   return (
-                    <div key={item.planId} className="transition-colors">
+                    <div key={`usage-plan-${item.planId || itemIdx}-${itemIdx}`} className="transition-colors">
                       <div 
                         onClick={() => setExpandedPlanId(isExpanded ? null : item.planId)}
                         className="p-5 flex items-center justify-between hover:bg-slate-50/50 cursor-pointer transition select-none"
@@ -2464,8 +2465,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               <div className="space-y-2">
                                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block">Atendimentos por Profissional</span>
                                 <div className="flex flex-wrap gap-2">
-                                  {Object.entries(barberBreakdown).map(([barberName, count]) => (
-                                    <div key={barberName} className="bg-white border border-slate-200/65 px-3 py-1.5 rounded-full text-[10px] font-bold text-slate-600 shadow-sm flex items-center gap-1.5">
+                                  {Object.entries(barberBreakdown).map(([barberName, count], bIdx) => (
+                                    <div key={`b-breakdown-${barberName}-${bIdx}`} className="bg-white border border-slate-200/65 px-3 py-1.5 rounded-full text-[10px] font-bold text-slate-600 shadow-sm flex items-center gap-1.5">
                                       <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                                       <span>{barberName}:</span>
                                       <span className="font-black text-indigo-600">{count}</span>
@@ -2488,8 +2489,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-150 text-[11px] font-semibold text-slate-600">
-                                        {item.usages.map((u: any) => (
-                                          <tr key={u.id} className="hover:bg-slate-50/50 transition">
+                                        {item.usages.map((u: any, uIdx: number) => (
+                                          <tr key={`u-row-${u.id || uIdx}-${uIdx}`} className="hover:bg-slate-50/50 transition">
                                             <td className="p-3 whitespace-nowrap">
                                               {format(parseISO(u.date), 'dd/MM/yyyy')}
                                             </td>
@@ -2813,13 +2814,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 </div>
               ) : (
                 <div className="space-y-4 max-h-[220px] overflow-y-auto pr-1">
-                  {calculatedCommissions.map(barber => {
+                  {calculatedCommissions.map((barber, bIdx) => {
                     const sharePct = filteredUsages.length > 0 
                       ? Math.round((barber.totalServices / filteredUsages.length) * 100) 
                       : 0;
 
                     return (
-                      <div key={barber.uid} className="flex items-center gap-4">
+                      <div key={`calc-barber-${barber.uid || bIdx}-${bIdx}`} className="flex items-center gap-4">
                         <div className="w-8 h-8 rounded-full bg-slate-100 border overflow-hidden flex items-center justify-center shrink-0">
                           {barber.foto ? (
                             <img src={barber.foto} alt={barber.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -3440,8 +3441,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         className="w-full bg-transparent border-0 py-2 px-3 text-xs font-bold text-slate-800 outline-none cursor-pointer"
                       >
                         <option value="">Selecione um serviço do catálogo para adicionar...</option>
-                        {services.map(s => (
-                          <option key={s.id} value={s.id}>
+                        {services.map((s, sIdx) => (
+                          <option key={`ps-svc-opt-${s.id || sIdx}-${sIdx}`} value={s.id}>
                             {s.nome} — R$ {(s.preco ?? s.price ?? 0).toFixed(2)}
                           </option>
                         ))}

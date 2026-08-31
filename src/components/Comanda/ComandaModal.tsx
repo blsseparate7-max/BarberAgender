@@ -802,9 +802,45 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       const originalPrice = type === 'servico' ? (item as Service).preco ?? (item as Service).price ?? 0 : (item as Product).salePrice ?? (item as any).preco ?? 0;
       const subDiscount = getSubscriptionDiscount(item, type);
       const unitPrice = subDiscount > 0 ? originalPrice * (1 - subDiscount / 100) : originalPrice;
-      const totalPrice = isCortesia ? 0 : unitPrice;
 
-      if (subDiscount > 0 && !isCortesia) {
+      let deductTypeVal: 'assinatura' | undefined = undefined;
+      let subscriptionIdVal: string | undefined = undefined;
+      let isCortesiaVal = isCortesia;
+      let totalPriceVal = isCortesia ? 0 : unitPrice;
+      let generateCommVal = (type === 'servico' || type === 'product') && !isCortesia;
+
+      const activeSub = clientSubscriptions?.find(s => s.status === 'active');
+      if (type === 'servico' && activeSub && !isCortesia) {
+        let isEligible = false;
+        if (activeSub.services && activeSub.services.length > 0) {
+          const planService = activeSub.services.find((ps: any) => ps.serviceId === item.id);
+          if (planService) {
+            if (planService.isUnlimited) isEligible = true;
+            else {
+              const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.id]) || 0;
+              isEligible = currentUsed < planService.limit;
+            }
+          }
+        } else {
+          const itemDisplayName = (item as Service).nome || item.name || '';
+          const isCut = itemDisplayName.toLowerCase().includes('corte') || itemDisplayName.toLowerCase().includes('cabelo') || itemDisplayName.toLowerCase().includes('hair');
+          const isBeard = itemDisplayName.toLowerCase().includes('barba') || itemDisplayName.toLowerCase().includes('beard');
+          if (isCut) isEligible = (activeSub.haircutsUsed ?? 0) < (activeSub.haircutsPerMonth || 999);
+          else if (isBeard) isEligible = (activeSub.beardsUsed ?? 0) < (activeSub.beardsPerMonth || 999);
+          else isEligible = true;
+        }
+
+        if (isEligible) {
+          deductTypeVal = 'assinatura';
+          subscriptionIdVal = activeSub.id;
+          isCortesiaVal = true;
+          totalPriceVal = 0;
+          generateCommVal = false;
+          toast.info(`Serviço coberto e zerado pelo Clube de Assinatura!`);
+        }
+      }
+
+      if (subDiscount > 0 && !isCortesiaVal && !deductTypeVal) {
         const itemDisplayName = (item as Service).nome || item.name || '';
         toast.info(`Desconto de ${subDiscount}% de assinante aplicado ao item: ${itemDisplayName}!`);
       }
@@ -816,11 +852,13 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         name: (item as Service).nome || item.name || '',
         quantity: 1,
         unitPrice,
-        totalPrice,
+        totalPrice: totalPriceVal,
         profissional_id: comanda.profissional_id,
         profissional_name: comanda.profissional_name,
-        isCortesia,
-        generateCommission: (type === 'servico' || type === 'product') && !isCortesia
+        isCortesia: isCortesiaVal,
+        deductType: deductTypeVal,
+        subscriptionId: subscriptionIdVal,
+        generateCommission: generateCommVal
       };
 
       const updatedItems = [...(comanda.items || []), newItem];
@@ -2060,9 +2098,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                         </span>
                                       )}
                                       {item.deductType === 'assinatura' && (
-                                        <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-indigo-600 uppercase tracking-widest bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                                          <Sparkles size={10} fill="currentColor" />
-                                          CLUBE
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 uppercase tracking-wider bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200/80 shadow-2xs">
+                                          <Sparkles size={11} className="text-emerald-600 fill-emerald-600" />
+                                          <span>Coberto por Assinatura (R$ 0,00)</span>
                                         </span>
                                       )}
                                     </div>
@@ -2073,13 +2111,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                         <button
                                           type="button"
                                           onClick={() => toggleItemDeduction(item.id, 'none')}
-                                          className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all ${
+                                          title="Desvincular assinatura / cobrar valor avulso"
+                                          className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all ${
                                             !item.deductType 
                                               ? 'bg-slate-800 text-white border-slate-800 shadow-sm' 
-                                              : 'bg-white text-slate-400 border-slate-150 hover:text-slate-600 hover:border-slate-300'
+                                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-800'
                                           }`}
                                         >
-                                          Pagar R$
+                                          {item.deductType === 'assinatura' ? '🔓 Desvincular (Cobrar Avulso)' : 'Pagar R$'}
                                         </button>
                                         
                                         {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg, pkgIdx) => {
@@ -2110,18 +2149,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                           );
                                         })}
 
-                                        {hasSub && (
+                                        {hasSub && item.deductType !== 'assinatura' && (
                                           <button
                                             type="button"
                                             onClick={() => toggleItemDeduction(item.id, 'assinatura')}
-                                            className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-1 ${
-                                              item.deductType === 'assinatura'
-                                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
-                                                : 'bg-indigo-50 text-indigo-600 border-indigo-100/50 hover:bg-indigo-150'
-                                            }`}
+                                            className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-1 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
                                           >
                                             <Sparkles size={10} fill="currentColor" />
-                                            <span>Clube</span>
+                                            <span>Vincular ao Clube (R$ 0)</span>
                                           </button>
                                         )}
                                       </div>

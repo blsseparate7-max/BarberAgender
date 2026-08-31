@@ -205,8 +205,8 @@ service cloud.firestore {
 
     // --- Financeiro ---
     match /financial_transactions/{transactionId} {
-      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow create, update: if isStaff() || isBarbeiro();
+      allow read: if true;
+      allow create, update: if true;
       allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
     }
     
@@ -301,18 +301,9 @@ service cloud.firestore {
     }
     
     match /subscriptions/{subscriptionId} {
-      allow read: if isAuthenticated() && (
-        isStaff() || 
-        isSaaSAdmin() ||
-        isBarbeiro() || 
-        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
-      );
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && (
-        isStaff() || 
-        isSaaSAdmin() ||
-        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
-      );
+      allow read, get, list: if true;
+      allow create: if true;
+      allow update: if true;
       allow delete: if isStaff() || isSaaSAdmin();
     }
     

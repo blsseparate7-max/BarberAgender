@@ -401,7 +401,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
               <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Profissionais Adicionados ({addedProfessionals.length})</h4>
               <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-1">
                 {addedProfessionals.map((p, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl shadow-sm text-xs">
+                  <div key={`ob-prof-${p.nome}-${idx}`} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl shadow-sm text-xs">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 bg-indigo-100 text-indigo-700 font-bold rounded-lg flex items-center justify-center">
                         {p.nome.charAt(0).toUpperCase()}
@@ -509,7 +509,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
               <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Serviços Adicionados ({addedServices.length})</h4>
               <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-1">
                 {addedServices.map((s, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl shadow-sm text-xs">
+                  <div key={`ob-svc-${s.nome}-${idx}`} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl shadow-sm text-xs">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 bg-emerald-100 text-emerald-700 font-bold rounded-lg flex items-center justify-center">
                         <Scissors size={12} />
@@ -614,7 +614,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
               <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Produtos Adicionados ({addedProducts.length})</h4>
               <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-1">
                 {addedProducts.map((p, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl shadow-sm text-xs">
+                  <div key={`ob-prod-${p.name}-${idx}`} className="flex items-center justify-between p-3 bg-white border border-slate-150 rounded-xl shadow-sm text-xs">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 bg-amber-100 text-amber-700 font-bold rounded-lg flex items-center justify-center">
                         <ShoppingBag size={12} />
@@ -706,7 +706,7 @@ export function OnboardingWelcome({ profile, onClose, onNavigate }: OnboardingWe
         <div className="h-1 w-full bg-slate-100 flex shrink-0">
           {[...Array(totalSteps)].map((_, i) => (
             <div 
-              key={i} 
+              key={`ob-step-bar-${i}`} 
               className={`h-full flex-1 transition-all duration-300 ${
                 i < step ? 'bg-emerald-500' : 'bg-slate-100'
               } ${i > 0 ? 'border-l border-white' : ''}`}

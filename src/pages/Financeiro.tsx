@@ -443,7 +443,10 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       }
 
       // Payment method grouping
-      const pmKey = (t.paymentMethod || 'outros').toLowerCase();
+      let pmKey = (t.paymentMethod || 'outros').toLowerCase();
+      if (pmKey.includes('online') || pmKey === 'asaas' || pmKey === 'pix_online' || pmKey === 'cartao_online' || pmKey === 'pagamento_online') {
+        pmKey = 'online';
+      }
       if (isPaid) {
         if (!defaultMethods[pmKey]) {
           let labelName = t.paymentMethod || 'Outros';

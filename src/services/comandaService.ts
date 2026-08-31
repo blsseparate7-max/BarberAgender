@@ -124,7 +124,57 @@ export const comandaService = {
     const docRef = doc(collection(db, COLLECTION));
     const number = Math.floor(1000 + Math.random() * 9000).toString();
     
+    const clienteId = data.cliente_id || '';
     const items = data.items || [];
+
+    // Auto-apply active subscription if client is a subscriber
+    if (clienteId && clienteId !== 'avulso' && items.length > 0) {
+      try {
+        const subQuery = query(
+          collection(db, 'subscriptions'),
+          where('cliente_id', '==', clienteId),
+          where('status', '==', 'active')
+        );
+        const subSnap = await getDocs(subQuery);
+        if (!subSnap.empty) {
+          const activeSub = subSnap.docs[0].data() as any;
+          const activeSubId = subSnap.docs[0].id;
+          
+          items.forEach(item => {
+            if ((item.type === 'servico' || item.type === 'assinatura') && !item.deductType) {
+              let isEligible = false;
+              if (activeSub.services && activeSub.services.length > 0) {
+                const planService = activeSub.services.find((ps: any) => ps.serviceId === item.referencia_id);
+                if (planService) {
+                  if (planService.isUnlimited) isEligible = true;
+                  else {
+                    const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.referencia_id]) || 0;
+                    isEligible = currentUsed < planService.limit;
+                  }
+                }
+              } else {
+                const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
+                const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
+                if (isCut) isEligible = (activeSub.haircutsUsed ?? 0) < (activeSub.haircutsPerMonth || 999);
+                else if (isBeard) isEligible = (activeSub.beardsUsed ?? 0) < (activeSub.beardsPerMonth || 999);
+                else isEligible = true;
+              }
+
+              if (isEligible) {
+                item.deductType = 'assinatura';
+                item.subscriptionId = activeSubId;
+                item.isCortesia = true;
+                item.totalPrice = 0;
+                item.generateCommission = false;
+              }
+            }
+          });
+        }
+      } catch (subErr) {
+        console.warn("Could not check active subscription for new comanda items:", subErr);
+      }
+    }
+
     const subtotalServices = items
       .filter(i => (i.type === 'servico' || i.type === 'assinatura') && !i.isCortesia)
       .reduce((acc, i) => acc + i.totalPrice, 0);
@@ -486,6 +536,12 @@ export const comandaService = {
           categoryName = 'Serviços/Produtos';
         }
 
+        let normalizedPaymentMethod = payment.method;
+        const pmLower = String(payment.method || '').toLowerCase();
+        if (pmLower === 'pagamento_online' || pmLower === 'pagamento online' || pmLower === 'asaas' || pmLower === 'pix_online' || pmLower === 'cartao_online' || pmLower === 'online') {
+          normalizedPaymentMethod = 'Pagamento Online';
+        }
+
         const financialTx: FinancialTransaction = {
           id: financialRef.id,
           tenantId: comanda.tenantId || getActiveTenantId(),
@@ -499,7 +555,7 @@ export const comandaService = {
           product_amount: productAmount,
           package_amount: packageAmount,
           subscription_amount: subscriptionAmount,
-          paymentMethod: payment.method,
+          paymentMethod: normalizedPaymentMethod,
           metodo_pagamento_id: methodConfig.id,
           date: today,
           settlement_date: settlementDateStr,
@@ -531,7 +587,8 @@ export const comandaService = {
             category: 'Venda',
             description: `Comanda #${comanda.number}`,
             amount: isReceivable ? netAmount : payment.amount,
-            paymentMethod: payment.method,
+            paymentMethod: normalizedPaymentMethod,
+            payment_method: pmLower === 'pagamento_online' || pmLower === 'pagamento online' ? 'pagamento_online' : payment.method,
             is_receivable: isReceivable,
             settlement_date: settlementDateStr,
             referencia_id: comanda.id,
@@ -871,42 +928,39 @@ export const comandaService = {
       });
 
       // 2.1 Loyalty Points & Cashback
-      // We'll use a fixed calculation or attempt to fetch config if we were in a context allowing it.
-      // Since this is inside a transaction, we can't easily do 'await' for a NEW doc here without pre-fetching.
-      // However, we can use a standard logic: 1 point per Real, 5% cashback (matching default config)
-      // If a service is deducted via subscription, calculate points based on its original price so points are still credited
-      const originalSubscriptionAmount = (comanda.items || [])
-        .filter(item => item.deductType === 'assinatura')
-        .reduce((sum, item) => sum + ((item.unitPrice || 0) * (item.quantity || 1)), 0);
+      // Cashback and Points are calculated STRICTLY on the actual paid amount (comanda.totalAmount).
+      // Zeroed subscription items yield 0 cashback and 0 points because the subscriber already paid their subscription fee separately.
+      const effectiveAmountForPoints = comanda.totalAmount || 0;
+      const pointsToAdd = Math.floor(effectiveAmountForPoints); // 1 point per Real paid
+      const cashbackToAdd = (effectiveAmountForPoints * 5) / 100; // 5% cashback on actual paid amount
 
-      const effectiveAmountForPoints = (comanda.totalAmount || 0) + originalSubscriptionAmount;
-      const pointsToAdd = Math.floor(effectiveAmountForPoints); // 1 point per Real
-      const cashbackToAdd = ((comanda.totalAmount || 0) * 5) / 100; // 5% cashback on actual paid amount
-      const activeTenantId = comanda.tenantId || getActiveTenantId();
-      const pointsDocId = `${activeTenantId}_${comanda.cliente_id}`;
+      if (pointsToAdd > 0 || cashbackToAdd > 0) {
+        const activeTenantId = comanda.tenantId || getActiveTenantId();
+        const pointsDocId = `${activeTenantId}_${comanda.cliente_id}`;
 
-      const pointsRef = doc(db, 'loyalty_points', pointsDocId);
-      // We use set with merge: true to create if not exists
-      transaction.set(pointsRef, {
-        cliente_id: comanda.cliente_id,
-        tenantId: activeTenantId,
-        points: increment(pointsToAdd),
-        cashback: increment(cashbackToAdd),
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+        const pointsRef = doc(db, 'loyalty_points', pointsDocId);
+        // We use set with merge: true to create if not exists
+        transaction.set(pointsRef, {
+          cliente_id: comanda.cliente_id,
+          tenantId: activeTenantId,
+          points: increment(pointsToAdd),
+          cashback: increment(cashbackToAdd),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
 
-      const historyRef = doc(collection(db, 'loyalty_history'));
-      transaction.set(historyRef, {
-        cliente_id: comanda.cliente_id,
-        tenantId: activeTenantId,
-        type: 'earn',
-        source: comanda.origin === 'agenda' ? 'appointment' : 'purchase',
-        points: pointsToAdd,
-        cashback: cashbackToAdd,
-        description: `Comanda #${comanda.number}`,
-        date: new Date().toISOString().split('T')[0],
-        createdAt: serverTimestamp()
-      });
+        const historyRef = doc(collection(db, 'loyalty_history'));
+        transaction.set(historyRef, {
+          cliente_id: comanda.cliente_id,
+          tenantId: activeTenantId,
+          type: 'earn',
+          source: comanda.origin === 'agenda' ? 'appointment' : 'purchase',
+          points: pointsToAdd,
+          cashback: cashbackToAdd,
+          description: `Comanda #${comanda.number}`,
+          date: new Date().toISOString().split('T')[0],
+          createdAt: serverTimestamp()
+        });
+      }
     }
 
     // 3. Generate Commissions and Update Inventory

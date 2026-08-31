@@ -310,6 +310,7 @@ export const userService = {
       email: data.email || '',
       tipo: data.tipo || 'cliente',
       ativo: data.ativo !== undefined ? data.ativo : true,
+      isLinked: data.isLinked !== undefined ? data.isLinked : Boolean(data.password),
       tenantId: data.tenantId || getActiveTenantId(),
       telefone: data.telefone || '',
       phone: data.telefone || '', // dual storage for safety

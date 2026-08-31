@@ -60,6 +60,7 @@ import {
   Ban,
   ShieldCheck,
   Clock,
+  Lock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -80,6 +81,19 @@ const formatCpfMask = (value: string) => {
   if (digits.length > 3) return digits.replace(/(\d{3})(\d{1,3})/, '$1.$2');
   return digits;
 };
+
+export function isCustomerLinked(customer?: UserProfile | null): boolean {
+  if (!customer) return false;
+  if (customer.isLinked === true) return true;
+  if (customer.isLinked === false) return false;
+  if (customer.linkedAt) return true;
+  
+  const email = (customer.email || '').toLowerCase().trim();
+  if (!email || email.includes('manual_') || email.includes('placeholder') || email.includes('sem-email') || email.includes('sem_email')) {
+    return false;
+  }
+  return false;
+}
 
 export function Clientes() {
   const { tenantId } = useTenant();
@@ -522,6 +536,10 @@ export function Clientes() {
               setIsDetailsOpen(false);
               handleEditCustomer(selectedCustomer);
             }}
+            onLinkAccount={() => {
+              setIsDetailsOpen(false);
+              handleLinkAccount(selectedCustomer);
+            }}
           />
         )}
         {isLinkingOpen && linkingCustomer && (
@@ -712,14 +730,25 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
             <span>Ficha</span>
             <ArrowRight size={14} />
           </button>
-          <button 
-            type="button"
-            onClick={onLinkAccount}
-            title="Vincular Conta / Enviar Convite"
-            className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
-          >
-            <Link2 size={16} />
-          </button>
+          {isCustomerLinked(customer) ? (
+            <button 
+              type="button"
+              onClick={onLinkAccount}
+              title="Cliente Já Vinculado (Conta Ativa)"
+              className="p-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-all border border-emerald-200 flex items-center gap-1 font-bold text-xs"
+            >
+              <CheckCircle2 size={16} className="text-emerald-600" />
+            </button>
+          ) : (
+            <button 
+              type="button"
+              onClick={onLinkAccount}
+              title="Vincular Conta / Enviar Convite"
+              className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+            >
+              <Link2 size={16} />
+            </button>
+          )}
           <button 
             type="button"
             onClick={onEdit}
@@ -818,14 +847,25 @@ function CustomerCard({ customer, onViewDetails, onEdit, onLinkAccount }: Custom
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button 
-            type="button"
-            onClick={onLinkAccount}
-            title="Vincular Conta / Enviar Convite"
-            className="p-2 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-100"
-          >
-            <Link2 size={18} />
-          </button>
+          {isCustomerLinked(customer) ? (
+            <button 
+              type="button"
+              onClick={onLinkAccount}
+              title="Cliente Já Vinculado (Conta Ativa)"
+              className="p-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-all border border-emerald-200"
+            >
+              <CheckCircle2 size={18} className="text-emerald-600" />
+            </button>
+          ) : (
+            <button 
+              type="button"
+              onClick={onLinkAccount}
+              title="Vincular Conta / Enviar Convite"
+              className="p-2 text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-100"
+            >
+              <Link2 size={18} />
+            </button>
+          )}
           <button 
             type="button"
             onClick={onEdit}
@@ -1122,7 +1162,7 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
   );
 }
 
-function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile, onClose: () => void, onEdit: () => void }) {
+function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { customer: UserProfile, onClose: () => void, onEdit: () => void, onLinkAccount?: () => void }) {
   const { user } = useAuth();
   const { tenantId } = useTenant();
   const [dontAddToCash, setDontAddToCash] = useState(false);
@@ -1626,8 +1666,8 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
     }
   });
 
-  // Login do Usuário se possui ou não
-  const temLogin = customer.email && !customer.email.includes('sem-email') && !customer.email.includes('teste');
+  // Login do Usuário se possui ou não (vinculado com senha ativada)
+  const temLogin = isCustomerLinked(customer);
   // Fidelidade se está ativado
   const pontosFidelidade = customer.pontos ?? customer.points ?? 0;
 
@@ -1718,11 +1758,28 @@ function CustomerDetails({ customer, onClose, onEdit }: { customer: UserProfile,
                   </div>
                 )}
 
-                <div className={`inline-flex items-center gap-2 px-3.5 py-1 rounded-full shadow-inner border text-[11px] font-black ${
-                  temLogin ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-amber-50 text-amber-600 border-amber-100'
-                }`}>
-                  <span>{temLogin ? '🟢 USUÁRIO COM LOGIN' : '🔴 SEM LOGIN CLIENTE'}</span>
-                </div>
+                {temLogin ? (
+                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full shadow-inner text-[11px] font-black">
+                    <CheckCircle2 size={13} className="text-emerald-600" />
+                    <span>✅ CLIENTE VINCULADO</span>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full shadow-inner text-[11px] font-black">
+                    <Lock size={13} className="text-amber-600" />
+                    <span>🔐 PENDENTE DE ATIVAÇÃO</span>
+                  </div>
+                )}
+
+                {!temLogin && onLinkAccount && (
+                  <button
+                    type="button"
+                    onClick={onLinkAccount}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full text-[11px] font-black transition-all shadow-sm active:scale-95 cursor-pointer"
+                  >
+                    <Link2 size={12} />
+                    <span>Vincular / Enviar Convite</span>
+                  </button>
+                )}
 
                 <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-blue-50 text-blue-700 border border-blue-100 rounded-full shadow-inner text-[11px] font-black">
                   ⭐ {pontosFidelidade} PONTOS FIDELIDADE
@@ -2589,10 +2646,13 @@ function DetailStat({ label, value, icon, color }: { label: string, value: strin
 }
 
 function LinkingModal({ customer, tenantId, onClose }: { customer: UserProfile; tenantId: string; onClose: () => void }) {
+  const isLinked = isCustomerLinked(customer);
   const generatedLink = `${window.location.origin}/register?link_client_id=${customer.uid}&tenant=${tenantId}`;
   
   const formattedPhone = (customer.telefone || customer.phone || '').replace(/\D/g, '');
-  const whatsappText = `Olá, ${customer.nome}! Para fazer seus agendamentos online, acompanhar seus pontos de fidelidade e ver seu histórico, clique no link abaixo para ativar sua conta:\n\n🔗 ${generatedLink}`;
+  const whatsappText = isLinked
+    ? `Olá, ${customer.nome}! Lembrando que sua conta de cliente na barbearia já está vinculada e ativa com o e-mail: ${customer.email}. Você pode acessar seus agendamentos e histórico a qualquer momento!`
+    : `Olá, ${customer.nome}! Para fazer seus agendamentos online, acompanhar seus pontos de fidelidade e ver seu histórico, clique no link abaixo para criar sua senha e ativar sua conta:\n\n🔗 ${generatedLink}`;
   
   const handleCopyLink = () => {
     navigator.clipboard.writeText(generatedLink);
@@ -2619,12 +2679,21 @@ function LinkingModal({ customer, tenantId, onClose }: { customer: UserProfile; 
       >
         <div className="p-8 border-b border-border flex items-center justify-between bg-slate-50/50">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100">
-              <Link2 size={20} />
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${
+              isLinked 
+                ? 'bg-emerald-50 text-emerald-600 border-emerald-200' 
+                : 'bg-amber-50 text-amber-600 border-amber-200'
+            }`}>
+              {isLinked ? <CheckCircle2 size={20} /> : <Link2 size={20} />}
             </div>
-            <h2 className="text-xl font-black text-primary tracking-tight">
-              Vincular Conta do Cliente
-            </h2>
+            <div>
+              <h2 className="text-xl font-black text-primary tracking-tight">
+                {isLinked ? 'Cliente Já Vinculado' : 'Vincular Conta do Cliente'}
+              </h2>
+              <p className="text-[11px] font-bold text-muted">
+                {isLinked ? 'Este cliente possui conta ativa no sistema' : 'Gere o link de ativação para o cliente cadastrar a senha'}
+              </p>
+            </div>
           </div>
           <button onClick={onClose} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-xl border border-slate-100 shadow-sm">
             <X size={20} />
@@ -2632,60 +2701,116 @@ function LinkingModal({ customer, tenantId, onClose }: { customer: UserProfile; 
         </div>
 
         <div className="p-8 space-y-6">
-          <div>
-            <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Cliente Selecionado</p>
-            <h3 className="text-lg font-black text-primary">{customer.nome}</h3>
-            {customer.email && <p className="text-xs text-muted font-bold">{customer.email}</p>}
-          </div>
+          {isLinked ? (
+            <>
+              <div className="bg-emerald-50 border border-emerald-200/80 p-5 rounded-2xl flex items-start gap-4 text-emerald-950">
+                <div className="p-2.5 bg-emerald-500 text-white rounded-xl shrink-0 shadow-md">
+                  <CheckCircle2 size={24} />
+                </div>
+                <div className="space-y-1">
+                  <span className="inline-block text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100/90 px-2.5 py-0.5 rounded-md border border-emerald-200">
+                    ✅ CONTA VERIFICADA & ATIVA
+                  </span>
+                  <h3 className="text-base font-black text-slate-900">{customer.nome}</h3>
+                  <p className="text-xs text-slate-600 leading-relaxed font-semibold">
+                    Este cliente já completou o cadastro de senha e vinculou seu histórico completo de agendamentos, saldos e pontos de fidelidade.
+                  </p>
+                </div>
+              </div>
 
-          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed font-semibold">
-            Este cliente foi cadastrado diretamente na barbearia. Gerando o link abaixo, ele poderá criar as credenciais de login dele e se vincular a este histórico completo de agendamentos, saldos e pontos de fidelidade!
-          </div>
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider">E-mail de Acesso:</span>
+                  <span className="font-bold text-slate-800 font-mono">{customer.email || 'Não informado'}</span>
+                </div>
+                {customer.telefone && (
+                  <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-200/80">
+                    <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider">Telefone:</span>
+                    <span className="font-bold text-slate-800 font-mono">{customer.telefone}</span>
+                  </div>
+                )}
+              </div>
 
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Link de Ativação Único</label>
-            <div className="flex gap-2">
-              <input 
-                type="text"
-                readOnly
-                value={generatedLink}
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-mono focus:outline-none text-primary"
-              />
-              <button 
-                onClick={handleCopyLink}
-                className="bg-primary text-white hover:bg-primary-hover px-4 rounded-xl text-xs font-black transition-all shadow-sm active:scale-95"
-              >
-                Copiar
-              </button>
-            </div>
-          </div>
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(customer.email || '');
+                    toast.success("E-mail copiado com sucesso!");
+                  }}
+                  className="flex-1 py-3.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Mail size={16} />
+                  Copiar E-mail de Acesso
+                </button>
+                {formattedPhone && (
+                  <button 
+                    onClick={handleShareWhatsApp}
+                    className="flex-1 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-emerald-500/10"
+                  >
+                    <MessageCircle size={16} />
+                    Enviar Lembrete WhatsApp
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1">Cliente Selecionado</p>
+                <h3 className="text-lg font-black text-primary">{customer.nome}</h3>
+                {customer.email && <p className="text-xs text-muted font-bold">{customer.email}</p>}
+              </div>
 
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Mensagem Pronta para WhatsApp</label>
-            <div className="relative">
-              <textarea 
-                readOnly
-                value={whatsappText}
-                rows={4}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs focus:outline-none text-primary leading-relaxed font-semibold"
-              />
-            </div>
-            <div className="flex flex-col sm:flex-row gap-3 pt-2">
-              <button 
-                onClick={handleCopyMessage}
-                className="flex-1 py-3.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-sm"
-              >
-                Copiar Mensagem
-              </button>
-              <button 
-                onClick={handleShareWhatsApp}
-                className="flex-1 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-emerald-500/10"
-              >
-                <MessageCircle size={16} />
-                Enviar via WhatsApp
-              </button>
-            </div>
-          </div>
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed font-semibold">
+                Este cliente foi cadastrado diretamente na barbearia. Gerando o link abaixo, ele poderá cadastrar sua senha de acesso para vincular seu histórico completo de agendamentos, saldos e pontos de fidelidade!
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Link de Ativação Único</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text"
+                    readOnly
+                    value={generatedLink}
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-xs font-mono focus:outline-none text-primary"
+                  />
+                  <button 
+                    onClick={handleCopyLink}
+                    className="bg-primary text-white hover:bg-primary-hover px-4 rounded-xl text-xs font-black transition-all shadow-sm active:scale-95"
+                  >
+                    Copiar
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Mensagem Pronta para WhatsApp</label>
+                <div className="relative">
+                  <textarea 
+                    readOnly
+                    value={whatsappText}
+                    rows={4}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs focus:outline-none text-primary leading-relaxed font-semibold"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <button 
+                    onClick={handleCopyMessage}
+                    className="flex-1 py-3.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    Copiar Mensagem
+                  </button>
+                  <button 
+                    onClick={handleShareWhatsApp}
+                    className="flex-1 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-emerald-500/10"
+                  >
+                    <MessageCircle size={16} />
+                    Enviar via WhatsApp
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </motion.div>
     </div>

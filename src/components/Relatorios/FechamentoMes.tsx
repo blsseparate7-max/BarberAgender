@@ -199,16 +199,18 @@ export function FechamentoMes() {
 
         // Means of Payment (Consolidation for accountant)
         const method = (t.paymentMethod || '').toLowerCase();
-        if (method === 'pix') {
+        if (method.includes('pix')) {
           metrics.byPaymentMethod.pix += amount;
         } else if (method === 'dinheiro' || method === 'cash') {
           metrics.byPaymentMethod.dinheiro += amount;
-        } else if (method === 'credito' || method === 'crédito' || method === 'credit_card' || method === 'cartao_credito') {
+        } else if (method.includes('credito') || method.includes('credit')) {
           metrics.byPaymentMethod.credito += amount;
-        } else if (method === 'debito' || method === 'débito' || method === 'debit_card' || method === 'cartao_debito') {
+        } else if (method.includes('debito') || method.includes('debit')) {
           metrics.byPaymentMethod.debito += amount;
         } else if (method === 'fiado' || method === 'saldo' || method === 'cliente_saldo') {
           metrics.byPaymentMethod.fiado += amount;
+        } else if (method.includes('online') || method.includes('asaas')) {
+          metrics.byPaymentMethod.pix += amount; // Online standard payment
         } else {
           metrics.byPaymentMethod.outros += amount;
         }
@@ -678,10 +680,10 @@ export function FechamentoMes() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 text-xs font-semibold text-primary">
-                    {dataA && Object.values(dataA.barberStats).map((barber: any) => {
+                    {dataA && Object.values(dataA.barberStats).map((barber: any, idx: number) => {
                       const pctPaid = barber.commission > 0 ? (barber.payouts / barber.commission) * 100 : 100;
                       return (
-                        <tr key={barber.id} className="hover:bg-slate-50/50">
+                        <tr key={`barber-stat-${barber.id || barber.name || idx}-${idx}`} className="hover:bg-slate-50/50">
                           <td className="py-3.5 font-bold flex items-center gap-2">
                             <div className="w-8 h-8 rounded-full bg-primary/5 text-primary flex items-center justify-center font-black text-xs">
                               {barber.name.substring(0, 2).toUpperCase()}

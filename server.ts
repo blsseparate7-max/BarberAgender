@@ -532,6 +532,23 @@ function getAsaasBaseUrl(env?: string): string {
   return 'https://sandbox.asaas.com/api/v3';
 }
 
+function parseFirestoreFields(fields: any): any {
+  const result: any = {};
+  if (!fields || typeof fields !== 'object') return result;
+  for (const key of Object.keys(fields)) {
+    const valObj = fields[key];
+    if (!valObj || typeof valObj !== 'object') continue;
+    if ('stringValue' in valObj) result[key] = valObj.stringValue;
+    else if ('integerValue' in valObj) result[key] = Number(valObj.integerValue);
+    else if ('doubleValue' in valObj) result[key] = Number(valObj.doubleValue);
+    else if ('booleanValue' in valObj) result[key] = valObj.booleanValue;
+    else if ('mapValue' in valObj && valObj.mapValue?.fields) result[key] = parseFirestoreFields(valObj.mapValue.fields);
+    else if ('arrayValue' in valObj) result[key] = (valObj.arrayValue?.values || []).map((v: any) => parseFirestoreFields({ temp: v }).temp);
+    else if ('nullValue' in valObj) result[key] = null;
+  }
+  return result;
+}
+
 async function safeJsonFetch(response: any): Promise<any> {
   try {
     const text = await response.text();
@@ -546,71 +563,82 @@ async function safeJsonFetch(response: any): Promise<any> {
   async function getTenantAsaasCredentials(tenantId?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; tenantData?: any }> {
     const rawMasterKey = process.env.ASAAS_API_KEY || '';
     const masterApiKey = rawMasterKey.trim().replace(/^['"]|['"]$/g, '');
-    const masterEnv = (process.env.ASAAS_ENVIRONMENT || 'production').toLowerCase().trim();
+    let masterEnv = (process.env.ASAAS_ENVIRONMENT || 'production').toLowerCase().trim();
+    if (masterApiKey.startsWith('$aact_') || masterApiKey.startsWith('aact_')) {
+      masterEnv = 'production';
+    }
     const masterBaseUrl = getAsaasBaseUrl(masterEnv);
 
     if (!tenantId) {
       return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false };
     }
 
+    let tData: any = null;
+    let privData: any = null;
+
+    // 1. Attempt using Firebase Admin SDK if available
     const dbAdmin = getAdminDb();
     if (dbAdmin) {
       try {
         const tenantDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
-        const tData = tenantDoc.exists ? tenantDoc.data() : null;
+        if (tenantDoc.exists) tData = tenantDoc.data();
 
         const privDoc = await dbAdmin.collection('tenants').doc(tenantId).collection('private_settings').doc('asaas').get();
-        const privData = privDoc.exists ? privDoc.data() : null;
-
-        // Prefer tenantDoc asaas.apiKey if set from Portal SaaS Admin, or fall back to isolated private_settings
-        let cleanKey = (tData?.asaas?.apiKey || privData?.apiKey || '').trim().replace(/^['"]|['"]$/g, '');
-        let explicitEnv = (tData?.asaas?.environment || privData?.environment || tData?.asaasEnvironment || privData?.env || '').toLowerCase().trim();
-
-        if (cleanKey && cleanKey !== masterApiKey) {
-          let tEnv = explicitEnv;
-          if (!tEnv || tEnv === 'sandbox') {
-            const keyLower = cleanKey.toLowerCase();
-            if (keyLower.includes('$sandbox') || keyLower.includes('sandbox')) {
-              tEnv = 'sandbox';
-            } else if (keyLower.startsWith('$aact_') || keyLower.startsWith('aact_') || keyLower.includes('aact_')) {
-              tEnv = 'production';
-            } else {
-              tEnv = masterEnv;
-            }
-          }
-
-          // Sync into private_settings if missing or outdated
-          if (!privData || privData.apiKey !== cleanKey || privData.environment !== tEnv) {
-            try {
-              await dbAdmin.collection('tenants').doc(tenantId).collection('private_settings').doc('asaas').set({
-                apiKey: cleanKey,
-                environment: tEnv,
-                updatedAt: new Date()
-              }, { merge: true });
-            } catch (syncErr) {
-              console.warn(`[getTenantAsaasCredentials] Aviso ao atualizar private_settings de ${tenantId}:`, syncErr);
-            }
-          }
-
-          const tBaseUrl = getAsaasBaseUrl(tEnv);
-          return {
-            apiKey: cleanKey,
-            baseUrl: tBaseUrl,
-            env: tEnv,
-            isSubaccount: true,
-            tenantData: tData || undefined
-          };
-        }
-
-        if (tData) {
-          return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false, tenantData: tData };
-        }
+        if (privDoc.exists) privData = privDoc.data();
       } catch (err) {
-        console.warn(`[getTenantAsaasCredentials] Erro ao buscar credenciais do tenant ${tenantId}:`, err);
+        console.warn(`[getTenantAsaasCredentials] Aviso ao buscar via Admin DB para ${tenantId}:`, err);
       }
     }
 
-    return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false };
+    // 2. Fallback to Firestore REST API if tData is missing or dbAdmin is null
+    if (!tData) {
+      try {
+        const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
+        const restRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${tenantId}`);
+        if (restRes.ok) {
+          const json = await restRes.json();
+          if (json?.fields) {
+            tData = parseFirestoreFields(json.fields);
+          }
+        }
+      } catch (restErr) {
+        console.warn(`[getTenantAsaasCredentials] Aviso ao buscar via REST API para ${tenantId}:`, restErr);
+      }
+    }
+
+    let cleanKey = (tData?.asaas?.apiKey || tData?.asaasApiKey || privData?.apiKey || '').trim().replace(/^['"]|['"]$/g, '');
+    let explicitEnv = (tData?.asaas?.environment || privData?.environment || tData?.asaasEnvironment || privData?.env || '').toLowerCase().trim();
+
+    if (!cleanKey && masterApiKey) {
+      cleanKey = masterApiKey;
+      explicitEnv = masterEnv;
+    }
+
+    if (cleanKey) {
+      let tEnv = explicitEnv;
+      const keyLower = cleanKey.toLowerCase();
+
+      // Key format check: $aact_ indicates production key
+      if (keyLower.startsWith('$aact_') || keyLower.startsWith('aact_') || keyLower.includes('aact_')) {
+        tEnv = 'production';
+      } else if (keyLower.includes('sandbox')) {
+        tEnv = 'sandbox';
+      } else if (!tEnv) {
+        tEnv = 'production';
+      }
+
+      const tBaseUrl = getAsaasBaseUrl(tEnv);
+      console.log(`🔑 [Asaas Credentials Resolved] Tenant: ${tenantId} | Key: ${cleanKey.substring(0, 10)}... | Env: ${tEnv} | BaseUrl: ${tBaseUrl}`);
+      return {
+        apiKey: cleanKey,
+        baseUrl: tBaseUrl,
+        env: tEnv,
+        isSubaccount: true,
+        tenantData: tData || undefined
+      };
+    }
+
+    return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false, tenantData: tData };
   }
 
   // SAAS PAYMENT GATEWAY ROUTES (Asaas / MP / Pix)

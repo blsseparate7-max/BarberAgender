@@ -42,7 +42,8 @@ import {
   Key,
   Palette,
   FileText,
-  Eye
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -212,6 +213,7 @@ export function PortalSaaSAdmin() {
   const [editTenantSubscriptionsEnabled, setEditTenantSubscriptionsEnabled] = useState(false);
   const [editTenantAsaasApiKey, setEditTenantAsaasApiKey] = useState('');
   const [editTenantAsaasEnv, setEditTenantAsaasEnv] = useState<'production' | 'sandbox'>('production');
+  const [showAsaasApiKey, setShowAsaasApiKey] = useState(false);
 
   // Raio-X Tenant Support Modal State
   const [raioXTenant, setRaioXTenant] = useState<TenantProfile | null>(null);
@@ -344,6 +346,7 @@ export function PortalSaaSAdmin() {
     setEditTenantSubscriptionsEnabled(tenant.subscriptions_enabled ?? false);
     setEditTenantAsaasApiKey(tenant.asaas?.apiKey || '');
     setEditTenantAsaasEnv(tenant.asaas?.environment === 'sandbox' ? 'sandbox' : 'production');
+    setShowAsaasApiKey(false);
   };
 
   // Toggle Subscriptions Module Quick Action
@@ -2489,14 +2492,35 @@ export function PortalSaaSAdmin() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Chave de API do Asaas (ApiKey)</label>
-                        <input 
-                          type="text"
-                          placeholder="Ex: $aact_YTU5Y... ou similar"
-                          value={editTenantAsaasApiKey}
-                          onChange={(e) => setEditTenantAsaasApiKey(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 font-mono"
-                        />
+                        <div className="flex items-center justify-between ml-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                            <Key size={11} className="text-emerald-600" />
+                            Chave de API do Asaas (ApiKey)
+                          </label>
+                          {editTenantAsaasApiKey && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">
+                              🔒 Protegida
+                            </span>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <input 
+                            type={showAsaasApiKey ? "text" : "password"}
+                            placeholder="Ex: $aact_YTU5Y... ou similar"
+                            value={editTenantAsaasApiKey}
+                            onChange={(e) => setEditTenantAsaasApiKey(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-4 pr-11 text-xs font-bold text-slate-800 font-mono tracking-wider focus:outline-none focus:border-indigo-500 transition-colors"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowAsaasApiKey(!showAsaasApiKey)}
+                            tabIndex={-1}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200/50 transition-colors"
+                            title={showAsaasApiKey ? "Ocultar chave" : "Visualizar chave"}
+                          >
+                            {showAsaasApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-1">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ambiente do Gateway</label>
@@ -3581,9 +3605,19 @@ export function PortalSaaSAdmin() {
                     </h5>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-semibold">
                       <div className="bg-white p-4 rounded-xl border border-slate-200">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Chave API (Asaas)</p>
-                        <p className="font-mono text-slate-800 mt-1 break-all">
-                          {raioXTenant.asaas?.apiKey ? `${raioXTenant.asaas.apiKey.substring(0, 10)}... (Configurada)` : 'Usando chave padrão do servidor / Não configurada'}
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-between">
+                          <span>Chave API (Asaas)</span>
+                          {raioXTenant.asaas?.apiKey && <span className="text-emerald-600 font-bold text-[9px]">🔒 Protegida</span>}
+                        </p>
+                        <p className="font-mono text-slate-800 mt-1 break-all flex items-center gap-1.5">
+                          {raioXTenant.asaas?.apiKey ? (
+                            <>
+                              <span className="text-slate-400">••••••••••••••••</span>
+                              <span className="text-slate-600 text-[11px] font-sans font-bold">({raioXTenant.asaas.apiKey.slice(-4)})</span>
+                            </>
+                          ) : (
+                            <span className="text-slate-400 font-sans italic">Usando chave padrão do servidor / Não configurada</span>
+                          )}
                         </p>
                       </div>
                       <div className="bg-white p-4 rounded-xl border border-slate-200">

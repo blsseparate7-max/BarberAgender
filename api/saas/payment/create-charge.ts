@@ -61,6 +61,23 @@ function getAsaasBaseUrl(env?: string): string {
   return 'https://sandbox.asaas.com/api/v3';
 }
 
+function parseFirestoreFields(fields: any): any {
+  const result: any = {};
+  if (!fields || typeof fields !== 'object') return result;
+  for (const key of Object.keys(fields)) {
+    const valObj = fields[key];
+    if (!valObj || typeof valObj !== 'object') continue;
+    if ('stringValue' in valObj) result[key] = valObj.stringValue;
+    else if ('integerValue' in valObj) result[key] = Number(valObj.integerValue);
+    else if ('doubleValue' in valObj) result[key] = Number(valObj.doubleValue);
+    else if ('booleanValue' in valObj) result[key] = valObj.booleanValue;
+    else if ('mapValue' in valObj && valObj.mapValue?.fields) result[key] = parseFirestoreFields(valObj.mapValue.fields);
+    else if ('arrayValue' in valObj) result[key] = (valObj.arrayValue?.values || []).map((v: any) => parseFirestoreFields({ temp: v }).temp);
+    else if ('nullValue' in valObj) result[key] = null;
+  }
+  return result;
+}
+
 export default async function handler(req: any, res: any) {
   // Support CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -83,17 +100,44 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Parâmetros obrigatórios incompletos (tenantId e amount)." });
     }
 
-    const rawAsaasKey = process.env.ASAAS_API_KEY || '';
+    let rawAsaasKey = process.env.ASAAS_API_KEY || '';
+    let asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+
+    // Attempt to load tenant configuration from Firestore
+    if (tenantId) {
+      try {
+        const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
+        const restRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${tenantId}`);
+        if (restRes.ok) {
+          const json = await restRes.json();
+          if (json?.fields) {
+            const tData = parseFirestoreFields(json.fields);
+            if (tData?.asaas?.apiKey || tData?.asaasApiKey) {
+              rawAsaasKey = tData.asaas?.apiKey || tData.asaasApiKey;
+            }
+            if (tData?.asaas?.environment || tData?.asaasEnvironment) {
+              asaasEnv = tData.asaas?.environment || tData.asaasEnvironment;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[Vercel handler] Aviso ao buscar tenant ${tenantId}:`, err);
+      }
+    }
+
     const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
-    const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
 
     if (!asaasApiKey) {
-      return res.status(400).json({ error: "Integração com Asaas não configurada (ASAAS_API_KEY ausente)." });
+      return res.status(400).json({ error: "Integração com Asaas não configurada (Chave de API do Asaas ausente)." });
+    }
+
+    if (asaasApiKey.startsWith('$aact_') || asaasApiKey.startsWith('aact_') || asaasApiKey.includes('aact_')) {
+      asaasEnv = 'production';
     }
 
     let baseUrl = getAsaasBaseUrl(asaasEnv);
     let cleanCpfCnpj = (ownerCpfCnpj || '').replace(/\D/g, '');
-    let isSandboxMode = asaasEnv !== 'production' || asaasApiKey.toLowerCase().includes('sandbox');
+    let isSandboxMode = asaasEnv !== 'production' && (asaasEnv === 'sandbox' || asaasApiKey.toLowerCase().includes('sandbox'));
     
     const validSandboxCpf = '12345678909';
     const validSandboxCnpj = '11444777000161';

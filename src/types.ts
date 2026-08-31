@@ -108,6 +108,7 @@ export interface Service {
   comissoes_por_profissional?: Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>;
   barbeiros_ids?: string[];
   showInPortal?: boolean;
+  fotoUrl?: string;
   name?: string; // legado
   duration?: number; // legado
   price?: number; // legado
@@ -872,4 +873,23 @@ export interface Combo {
   tenantId?: string;
   createdAt: any;
   updatedAt: any;
+}
+
+export interface InAppNotification {
+  id: string;
+  tenantId: string;
+  recipientId: string; // 'admin' ou profissional_id
+  title: string;
+  message: string;
+  type: 'created' | 'cancelled' | 'rescheduled';
+  read: boolean;
+  createdAt: any;
+  metadata?: {
+    appointmentId?: string;
+    clientName?: string;
+    date?: string;
+    startTime?: string;
+    profissional_name?: string;
+    servico_name?: string;
+  };
 }

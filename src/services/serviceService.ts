@@ -66,6 +66,7 @@ export const serviceService = {
       tipo_comissao: data.tipo_comissao || 'padrao',
       valor_comissao: data.valor_comissao || 0,
       comissoes_por_profissional: data.comissoes_por_profissional || {},
+      fotoUrl: data.fotoUrl || '',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });

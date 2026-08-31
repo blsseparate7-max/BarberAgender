@@ -531,6 +531,21 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // --- In-App Notifications ---
+    match /notifications/{notificationId} {
+      allow read, list: if isAuthenticated() && (
+        isStaff() ||
+        isBarbeiro() ||
+        (resource != null && (resource.data.recipientId == request.auth.uid || resource.data.recipientId == 'admin'))
+      );
+      allow create: if true;
+      allow update: if isAuthenticated() && (
+        isStaff() ||
+        (resource != null && (resource.data.recipientId == request.auth.uid || resource.data.recipientId == 'admin'))
+      );
+      allow delete: if isAuthenticated() && isStaff();
+    }
+
     // --- SaaS Plans ---
     match /saas_plans/{planId} {
       allow read: if true;

@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { Search, Bell, Menu, Unlock, Lock } from 'lucide-react';
+import { Search, Menu, Unlock, Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cashService } from '../services/cashService';
 import { DailyCash } from '../types';
+import { NotificationBell } from './NotificationBell';
 
 interface HeaderProps {
   setSidebarOpen: (open: boolean) => void;
@@ -74,10 +75,7 @@ export function Header({ setSidebarOpen, onProfileClick }: HeaderProps) {
           </div>
         )}
 
-        <button className="p-3 text-slate-500 hover:text-primary transition-all relative bg-white rounded-2xl border border-slate-100 shadow-sm active:scale-95">
-          <Bell size={20} />
-          <span className="absolute top-3 right-3 w-2.5 h-2.5 bg-accent rounded-full border-2 border-white shadow-sm"></span>
-        </button>
+        <NotificationBell />
         
         <div className="h-8 w-[1px] bg-slate-100 mx-1 hidden md:block"></div>
         

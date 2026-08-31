@@ -512,6 +512,27 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
   const [duracao_minutos, setDuracaoMinutos] = useState(service?.duracao_minutos || service?.duration || 30);
   const [preco, setPreco] = useState(service?.preco ?? service?.price ?? 35);
   const [categoria, setCategoria] = useState(service?.categoria || service?.category || '');
+  const [fotoUrl, setFotoUrl] = useState(service?.fotoUrl || '');
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (file.size > 1024 * 1024) {
+      toast.error("A foto deve ter no máximo 1MB para preservar a qualidade e limites da nuvem.");
+      return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setFotoUrl(event.target.result as string);
+        toast.success("Foto do serviço carregada com sucesso!");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Real-time live synchronization of available professionals
   useEffect(() => {
@@ -574,6 +595,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
       comissoes_por_profissional: comissoesPorProfissional,
       barbeiros_ids: barbeirosIds,
       showInPortal,
+      fotoUrl,
       active: service ? service.active : true
     };
 
@@ -645,7 +667,65 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
             
             {/* TAB 1: BASIC INFORMATION DATA */}
             {activeTab === 'dados' && (
-              <div className="space-y-5">
+              <div className="space-y-5 animate-fadeIn">
+                
+                {/* Photo Uploader */}
+                <div className="bg-slate-50 border border-slate-100 p-4 rounded-3xl flex flex-col sm:flex-row items-center gap-5">
+                  <div className="w-20 h-20 bg-white border border-slate-100 rounded-2xl flex items-center justify-center overflow-hidden shrink-0 shadow-md relative group">
+                    {fotoUrl ? (
+                      <>
+                        <img 
+                          src={fotoUrl} 
+                          alt="Prévia do Serviço" 
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFotoUrl('')}
+                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"
+                          title="Remover foto"
+                        >
+                          <X size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <Scissors size={28} className="text-slate-350" />
+                    )}
+                  </div>
+                  <div className="flex-1 text-center sm:text-left space-y-2">
+                    <h4 className="text-xs font-black text-slate-700 uppercase tracking-wide">Foto do Serviço</h4>
+                    <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                      Adicione uma foto demonstrativa para encantar os clientes no portal de agendamentos. Recomendado: quadrado (1:1), tamanho máx. 1MB.
+                    </p>
+                    <div className="flex flex-wrap justify-center sm:justify-start gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-[10px] font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl transition"
+                      >
+                        Carregar Imagem
+                      </button>
+                      {fotoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setFotoUrl('')}
+                          className="text-[10px] font-black uppercase tracking-wider border border-slate-200 hover:bg-slate-50 text-slate-650 px-3.5 py-1.5 rounded-xl transition"
+                        >
+                          Remover
+                        </button>
+                      )}
+                    </div>
+                    <input 
+                      ref={fileInputRef}
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handleFileChange}
+                      className="hidden" 
+                    />
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                   <div className="space-y-1.5 sm:col-span-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Nome do Serviço</label>

@@ -41,7 +41,8 @@ import {
   Tag,
   Megaphone,
   ChevronDown,
-  ShoppingBag
+  ShoppingBag,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
@@ -119,6 +120,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     }
     return 'home';
   });
+  
+  const [sidebarExpanded, setSidebarExpanded] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   // Data State
   const [allTenants, setAllTenants] = useState<TenantProfile[]>([]);
@@ -1268,18 +1272,16 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         clientName: clientName
       };
 
-      if (!profile) {
-        setGuestCreatedAppointment(confirmedData);
-      } else {
-        // Reset Scheduling Form
-        setSelectedBarber(null);
-        setSelectedService(null);
-        setSelectedTime(null);
-        
-        // Reload Data and Go to Home
-        await loadData();
-        setActiveTab('home');
-      }
+      setGuestCreatedAppointment(confirmedData);
+      
+      // Reset Scheduling Form
+      setSelectedBarber(null);
+      setSelectedService(null);
+      setSelectedTime(null);
+      setBookingStep(1);
+      
+      // Reload Data
+      await loadData();
     } catch (err: any) {
       console.error("Error scheduling appointment:", err);
       toast.error(err.message || "Erro ao agendar horário.");
@@ -1437,23 +1439,224 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     return { morning, afternoon, evening };
   };
 
+  // Unified Navigation Items
+  const navItems = [
+    { id: 'home', label: 'Início', icon: Calendar },
+    { id: 'schedule', label: 'Reservar', icon: Scissors },
+    ...(profile ? [
+      { id: 'history', label: 'Histórico', icon: History },
+      { id: 'fidelidade', label: 'Fidelidade', icon: Award },
+      { id: 'pacotes', label: 'Pacotes', icon: Briefcase },
+      { id: 'assinaturas', label: 'Assinaturas', icon: Sparkles },
+      { id: 'perfil', label: 'Perfil', icon: User }
+    ] : [])
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-24 md:pb-6">
-      {/* Superadmin Mode Banner */}
-      {isSaaSAdminUser && (
-        <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-black flex items-center justify-between shadow-md z-30">
-          <div className="flex items-center gap-2">
-            <Sparkles size={16} />
-            <span>Simulação de Perfil (Portal do Cliente)</span>
+    <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900 overflow-hidden w-full">
+      
+      {/* 1. Desktop Left Sidebar */}
+      <aside className={`hidden md:flex flex-col border-r border-slate-100 bg-white transition-all duration-300 relative shrink-0 z-30 ${
+        sidebarExpanded ? 'w-64' : 'w-20'
+      }`}>
+        {/* Logo Header */}
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+          <div className={`flex items-center gap-3 overflow-hidden ${sidebarExpanded ? 'opacity-100' : 'opacity-0 md:w-0'}`}>
+            <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md shadow-indigo-600/20">
+              <Scissors size={18} />
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-700 truncate">
+              {tenantInfo?.name || 'Cliente'}
+            </span>
           </div>
           <button
-            onClick={() => setOverrideRole(null)}
-            className="bg-slate-950 hover:bg-slate-900 text-white px-3 py-1 rounded-lg text-[10px] uppercase font-extrabold tracking-wider transition-all"
+            type="button"
+            onClick={() => setSidebarExpanded(!sidebarExpanded)}
+            className="p-1.5 hover:bg-slate-50 text-slate-400 hover:text-slate-600 rounded-lg transition-colors border border-slate-100 shadow-sm"
+            title={sidebarExpanded ? "Recolher menu" : "Expandir menu"}
           >
-            🚀 Voltar ao Painel SaaS
+            <ChevronDown size={14} className={`transform transition-transform ${sidebarExpanded ? 'rotate-90' : '-rotate-90'}`} />
           </button>
         </div>
-      )}
+
+        {/* Sidebar Nav Items */}
+        <div className="flex-1 py-5 px-3 space-y-1 overflow-y-auto">
+          {navItems.map((item) => {
+            const isActive = activeTab === item.id;
+            const Icon = item.icon;
+            return (
+              <button
+                key={`side-nav-${item.id}`}
+                onClick={() => {
+                  setActiveTab(item.id as any);
+                }}
+                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl transition-all font-bold text-[11px] uppercase tracking-wider ${
+                  isActive 
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10' 
+                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-850'
+                }`}
+              >
+                <Icon size={16} className={isActive ? 'text-white' : 'text-slate-400'} />
+                <span className={sidebarExpanded ? 'block' : 'hidden'}>{item.label}</span>
+              </button>
+            );
+          })}
+          
+          {!profile && onLoginClick && sidebarExpanded && (
+            <button
+              type="button"
+              onClick={onLoginClick}
+              className="mt-4 w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-black text-[10px] uppercase tracking-widest text-amber-600 bg-amber-50 hover:bg-amber-100"
+            >
+              <User size={16} className="text-amber-600" />
+              <span>Já Tenho Conta</span>
+            </button>
+          )}
+        </div>
+
+        {/* Sidebar Profile Footer */}
+        {profile && sidebarExpanded && (
+          <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0 border border-indigo-200">
+              {(profile.nome || 'C').substring(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-black text-slate-800 truncate leading-none mb-1">{profile.nome}</p>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Cliente VIP</p>
+            </div>
+          </div>
+        )}
+      </aside>
+
+      {/* 2. Mobile Sliding Drawer Sidebar */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.4 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileMenuOpen(false)}
+              className="fixed inset-0 bg-slate-950 z-50 md:hidden"
+            />
+            {/* Drawer */}
+            <motion.aside
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed inset-y-0 left-0 w-72 bg-white border-r border-slate-100 shadow-2xl z-50 flex flex-col md:hidden"
+            >
+              {/* Header */}
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow">
+                    <Scissors size={18} />
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">
+                    {tenantInfo?.name || 'Cliente'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-lg transition"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Navigation Items */}
+              <div className="flex-1 py-5 px-4 space-y-1.5 overflow-y-auto">
+                {navItems.map((item) => {
+                  const isActive = activeTab === item.id;
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={`mob-nav-${item.id}`}
+                      onClick={() => {
+                        setActiveTab(item.id as any);
+                        setMobileMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-4 px-5 py-3.5 rounded-xl transition-all font-black text-xs uppercase tracking-wider text-slate-500 hover:bg-slate-50 hover:text-slate-850"
+                    >
+                      <Icon size={18} className={isActive ? 'text-white' : 'text-slate-400'} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+                
+                {!profile && onLoginClick && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onLoginClick();
+                      setMobileMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-4 px-5 py-3.5 rounded-xl transition-all font-black text-xs uppercase tracking-wider text-amber-600 bg-amber-50 hover:bg-amber-100"
+                  >
+                    <User size={18} className="text-amber-600" />
+                    <span>Já Tenho Conta</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Profile Footer */}
+              {profile && (
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm shrink-0">
+                    {(profile.nome || 'C').substring(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-slate-800 truncate leading-none mb-1">{profile.nome}</p>
+                    <p className="text-xs text-slate-400 font-semibold truncate">{profile.email}</p>
+                  </div>
+                </div>
+              )}
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* 3. Main Content Pane Wrapper */}
+      <div className="flex-1 flex flex-col min-h-screen overflow-y-auto w-full md:pb-6">
+        
+        {/* Sticky Mobile Header Bar */}
+        <div className="md:hidden bg-slate-900 border-b border-slate-800 text-white px-5 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="p-2 -ml-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition"
+              title="Abrir menu"
+            >
+              <Menu size={20} />
+            </button>
+            <span className="text-[10px] font-black tracking-widest uppercase text-amber-400">
+              {tenantInfo?.name || 'Agendamento'}
+            </span>
+          </div>
+          <div className="w-8 h-8 rounded-full bg-slate-800 text-indigo-400 border border-slate-700/50 flex items-center justify-center font-bold text-xs">
+            {profile ? (profile.nome || 'C').substring(0, 1).toUpperCase() : <Scissors size={14} />}
+          </div>
+        </div>
+
+        {/* Superadmin Mode Banner */}
+        {isSaaSAdminUser && (
+          <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-black flex items-center justify-between shadow-md z-30">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} />
+              <span>Simulação de Perfil (Portal do Cliente)</span>
+            </div>
+            <button
+              onClick={() => setOverrideRole(null)}
+              className="bg-slate-950 hover:bg-slate-900 text-white px-3 py-1 rounded-lg text-[10px] uppercase font-extrabold tracking-wider transition-all"
+            >
+              🚀 Voltar ao Painel SaaS
+            </button>
+          </div>
+        )}
 
       {/* Header Panel */}
       <header className="bg-slate-900 text-white shadow-md relative overflow-hidden">
@@ -2258,7 +2461,6 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     </motion.div>
                   )}
 
-                  {/* Step 2: Select Service */}
                   {/* STEP 2: SELECT SERVICE */}
                   {bookingStep === 2 && (
                     <motion.div 
@@ -2278,49 +2480,103 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                           <p className="text-xs text-slate-400 font-semibold">Nenhum serviço disponível no portal no momento.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {services.map((s, sIdx) => {
-                            const isSelected = selectedService?.id === s.id;
-                            return (
-                              <button
-                                key={`srv-item-${s.id || sIdx}-${sIdx}`}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedService(s);
-                                  setSelectedTime(null);
-                                  setBookingStep(3);
-                                }}
-                                className={`p-5 rounded-2xl border transition-all text-left flex justify-between items-center gap-4 relative group ${
-                                  isSelected 
-                                    ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-2 ring-indigo-600/10' 
-                                    : 'border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-200 shadow-sm'
-                                }`}
-                              >
-                                {isSelected && (
-                                  <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow">
-                                    <Check size={10} />
+                        <div className="space-y-8 pt-2">
+                          {(() => {
+                            const grouped: Record<string, typeof services> = {};
+                            services.forEach(s => {
+                              const cat = s.categoria || 'Geral';
+                              if (!grouped[cat]) grouped[cat] = [];
+                              grouped[cat].push(s);
+                            });
+
+                            return Object.entries(grouped).map(([catName, sList]) => {
+                              const isCabelo = catName.toLowerCase().includes('cabelo') || catName.toLowerCase().includes('corte');
+                              const isBarba = catName.toLowerCase().includes('barba');
+                              const isCombo = catName.toLowerCase().includes('combo');
+
+                              return (
+                                <div key={`cat-section-${catName}`} className="space-y-4">
+                                  {/* Premium Category Header */}
+                                  <div className="border-l-4 border-indigo-600 pl-3.5 py-1 bg-gradient-to-r from-indigo-50/10 to-transparent">
+                                    <h4 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                                      {catName}
+                                      <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold px-2 py-0.5 rounded-full">
+                                        {sList.length} {sList.length === 1 ? 'opção' : 'opções'}
+                                      </span>
+                                    </h4>
+                                    <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
+                                      {isCabelo ? 'Estilos modernos, clássicos e acabamento personalizado de alta precisão.' :
+                                       isBarba ? 'Tratamento com toalha quente, navalha e óleos hidratantes premium.' :
+                                       isCombo ? 'Os melhores serviços combinados em experiências completas e vantajosas.' :
+                                       'Procedimentos sob medida executados com produtos de alta performance.'}
+                                    </p>
                                   </div>
-                                )}
-                                <div className="min-w-0 flex-1">
-                                  <span className="px-2 py-0.5 bg-slate-100 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
-                                    {s.categoria || 'Serviço'}
-                                  </span>
-                                  <h4 className="text-sm font-black text-slate-800 truncate mt-2">{s.nome || s.name}</h4>
-                                  <p className="text-xs text-slate-500 font-semibold line-clamp-2 mt-1 leading-relaxed">
-                                    {s.descricao || 'Atendimento com acabamento premium e toalha quente.'}
-                                  </p>
-                                  <div className="flex items-center gap-3 mt-4 font-bold text-[10px]">
-                                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 font-extrabold text-xs">
-                                      R$ {(s.preco || s.price || 0).toFixed(2)}
-                                    </span>
-                                    <span className="text-slate-500 flex items-center gap-1 bg-slate-150/40 px-2.5 py-1 rounded-md">
-                                      <Clock size={10} className="text-slate-400" /> {s.duracao_minutos || s.duration || 30} min
-                                    </span>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {sList.map((s, sIdx) => {
+                                      const isSelected = selectedService?.id === s.id;
+                                      return (
+                                        <button
+                                          key={`srv-item-${s.id || sIdx}-${sIdx}`}
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedService(s);
+                                            setSelectedTime(null);
+                                            setBookingStep(3);
+                                          }}
+                                          className={`p-4 rounded-2xl border transition-all text-left flex items-start gap-4 relative group ${
+                                            isSelected 
+                                              ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-2 ring-indigo-600/10' 
+                                              : 'border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-200 shadow-sm'
+                                          }`}
+                                        >
+                                          {isSelected && (
+                                            <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow z-10">
+                                              <Check size={10} />
+                                            </div>
+                                          )}
+
+                                          {/* Foto do Serviço */}
+                                          <div className={`w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center transition-all shrink-0 border-2 bg-slate-100 text-slate-650 shadow-sm ${
+                                            isSelected ? 'border-indigo-600 bg-white' : 'border-white bg-slate-50'
+                                          }`}>
+                                            {s.fotoUrl ? (
+                                              <img 
+                                                src={s.fotoUrl} 
+                                                alt={s.nome || s.name} 
+                                                className="w-full h-full object-cover"
+                                                referrerPolicy="no-referrer"
+                                              />
+                                            ) : (
+                                              <Scissors size={20} className="text-slate-400" />
+                                            )}
+                                          </div>
+
+                                          <div className="min-w-0 flex-1">
+                                            <span className="px-2 py-0.5 bg-slate-150/50 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
+                                              {s.categoria || 'Serviço'}
+                                            </span>
+                                            <h4 className="text-sm font-black text-slate-800 truncate mt-1">{s.nome || s.name}</h4>
+                                            <p className="text-xs text-slate-500 font-semibold line-clamp-2 mt-1 leading-relaxed">
+                                              {s.descricao || 'Atendimento com acabamento premium e toalha quente.'}
+                                            </p>
+                                            <div className="flex items-center gap-3 mt-3 font-bold text-[10px]">
+                                              <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 font-extrabold text-xs">
+                                                R$ {(s.preco || s.price || 0).toFixed(2)}
+                                              </span>
+                                              <span className="text-slate-500 flex items-center gap-1 bg-slate-150/40 px-2.5 py-1 rounded-md">
+                                                <Clock size={10} className="text-slate-400" /> {s.duracao_minutos || s.duration || 30} min
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
                                   </div>
                                 </div>
-                              </button>
-                            );
-                          })}
+                              );
+                            });
+                          })()}
                         </div>
                       )}
                     </motion.div>
@@ -3996,92 +4252,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
       </main>
 
-      {/* Bottom Bar Navigation for mobile-first feels */}
-      <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200/80 px-2 py-2.5 flex items-center justify-around z-40 md:sticky md:bottom-auto md:top-4 md:bg-white md:border-none md:shadow-md md:rounded-[24px] md:max-w-xl md:mx-auto md:mt-4 shadow-2xl overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('home')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'home' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <Calendar size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Início</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('schedule')}
-          className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-            activeTab === 'schedule' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <Scissors size={18} />
-          <span className="text-[8px] font-black uppercase tracking-wider">Reservar</span>
-        </button>
-
-        {profile ? (
-          <>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-                activeTab === 'history' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <History size={18} />
-              <span className="text-[8px] font-black uppercase tracking-wider">Histórico</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('fidelidade')}
-              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-                activeTab === 'fidelidade' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Award size={18} />
-              <span className="text-[8px] font-black uppercase tracking-wider">Fidelidade</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('pacotes')}
-              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-                activeTab === 'pacotes' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Briefcase size={18} />
-              <span className="text-[8px] font-black uppercase tracking-wider">Pacotes</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('assinaturas')}
-              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-                activeTab === 'assinaturas' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Sparkles size={18} />
-              <span className="text-[8px] font-black uppercase tracking-wider">Assinar</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('perfil')}
-              className={`flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] ${
-                activeTab === 'perfil' ? 'text-indigo-600 scale-105 font-bold' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <User size={18} />
-              <span className="text-[8px] font-black uppercase tracking-wider">Perfil</span>
-            </button>
-          </>
-        ) : (
-          onLoginClick && (
-            <button
-              onClick={onLoginClick}
-              className="flex flex-col items-center gap-1 transition-all flex-shrink-0 min-w-[54px] text-amber-600 hover:text-amber-700"
-            >
-              <User size={18} />
-              <span className="text-[8px] font-black uppercase tracking-wider">Entrar</span>
-            </button>
-          )
-        )}
-      </nav>
+      </div> {/* Fechamento do Main Content Pane Wrapper */}
 
       {/* PORTFOLIO / LANDING PAGE MODAL */}
       <AnimatePresence>
@@ -5390,7 +5561,14 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                 {guestCreatedAppointment.tenantPhone && (
                   <a
                     href={`https://wa.me/${guestCreatedAppointment.tenantPhone.replace(/\D/g, '')}?text=${encodeURIComponent(
-                      `Olá! Acabei de agendar um horário para ${guestCreatedAppointment.serviceName} com ${guestCreatedAppointment.barberName} em ${guestCreatedAppointment.date} às ${guestCreatedAppointment.time}.`
+                      `Olá! Acabei de agendar um horário via portal de agendamento:\n\n` +
+                      `👤 *Cliente:* ${guestCreatedAppointment.clientName}\n` +
+                      `💈 *Serviço:* ${guestCreatedAppointment.serviceName}\n` +
+                      `✂️ *Profissional:* ${guestCreatedAppointment.barberName}\n` +
+                      `📅 *Data:* ${format(parse(guestCreatedAppointment.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')}\n` +
+                      `⏰ *Horário:* ${guestCreatedAppointment.time}\n` +
+                      `💳 *Valor:* R$ ${Number(guestCreatedAppointment.price || 0).toFixed(2)}\n\n` +
+                      `Confirma para mim, por favor? Obrigado!`
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"

@@ -32,8 +32,26 @@
         "duration": { "type": "number" },
         "price": { "type": "number" },
         "category": { "type": "string" },
-        "active": { "type": "boolean" }
+        "active": { "type": "boolean" },
+        "fotoUrl": { "type": "string" }
       }
+    },
+    "InAppNotification": {
+      "title": "InAppNotification",
+      "description": "Notificações internas para profissionais e administradores",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["created", "cancelled", "rescheduled"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["tenantId", "recipientId", "title", "message", "type", "read"]
     },
     "Appointment": {
       "title": "Appointment",
@@ -274,6 +292,10 @@
     "/assinaturas/{id}": {
       "schema": "Subscription",
       "description": "Assinaturas e Mensalidades dos Clientes"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "InAppNotification",
+      "description": "Notificações internas para profissionais e administradores"
     }
   }
 }

@@ -29,6 +29,7 @@ import { cashService } from './cashService';
 import { serviceService } from './serviceService';
 import { getActiveTenantId, tenantService } from './tenantService';
 import { comandaService } from './comandaService';
+import { notificationService } from './notificationService';
 
 const COLLECTION = 'appointments';
 const RECURRING_COLLECTION = 'recurring_appointments';
@@ -83,18 +84,69 @@ export const appointmentService = {
 
     // 3. Add to Firestore
     const docRef = await addDoc(collection(db, COLLECTION), payload);
+    const id = docRef.id;
 
-    return docRef.id;
+    // Trigger In-App Notification
+    try {
+      const clientName = data.cliente_name || 'Cliente';
+      const serviceName = data.servico_name || 'Serviço';
+      const profName = data.profissional_name || 'Profissional';
+      const message = `${clientName} agendou ${serviceName} com ${profName} no dia ${data.date} às ${data.startTime}.`;
+
+      // 1. Notify Admin
+      await notificationService.createNotification({
+        tenantId,
+        recipientId: 'admin',
+        title: 'Novo Agendamento! 📅',
+        message,
+        type: 'created',
+        metadata: {
+          appointmentId: id,
+          clientName,
+          date: data.date,
+          startTime: data.startTime,
+          profissional_name: profName,
+          servico_name: serviceName
+        }
+      });
+
+      // 2. Notify Professional
+      if (data.profissional_id && data.profissional_id !== 'admin') {
+        await notificationService.createNotification({
+          tenantId,
+          recipientId: data.profissional_id,
+          title: 'Novo Agendamento na sua Agenda! 📅',
+          message,
+          type: 'created',
+          metadata: {
+            appointmentId: id,
+            clientName,
+            date: data.date,
+            startTime: data.startTime,
+            profissional_name: profName,
+            servico_name: serviceName
+          }
+        });
+      }
+    } catch (notifErr) {
+      console.error('Falha ao enviar notificações de criação de agendamento:', notifErr);
+    }
+
+    return id;
   },
 
   async updateAppointment(id: string, data: Partial<Appointment>) {
     const docRef = doc(db, COLLECTION, id);
+    const currentSnap = await getDoc(docRef);
+    if (!currentSnap.exists()) throw new Error('Agendamento não encontrado.');
+    const current = currentSnap.data() as Appointment;
+
+    const isRescheduled = (data.date && data.date !== current.date) || 
+                          (data.startTime && data.startTime !== current.startTime) || 
+                          (data.profissional_id && data.profissional_id !== current.profissional_id);
     
     // If date or time changed, check for availability
     if (data.date || data.startTime || data.endTime || data.profissional_id) {
-      const currentSnap = await getDoc(docRef);
-      const current = currentSnap.data() as Appointment;
-      
       const origin = data.origin || current.origin;
       if (origin !== 'encaixe') {
         const profissional_id = data.profissional_id || current.profissional_id;
@@ -113,6 +165,79 @@ export const appointmentService = {
       ...data,
       updatedAt: serverTimestamp(),
     });
+
+    if (isRescheduled) {
+      try {
+        const clientName = current.cliente_name || 'Cliente';
+        const serviceName = current.servico_name || 'Serviço';
+        const profName = data.profissional_name || current.profissional_name || 'Profissional';
+        const tenantId = current.tenantId || getActiveTenantId();
+        
+        const oldDate = current.date;
+        const oldTime = current.startTime;
+        const newDate = data.date || current.date;
+        const newTime = data.startTime || current.startTime;
+
+        const message = `Agendamento de ${clientName} alterado de ${oldDate} às ${oldTime} para o dia ${newDate} às ${newTime} com ${profName}.`;
+
+        // 1. Notify Admin
+        await notificationService.createNotification({
+          tenantId,
+          recipientId: 'admin',
+          title: 'Agendamento Reagendado! 🔄',
+          message,
+          type: 'rescheduled',
+          metadata: {
+            appointmentId: id,
+            clientName,
+            date: newDate,
+            startTime: newTime,
+            profissional_name: profName,
+            servico_name: serviceName
+          }
+        });
+
+        // 2. Notify Original Professional
+        if (current.profissional_id && current.profissional_id !== 'admin') {
+          await notificationService.createNotification({
+            tenantId,
+            recipientId: current.profissional_id,
+            title: 'Seu horário foi alterado! 🔄',
+            message,
+            type: 'rescheduled',
+            metadata: {
+              appointmentId: id,
+              clientName,
+              date: newDate,
+              startTime: newTime,
+              profissional_name: profName,
+              servico_name: serviceName
+            }
+          });
+        }
+
+        // 3. Notify New Professional (if changed and different)
+        if (data.profissional_id && data.profissional_id !== current.profissional_id && data.profissional_id !== 'admin') {
+          await notificationService.createNotification({
+            tenantId,
+            recipientId: data.profissional_id,
+            title: 'Novo horário remanejado para você! 🔄',
+            message,
+            type: 'rescheduled',
+            metadata: {
+              appointmentId: id,
+              clientName,
+              date: newDate,
+              startTime: newTime,
+              profissional_name: profName,
+              servico_name: serviceName
+            }
+          });
+        }
+      } catch (notifErr) {
+        console.error('Falha ao enviar notificações de reagendamento:', notifErr);
+      }
+    }
   },
 
   async checkAvailability(profissional_id: string, date: string, startTime: string, endTime: string, excludeId?: string): Promise<{ available: boolean; reason?: string }> {
@@ -317,6 +442,55 @@ export const appointmentService = {
       status,
       updatedAt: serverTimestamp(),
     });
+
+    // Trigger Notification for Cancellation
+    if (status === 'cancelado') {
+      try {
+        const clientName = appointment.cliente_name || 'Cliente';
+        const serviceName = appointment.servico_name || 'Serviço';
+        const profName = appointment.profissional_name || 'Profissional';
+        const message = `${clientName} cancelou o horário de ${serviceName} com ${profName} no dia ${appointment.date} às ${appointment.startTime}.`;
+        const tenantId = appointment.tenantId || getActiveTenantId();
+
+        // 1. Notify Admin
+        await notificationService.createNotification({
+          tenantId,
+          recipientId: 'admin',
+          title: 'Agendamento Cancelado! 🚨',
+          message,
+          type: 'cancelled',
+          metadata: {
+            appointmentId: id,
+            clientName,
+            date: appointment.date,
+            startTime: appointment.startTime,
+            profissional_name: profName,
+            servico_name: serviceName
+          }
+        });
+
+        // 2. Notify Professional
+        if (appointment.profissional_id && appointment.profissional_id !== 'admin') {
+          await notificationService.createNotification({
+            tenantId,
+            recipientId: appointment.profissional_id,
+            title: 'Seu horário foi Cancelado! 🚨',
+            message,
+            type: 'cancelled',
+            metadata: {
+              appointmentId: id,
+              clientName,
+              date: appointment.date,
+              startTime: appointment.startTime,
+              profissional_name: profName,
+              servico_name: serviceName
+            }
+          });
+        }
+      } catch (notifErr) {
+        console.error('Falha ao enviar notificações de cancelamento:', notifErr);
+      }
+    }
 
     // Auto-cria ou sincroniza comanda ao iniciar atendimento
     if (status === 'em_atendimento') {

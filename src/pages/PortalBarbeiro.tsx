@@ -50,6 +50,7 @@ import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
 import { ImageCropModal } from '../components/ImageCropModal';
+import { NotificationBell } from '../components/NotificationBell';
 import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock, ProfessionalAdvance, ProfessionalPayment } from '../types';
 import { toast } from 'sonner';
 import { format, parse, addDays, startOfDay, endOfDay, isToday } from 'date-fns';
@@ -679,13 +680,16 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               <h2 className="text-lg font-black tracking-tight">{currentProfile.nome}</h2>
             </div>
           </div>
-          <button 
-            onClick={handleLogout}
-            className="p-2.5 bg-slate-800/80 hover:bg-red-500/20 hover:text-red-400 text-slate-300 rounded-xl transition border border-slate-700/50"
-            title="Sair do Sistema"
-          >
-            <LogOut size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <button 
+              onClick={handleLogout}
+              className="p-2.5 bg-slate-800/80 hover:bg-red-500/20 hover:text-red-400 text-slate-300 rounded-xl transition border border-slate-700/50"
+              title="Sair do Sistema"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
         </div>
       </header>
 

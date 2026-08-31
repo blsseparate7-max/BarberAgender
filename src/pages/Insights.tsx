@@ -74,8 +74,8 @@ export function Insights() {
           </div>
 
           <div className="space-y-4">
-            {insights.map(insight => (
-              <InsightCard key={insight.id} insight={insight} />
+            {insights.map((insight, idx) => (
+              <InsightCard key={`insight-${insight.id || idx}-${idx}`} insight={insight} />
             ))}
           </div>
         </div>

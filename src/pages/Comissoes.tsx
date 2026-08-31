@@ -422,7 +422,7 @@ export function Comissoes() {
                   
                   return (
                     <div 
-                      key={`roster-card-${barber.uid || index}`}
+                      key={`roster-card-${barber.uid || 'b'}-${index}`}
                       className="bg-white border border-slate-200 rounded-[2rem] p-6 hover:border-slate-350 hover:shadow-md transition-all duration-300 flex flex-col justify-between shadow-xs group"
                     >
                       {/* Barber Basic Header */}
@@ -513,7 +513,7 @@ export function Comissoes() {
                       >
                         <option value="">Todos os Profissionais</option>
                         {barbers.map((b, index) => (
-                          <option key={`barber-opt-${b.uid || index}`} value={b.uid}>{b.nome}</option>
+                          <option key={`barber-opt-${b.uid || 'b'}-${index}`} value={b.uid}>{b.nome}</option>
                         ))}
                       </select>
                     </div>
@@ -568,7 +568,7 @@ export function Comissoes() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {commissions.map((c, index) => (
-                        <tr key={`comm-tr-${c.id || index}`} className="hover:bg-slate-50/50 transition-colors align-middle">
+                        <tr key={`comm-tr-${c.id || 'c'}-${index}`} className="hover:bg-slate-50/50 transition-colors align-middle">
                           <td className="px-6 py-4 text-xs text-slate-400 font-bold">{format(new Date(c.date), 'dd/MM/yyyy')}</td>
                           <td className="px-6 py-4 text-xs font-black text-slate-900">{c.profissional_name}</td>
                           <td className="px-6 py-4 text-xs text-slate-600 font-bold">{c.servico_name}</td>
@@ -608,7 +608,7 @@ export function Comissoes() {
               >
                 {payouts.map((p, index) => (
                   <div 
-                    key={`payout-card-${p.id || index}`} 
+                    key={`payout-card-${p.id || 'p'}-${index}`} 
                     className="bg-white border border-slate-200 rounded-3xl p-6 hover:border-slate-350 transition-all shadow-xs flex flex-col justify-between"
                   >
                     <div>

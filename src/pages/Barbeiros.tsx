@@ -744,11 +744,11 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
               className="overflow-hidden space-y-1.5 pt-3"
             >
               <div className="grid grid-cols-2 gap-2 max-h-[160px] overflow-y-auto pr-1">
-                {DAYS_OF_WEEK.map(day => {
+                {DAYS_OF_WEEK.map((day, dIdx) => {
                   const hours = activeHours.find(h => h.dayOfWeek === day.id);
                   const open = hours ? hours.isOpen : false;
                   return (
-                    <div key={day.id} className="bg-slate-50 border border-slate-200/40 px-2.5 py-1.5 rounded-xl flex flex-col">
+                    <div key={`day-roster-${day.id}-${dIdx}`} className="bg-slate-50 border border-slate-200/40 px-2.5 py-1.5 rounded-xl flex flex-col">
                       <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">{day.name.split('-')[0]}</span>
                       {open && hours ? (
                         <div className="text-[10px] font-black text-primary leading-tight">
@@ -1261,12 +1261,12 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                       Especialidades Oferecidas 
                     </label>
                     <div className="flex flex-wrap gap-2 mb-2 p-3 bg-slate-50/70 border rounded-2xl">
-                      {SPECIALTY_PRESETS.map(preset => {
+                      {SPECIALTY_PRESETS.map((preset, pIdx) => {
                         const isSelected = currentSelectsSpecs.includes(preset);
                         return (
                           <button
                             type="button"
-                            key={preset}
+                            key={`spec-preset-${preset}-${pIdx}`}
                             onClick={() => handleToggleSpecialty(preset)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition flex items-center gap-1 border ${
                               isSelected 
@@ -1655,13 +1655,13 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                 </div>
 
                 <div className="space-y-4 max-h-[340px] overflow-y-auto pr-1">
-                  {DAYS_OF_WEEK.map(day => {
+                  {DAYS_OF_WEEK.map((day, dayIdx) => {
                     const hoursIndex = schedule.findIndex(h => h.dayOfWeek === day.id);
                     const hoursObj = schedule[hoursIndex] ?? { dayOfWeek: day.id, isOpen: false, startTime: '09:00', endTime: '18:00' };
 
                     return (
                       <div 
-                        key={day.id} 
+                        key={`barber-wh-day-${day.id}-${dayIdx}`} 
                         className={`p-4 border rounded-2xl flex flex-col md:flex-row gap-4 items-start md:items-center justify-between transition-colors ${
                           hoursObj.isOpen ? 'bg-emerald-50/15 border-emerald-200/50' : 'bg-slate-100/40 border-slate-200/30 opacity-70'
                         }`}
@@ -1755,10 +1755,10 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
-                    {services.map((service) => {
+                    {services.map((service, sIdx) => {
                       const value = servicosDuracoes[service.id] || '';
                       return (
-                        <div key={service.id} className="p-4 bg-slate-50 hover:bg-slate-100/50 border border-slate-200/60 rounded-2xl flex items-center justify-between gap-4 transition-colors">
+                        <div key={`srv-dur-${service.id || 'srv'}-${sIdx}`} className="p-4 bg-slate-50 hover:bg-slate-100/50 border border-slate-200/60 rounded-2xl flex items-center justify-between gap-4 transition-colors">
                           <div className="flex-1 min-w-0">
                             <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider mb-1 inline-block">
                               {service.categoria || 'Geral'}

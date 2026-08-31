@@ -288,9 +288,9 @@ export function AgendaProfessional({
             <Clock size={16} className="text-muted" />
           </div>
           <div className="flex-1 grid grid-cols-7">
-            {weekDays.map(day => (
+            {weekDays.map((day, idx) => (
               <div 
-                key={day.toISOString()} 
+                key={`prof-weekday-${day.toISOString()}-${idx}`} 
                 className={`p-4 text-center border-r border-border last:border-r-0 ${
                   isSameDay(day, new Date()) ? 'bg-accent/5' : ''
                 }`}

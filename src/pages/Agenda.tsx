@@ -367,9 +367,9 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
       {/* Sub-navigation */}
       <div className="flex items-center gap-3 overflow-x-auto pb-4 custom-scrollbar">
-        {filteredTabs.map(tab => (
+        {filteredTabs.map((tab, tabIdx) => (
           <button
-            key={tab.id}
+            key={`agenda-tab-${tab.id}-${tabIdx}`}
             onClick={() => setActiveTab(tab.id as AgendaTab)}
             className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs font-bold whitespace-nowrap transition-all border shadow-sm active:scale-95 ${
               activeTab === tab.id 
@@ -953,9 +953,9 @@ function PaymentModal({ appointment, onClose, onConfirm }: { appointment: Appoin
               { id: 'debito', label: 'Débito', icon: <CreditCard size={20} /> },
               { id: 'fiado', label: 'Fiado', icon: <Clock size={20} /> },
               { id: 'assinatura', label: 'Assinatura', icon: <DollarSign size={20} /> },
-            ].map((m) => (
+            ].map((m, mIdx) => (
               <button
-                key={m.id}
+                key={`payment-method-${m.id}-${mIdx}`}
                 onClick={() => setMethod(m.id)}
                 className={`flex flex-col items-center justify-center gap-3 p-6 rounded-[1.5rem] border-2 transition-all shadow-sm active:scale-95 ${
                   method === m.id 

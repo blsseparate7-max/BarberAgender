@@ -2197,10 +2197,10 @@ export function PortalSaaSAdmin() {
                           className="w-10 h-10 rounded-xl cursor-pointer border-0"
                         />
                         <div className="flex gap-2">
-                          {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map(color => (
+                          {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map((color, idx) => (
                             <button
                               type="button"
-                              key={color}
+                              key={`edit-color-${color}-${idx}`}
                               onClick={() => setEditTenantAccentColor(color)}
                               className="w-7 h-7 rounded-lg border-2 border-white shadow-sm"
                               style={{ backgroundColor: color }}
@@ -2351,8 +2351,8 @@ export function PortalSaaSAdmin() {
                         className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
                         <option value="">Personalizado (Sem Plano Pré-definido)</option>
-                        {plans.map(p => (
-                          <option key={p.id} value={p.id}>
+                        {plans.map((p, idx) => (
+                          <option key={`edit-plan-opt-${p.id || idx}-${idx}`} value={p.id}>
                             {p.name} ({p.maxBarbers} barbeiros - R$ {p.priceMonthly}/mês)
                           </option>
                         ))}
@@ -2748,10 +2748,10 @@ export function PortalSaaSAdmin() {
                               className="w-10 h-10 rounded-xl cursor-pointer border-0 shadow-sm"
                             />
                             <div className="flex gap-1.5 flex-wrap">
-                              {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map(color => (
+                              {['#10B981', '#6366F1', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6'].map((color, idx) => (
                                 <button
                                   type="button"
-                                  key={color}
+                                  key={`new-accent-color-${color}-${idx}`}
                                   onClick={() => setNewTenantAccentColor(color)}
                                   className="w-6 h-6 rounded-lg border-2 border-white shadow-sm"
                                   style={{ backgroundColor: color }}
@@ -2771,10 +2771,10 @@ export function PortalSaaSAdmin() {
                               className="w-10 h-10 rounded-xl cursor-pointer border-0 shadow-sm"
                             />
                             <div className="flex gap-1.5 flex-wrap">
-                              {['#3B82F6', '#6366F1', '#8B5CF6', '#10B981', '#F59E0B', '#F43F5E'].map(color => (
+                              {['#3B82F6', '#6366F1', '#8B5CF6', '#10B981', '#F59E0B', '#F43F5E'].map((color, idx) => (
                                 <button
                                   type="button"
-                                  key={color}
+                                  key={`new-secondary-color-${color}-${idx}`}
                                   onClick={() => setNewTenantSecondaryColor(color)}
                                   className="w-6 h-6 rounded-lg border-2 border-white shadow-sm"
                                   style={{ backgroundColor: color }}
@@ -2995,8 +2995,8 @@ export function PortalSaaSAdmin() {
                         className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
                         <option value="">Personalizado (Sem Plano Pré-definido)</option>
-                        {plans.map(p => (
-                          <option key={p.id} value={p.id}>
+                        {plans.map((p, idx) => (
+                          <option key={`new-tenant-plan-opt-${p.id || idx}-${idx}`} value={p.id}>
                             {p.name} ({p.maxBarbers} barbeiros - R$ {p.priceMonthly}/mês)
                           </option>
                         ))}

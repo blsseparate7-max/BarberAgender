@@ -1849,8 +1849,8 @@ Assinatura: _______________________________
                     <div className="space-y-2">
                       <p className="text-xs font-black text-primary uppercase tracking-wider ml-1">Vales do Período sendo liquidados:</p>
                       <div className="max-h-28 overflow-y-auto bg-slate-50 border border-slate-150 rounded-2xl p-2.5 space-y-1.5 no-scrollbar">
-                        {periodPendingAdvances.map(adv => (
-                          <div key={`chk-adv-${adv.id}`} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-2 rounded-xl border border-slate-150 shadow-sm animate-in fade-in">
+                        {periodPendingAdvances.map((adv, idx) => (
+                          <div key={`chk-adv-${adv.id || 'adv'}-${idx}`} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-2 rounded-xl border border-slate-150 shadow-sm animate-in fade-in">
                             <span className="font-bold text-slate-700">{adv.description} ({format(parseISO(adv.date), 'dd/MM/yyyy')})</span>
                             <span className="font-black text-red-500">- R$ {adv.amount.toFixed(2)}</span>
                           </div>

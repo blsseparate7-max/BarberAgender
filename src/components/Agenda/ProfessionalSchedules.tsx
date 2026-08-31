@@ -95,9 +95,9 @@ export function ProfessionalSchedules() {
       {/* Barber List */}
       <div className="w-full lg:w-64 space-y-2">
         <h3 className="text-[10px] font-black text-muted uppercase tracking-widest mb-4 ml-2">Equipe</h3>
-        {barbers.map(barber => (
+        {barbers.map((barber, bIdx) => (
           <button
-            key={barber.uid}
+            key={`sched-barber-${barber.uid || 'b'}-${bIdx}`}
             onClick={() => setSelectedBarberId(barber.uid)}
             className={`w-full p-4 rounded-2xl flex items-center gap-3 transition-all active:scale-95 border ${
               selectedBarberId === barber.uid 

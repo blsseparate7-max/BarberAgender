@@ -117,7 +117,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     if (tabParam && ['home', 'schedule', 'history', 'fidelidade', 'pacotes', 'assinaturas', 'perfil'].includes(tabParam)) {
       return tabParam as any;
     }
-    return profile ? 'home' : 'schedule';
+    return 'home';
   });
   
   // Data State
@@ -1499,7 +1499,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                   <span>Já Tenho Conta</span>
                 </button>
               )}
-              {onBackToLanding && (
+              {onBackToLanding && !getActiveTenantId() && (
                 <button
                   type="button"
                   onClick={onBackToLanding}
@@ -1530,300 +1530,515 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="space-y-6"
             >
-              {/* Notícias & Promoções Banner Widget */}
-              {announcements.length > 0 && (
-                <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-3.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Megaphone className="text-amber-500 animate-pulse" size={18} />
-                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-800">
-                        Mural de Notícias & Promoções
-                      </h3>
+              {!profile ? (
+                /* EXCLUSIVE TENANT SHOWCASE FOR GUESTS */
+                <div className="space-y-8">
+                  {/* Hero Cover Banner */}
+                  <div className="relative rounded-[32px] overflow-hidden bg-slate-900 border border-slate-100 shadow-sm">
+                    <div className="h-48 md:h-64 relative">
+                      <img 
+                        src={tenantInfo?.coverImage || "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=1200&q=80"} 
+                        alt="Barbearia Cover" 
+                        className="w-full h-full object-cover opacity-60"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
                     </div>
-                    <span className="text-[10px] font-bold text-slate-400">
-                      {announcements.length} {announcements.length === 1 ? 'comunicado' : 'comunicados'}
-                    </span>
-                  </div>
-
-                  <div className="flex gap-3 overflow-x-auto pb-2 pt-1 scrollbar-none">
-                    {announcements.map((item, idx) => (
-                      <div
-                        key={`announcement-${item.id || idx}-${idx}`}
-                        onClick={() => setAnnouncementModalData(item)}
-                        className="min-w-[260px] max-w-[280px] bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 rounded-2xl border border-slate-700/60 shadow-sm flex flex-col justify-between cursor-pointer hover:border-amber-500/50 transition-all shrink-0 group"
-                      >
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={`text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
-                              item.category === 'promocao' || item.category === 'Promoção'
-                                ? 'bg-amber-500 text-slate-950'
-                                : item.category === 'aviso' || item.category === 'Aviso'
-                                ? 'bg-rose-500 text-white'
-                                : 'bg-indigo-500 text-white'
-                            }`}>
-                              {item.category || 'Novidade'}
-                            </span>
-                            {item.date && (
-                              <span className="text-[9px] text-slate-400 font-semibold">
-                                {item.date}
-                              </span>
-                            )}
-                          </div>
-                          <h4 className="text-xs font-black group-hover:text-amber-400 transition-colors line-clamp-1">
-                            {item.title}
-                          </h4>
-                          <p className="text-[11px] text-slate-300 font-medium line-clamp-2 leading-relaxed">
-                            {item.content}
+                    
+                    <div className="absolute bottom-6 left-6 right-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-20 h-20 bg-white rounded-2xl p-1 shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {tenantInfo?.logoUrl ? (
+                            <img 
+                              src={tenantInfo.logoUrl} 
+                              alt="Barbearia Logo" 
+                              className="w-full h-full object-cover rounded-xl"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-white font-black text-2xl rounded-xl" style={{ backgroundColor: tenantInfo?.accentColor || '#6366F1' }}>
+                              {tenantInfo?.name?.charAt(0).toUpperCase() || 'B'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-white">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-amber-400">Barbearia Exclusiva</span>
+                          <h1 className="text-2xl md:text-3xl font-black tracking-tight leading-none mt-1">{tenantInfo?.name || 'GB Cortes'}</h1>
+                          <p className="text-xs text-slate-300 font-semibold mt-1">
+                            {tenantInfo?.address?.city || 'São Paulo'} - {tenantInfo?.address?.state || 'SP'}
                           </p>
                         </div>
-                        <div className="mt-3 pt-2 border-t border-slate-700/50 flex items-center justify-between text-[10px] text-amber-400 font-bold">
-                          <span>Ler mais</span>
-                          <ChevronRight size={12} className="group-hover:translate-x-1 transition-transform" />
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('schedule')}
+                        className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs px-6 py-3.5 rounded-2xl transition-all shadow-lg shadow-amber-500/20 uppercase tracking-wider flex items-center gap-2 active:scale-95 w-full md:w-auto justify-center"
+                      >
+                        <Scissors size={14} />
+                        Agendar Horário
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* About Section */}
+                  <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-3">
+                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Nossa História</h3>
+                    <p className="text-sm font-medium text-slate-600 leading-relaxed">
+                      {tenantInfo?.aboutText || "Oferecemos uma experiência completa de cuidado e estilo, com cortes de cabelo modernos, alinhamento de barba, tratamentos capilares e um ambiente acolhedor com atendimento qualificado."}
+                    </p>
+                  </div>
+
+                  {/* Services & Prices Showcase Grid */}
+                  <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
+                    <div>
+                      <h3 className="text-base font-black text-slate-800 tracking-tight flex items-center gap-2">
+                        <Scissors className="text-amber-500" size={20} />
+                        Serviços & Valores
+                      </h3>
+                      <p className="text-xs text-slate-500 font-semibold mt-0.5">Confira nossa tabela completa de serviços profissionais</p>
+                    </div>
+
+                    {services.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {services.map((service, sIdx) => (
+                          <div 
+                            key={`showcase-svc-${service.id || sIdx}`}
+                            className="p-4 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100/80 hover:border-slate-200 transition-all flex flex-col justify-between gap-3 group"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
+                                <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+                                  R$ {Number(service.preco || 0).toFixed(2)}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                                {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
+                              </p>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-100/50">
+                              <span className="flex items-center gap-1"><Clock size={11} /> {service.tempo_estimado || 30} min</span>
+                              <button 
+                                onClick={() => {
+                                  setSelectedService(service);
+                                  setBookingStep(1); // Go choose professional
+                                  setActiveTab('schedule');
+                                }}
+                                className="text-indigo-600 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-indigo-700"
+                              >
+                                Agendar este <ChevronRight size={10} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">Nenhum serviço listado no momento.</p>
+                    )}
+                  </div>
+
+                  {/* Our Professional Team */}
+                  {barbers.filter(b => b.uid !== 'any').length > 0 && (
+                    <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
+                      <div>
+                        <h3 className="text-base font-black text-slate-800 tracking-tight flex items-center gap-2">
+                          <User className="text-amber-500" size={20} />
+                          Nossos Profissionais
+                        </h3>
+                        <p className="text-xs text-slate-500 font-semibold mt-0.5">Mestres das tesouras e navalhas prontos para te atender</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        {barbers.filter(b => b.uid !== 'any').map((barber, bIdx) => (
+                          <div 
+                            key={`showcase-barber-${barber.uid || bIdx}`}
+                            className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col items-center text-center space-y-2"
+                          >
+                            <div className="w-12 h-12 rounded-full bg-indigo-50 border border-indigo-200 flex items-center justify-center font-black text-indigo-600 text-sm">
+                              {(barber.nome || 'Barbeiro').substring(0, 2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="text-xs font-black text-slate-800 truncate">{barber.nome}</h4>
+                              <p className="text-[10px] text-slate-500 font-semibold truncate mt-0.5">{barber.especialidade || 'Barbeiro especialista'}</p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setSelectedBarber(barber);
+                                setBookingStep(2); // Choose Service next
+                                setActiveTab('schedule');
+                              }}
+                              className="text-[9px] font-black text-indigo-600 hover:text-indigo-700 uppercase bg-white px-2.5 py-1 rounded-lg border border-slate-200 tracking-wider shadow-xs hover:border-indigo-400 transition-all cursor-pointer"
+                            >
+                              Ver Agenda
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Contact & Location card */}
+                  <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
+                    <div>
+                      <h3 className="text-base font-black text-slate-800 tracking-tight flex items-center gap-2">
+                        <MapPin className="text-amber-500" size={20} />
+                        Localização & Contato
+                      </h3>
+                      <p className="text-xs text-slate-500 font-semibold mt-0.5">Saiba onde estamos e tire suas dúvidas</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-3 text-xs font-semibold text-slate-600 leading-relaxed">
+                        <p className="flex items-start gap-2.5">
+                          <MapPin size={16} className="text-indigo-600 flex-shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Endereço:</strong><br />
+                            {tenantInfo?.address?.street ? (
+                              <>
+                                {tenantInfo.address.street}, {tenantInfo.address.number || 'S/N'}<br />
+                                {tenantInfo.address.neighborhood && <>{tenantInfo.address.neighborhood}<br /></>}
+                                {tenantInfo.address.city} - {tenantInfo.address.state || 'SP'}
+                              </>
+                            ) : (
+                              "Rua Principal da Barbearia, Centro"
+                            )}
+                          </span>
+                        </p>
+                        
+                        {(tenantInfo?.phone || tenantInfo?.email) && (
+                          <p className="flex items-start gap-2.5">
+                            <Phone size={14} className="text-indigo-600 flex-shrink-0 mt-0.5" />
+                            <span>
+                              <strong>Contato:</strong><br />
+                              {tenantInfo.phone && <>Telefone: {tenantInfo.phone}<br /></>}
+                              {tenantInfo.email && <>E-mail: {tenantInfo.email}</>}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-2.5 justify-center font-bold">
+                        {tenantInfo?.whatsapp && (
+                          <a
+                            href={`https://wa.me/${tenantInfo.whatsapp.replace(/\D/g, '')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-md shadow-emerald-600/10"
+                          >
+                            <Phone size={14} /> Falar no WhatsApp
+                          </a>
+                        )}
+                        {tenantInfo?.instagram && (
+                          <a
+                            href={`https://instagram.com/${tenantInfo.instagram.replace('@', '')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-slate-900 hover:bg-slate-800 text-amber-400 font-black text-xs py-3 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-md"
+                          >
+                            <Instagram size={14} /> Siga-nos no Instagram
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* EXISTING LOGGED-IN CUSTOMER HOME STATE */
+                <>
+                  {/* Notícias & Promoções Banner Widget */}
+                  {announcements.length > 0 && (
+                    <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-3.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Megaphone className="text-amber-500 animate-pulse" size={18} />
+                          <h3 className="text-xs font-black uppercase tracking-widest text-slate-800">
+                            Mural de Notícias & Promoções
+                          </h3>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-400">
+                          {announcements.length} {announcements.length === 1 ? 'comunicado' : 'comunicados'}
+                        </span>
+                      </div>
+
+                      <div className="flex gap-3 overflow-x-auto pb-2 pt-1 scrollbar-none">
+                        {announcements.map((item, idx) => (
+                          <div
+                            key={`announcement-${item.id || idx}-${idx}`}
+                            onClick={() => setAnnouncementModalData(item)}
+                            className="min-w-[260px] max-w-[280px] bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 rounded-2xl border border-slate-700/60 shadow-sm flex flex-col justify-between cursor-pointer hover:border-amber-500/50 transition-all shrink-0 group"
+                          >
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={`text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                                  item.category === 'promocao' || item.category === 'Promoção'
+                                    ? 'bg-amber-500 text-slate-950'
+                                    : item.category === 'aviso' || item.category === 'Aviso'
+                                    ? 'bg-rose-500 text-white'
+                                    : 'bg-indigo-500 text-white'
+                                }`}>
+                                  {item.category || 'Novidade'}
+                                </span>
+                                {item.date && (
+                                  <span className="text-[9px] text-slate-400 font-semibold">
+                                    {item.date}
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="text-xs font-black group-hover:text-amber-400 transition-colors line-clamp-1">
+                                {item.title}
+                              </h4>
+                              <p className="text-[11px] text-slate-300 font-medium line-clamp-2 leading-relaxed">
+                                {item.content}
+                              </p>
+                            </div>
+                            <div className="mt-3 pt-2 border-t border-slate-700/50 flex items-center justify-between text-[10px] text-amber-400 font-bold">
+                              <span>Ler mais</span>
+                              <ChevronRight size={12} className="group-hover:translate-x-1 transition-transform" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Smart Rebooking Card ("Cortei há X dias") */}
+                  {(() => {
+                    if (futureAppointments.length > 0) return null;
+                    const lastCompletedApp = pastAppointments.find(a => a.status === 'concluído');
+                    if (!lastCompletedApp) return null;
+
+                    let daysSinceLastCut = 0;
+                    try {
+                      const lastDate = parse(lastCompletedApp.date, 'yyyy-MM-dd', new Date());
+                      const today = new Date();
+                      lastDate.setHours(0, 0, 0, 0);
+                      today.setHours(0, 0, 0, 0);
+                      daysSinceLastCut = Math.max(0, Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24)));
+                    } catch (e) {
+                      return null;
+                    }
+
+                    const handleQuickRebook = () => {
+                      const matchingBarber = barbers.find(b => b.uid === lastCompletedApp.profissional_id || b.nome === lastCompletedApp.profissional_name);
+                      const matchingService = services.find(s => s.id === lastCompletedApp.servico_id || s.nome === lastCompletedApp.servico_name);
+
+                      if (matchingBarber) setSelectedBarber(matchingBarber);
+                      if (matchingService) setSelectedService(matchingService);
+
+                      setActiveTab('schedule');
+                      toast.success(`Barbeiro e serviço selecionados! Escolha a data para repetir seu agendamento.`);
+                    };
+
+                    return (
+                      <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 p-6 rounded-[32px] text-slate-950 shadow-md relative overflow-hidden space-y-3">
+                        <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-xl pointer-events-none" />
+                        <div className="flex items-center gap-2">
+                          <span className="bg-slate-950 text-amber-400 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full flex items-center gap-1">
+                            <Scissors size={10} /> Frequência de Cortes
+                          </span>
+                        </div>
+                        <div>
+                          <h3 className="text-base font-black tracking-tight text-slate-950">
+                            Faz {daysSinceLastCut} {daysSinceLastCut === 1 ? 'dia' : 'dias'} desde seu último atendimento!
+                          </h3>
+                          <p className="text-xs font-semibold text-slate-900/80 mt-1">
+                            Você cortou em {format(parse(lastCompletedApp.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')} com <span className="font-bold text-slate-950">{lastCompletedApp.profissional_name}</span>. Que tal manter o visual alinhado?
+                          </p>
+                        </div>
+                        <button
+                          onClick={handleQuickRebook}
+                          className="bg-slate-950 hover:bg-slate-900 text-amber-400 font-black text-xs px-5 py-3 rounded-2xl transition-all shadow-md flex items-center gap-2 uppercase tracking-wider active:scale-95"
+                        >
+                          <Scissors size={14} /> Reagendar {lastCompletedApp.servico_name} em 1 Clique
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Next Appointment Card */}
+                  <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col justify-between min-h-[140px]">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <CalendarClock size={20} className="text-indigo-500" />
+                        <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Próximo Agendamento</span>
+                      </div>
+                    </div>
+
+                    {futureAppointments.length > 0 ? (
+                      <div className="my-3 flex items-start gap-3.5">
+                        <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600 flex flex-col items-center">
+                          <span className="text-[9px] font-black uppercase">
+                            {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR })}
+                          </span>
+                          <span className="text-xl font-black">
+                            {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'dd')}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-black text-slate-800 truncate">{futureAppointments[0].servico_name}</h4>
+                          <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Profissional: {futureAppointments[0].profissional_name}</p>
+                          <p className="text-xs font-bold text-indigo-600 mt-1 flex items-center gap-1">
+                            <Clock size={12} />
+                            {futureAppointments[0].startTime} ({futureAppointments[0].endTime})
+                          </p>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    ) : (
+                      <div className="my-4 text-center">
+                        <p className="text-xs text-slate-400 font-semibold">Nenhum horário marcado atualmente.</p>
+                      </div>
+                    )}
 
-              {/* Smart Rebooking Card ("Cortei há X dias") */}
-              {(() => {
-                if (futureAppointments.length > 0) return null;
-                const lastCompletedApp = pastAppointments.find(a => a.status === 'concluído');
-                if (!lastCompletedApp) return null;
-
-                let daysSinceLastCut = 0;
-                try {
-                  const lastDate = parse(lastCompletedApp.date, 'yyyy-MM-dd', new Date());
-                  const today = new Date();
-                  lastDate.setHours(0, 0, 0, 0);
-                  today.setHours(0, 0, 0, 0);
-                  daysSinceLastCut = Math.max(0, Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24)));
-                } catch (e) {
-                  return null;
-                }
-
-                const handleQuickRebook = () => {
-                  const matchingBarber = barbers.find(b => b.uid === lastCompletedApp.profissional_id || b.nome === lastCompletedApp.profissional_name);
-                  const matchingService = services.find(s => s.id === lastCompletedApp.servico_id || s.nome === lastCompletedApp.servico_name);
-
-                  if (matchingBarber) setSelectedBarber(matchingBarber);
-                  if (matchingService) setSelectedService(matchingService);
-
-                  setActiveTab('schedule');
-                  toast.success(`Barbeiro e serviço selecionados! Escolha a data para repetir seu agendamento.`);
-                };
-
-                return (
-                  <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 p-6 rounded-[32px] text-slate-950 shadow-md relative overflow-hidden space-y-3">
-                    <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-xl pointer-events-none" />
-                    <div className="flex items-center gap-2">
-                      <span className="bg-slate-950 text-amber-400 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full flex items-center gap-1">
-                        <Scissors size={10} /> Frequência de Cortes
-                      </span>
+                    <div className="border-t border-slate-100 pt-2.5 flex items-center justify-between gap-2">
+                      {futureAppointments.length > 0 ? (
+                        <>
+                          <button 
+                            onClick={() => handleCancelAppointment(futureAppointments[0].id)}
+                            className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg transition-all ${
+                              confirmingCancelAppId === futureAppointments[0].id
+                                ? 'bg-rose-600 text-white animate-pulse shadow-sm'
+                                : 'text-rose-500 hover:bg-rose-50 hover:underline'
+                            }`}
+                          >
+                            {confirmingCancelAppId === futureAppointments[0].id ? 'Confirmar Cancelamento?' : 'Cancelar Horário'}
+                          </button>
+                          <a 
+                            href={`https://wa.me/${tenantInfo?.phone || ''}`} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="text-[10px] text-indigo-600 font-black hover:underline uppercase tracking-wider flex items-center gap-1"
+                          >
+                            Falar no WhatsApp
+                          </a>
+                        </>
+                      ) : (
+                        <button 
+                          onClick={() => setActiveTab('schedule')}
+                          className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl py-2 text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1"
+                        >
+                          <Plus size={12} /> Marcar meu primeiro horário
+                        </button>
+                      )}
                     </div>
-                    <div>
-                      <h3 className="text-base font-black tracking-tight text-slate-950">
-                        Faz {daysSinceLastCut} {daysSinceLastCut === 1 ? 'dia' : 'dias'} desde seu último atendimento!
+                  </div>
+
+                  {/* Subscriptions / Packages Widgets */}
+                  {(() => {
+                    const activeSubs = subscriptions.filter(s => s.status === 'active');
+                    if (activeSubs.length === 0 && packages.length === 0) return null;
+
+                    return (
+                      <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                          <ShieldCheck className="text-emerald-500 animate-pulse" size={16} />
+                          Meus Planos e Combos Ativos
+                        </h3>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                          {/* Active Subscriptions */}
+                          {activeSubs.map((sub, sIdx) => (
+                            <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
+                              <div>
+                                <p className="text-xs font-black text-emerald-800">{sub.planName}</p>
+                                <p className="text-[10px] text-emerald-600/80 font-bold mt-1">Cortes: {sub.haircutsUsed} usados / Barbas: {sub.beardsUsed} usadas</p>
+                                <p className="text-[9px] text-slate-400 mt-1 font-semibold">Válido até: {sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</p>
+                              </div>
+                              <span className="bg-emerald-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Assinante</span>
+                            </div>
+                          ))}
+
+                          {/* Active Packages */}
+                          {packages.map((pkg, pIdx) => (
+                            <div key={`active-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
+                              <div>
+                                <p className="text-xs font-black text-amber-800">{pkg.packageName || 'Combo de Serviços'}</p>
+                                <p className="text-[10px] text-amber-600/80 font-bold mt-1">
+                                  Cortes Restantes: <span className="font-extrabold text-amber-800">{pkg.remainingCuts} de {pkg.totalCuts}</span>
+                                </p>
+                                <p className="text-[9px] text-slate-400 mt-1 font-semibold">Valor Pago: R$ {pkg.pricePaid?.toFixed(2)}</p>
+                              </div>
+                              <span className="bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Pacote</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Booking Shortcut Board */}
+                  <div className="bg-gradient-to-r from-indigo-600 to-indigo-800 p-6 rounded-[32px] text-white shadow-lg relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="absolute top-0 right-0 w-44 h-44 bg-white/10 rounded-full blur-xl pointer-events-none" />
+                    <div className="space-y-1.5 text-center md:text-left">
+                      <h3 className="text-base font-black tracking-tight flex items-center gap-2 justify-center md:justify-start">
+                        <Sparkles size={18} className="text-amber-400 animate-spin-slow" />
+                        Agende em Segundos!
                       </h3>
-                      <p className="text-xs font-semibold text-slate-900/80 mt-1">
-                        Você cortou em {format(parse(lastCompletedApp.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')} com <span className="font-bold text-slate-950">{lastCompletedApp.profissional_name}</span>. Que tal manter o visual alinhado?
+                      <p className="text-xs text-white/80 font-semibold max-w-md">
+                        Escolha seu barbeiro de preferência, selecione o serviço e garanta o seu horário na agenda sem complicação.
                       </p>
                     </div>
-                    <button
-                      onClick={handleQuickRebook}
-                      className="bg-slate-950 hover:bg-slate-900 text-amber-400 font-black text-xs px-5 py-3 rounded-2xl transition-all shadow-md flex items-center gap-2 uppercase tracking-wider active:scale-95"
-                    >
-                      <Scissors size={14} /> Reagendar {lastCompletedApp.servico_name} em 1 Clique
-                    </button>
-                  </div>
-                );
-              })()}
-
-              {/* Next Appointment Card */}
-              <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col justify-between min-h-[140px]">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-slate-500">
-                    <CalendarClock size={20} className="text-indigo-500" />
-                    <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Próximo Agendamento</span>
-                  </div>
-                </div>
-
-                {futureAppointments.length > 0 ? (
-                  <div className="my-3 flex items-start gap-3.5">
-                    <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600 flex flex-col items-center">
-                      <span className="text-[9px] font-black uppercase">
-                        {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR })}
-                      </span>
-                      <span className="text-xl font-black">
-                        {format(parse(futureAppointments[0].date, 'yyyy-MM-dd', new Date()), 'dd')}
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="text-xs font-black text-slate-800 truncate">{futureAppointments[0].servico_name}</h4>
-                      <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Profissional: {futureAppointments[0].profissional_name}</p>
-                      <p className="text-xs font-bold text-indigo-600 mt-1 flex items-center gap-1">
-                        <Clock size={12} />
-                        {futureAppointments[0].startTime} ({futureAppointments[0].endTime})
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="my-4 text-center">
-                    <p className="text-xs text-slate-400 font-semibold">Nenhum horário marcado atualmente.</p>
-                  </div>
-                )}
-
-                <div className="border-t border-slate-100 pt-2.5 flex items-center justify-between gap-2">
-                  {futureAppointments.length > 0 ? (
-                    <>
-                      <button 
-                        onClick={() => handleCancelAppointment(futureAppointments[0].id)}
-                        className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg transition-all ${
-                          confirmingCancelAppId === futureAppointments[0].id
-                            ? 'bg-rose-600 text-white animate-pulse shadow-sm'
-                            : 'text-rose-500 hover:bg-rose-50 hover:underline'
-                        }`}
-                      >
-                        {confirmingCancelAppId === futureAppointments[0].id ? 'Confirmar Cancelamento?' : 'Cancelar Horário'}
-                      </button>
-                      <a 
-                        href={`https://wa.me/${tenantInfo?.phone || ''}`} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="text-[10px] text-indigo-600 font-black hover:underline uppercase tracking-wider flex items-center gap-1"
-                      >
-                        Falar no WhatsApp
-                      </a>
-                    </>
-                  ) : (
                     <button 
                       onClick={() => setActiveTab('schedule')}
-                      className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl py-2 text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1"
+                      className="bg-white text-indigo-700 hover:bg-slate-50 transition-all font-black text-xs px-6 py-4 rounded-2xl flex items-center gap-1.5 shadow-md flex-shrink-0"
                     >
-                      <Plus size={12} /> Marcar meu primeiro horário
+                      <Scissors size={14} />
+                      Agendar Agora
                     </button>
-                  )}
-                </div>
-              </div>
+                  </div>
 
-              {/* Subscriptions / Packages Widgets */}
-              {(() => {
-                const activeSubs = subscriptions.filter(s => s.status === 'active');
-                if (activeSubs.length === 0 && packages.length === 0) return null;
-
-                return (
+                  {/* Next Scheduled Slots List */}
                   <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-                      <ShieldCheck className="text-emerald-500 animate-pulse" size={16} />
-                      Meus Planos e Combos Ativos
-                    </h3>
+                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Próximos agendamentos</h3>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                      {/* Active Subscriptions */}
-                      {activeSubs.map((sub, sIdx) => (
-                        <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
-                          <div>
-                            <p className="text-xs font-black text-emerald-800">{sub.planName}</p>
-                            <p className="text-[10px] text-emerald-600/80 font-bold mt-1">Cortes: {sub.haircutsUsed} usados / Barbas: {sub.beardsUsed} usadas</p>
-                            <p className="text-[9px] text-slate-400 mt-1 font-semibold">Válido até: {sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</p>
-                          </div>
-                          <span className="bg-emerald-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Assinante</span>
-                        </div>
-                      ))}
+                    {futureAppointments.length > 0 ? (
+                      <div className="divide-y divide-slate-100">
+                        {futureAppointments.map((app, appIdx) => (
+                          <div key={`next-app-${app.id || appIdx}-${appIdx}`} className="py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3.5">
+                              <div className="bg-slate-100 p-2.5 rounded-xl text-slate-700 flex flex-col items-center min-w-[50px]">
+                                <span className="text-[9px] font-black uppercase text-slate-500">
+                                  {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR }).replace('.', '')}
+                                </span>
+                                <span className="text-base font-black text-slate-800">
+                                  {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'dd')}
+                                </span>
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-black text-slate-800">{app.servico_name}</h4>
+                                <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Com {app.profissional_name}</p>
+                                <span className="text-[9px] font-black tracking-wider uppercase px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full mt-1.5 inline-block">
+                                  {app.startTime} ({app.endTime})
+                                </span>
+                              </div>
+                            </div>
 
-                      {/* Active Packages */}
-                      {packages.map((pkg, pIdx) => (
-                        <div key={`active-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
-                          <div>
-                            <p className="text-xs font-black text-amber-800">{pkg.packageName || 'Combo de Serviços'}</p>
-                            <p className="text-[10px] text-amber-600/80 font-bold mt-1">
-                              Cortes Restantes: <span className="font-extrabold text-amber-800">{pkg.remainingCuts} de {pkg.totalCuts}</span>
-                            </p>
-                            <p className="text-[9px] text-slate-400 mt-1 font-semibold">Valor Pago: R$ {pkg.pricePaid?.toFixed(2)}</p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleCancelAppointment(app.id)}
+                                className={`transition-all rounded-xl ${
+                                  confirmingCancelAppId === app.id
+                                    ? 'bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wider animate-pulse'
+                                    : 'p-2 text-rose-500 hover:bg-rose-50'
+                                }`}
+                                title={confirmingCancelAppId === app.id ? "Confirmar Cancelamento?" : "Cancelar Agendamento"}
+                              >
+                                {confirmingCancelAppId === app.id ? (
+                                  <span>Confirmar?</span>
+                                ) : (
+                                  <AlertCircle size={18} />
+                                )}
+                              </button>
+                            </div>
                           </div>
-                          <span className="bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Pacote</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Booking Shortcut Board */}
-              <div className="bg-gradient-to-r from-indigo-600 to-indigo-800 p-6 rounded-[32px] text-white shadow-lg relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-4">
-                <div className="absolute top-0 right-0 w-44 h-44 bg-white/10 rounded-full blur-xl pointer-events-none" />
-                <div className="space-y-1.5 text-center md:text-left">
-                  <h3 className="text-base font-black tracking-tight flex items-center gap-2 justify-center md:justify-start">
-                    <Sparkles size={18} className="text-amber-400 animate-spin-slow" />
-                    Agende em Segundos!
-                  </h3>
-                  <p className="text-xs text-white/80 font-semibold max-w-md">
-                    Escolha seu barbeiro de preferência, selecione o serviço e garanta o seu horário na agenda sem complicação.
-                  </p>
-                </div>
-                <button 
-                  onClick={() => setActiveTab('schedule')}
-                  className="bg-white text-indigo-700 hover:bg-slate-50 transition-all font-black text-xs px-6 py-4 rounded-2xl flex items-center gap-1.5 shadow-md flex-shrink-0"
-                >
-                  <Scissors size={14} />
-                  Agendar Agora
-                </button>
-              </div>
-
-              {/* Next Scheduled Slots List */}
-              <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-                <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Próximos agendamentos</h3>
-                
-                {futureAppointments.length > 0 ? (
-                  <div className="divide-y divide-slate-100">
-                    {futureAppointments.map((app, appIdx) => (
-                      <div key={`next-app-${app.id || appIdx}-${appIdx}`} className="py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3.5">
-                          <div className="bg-slate-100 p-2.5 rounded-xl text-slate-700 flex flex-col items-center min-w-[50px]">
-                            <span className="text-[9px] font-black uppercase text-slate-500">
-                              {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'MMM', { locale: ptBR }).replace('.', '')}
-                            </span>
-                            <span className="text-base font-black text-slate-800">
-                              {format(parse(app.date, 'yyyy-MM-dd', new Date()), 'dd')}
-                            </span>
-                          </div>
-                          <div>
-                            <h4 className="text-xs font-black text-slate-800">{app.servico_name}</h4>
-                            <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Com {app.profissional_name}</p>
-                            <span className="text-[9px] font-black tracking-wider uppercase px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full mt-1.5 inline-block">
-                              {app.startTime} ({app.endTime})
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleCancelAppointment(app.id)}
-                            className={`transition-all rounded-xl ${
-                              confirmingCancelAppId === app.id
-                                ? 'bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wider animate-pulse'
-                                : 'p-2 text-rose-500 hover:bg-rose-50'
-                            }`}
-                            title={confirmingCancelAppId === app.id ? "Confirmar Cancelamento?" : "Cancelar Agendamento"}
-                          >
-                            {confirmingCancelAppId === app.id ? (
-                              <span>Confirmar?</span>
-                            ) : (
-                              <AlertCircle size={18} />
-                            )}
-                          </button>
-                        </div>
+                        ))}
                       </div>
-                    ))}
+                    ) : (
+                      <div className="py-8 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                        <p className="text-xs text-slate-400 font-semibold">Você ainda não possui nenhum agendamento pendente.</p>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="py-8 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                    <p className="text-xs text-slate-400 font-semibold">Você ainda não possui nenhum agendamento pendente.</p>
-                  </div>
-                )}
-              </div>
-
+                </>
+              )}
             </motion.div>
           )}
 
@@ -3488,11 +3703,11 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
                           return (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {allRedeemable.map((item) => {
+                              {allRedeemable.map((item, itemIdx) => {
                                 const canAfford = currentPoints >= item.points;
                                 return (
                                   <div 
-                                    key={`redeem-item-${item.type}-${item.id}`}
+                                    key={`redeem-item-${item.type}-${item.id || itemIdx}-${itemIdx}`}
                                     className={`p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-4 ${
                                       canAfford 
                                         ? 'bg-gradient-to-b from-white to-indigo-50/30 border-indigo-150 hover:shadow-md hover:border-indigo-300' 
@@ -3547,11 +3762,11 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                               <span>Seus Vouchers / Cupons Gerados ({clientVouchers.filter(v => v.status === 'disponivel').length} Ativos)</span>
                             </h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {clientVouchers.map((voucher) => {
+                              {clientVouchers.map((voucher, vIdx) => {
                                 const isActive = voucher.status === 'disponivel';
                                 return (
                                   <div 
-                                    key={`voucher-${voucher.id}`}
+                                    key={`voucher-${voucher.id || vIdx}-${vIdx}`}
                                     className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
                                       isActive 
                                         ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950 shadow-sm' 
@@ -3618,7 +3833,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                       {loyaltyHistory.length > 0 ? (
                         <div className="divide-y divide-slate-100">
                           {loyaltyHistory.map((item, idx) => (
-                            <div key={item.id || idx} className="py-3.5 flex items-center justify-between gap-3">
+                            <div key={`loyalty-${item.id || 'item'}-${idx}`} className="py-3.5 flex items-center justify-between gap-3">
                               <div className="flex items-center gap-3">
                                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold ${
                                   item.type === 'earn' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
@@ -3995,7 +4210,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                   ) : portfolioBarbers.length > 0 ? (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {portfolioBarbers.map((barber: any, index: number) => (
-                        <div key={index} className="flex items-center gap-2.5 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div key={`port-barber-${barber.uid || barber.id || index}-${index}`} className="flex items-center gap-2.5 p-3 bg-slate-50 rounded-xl border border-slate-100">
                           <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center overflow-hidden flex-shrink-0">
                             {barber.fotoUrl || barber.avatarUrl ? (
                               <img src={barber.fotoUrl || barber.avatarUrl} alt={barber.nome} className="w-full h-full object-cover" />
@@ -4781,7 +4996,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                 {selectedComandaForView.items && selectedComandaForView.items.length > 0 ? (
                   <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
                     {selectedComandaForView.items.map((item: any, idx: number) => (
-                      <div key={idx} className="p-3 bg-white flex items-center justify-between text-xs">
+                      <div key={`comanda-item-${item.id || item.name || idx}-${idx}`} className="p-3 bg-white flex items-center justify-between text-xs">
                         <div>
                           <span className="font-bold text-slate-800">{item.name}</span>
                           <div className="flex items-center gap-2 text-[10px] text-slate-400 font-semibold mt-0.5">
@@ -4843,7 +5058,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                   <h4 className="font-black text-slate-700 uppercase tracking-wider text-[10px]">Forma de Pagamento</h4>
                   <div className="flex flex-wrap gap-2">
                     {selectedComandaForView.payments.map((p: any, i: number) => (
-                      <span key={i} className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-slate-200">
+                      <span key={`comanda-pay-${p.method || p.methodName || i}-${i}`} className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-slate-200">
                         {p.methodName || p.method || 'Pagamento'}: R$ {(p.amount || 0).toFixed(2)}
                       </span>
                     ))}

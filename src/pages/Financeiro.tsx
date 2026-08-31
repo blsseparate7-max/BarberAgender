@@ -1121,10 +1121,10 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           onChange={(e) => setActiveTab(e.target.value as any)}
           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-accent"
         >
-          {navGroups.map((group) => (
-            <optgroup key={group.title} label={group.title}>
-              {group.items.map((item) => (
-                <option key={item.id} value={item.id}>
+          {navGroups.map((group, gIdx) => (
+            <optgroup key={`nav-group-opt-${group.title}-${gIdx}`} label={group.title}>
+              {group.items.map((item, iIdx) => (
+                <option key={`nav-item-opt-${item.id}-${iIdx}`} value={item.id}>
                   {item.label}
                 </option>
               ))}
@@ -1138,17 +1138,17 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         {/* Vertical Submenu Navigation Panel */}
         <aside className="hidden lg:block lg:col-span-3 sticky top-6 space-y-6">
           <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-sm space-y-5">
-            {navGroups.map((group) => (
-              <div key={group.title} className="space-y-1">
+            {navGroups.map((group, gIdx) => (
+              <div key={`nav-group-desk-${group.title}-${gIdx}`} className="space-y-1">
                 <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
                   {group.title}
                 </div>
                 <div className="space-y-0.5">
-                  {group.items.map((item) => {
+                  {group.items.map((item, iIdx) => {
                     const isActive = activeTab === item.id;
                     return (
                       <button
-                        key={item.id}
+                        key={`nav-item-desk-${item.id}-${iIdx}`}
                         onClick={() => setActiveTab(item.id as any)}
                         className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
                           isActive
@@ -2761,9 +2761,9 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                         initial={{ opacity: 0, scale: 0.95, y: 15 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                        className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden max-w-md w-full relative z-10"
+                        className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden max-w-md w-full relative z-10 max-h-[90vh] flex flex-col my-auto"
                       >
-                        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-purple-50">
+                        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-purple-50 shrink-0">
                           <div className="flex items-center gap-2">
                             <Sparkles className="text-purple-600" size={18} />
                             <h4 className="font-black text-primary text-base">Nova Assinatura Recorrente</h4>
@@ -2771,7 +2771,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                           <button 
                             type="button"
                             onClick={() => setIsNewSubscriptionModalOpen(false)}
-                            className="p-1 rounded-lg hover:bg-purple-100 text-slate-500 transition-all"
+                            className="p-1 rounded-lg hover:bg-purple-100 text-slate-500 transition-all cursor-pointer"
                           >
                             <X size={18} />
                           </button>
@@ -2810,84 +2810,86 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                           }).finally(() => {
                             setLoadingSubscriptions(false);
                           });
-                        }} className="p-6 space-y-4">
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-slate-500 uppercase">Selecione o Cliente</label>
-                            <select
-                              value={newSubClientId}
-                              onChange={(e) => setNewSubClientId(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-500 text-slate-800 font-semibold"
-                              required
-                            >
-                              <option value="">-- Escolha um Cliente --</option>
-                              {clients.map((c, idx) => (
-                                <option key={`sub-client-${c.uid || c.id || idx}-${idx}`} value={c.uid || c.id}>
-                                  {c.name || c.displayName || "Sem Nome"}
-                                </option>
-                              ))}
-                            </select>
+                        }} className="flex flex-col flex-1 overflow-hidden">
+                          <div className="p-6 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 uppercase">Selecione o Cliente</label>
+                              <select
+                                value={newSubClientId}
+                                onChange={(e) => setNewSubClientId(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-500 text-slate-800 font-semibold cursor-pointer"
+                                required
+                              >
+                                <option value="">-- Escolha um Cliente --</option>
+                                {clients.map((c, idx) => (
+                                  <option key={`sub-client-${c.uid || c.id || idx}-${idx}`} value={c.uid || c.id}>
+                                    {c.name || c.displayName || "Sem Nome"}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 uppercase">Plano de Assinatura</label>
+                              <select
+                                value={newSubPlanId}
+                                onChange={(e) => setNewSubPlanId(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-500 text-slate-800 font-semibold cursor-pointer"
+                                required
+                              >
+                                <option value="">-- Escolha o Plano --</option>
+                                {subscriptionPlans.map((p, idx) => (
+                                  <option key={`sub-plan-${p.id || idx}-${idx}`} value={p.id}>
+                                    {p.name} - R$ {p.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês
+                                  </option>
+                                ))}
+                              </select>
+                              {(() => {
+                                const selectedPlanObj = subscriptionPlans.find(plan => plan.id === newSubPlanId);
+                                if (selectedPlanObj) {
+                                  return (
+                                    <p className="text-[10px] text-purple-600 font-semibold bg-purple-50 p-2.5 rounded-lg mt-1 leading-relaxed">
+                                      Benefícios: {selectedPlanObj.haircutsPerMonth} cortes de cabelo e {selectedPlanObj.beardsPerMonth} barbas por mês inclusos.
+                                    </p>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-2">
+                              <input
+                                type="checkbox"
+                                id="autoRenew"
+                                checked={newSubAutoRenew}
+                                onChange={(e) => setNewSubAutoRenew(e.target.checked)}
+                                className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 h-4 w-4 cursor-pointer"
+                              />
+                              <label htmlFor="autoRenew" className="text-xs text-slate-600 font-bold cursor-pointer">
+                                Renovar plano automaticamente no vencimento
+                              </label>
+                            </div>
+
+                            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-100 flex items-start gap-2.5 mt-2">
+                              <AlertCircle className="text-amber-500 mt-0.5 shrink-0" size={14} />
+                              <p className="text-[10px] text-amber-700 leading-relaxed font-bold">
+                                Atenção: Ao confirmar a criação da assinatura, o sistema lançará automaticamente um débito correspondente à primeira mensalidade como Entrada (Categoria: Assinaturas) no Caixa de hoje, e atualizará a data de vencimento do cliente para daqui 1 mês.
+                              </p>
+                            </div>
                           </div>
 
-                          <div className="space-y-1">
-                            <label className="text-xs font-bold text-slate-500 uppercase">Plano de Assinatura</label>
-                            <select
-                              value={newSubPlanId}
-                              onChange={(e) => setNewSubPlanId(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-500 text-slate-800 font-semibold"
-                              required
-                            >
-                              <option value="">-- Escolha o Plano --</option>
-                              {subscriptionPlans.map((p, idx) => (
-                                <option key={`sub-plan-${p.id || idx}-${idx}`} value={p.id}>
-                                  {p.name} - R$ {p.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês
-                                </option>
-                              ))}
-                            </select>
-                            {(() => {
-                              const selectedPlanObj = subscriptionPlans.find(plan => plan.id === newSubPlanId);
-                              if (selectedPlanObj) {
-                                return (
-                                  <p className="text-[10px] text-purple-600 font-semibold bg-purple-50 p-2.5 rounded-lg mt-1 leading-relaxed">
-                                    Benefícios: {selectedPlanObj.haircutsPerMonth} cortes de cabelo e {selectedPlanObj.beardsPerMonth} barbas por mês inclusos.
-                                  </p>
-                                );
-                              }
-                              return null;
-                            })()}
-                          </div>
-
-                          <div className="flex items-center gap-2 pt-2">
-                            <input
-                              type="checkbox"
-                              id="autoRenew"
-                              checked={newSubAutoRenew}
-                              onChange={(e) => setNewSubAutoRenew(e.target.checked)}
-                              className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 h-4 w-4"
-                            />
-                            <label htmlFor="autoRenew" className="text-xs text-slate-600 font-bold cursor-pointer">
-                              Renovar plano automaticamente no vencimento
-                            </label>
-                          </div>
-
-                          <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-100 flex items-start gap-2.5 mt-2">
-                            <AlertCircle className="text-amber-500 mt-0.5 shrink-0" size={14} />
-                            <p className="text-[10px] text-amber-700 leading-relaxed font-bold">
-                              Atenção: Ao confirmar a criação da assinatura, o sistema lançará automaticamente um débito correspondente à primeira mensalidade como Entrada (Categoria: Assinaturas) no Caixa de hoje, e atualizará a data de vencimento do cliente para daqui 1 mês.
-                            </p>
-                          </div>
-
-                          <div className="flex gap-3 pt-4">
+                          <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex gap-3 shrink-0">
                             <button
                               type="button"
                               onClick={() => setIsNewSubscriptionModalOpen(false)}
-                              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 px-4 rounded-xl text-xs transition-all"
+                              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 px-4 rounded-xl text-xs transition-all cursor-pointer"
                             >
                               Fechar
                             </button>
                             <button
                               type="submit"
                               disabled={loadingSubscriptions}
-                              className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1 shadow-md shadow-purple-100"
+                              className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1 shadow-md shadow-purple-100 cursor-pointer"
                             >
                               {loadingSubscriptions ? (
                                 <Loader2 className="animate-spin" size={14} />

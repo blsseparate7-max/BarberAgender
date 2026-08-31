@@ -220,8 +220,8 @@ export function PesquisaSatisfacao() {
             {questions.length === 0 ? (
               <div className="py-12 text-center text-xs text-muted italic">Qual nota de 0 a 10 você daria para o nosso corte? (Padrão)</div>
             ) : (
-              questions.map(q => (
-                <div key={q.id} className="p-4 border border-slate-100 rounded-2xl flex items-center justify-between shadow-sm hover:border-slate-200">
+              questions.map((q, qIdx) => (
+                <div key={`question-${q.id || 'q'}-${qIdx}`} className="p-4 border border-slate-100 rounded-2xl flex items-center justify-between shadow-sm hover:border-slate-200">
                   <p className="text-xs font-bold text-slate-800">{q.title}</p>
                   <button onClick={() => handleDeleteQuestion(q.id)} className="text-slate-300 hover:text-red-500 p-1">
                     <Trash2 size={14} />
@@ -247,11 +247,11 @@ export function PesquisaSatisfacao() {
             <div className="py-12 border border-dashed rounded-3xl text-center italic text-xs text-muted">Vazio.</div>
           ) : (
             <div className="space-y-4 max-h-[480px] overflow-y-auto no-scrollbar">
-              {responses.map(resp => {
+              {responses.map((resp, rIdx) => {
                 const isPromoter = resp.score >= 9;
                 const isNeutro = resp.score === 7 || resp.score === 8;
                 return (
-                  <div key={resp.id} className="bg-slate-50 border border-slate-100 p-5 rounded-2xl flex flex-col justify-between hover:border-accent/10 transition-all shadow-inner">
+                  <div key={`resp-${resp.id || 'r'}-${rIdx}`} className="bg-slate-50 border border-slate-100 p-5 rounded-2xl flex flex-col justify-between hover:border-accent/10 transition-all shadow-inner">
                     <div className="flex justify-between items-start gap-4">
                       <div>
                         <div className="flex items-center gap-2">

@@ -3252,8 +3252,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-[11px] font-medium text-slate-600">
-                              {subUsages.map((usage) => (
-                                <tr key={usage.id} className="hover:bg-slate-50/50 transition">
+                              {subUsages.map((usage, uIdx) => (
+                                <tr key={`sub-usage-${usage.id || uIdx}-${uIdx}`} className="hover:bg-slate-50/50 transition">
                                   <td className="p-3 pl-4 font-extrabold text-slate-800">
                                     {usage.service_name || (usage.type === 'haircut' ? 'Corte de Cabelo' : 'Barba')}
                                   </td>
@@ -3682,15 +3682,15 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           <option value="all_products">Todos os Produtos</option>
                         </optgroup>
                         <optgroup label="Serviços Individuais">
-                          {services.map(s => (
-                            <option key={`servico_${s.id}`} value={`servico_${s.id}`}>
+                          {services.map((s, sIdx) => (
+                            <option key={`servico_${s.id || sIdx}_${sIdx}`} value={`servico_${s.id}`}>
                               Serviço: {s.nome} (R$ {(s.preco ?? s.price ?? 0).toFixed(2)})
                             </option>
                           ))}
                         </optgroup>
                         <optgroup label="Produtos Individuais">
-                          {products.map(p => (
-                            <option key={`product_${p.id}`} value={`product_${p.id}`}>
+                          {products.map((p, pIdx) => (
+                            <option key={`product_${p.id || pIdx}_${pIdx}`} value={`product_${p.id}`}>
                               Produto: {p.name} (R$ {(p.salePrice ?? p.preco ?? 0).toFixed(2)})
                             </option>
                           ))}
@@ -3895,146 +3895,149 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       {/* Form Modal: Vincular Assinante */}
       <AnimatePresence>
         {showAssignModal && selectedPlan && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white border rounded-[2rem] w-full max-w-md overflow-hidden shadow-2xl"
+              className="bg-white border rounded-[2rem] w-full max-w-md max-h-[90vh] flex flex-col shadow-2xl overflow-hidden my-auto"
             >
-              <div className="p-6 border-b flex items-center justify-between bg-slate-50/50">
+              <div className="p-6 border-b flex items-center justify-between bg-slate-50/50 shrink-0">
                 <div>
                   <h2 className="text-xl font-bold text-primary">Ativar Assinatura de Cliente</h2>
                   <p className="text-muted text-xs font-bold uppercase tracking-widest mt-1">Plano Escolhido: {selectedPlan.name}</p>
                 </div>
-                <button type="button" onClick={() => setShowAssignModal(false)} className="p-2 text-slate-400 hover:text-primary transition-colors">
+                <button type="button" onClick={() => setShowAssignModal(false)} className="p-2 text-slate-400 hover:text-primary transition-colors cursor-pointer">
                   <X size={20} />
                 </button>
               </div>
-              <form onSubmit={handleAssignSubscription} className="p-6 space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Buscar Cliente</label>
-                  <select 
-                    name="clientId" 
-                    required 
-                    value={assignSelectedClientId}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      setAssignSelectedClientId(id);
-                      const c = clients.find(cl => cl.uid === id);
-                      const existingCpf = c?.cpf || (c as any)?.cpfCnpj || '';
-                      setAssignClientCpf(formatCpfMask(existingCpf));
-                      setAssignClientEmail(c?.email || '');
-                    }}
-                    className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
-                  >
-                    <option value="">Selecione o Cliente do Clube...</option>
-                    {clients.map((c, index) => (
-                      <option key={`assign-client-${c.uid || index}-${index}`} value={c.uid}>
-                        {c.nome} {c.cpf ? `(CPF: ${formatCpfMask(c.cpf)})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Cadastro / Ativação</label>
-                  <select 
-                    name="activationType" 
-                    required 
-                    value={assignActivationType} 
-                    onChange={(e) => setAssignActivationType(e.target.value as 'manual' | 'asaas')} 
-                    className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
-                  >
-                    <option value="manual">Cadastro Manual (Ativar agora abrindo Caixa/PDV)</option>
-                    <option value="asaas">Cadastro via Asaas (Fica Pendente até simular pagamento ou webhook)</option>
-                  </select>
-                </div>
-
-                {assignActivationType === 'manual' ? (
-                  <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl text-xs text-emerald-800 space-y-1">
-                    <p className="font-extrabold uppercase tracking-wide text-[10px] text-emerald-600">Fluxo Manual:</p>
-                    <p>O cliente assina na hora. O sistema irá abrir o Caixa/PDV para você lançar o recebimento no dinheiro, cartão ou fiado.</p>
+              <form onSubmit={handleAssignSubscription} className="flex flex-col flex-1 overflow-hidden">
+                <div className="p-6 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Buscar Cliente</label>
+                    <select 
+                      name="clientId" 
+                      required 
+                      value={assignSelectedClientId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setAssignSelectedClientId(id);
+                        const c = clients.find(cl => cl.uid === id);
+                        const existingCpf = c?.cpf || (c as any)?.cpfCnpj || '';
+                        setAssignClientCpf(formatCpfMask(existingCpf));
+                        setAssignClientEmail(c?.email || '');
+                      }}
+                      className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
+                    >
+                      <option value="">Selecione o Cliente do Clube...</option>
+                      {clients.map((c, index) => (
+                        <option key={`assign-client-${c.uid || index}-${index}`} value={c.uid}>
+                          {c.nome} {c.cpf ? `(CPF: ${formatCpfMask(c.cpf)})` : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                ) : (
-                  <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl text-xs text-purple-800 space-y-4">
-                    <div>
-                      <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Cobrança Online):</p>
-                      <p className="text-[11px] mt-0.5">A assinatura é criada como <strong className="text-purple-900 font-extrabold">pendente</strong> e é liberada quando o cliente conclui o Pix ou Cartão de Crédito.</p>
-                    </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Cadastro / Ativação</label>
+                    <select 
+                      name="activationType" 
+                      required 
+                      value={assignActivationType} 
+                      onChange={(e) => setAssignActivationType(e.target.value as 'manual' | 'asaas')} 
+                      className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
+                    >
+                      <option value="manual">Cadastro Manual (Ativar agora abrindo Caixa/PDV)</option>
+                      <option value="asaas">Cadastro via Asaas (Fica Pendente até simular pagamento ou webhook)</option>
+                    </select>
+                  </div>
 
-                    <div className="space-y-1 text-left">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">
-                        E-mail do Cliente (Obrigatório Asaas)
-                      </label>
-                      <input 
-                        type="email" 
-                        name="clientEmail" 
-                        value={assignClientEmail}
-                        onChange={(e) => setAssignClientEmail(e.target.value)}
-                        placeholder="cliente@email.com" 
-                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
-                        required
-                      />
-                      <p className="text-[10px] text-purple-700 font-medium mt-1">
-                        Necessário para registrar o pagador e enviar o comprovante de pagamento no Asaas.
-                      </p>
+                  {assignActivationType === 'manual' ? (
+                    <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl text-xs text-emerald-800 space-y-1">
+                      <p className="font-extrabold uppercase tracking-wide text-[10px] text-emerald-600">Fluxo Manual:</p>
+                      <p>O cliente assina na hora. O sistema irá abrir o Caixa/PDV para você lançar o recebimento no dinheiro, cartão ou fiado.</p>
                     </div>
-
-                    <div className="space-y-1 text-left">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">CPF do Cliente (Obrigatório Asaas)</label>
-                        {assignClientCpf && isValidCPF(assignClientCpf.replace(/\D/g, '')) ? (
-                          <span className="text-[9px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1">
-                            <ShieldCheck size={12} />
-                            CPF Válido
-                          </span>
-                        ) : assignClientCpf ? (
-                          <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
-                            Aguardando 11 dígitos
-                          </span>
-                        ) : null}
+                  ) : (
+                    <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl text-xs text-purple-800 space-y-4">
+                      <div>
+                        <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Cobrança Online):</p>
+                        <p className="text-[11px] mt-0.5">A assinatura é criada como <strong className="text-purple-900 font-extrabold">pendente</strong> e é liberada quando o cliente conclui o Pix ou Cartão de Crédito.</p>
                       </div>
-                      <input 
-                        type="text" 
-                        name="clientCpf" 
-                        value={assignClientCpf}
-                        onChange={(e) => setAssignClientCpf(formatCpfMask(e.target.value))}
-                        placeholder="000.000.000-00" 
-                        maxLength={14}
-                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 font-mono"
-                        required
-                      />
-                      <p className="text-[10px] text-purple-700 font-medium mt-1">
-                        O CPF é salvo automaticamente no cadastro do cliente e usado para a cobrança Asaas.
-                      </p>
-                    </div>
 
-                    <div className="space-y-1 text-left">
-                      <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">Forma de Pagamento</label>
-                      <select 
-                        name="billingType"
-                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 cursor-pointer"
-                      >
-                        {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('PIX')) && (
-                          <option value="PIX">⚡ Pix Instantâneo (QR Code + Copia e Cola)</option>
-                        )}
-                        {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('CREDIT_CARD')) && (
-                          <option value="CREDIT_CARD">💳 Cartão de Crédito Recorrente (Cobrança Mensal)</option>
-                        )}
-                      </select>
+                      <div className="space-y-1 text-left">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">
+                          E-mail do Cliente (Obrigatório Asaas)
+                        </label>
+                        <input 
+                          type="email" 
+                          name="clientEmail" 
+                          value={assignClientEmail}
+                          onChange={(e) => setAssignClientEmail(e.target.value)}
+                          placeholder="cliente@email.com" 
+                          className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
+                          required
+                        />
+                        <p className="text-[10px] text-purple-700 font-medium mt-1">
+                          Necessário para registrar o pagador e enviar o comprovante de pagamento no Asaas.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1 text-left">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">CPF do Cliente (Obrigatório Asaas)</label>
+                          {assignClientCpf && isValidCPF(assignClientCpf.replace(/\D/g, '')) ? (
+                            <span className="text-[9px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1">
+                              <ShieldCheck size={12} />
+                              CPF Válido
+                            </span>
+                          ) : assignClientCpf ? (
+                            <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                              Aguardando 11 dígitos
+                            </span>
+                          ) : null}
+                        </div>
+                        <input 
+                          type="text" 
+                          name="clientCpf" 
+                          value={assignClientCpf}
+                          onChange={(e) => setAssignClientCpf(formatCpfMask(e.target.value))}
+                          placeholder="000.000.000-00" 
+                          maxLength={14}
+                          className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 font-mono"
+                          required
+                        />
+                        <p className="text-[10px] text-purple-700 font-medium mt-1">
+                          O CPF é salvo automaticamente no cadastro do cliente e usado para a cobrança Asaas.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1 text-left">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">Forma de Pagamento</label>
+                        <select 
+                          name="billingType"
+                          className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 cursor-pointer"
+                        >
+                          {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('PIX')) && (
+                            <option value="PIX">⚡ Pix Instantâneo (QR Code + Copia e Cola)</option>
+                          )}
+                          {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('CREDIT_CARD')) && (
+                            <option value="CREDIT_CARD">💳 Cartão de Crédito Recorrente (Cobrança Mensal)</option>
+                          )}
+                        </select>
+                      </div>
                     </div>
+                  )}
+
+                  <div className="flex items-center gap-3 p-4 bg-slate-50 border border-slate-100 rounded-xl">
+                    <input type="checkbox" name="autoRenew" id="autoRenew" defaultChecked className="w-5 h-5 accent-accent rounded-lg cursor-pointer" />
+                    <label htmlFor="autoRenew" className="text-sm font-bold text-primary cursor-pointer select-none">Renovação Mensal Automática</label>
                   </div>
-                )}
-
-                <div className="flex items-center gap-3 p-4 bg-slate-50 border border-slate-100 rounded-xl">
-                  <input type="checkbox" name="autoRenew" id="autoRenew" defaultChecked className="w-5 h-5 accent-accent rounded-lg cursor-pointer" />
-                  <label htmlFor="autoRenew" className="text-sm font-bold text-primary cursor-pointer select-none">Renovação Mensal Automática</label>
                 </div>
-                <div className="flex gap-3 pt-4 font-bold">
-                  <button type="button" onClick={() => setShowAssignModal(false)} className="flex-1 py-4 border border-slate-205 rounded-xl text-sm text-muted uppercase tracking-widest hover:bg-slate-50 transition-all cursor-pointer">Cancelar</button>
+
+                <div className="p-4 sm:p-6 border-t bg-slate-50/50 flex gap-3 shrink-0 font-bold">
+                  <button type="button" onClick={() => setShowAssignModal(false)} className="flex-1 py-3.5 sm:py-4 border border-slate-200 rounded-xl text-xs sm:text-sm text-muted uppercase tracking-widest hover:bg-slate-100 transition-all cursor-pointer">Cancelar</button>
                   <button 
                     type="submit" 
-                    className="flex-[2] py-4 bg-primary text-white rounded-xl text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
+                    className="flex-[2] py-3.5 sm:py-4 bg-primary text-white rounded-xl text-xs sm:text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95 cursor-pointer font-extrabold"
                   >
                     {assignActivationType === 'manual' ? 'Ir para o Caixa / PDV' : 'Criar Pendente'}
                   </button>

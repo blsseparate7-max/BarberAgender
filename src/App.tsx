@@ -92,10 +92,11 @@ function MainApp() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const hasTenantParam = params.get('tenant') || params.get('tenantId');
     if (params.get('link_client_id') || params.get('link_id')) {
       setShowLanding(false);
       setAuthView('register');
-    } else if (params.get('agendar') === 'true' || params.get('booking') === 'true' || params.get('tab') === 'schedule') {
+    } else if (params.get('agendar') === 'true' || params.get('booking') === 'true' || params.get('tab') === 'schedule' || hasTenantParam) {
       setShowLanding(false);
       setAuthView('guest-booking');
     }

@@ -739,11 +739,11 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               </div>
               
               <div className="flex gap-2 overflow-x-auto no-scrollbar py-0.5 pr-2">
-                {dateStrip.map(d => {
+                {dateStrip.map((d, dIdx) => {
                   const isSelected = d.iso === format(selectedDate, 'yyyy-MM-dd');
                   return (
                     <button
-                       key={d.iso}
+                       key={`barber-date-strip-${d.iso || dIdx}-${dIdx}`}
                        onClick={() => setSelectedDate(parse(d.iso, 'yyyy-MM-dd', new Date()))}
                        className={`flex flex-col items-center justify-center min-w-[50px] h-[64px] rounded-2xl transition border ${
                         isSelected 
@@ -1205,13 +1205,13 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                     {assignedTeamGoals.length > 0 && (
                       <div className="space-y-3 border-t border-slate-100 pt-3 mt-3">
                         <p className="text-[10px] font-black uppercase text-indigo-600 tracking-wider">Metas e Bônus da Gestão</p>
-                        {assignedTeamGoals.map((tg) => {
+                        {assignedTeamGoals.map((tg, tgIdx) => {
                           const currentVal = tg.tipo === 'faturamento' ? stats.receivedThisMonth : stats.servedTodayCount;
                           const percent = Math.min(100, Math.round((currentVal / (tg.valorMeta || 1)) * 100));
                           const isAchieved = currentVal >= tg.valorMeta;
 
                           return (
-                            <div key={tg.id} className="bg-indigo-50/40 p-3 rounded-2xl border border-indigo-100/60 space-y-1.5">
+                            <div key={`tg-${tg.id || tgIdx}-${tgIdx}`} className="bg-indigo-50/40 p-3 rounded-2xl border border-indigo-100/60 space-y-1.5">
                               <div className="flex items-center justify-between text-xs font-bold">
                                 <span className="text-primary">{tg.titulo} ({tg.periodo})</span>
                                 <span className={isAchieved ? 'text-emerald-600 font-black' : 'text-slate-600'}>

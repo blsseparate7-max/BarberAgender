@@ -235,8 +235,8 @@ export function NoticiasPromocoes() {
               Nenhuma notícia ou promoção publicada recentemente.
             </div>
           ) : (
-            news.map(item => (
-              <div key={item.id} className="bg-white border p-6 rounded-[2rem] shadow-sm flex flex-col justify-between hover:border-accent/15 transition-all">
+            news.map((item, idx) => (
+              <div key={`news-item-${item.id || 'n'}-${idx}`} className="bg-white border p-6 rounded-[2rem] shadow-sm flex flex-col justify-between hover:border-accent/15 transition-all">
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="bg-blue-100 text-blue-800 text-[9px] font-black uppercase px-2.5 py-1 rounded-full">

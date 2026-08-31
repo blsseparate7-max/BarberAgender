@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2, ChevronDown, Search, Plus } from 'lucide-react';
+import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2, ChevronDown, Search, Plus, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -34,6 +34,7 @@ export function AppointmentModal({
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
@@ -82,6 +83,7 @@ export function AppointmentModal({
   useEffect(() => {
     if (isOpen) {
       loadInitialData();
+      setShowDeleteConfirm(false);
     }
   }, [isOpen]);
 
@@ -552,40 +554,89 @@ export function AppointmentModal({
           <div className="sticky -bottom-6 bg-white/95 backdrop-blur-md pt-4 pb-2 border-t border-slate-100 z-10 -mx-6 -mb-6 px-6 flex flex-col gap-4">
             {appointment && (
               <div className="flex flex-col gap-2">
-                {(appointment.status === 'agendado' || appointment.status === 'confirmado') && (
-                  <button 
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        setLoading(true);
-                        await appointmentService.startService(appointment.id);
-                        onSuccess();
-                        onClose();
-                      } catch (err: any) {
-                        setError(err.message);
-                      } finally {
-                        setLoading(false);
-                      }
-                    }}
-                    className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black text-sm hover:bg-emerald-600 transition-all flex items-center justify-center gap-3 shadow-lg shadow-emerald-500/10 active:scale-95 border-0"
-                  >
-                    <Clock size={20} />
-                    <span>INICIAR ATENDIMENTO</span>
-                  </button>
-                )}
+                {showDeleteConfirm ? (
+                  <div className="bg-rose-50 border border-rose-100 p-4 rounded-xl flex flex-col gap-3 animate-fadeIn">
+                    <p className="text-xs text-rose-800 font-bold leading-relaxed">
+                      Deseja mesmo excluir este agendamento definitivamente? Esta ação liberará o horário na agenda e não poderá ser desfeita.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(false)}
+                        className="flex-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 py-2 rounded-lg text-xs font-bold transition-all"
+                      >
+                        Voltar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            setLoading(true);
+                            await appointmentService.deleteAppointment(appointment.id);
+                            onSuccess();
+                            onClose();
+                          } catch (err: any) {
+                            setError(err.message);
+                          } finally {
+                            setLoading(false);
+                          }
+                        }}
+                        className="flex-1 bg-rose-600 hover:bg-rose-700 text-white py-2 rounded-lg text-xs font-black transition-all border-0 shadow-sm flex items-center justify-center gap-1"
+                      >
+                        {loading ? <Loader2 className="animate-spin" size={12} /> : 'Sim, Excluir'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {(appointment.status === 'agendado' || appointment.status === 'confirmado') && (
+                      <div className="flex gap-2 w-full">
+                        <button 
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              setLoading(true);
+                              await appointmentService.startService(appointment.id);
+                              onSuccess();
+                              onClose();
+                            } catch (err: any) {
+                              setError(err.message);
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          className="flex-[2] bg-emerald-500 text-white py-4 rounded-2xl font-black text-xs hover:bg-emerald-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10 active:scale-95 border-0"
+                        >
+                          <Clock size={16} />
+                          <span>INICIAR ATENDIMENTO</span>
+                        </button>
+                        
+                        <button 
+                          type="button"
+                          onClick={() => setShowDeleteConfirm(true)}
+                          className="flex-1 bg-rose-50 text-rose-600 hover:bg-rose-100 py-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center gap-2 active:scale-95 border-0"
+                          title="Excluir Agendamento Definitivamente"
+                        >
+                          <Trash2 size={16} />
+                          <span>EXCLUIR</span>
+                        </button>
+                      </div>
+                    )}
 
-                {['agendado', 'confirmado', 'em_atendimento'].includes(appointment.status) && onOpenComanda && (
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      onOpenComanda(appointment);
-                      onClose();
-                    }}
-                    className="w-full bg-accent text-white py-4 rounded-2xl font-black text-sm hover:bg-indigo-600 transition-all flex items-center justify-center gap-3 shadow-lg shadow-accent/10 active:scale-95 border-0"
-                  >
-                    <Receipt size={20} />
-                    <span>FINALIZAR E ABRIR COMANDA</span>
-                  </button>
+                    {['agendado', 'confirmado', 'em_atendimento'].includes(appointment.status) && onOpenComanda && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          onOpenComanda(appointment);
+                          onClose();
+                        }}
+                        className="w-full bg-accent text-white py-4 rounded-2xl font-black text-sm hover:bg-indigo-600 transition-all flex items-center justify-center gap-3 shadow-lg shadow-accent/10 active:scale-95 border-0"
+                      >
+                        <Receipt size={20} />
+                        <span>FINALIZAR E ABRIR COMANDA</span>
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}

@@ -301,6 +301,11 @@ export const appointmentService = {
     await this.updateStatus(id, 'cancelado');
   },
 
+  async deleteAppointment(id: string) {
+    const docRef = doc(db, COLLECTION, id);
+    await deleteDoc(docRef);
+  },
+
   async updateStatus(id: string, status: AppointmentStatus, paymentMethod: PaymentMethod = 'dinheiro') {
     const docRef = doc(db, COLLECTION, id);
     const appSnap = await getDoc(docRef);

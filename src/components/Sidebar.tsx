@@ -201,10 +201,16 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       subItems: [
         { id: 'financeiro-conta-digital', label: 'Conta Digital (Asaas)', roles: ['admin', 'gerente'] },
         { id: 'financeiro-caixa', label: 'Caixa do Dia', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-historico', label: 'Histórico de Caixas', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-movimentacoes', label: 'Entradas e Saídas', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-fluxo', label: 'Fluxo de Caixa', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-dre', label: 'DRE Gerencial', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-pagar', label: 'Contas a Pagar', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-receber', label: 'Contas a Receber', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-fluxo', label: 'DRE & Fluxo de Caixa', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-fiados', label: 'Conta do Cliente (Fiados)', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-comissoes', label: 'Comissões da Equipe', roles: ['admin', 'gerente'] },
         { id: 'cadastros-metodos-pagamento', label: 'Meios de Pagamento', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-inconsistencias', label: 'Auditoria & Inconsistências', roles: ['admin', 'gerente'] },
       ]
     },
     {

@@ -601,7 +601,7 @@ export const subscriptionService = {
           tenantId: activeTenantId,
           tenantName: data.cliente_name,
           ownerEmail: data.ownerEmail || `${data.cliente_id}@barbearia.com`,
-          ownerCpfCnpj: data.ownerCpfCnpj || '12345678909',
+          ownerCpfCnpj: data.ownerCpfCnpj || '',
           planId: data.plano_id,
           planName: plan.name,
           amount: plan.price,

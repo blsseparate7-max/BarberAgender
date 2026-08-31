@@ -106,6 +106,24 @@ service cloud.firestore {
       allow create: if true; // Allows initial setup and SaaS registration
       allow update: if isStaff() || isSaaSAdmin();
       allow delete: if isSaaSAdmin();
+
+      // Private settings / Asaas credentials subcollection - BLINDADO: Acesso exclusivo via Backend (Admin SDK)
+      match /private_settings/{docId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Security & Financial Audit Logs
+    match /financial_audit_logs/{logId} {
+      allow read: if isStaff() || isSaaSAdmin();
+      allow create, update: if isStaff() || isSaaSAdmin();
+      allow delete: if isSaaSAdmin();
+    }
+
+    match /security_audit_logs/{logId} {
+      allow read: if isStaff() || isSaaSAdmin();
+      allow create, update: if isStaff() || isSaaSAdmin();
+      allow delete: if isSaaSAdmin();
     }
 
     // Rules for Usuarios collection

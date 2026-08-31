@@ -182,6 +182,32 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [deleteSubId, setDeleteSubId] = useState<string | null>(null);
   const [deletePlanTarget, setDeletePlanTarget] = useState<SubscriptionPlan | null>(null);
   const [assignActivationType, setAssignActivationType] = useState<'manual' | 'asaas'>('manual');
+  const [assignSelectedClientId, setAssignSelectedClientId] = useState<string>('');
+  const [assignClientCpf, setAssignClientCpf] = useState<string>('');
+
+  const isValidCPF = (cpf: string) => {
+    const clean = cpf.replace(/\D/g, '');
+    if (clean.length !== 11 || /^(\d)\1{10}$/.test(clean)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += parseInt(clean.charAt(i)) * (10 - i);
+    let rev = 11 - (sum % 11);
+    if (rev === 10 || rev === 11) rev = 0;
+    if (rev !== parseInt(clean.charAt(9))) return false;
+    sum = 0;
+    for (let i = 0; i < 10; i++) sum += parseInt(clean.charAt(i)) * (11 - i);
+    rev = 11 - (sum % 11);
+    if (rev === 10 || rev === 11) rev = 0;
+    if (rev !== parseInt(clean.charAt(10))) return false;
+    return true;
+  };
+
+  const formatCpfMask = (value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 11);
+    if (digits.length > 9) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+    if (digits.length > 6) return digits.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+    if (digits.length > 3) return digits.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+    return digits;
+  };
   
   // State for Asaas Charge Result Modal (Pix QR Code, Copy/Paste, Payment Link)
   const [createdChargeData, setCreatedChargeData] = useState<{
@@ -601,7 +627,34 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const autoRenew = formData.get('autoRenew') === 'on';
 
     if (activationType === 'asaas') {
-      const clientCpf = formData.get('clientCpf') as string;
+      const rawCpf = assignClientCpf || (formData.get('clientCpf') as string) || client.cpf || (client as any).cpfCnpj || '';
+      const cleanCpf = rawCpf.replace(/\D/g, '');
+
+      if (!cleanCpf || cleanCpf.length !== 11) {
+        toast.error("Por favor, informe o CPF completo (11 dígitos) do cliente.");
+        return;
+      }
+
+      if (!isValidCPF(cleanCpf)) {
+        toast.error("O CPF informado para o cliente é inválido. Verifique os números digitados.");
+        return;
+      }
+
+      // Salva o CPF no documento do cliente no Firestore se ainda não estiver salvo ou se tiver mudado
+      if (client.uid) {
+        try {
+          await updateDoc(doc(db, 'usuarios', client.uid), {
+            cpf: cleanCpf,
+            cpfCnpj: cleanCpf,
+            updatedAt: serverTimestamp()
+          });
+          client.cpf = cleanCpf;
+          (client as any).cpfCnpj = cleanCpf;
+        } catch (e) {
+          console.warn("Aviso ao atualizar CPF do cliente em Assinaturas:", e);
+        }
+      }
+
       const billingType = (formData.get('billingType') as 'PIX' | 'CREDIT_CARD') || 'PIX';
 
       const res = await subscriptionService.createAsaasSubscription({
@@ -609,12 +662,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         cliente_name: client.nome,
         plano_id: selectedPlan.id,
         ownerEmail: client.email || '',
-        ownerCpfCnpj: clientCpf || client.cpf || '',
+        ownerCpfCnpj: cleanCpf,
         billingType
       });
 
       toast.success(`Assinatura via Asaas gerada como pendente para ${client.nome}!`);
       setShowAssignModal(false);
+      setAssignSelectedClientId('');
+      setAssignClientCpf('');
       loadData();
 
       if (res) {
@@ -3843,9 +3898,25 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               <form onSubmit={handleAssignSubscription} className="p-6 space-y-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Buscar Cliente</label>
-                  <select name="clientId" required className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold">
+                  <select 
+                    name="clientId" 
+                    required 
+                    value={assignSelectedClientId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setAssignSelectedClientId(id);
+                      const c = clients.find(cl => cl.uid === id);
+                      const existingCpf = c?.cpf || (c as any)?.cpfCnpj || '';
+                      setAssignClientCpf(formatCpfMask(existingCpf));
+                    }}
+                    className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
+                  >
                     <option value="">Selecione o Cliente do Clube...</option>
-                    {clients.map((c, index) => <option key={`assign-client-${c.uid || index}-${index}`} value={c.uid}>{c.nome}</option>)}
+                    {clients.map((c, index) => (
+                      <option key={`assign-client-${c.uid || index}-${index}`} value={c.uid}>
+                        {c.nome} {c.cpf ? `(CPF: ${formatCpfMask(c.cpf)})` : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -3877,25 +3948,30 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     <div className="space-y-1 text-left">
                       <div className="flex items-center justify-between">
                         <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">CPF do Cliente (Obrigatório Asaas)</label>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            const input = e.currentTarget.parentElement?.parentElement?.querySelector('input[name="clientCpf"]') as HTMLInputElement;
-                            if (input) input.value = "123.456.789-09";
-                          }}
-                          className="text-[9px] font-black text-purple-700 bg-purple-100 hover:bg-purple-200 px-2 py-0.5 rounded cursor-pointer transition-all"
-                        >
-                          Usar CPF de Teste
-                        </button>
+                        {assignClientCpf && isValidCPF(assignClientCpf.replace(/\D/g, '')) ? (
+                          <span className="text-[9px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1">
+                            <ShieldCheck size={12} />
+                            CPF Válido
+                          </span>
+                        ) : assignClientCpf ? (
+                          <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                            Aguardando 11 dígitos
+                          </span>
+                        ) : null}
                       </div>
                       <input 
                         type="text" 
                         name="clientCpf" 
-                        defaultValue="123.456.789-09"
+                        value={assignClientCpf}
+                        onChange={(e) => setAssignClientCpf(formatCpfMask(e.target.value))}
                         placeholder="000.000.000-00" 
-                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
+                        maxLength={14}
+                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 font-mono"
                         required
                       />
+                      <p className="text-[10px] text-purple-700 font-medium mt-1">
+                        O CPF é salvo automaticamente no cadastro do cliente e usado para a cobrança Asaas.
+                      </p>
                     </div>
 
                     <div className="space-y-1 text-left">

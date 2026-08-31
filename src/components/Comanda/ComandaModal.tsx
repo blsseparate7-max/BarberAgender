@@ -29,7 +29,8 @@ import {
   Sparkles,
   Award,
   BellRing,
-  Tag
+  Tag,
+  CalendarX
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc } from 'firebase/firestore';
@@ -78,6 +79,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmDeleteAppointment, setConfirmDeleteAppointment] = useState(false);
   const [confirmAusente, setConfirmAusente] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const [reopenReasonType, setReopenReasonType] = useState<'erro_lancamento' | 'ajuste_pagamento' | 'cortesia' | 'outro'>('erro_lancamento');
@@ -1453,6 +1455,28 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
+  const handleDeleteAppointmentFromAgenda = async () => {
+    if (!comanda || !user || loading) return;
+    setLoading(true);
+    try {
+      // 1. Delete linked appointments directly to free up the grid slot
+      await comandaService.deleteLinkedAppointments(comanda.id, comanda.agendamento_id);
+      
+      // 2. Also close the comanda as cancelada
+      await comandaService.closeComanda(comanda.id, user.uid, profile?.nome || user.email || 'Usuário', 'cancelada');
+      
+      toast.success("Agendamento excluído da agenda e horário liberado com sucesso!");
+      setConfirmDeleteAppointment(false);
+      setConfirmCancel(false);
+      onSave();
+    } catch (error) {
+      console.error("Erro ao excluir agendamento da agenda:", error);
+      toast.error("Erro ao excluir agendamento: " + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAusenteComanda = async () => {
     if (!comanda || !user || loading) return;
     setLoading(true);
@@ -2725,19 +2749,30 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <span>Finalizar Conta</span>
                     </button>
 
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <button 
                         onClick={() => setConfirmCancel(true)}
                         disabled={loading}
-                        className="py-3 bg-white border border-red-100 text-red-500 rounded-xl font-bold text-[10px] hover:bg-red-50 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
+                        className="py-3 bg-white border border-rose-100 text-rose-600 rounded-xl font-bold text-[10px] hover:bg-rose-50 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
+                        title="Cancelar comanda e manter registro cancelado"
                       >
                         {loading ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
                         <span>Cancelar</span>
                       </button>
                       <button 
+                        onClick={() => setConfirmDeleteAppointment(true)}
+                        disabled={loading}
+                        className="py-3 bg-white border border-red-200 text-red-600 rounded-xl font-bold text-[10px] hover:bg-red-50 hover:border-red-300 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
+                        title="Excluir agendamento do banco e desocupar horário na agenda"
+                      >
+                        {loading ? <Loader2 className="animate-spin" size={14} /> : <CalendarX size={14} />}
+                        <span>Excluir da Agenda</span>
+                      </button>
+                      <button 
                         onClick={() => setConfirmAusente(true)}
                         disabled={loading}
                         className="py-3 bg-white border border-amber-100 text-amber-600 rounded-xl font-bold text-[10px] hover:bg-amber-50 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
+                        title="Marcar cliente como faltou"
                       >
                         {loading ? <Loader2 className="animate-spin" size={14} /> : <AlertCircle size={14} />}
                         <span>Ausente</span>
@@ -2745,6 +2780,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <button 
                         onClick={onClose}
                         className="py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-[10px] transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95"
+                        title="Fechar janela sem alterar nada"
                       >
                         <EyeOff size={14} className="text-slate-500" />
                         <span>Ocultar</span>
@@ -3186,9 +3222,19 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         onClose={() => setConfirmCancel(false)}
         onConfirm={handleCancelComanda}
         title="Cancelar Comanda"
-        description="Deseja cancelar esta comanda? Esta ação não pode ser desfeita."
+        description="Deseja cancelar esta comanda? Ela ficará registrada como cancelada e o agendamento associado será cancelado."
         variant="danger"
-        confirmLabel="Cancelar"
+        confirmLabel="Cancelar Comanda"
+      />
+
+      <ConfirmationModal
+        isOpen={confirmDeleteAppointment}
+        onClose={() => setConfirmDeleteAppointment(false)}
+        onConfirm={handleDeleteAppointmentFromAgenda}
+        title="Excluir Agendamento da Agenda"
+        description="Tem certeza que deseja excluir este agendamento da grade? O agendamento será removido completamente do banco de dados para despoluir a agenda e o horário voltará a ficar 100% livre para novos agendamentos."
+        variant="danger"
+        confirmLabel="Excluir da Agenda"
       />
 
       <ConfirmationModal

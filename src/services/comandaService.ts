@@ -736,6 +736,47 @@ export const comandaService = {
     }
   },
 
+  async deleteLinkedAppointments(comandaId: string, agendamentoId?: string) {
+    try {
+      const batch = writeBatch(db);
+      let deletedCount = 0;
+
+      if (agendamentoId) {
+        batch.delete(doc(db, 'appointments', agendamentoId));
+        deletedCount++;
+      }
+
+      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+      if (comandaSnap.exists()) {
+        const cData = comandaSnap.data();
+        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+        if (linkedId && linkedId !== agendamentoId) {
+          batch.delete(doc(db, 'appointments', linkedId));
+          deletedCount++;
+        }
+      }
+
+      const apptsQuery = query(
+        collection(db, 'appointments'),
+        where('comanda_id', '==', comandaId)
+      );
+      const apptsSnap = await getDocs(apptsQuery);
+      if (!apptsSnap.empty) {
+        apptsSnap.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+          deletedCount++;
+        });
+      }
+
+      if (deletedCount > 0) {
+        await batch.commit();
+        console.log(`Successfully deleted ${deletedCount} linked appointments for comanda ${comandaId}`);
+      }
+    } catch (err) {
+      console.warn("Error auto-deleting linked appointments for comanda:", err);
+    }
+  },
+
   async markAbsentLinkedAppointments(comandaId: string, agendamentoId?: string) {
     try {
       const batch = writeBatch(db);

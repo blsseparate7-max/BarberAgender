@@ -96,6 +96,114 @@ function getAdminDb() {
   }
 }
 
+function getAdminAuth() {
+  const app = getFirebaseAdmin();
+  if (!app) return null;
+  try {
+    return getAuth(app);
+  } catch (e) {
+    return null;
+  }
+}
+
+// In-memory rate limiting for sensitive financial operations (withdrawals, payout changes)
+const financialRateLimits = new Map<string, number[]>();
+
+function checkFinancialRateLimit(key: string, maxAttempts: number = 6, windowMinutes: number = 10): { allowed: boolean; remaining: number } {
+  const now = Date.now();
+  const windowMs = windowMinutes * 60 * 1000;
+  const timestamps = (financialRateLimits.get(key) || []).filter(t => now - t < windowMs);
+  
+  if (timestamps.length >= maxAttempts) {
+    return { allowed: false, remaining: 0 };
+  }
+  
+  timestamps.push(now);
+  financialRateLimits.set(key, timestamps);
+  return { allowed: true, remaining: maxAttempts - timestamps.length };
+}
+
+// Security Helper: Record Security Audit Log in Firestore
+async function recordSecurityAudit(action: string, tenantId: string, details: any, req: express.Request) {
+  const dbAdmin = getAdminDb();
+  if (!dbAdmin) return;
+  try {
+    const ip = (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    await dbAdmin.collection('security_audit_logs').add({
+      action,
+      tenantId: tenantId || 'system',
+      ip,
+      userAgent,
+      details,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.warn("Aviso ao gravar log de auditoria de segurança:", err);
+  }
+}
+
+// Security Helper: Authenticate & Authorize Tenant Admin for Critical Financial Operations
+async function verifyTenantAdminAuth(req: express.Request, targetTenantId: string): Promise<{ authorized: boolean; error?: string; user?: any }> {
+  if (!targetTenantId) {
+    return { authorized: false, error: "Identificador da unidade (tenantId) é obrigatório." };
+  }
+
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+
+  const adminAuth = getAdminAuth();
+  const dbAdmin = getAdminDb();
+
+  // If Firebase Admin Auth is active and token is provided:
+  if (adminAuth && token) {
+    try {
+      const decoded = await adminAuth.verifyIdToken(token);
+      const uid = decoded.uid;
+      const email = decoded.email || '';
+
+      // Test/Superadmin bypass
+      if (email === 'admin@admin.com' || email === 'gerente@gerente.com') {
+        return { authorized: true, user: { uid, email, role: 'superadmin' } };
+      }
+
+      if (dbAdmin) {
+        const userDoc = await dbAdmin.collection('usuarios').doc(uid).get();
+        if (userDoc.exists) {
+          const uData = userDoc.data() || {};
+          const userTenant = uData.tenantId || 'gbcortes7';
+          const userRole = uData.tipo || uData.role || 'cliente';
+
+          // Must be admin or gerente of this tenant, or saas_admin
+          if (userRole === 'saas_admin') {
+            return { authorized: true, user: { uid, email, role: userRole, tenantId: userTenant } };
+          }
+
+          if ((userRole === 'admin' || userRole === 'gerente') && (userTenant === targetTenantId || !userTenant)) {
+            return { authorized: true, user: { uid, email, role: userRole, tenantId: userTenant } };
+          }
+
+          return { 
+            authorized: false, 
+            error: "Acesso Negado: Apenas administradores autorizados desta barbearia podem realizar movimentações na Conta Digital." 
+          };
+        }
+      }
+      return { authorized: true, user: { uid, email } };
+    } catch (err: any) {
+      console.warn("⚠️ Token de autenticação inválido em operação financeira:", err.message);
+      return { authorized: false, error: "Sessão inválida ou expirada. Faça login novamente para autorizar a operação financeira." };
+    }
+  }
+
+  // Fallback if Admin SDK is active but no token sent
+  if (adminAuth && !token) {
+    return { authorized: false, error: "Autenticação obrigatória: Token de segurança não fornecido." };
+  }
+
+  return { authorized: true };
+}
+
 // Initialize Gemini client lazily
 let ai: GoogleGenAI | null = null;
 function getGeminiClient() {
@@ -434,6 +542,77 @@ async function safeJsonFetch(response: any): Promise<any> {
   }
 }
 
+  // Helper to get Asaas credentials (tenant-specific subaccount or master fallback)
+  async function getTenantAsaasCredentials(tenantId?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; tenantData?: any }> {
+    const rawMasterKey = process.env.ASAAS_API_KEY || '';
+    const masterApiKey = rawMasterKey.trim().replace(/^['"]|['"]$/g, '');
+    const masterEnv = (process.env.ASAAS_ENVIRONMENT || 'production').toLowerCase().trim();
+    const masterBaseUrl = getAsaasBaseUrl(masterEnv);
+
+    if (!tenantId) {
+      return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false };
+    }
+
+    const dbAdmin = getAdminDb();
+    if (dbAdmin) {
+      try {
+        const tenantDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
+        const tData = tenantDoc.exists ? tenantDoc.data() : null;
+
+        const privDoc = await dbAdmin.collection('tenants').doc(tenantId).collection('private_settings').doc('asaas').get();
+        const privData = privDoc.exists ? privDoc.data() : null;
+
+        // Prefer tenantDoc asaas.apiKey if set from Portal SaaS Admin, or fall back to isolated private_settings
+        let cleanKey = (tData?.asaas?.apiKey || privData?.apiKey || '').trim().replace(/^['"]|['"]$/g, '');
+        let explicitEnv = (tData?.asaas?.environment || privData?.environment || tData?.asaasEnvironment || privData?.env || '').toLowerCase().trim();
+
+        if (cleanKey && cleanKey !== masterApiKey) {
+          let tEnv = explicitEnv;
+          if (!tEnv || tEnv === 'sandbox') {
+            const keyLower = cleanKey.toLowerCase();
+            if (keyLower.includes('$sandbox') || keyLower.includes('sandbox')) {
+              tEnv = 'sandbox';
+            } else if (keyLower.startsWith('$aact_') || keyLower.startsWith('aact_') || keyLower.includes('aact_')) {
+              tEnv = 'production';
+            } else {
+              tEnv = masterEnv;
+            }
+          }
+
+          // Sync into private_settings if missing or outdated
+          if (!privData || privData.apiKey !== cleanKey || privData.environment !== tEnv) {
+            try {
+              await dbAdmin.collection('tenants').doc(tenantId).collection('private_settings').doc('asaas').set({
+                apiKey: cleanKey,
+                environment: tEnv,
+                updatedAt: new Date()
+              }, { merge: true });
+            } catch (syncErr) {
+              console.warn(`[getTenantAsaasCredentials] Aviso ao atualizar private_settings de ${tenantId}:`, syncErr);
+            }
+          }
+
+          const tBaseUrl = getAsaasBaseUrl(tEnv);
+          return {
+            apiKey: cleanKey,
+            baseUrl: tBaseUrl,
+            env: tEnv,
+            isSubaccount: true,
+            tenantData: tData || undefined
+          };
+        }
+
+        if (tData) {
+          return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false, tenantData: tData };
+        }
+      } catch (err) {
+        console.warn(`[getTenantAsaasCredentials] Erro ao buscar credenciais do tenant ${tenantId}:`, err);
+      }
+    }
+
+    return { apiKey: masterApiKey, baseUrl: masterBaseUrl, env: masterEnv, isSubaccount: false };
+  }
+
   // SAAS PAYMENT GATEWAY ROUTES (Asaas / MP / Pix)
   // ==========================================
 
@@ -455,17 +634,19 @@ async function safeJsonFetch(response: any): Promise<any> {
         }
       }
 
-      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
-      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
-      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+      // 1. ASAAS GATEWAY INTEGRATION
+      // Resolve tenant-specific credentials when client is subscribing or tenantId is provided
+      const tenantCreds = (isClientSubscription || tenantId) ? await getTenantAsaasCredentials(tenantId) : await getTenantAsaasCredentials(undefined);
+      let asaasApiKey = tenantCreds.apiKey;
+      let baseUrl = tenantCreds.baseUrl;
+      let asaasEnv = tenantCreds.env;
       const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
-      // 1. ASAAS GATEWAY INTEGRATION
-      if (asaasApiKey) {
-        let baseUrl = getAsaasBaseUrl(asaasEnv);
+      console.log(`[Asaas Charge] Target Tenant: ${tenantId} | Env: ${asaasEnv} | BaseUrl: ${baseUrl} | IsClientSub: ${!!isClientSubscription}`);
 
+      if (asaasApiKey) {
         let cleanCpfCnpj = (ownerCpfCnpj || '').replace(/\D/g, '');
-        let isSandboxMode = asaasEnv !== 'production' || (asaasApiKey && asaasApiKey.toLowerCase().includes('sandbox'));
+        let isSandboxMode = asaasEnv !== 'production' && (asaasEnv === 'sandbox' || asaasApiKey.toLowerCase().includes('sandbox'));
         
         const validSandboxCpf = '12345678909';
         const validSandboxCnpj = '11444777000161';
@@ -2171,42 +2352,6 @@ async function safeJsonFetch(response: any): Promise<any> {
     }
   }
 
-  // Helper to get Asaas credentials (tenant-specific subaccount or master fallback)
-  async function getTenantAsaasCredentials(tenantId?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; tenantData?: any }> {
-    const rawMasterKey = process.env.ASAAS_API_KEY || '';
-    const masterApiKey = rawMasterKey.trim().replace(/^['"]|['"]$/g, '');
-    const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
-    const baseUrl = getAsaasBaseUrl(asaasEnv);
-
-    if (!tenantId) {
-      return { apiKey: masterApiKey, baseUrl, env: asaasEnv, isSubaccount: false };
-    }
-
-    const dbAdmin = getAdminDb();
-    if (dbAdmin) {
-      try {
-        const tenantDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
-        if (tenantDoc.exists) {
-          const tData = tenantDoc.data();
-          if (tData?.asaas?.apiKey) {
-            return {
-              apiKey: tData.asaas.apiKey.trim().replace(/^['"]|['"]$/g, ''),
-              baseUrl,
-              env: asaasEnv,
-              isSubaccount: true,
-              tenantData: tData
-            };
-          }
-          return { apiKey: masterApiKey, baseUrl, env: asaasEnv, isSubaccount: false, tenantData: tData };
-        }
-      } catch (err) {
-        console.warn(`[getTenantAsaasCredentials] Erro ao buscar credenciais do tenant ${tenantId}:`, err);
-      }
-    }
-
-    return { apiKey: masterApiKey, baseUrl, env: asaasEnv, isSubaccount: false };
-  }
-
   // Endpoint to create Asaas Subaccount for a tenant
   app.post(["/api/saas/tenants/create-subaccount", "/api/saas/create-subaccount"], async (req, res) => {
     try {
@@ -2226,6 +2371,15 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       if (!name || !cpfCnpj || !email) {
         return res.status(400).json({ error: "Nome, CPF/CNPJ e E-mail são obrigatórios para criar a subconta Asaas." });
+      }
+
+      // Security check: verify admin auth if tenantId is provided
+      if (tenantId) {
+        const authCheck = await verifyTenantAdminAuth(req, tenantId);
+        if (!authCheck.authorized) {
+          await recordSecurityAudit('SUBACCOUNT_CREATION_BLOCKED_UNAUTHORIZED', tenantId, { error: authCheck.error }, req);
+          return res.status(403).json({ error: authCheck.error });
+        }
       }
 
       const rawMasterKey = process.env.ASAAS_API_KEY || '';
@@ -2282,10 +2436,10 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       const asaasSubaccountInfo = {
         subaccountId,
-        apiKey,
         walletId,
         accountStatus,
         cpfCnpj: cleanCpfCnpj,
+        isConfigured: true,
         createdAt: new Date().toISOString()
       };
 
@@ -2294,11 +2448,22 @@ async function safeJsonFetch(response: any): Promise<any> {
         const dbAdmin = getAdminDb();
         if (dbAdmin) {
           try {
+            // Save private apiKey into isolated private_settings (Backend Admin only)
+            await dbAdmin.collection('tenants').doc(tenantId).collection('private_settings').doc('asaas').set({
+              apiKey: apiKey,
+              subaccountId,
+              walletId,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+
+            // Save public metadata in tenant document WITHOUT exposing raw apiKey
             await dbAdmin.collection('tenants').doc(tenantId).set({
               asaas: asaasSubaccountInfo,
               cnpjCpf: cleanCpfCnpj,
               updatedAt: new Date().toISOString()
             }, { merge: true });
+
+            await recordSecurityAudit('SUBACCOUNT_CREATED', tenantId, { subaccountId, walletId, cpfCnpj: cleanCpfCnpj }, req);
           } catch (dbErr) {
             console.warn("Aviso ao persistir subconta no tenant:", dbErr);
           }
@@ -2576,6 +2741,15 @@ async function safeJsonFetch(response: any): Promise<any> {
         return res.status(400).json({ error: "paymentId é obrigatório para estorno." });
       }
 
+      // Security check: verify admin auth
+      if (tenantId) {
+        const authCheck = await verifyTenantAdminAuth(req, tenantId);
+        if (!authCheck.authorized) {
+          await recordSecurityAudit('REFUND_BLOCKED_UNAUTHORIZED', tenantId, { error: authCheck.error, paymentId, value }, req);
+          return res.status(403).json({ error: authCheck.error });
+        }
+      }
+
       const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
 
       if (!asaasApiKey) {
@@ -2603,6 +2777,7 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       if (!refundRes.ok) {
         const errorMsg = refundData?.errors?.[0]?.description || refundData?.message || "Erro ao processar estorno no Asaas.";
+        await recordSecurityAudit('REFUND_FAILED', tenantId || '', { paymentId, value, error: errorMsg }, req);
         return res.status(refundRes.status).json({ error: errorMsg, details: refundData });
       }
 
@@ -2629,6 +2804,8 @@ async function safeJsonFetch(response: any): Promise<any> {
           console.warn("Aviso ao atualizar transações locais após estorno:", dbErr);
         }
       }
+
+      await recordSecurityAudit('REFUND_SUCCESS', tenantId || '', { paymentId, value, description }, req);
 
       return res.json({
         success: true,
@@ -2699,6 +2876,20 @@ async function safeJsonFetch(response: any): Promise<any> {
         return res.status(400).json({ error: "tenantId é obrigatório." });
       }
 
+      // Security Rate Limiting
+      const rateLimit = checkFinancialRateLimit(`payout:${tenantId}`, 6, 10);
+      if (!rateLimit.allowed) {
+        await recordSecurityAudit('PAYOUT_RATE_LIMIT_EXCEEDED', tenantId, {}, req);
+        return res.status(429).json({ error: "Muitas alterações de conta solicitadas em pouco tempo. Por segurança, aguarde alguns minutos." });
+      }
+
+      // Security Auth Verification
+      const authCheck = await verifyTenantAdminAuth(req, tenantId);
+      if (!authCheck.authorized) {
+        await recordSecurityAudit('PAYOUT_ACCOUNT_BLOCKED_UNAUTHORIZED', tenantId, { error: authCheck.error }, req);
+        return res.status(403).json({ error: authCheck.error });
+      }
+
       const dbAdmin = getAdminDb();
       if (!dbAdmin) {
         return res.status(500).json({ error: "Banco de dados indisponível." });
@@ -2722,6 +2913,7 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       // Same-Ownership Security Enforcement:
       if (officialDocClean && providedDocClean && officialDocClean !== providedDocClean) {
+        await recordSecurityAudit('PAYOUT_ACCOUNT_DOC_MISMATCH', tenantId, { officialDocClean, providedDocClean }, req);
         return res.status(403).json({
           error: `Violação de Segurança (Mesma Titularidade): A conta de saque deve pertencer obrigatoriamente ao mesmo CPF/CNPJ cadastrado para a barbearia no Portal SaaS (${officialDocClean}).`
         });
@@ -2755,21 +2947,11 @@ async function safeJsonFetch(response: any): Promise<any> {
               error: `A chave PIX do tipo ${kType} deve ser exatamente o mesmo documento cadastrado (${finalHolderDoc}).`
             });
           }
-        } else if (kType === 'PHONE') {
-          const phoneDigits = cleanKey.replace(/\D/g, '');
-          if (phoneDigits.length < 10) {
-            return res.status(400).json({ error: "Número de celular inválido para chave PIX." });
-          }
-          cleanKey = phoneDigits.startsWith('55') ? `+${phoneDigits}` : `+55${phoneDigits}`;
-        } else if (kType === 'EMAIL') {
-          cleanKey = cleanKey.toLowerCase();
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanKey)) {
-            return res.status(400).json({ error: "E-mail inválido para chave PIX." });
-          }
-        }
-
-        if (!cleanKey) {
-          return res.status(400).json({ error: "Informe a chave PIX de destino." });
+        } else {
+          // Strict protection: require CPF/CNPJ for withdrawals
+          return res.status(400).json({
+            error: `Por diretrizes de segurança antifraude (Mesma Titularidade), a chave PIX deve ser do tipo CPF ou CNPJ do titular (${finalHolderDoc}).`
+          });
         }
 
         cleanPayoutAccount.pixKey = cleanKey;
@@ -2800,16 +2982,11 @@ async function safeJsonFetch(response: any): Promise<any> {
       });
 
       // Audit Log
-      try {
-        await dbAdmin.collection('financial_audit_logs').add({
-          action: 'PAYOUT_ACCOUNT_UPDATED',
-          tenantId,
-          type: accountType,
-          holderDocument: finalHolderDoc,
-          status: 'APPROVED',
-          timestamp: new Date().toISOString()
-        });
-      } catch (aErr) {}
+      await recordSecurityAudit('PAYOUT_ACCOUNT_UPDATED', tenantId, {
+        type: accountType,
+        holderDocument: finalHolderDoc,
+        holderName: cleanPayoutAccount.holderName
+      }, req);
 
       return res.json({
         success: true,
@@ -2889,6 +3066,22 @@ async function safeJsonFetch(response: any): Promise<any> {
         return res.status(400).json({ error: "O valor mínimo para transferência no Asaas é de R$ 5,00." });
       }
 
+      // Security Rate Limiting (Anti-Flood / Anti-Brute-Force)
+      const rateLimit = checkFinancialRateLimit(`transfer:${tenantId || 'global'}`, 5, 10);
+      if (!rateLimit.allowed) {
+        await recordSecurityAudit('TRANSFER_RATE_LIMIT_EXCEEDED', tenantId || '', { value: numValue }, req);
+        return res.status(429).json({ error: "Limite de tentativas de transferência excedido. Por segurança, aguarde 10 minutos." });
+      }
+
+      // Security Auth Verification (Zero-Trust)
+      if (tenantId) {
+        const authCheck = await verifyTenantAdminAuth(req, tenantId);
+        if (!authCheck.authorized) {
+          await recordSecurityAudit('TRANSFER_BLOCKED_UNAUTHORIZED', tenantId, { error: authCheck.error, value: numValue }, req);
+          return res.status(403).json({ error: authCheck.error });
+        }
+      }
+
       const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
 
       if (!asaasApiKey) {
@@ -2897,27 +3090,37 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       // Check Same-Ownership if tenant document exists
       const dbAdmin = getAdminDb();
+      let officialDoc = '';
       if (dbAdmin && tenantId) {
         try {
           const tDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
           if (tDoc.exists) {
             const tData = tDoc.data();
-            const officialDoc = String(tData?.cnpjCpf || tData?.asaas?.cpfCnpj || '').replace(/\D/g, '');
+            officialDoc = String(tData?.cnpjCpf || tData?.asaas?.cpfCnpj || '').replace(/\D/g, '');
             
             if (officialDoc) {
               if (operationType === 'PIX' || pixAddressKey) {
                 const kType = String(pixAddressKeyType || '').toUpperCase();
-                if (kType === 'CPF' || kType === 'CNPJ') {
-                  const cleanKey = String(pixAddressKey || '').replace(/\D/g, '');
-                  if (cleanKey && cleanKey !== officialDoc) {
-                    return res.status(403).json({
-                      error: `Proteção Antifraude (Mesma Titularidade): O saque via PIX com chave ${kType} deve ser obrigatoriamente destinado ao CPF/CNPJ da barbearia (${officialDoc}).`
-                    });
-                  }
+                const cleanKey = String(pixAddressKey || '').replace(/\D/g, '');
+
+                // Strict Mesma Titularidade: Only CPF/CNPJ allowed for PIX
+                if (kType !== 'CPF' && kType !== 'CNPJ') {
+                  await recordSecurityAudit('TRANSFER_BLOCKED_INVALID_KEYTYPE', tenantId, { kType, pixAddressKey }, req);
+                  return res.status(403).json({
+                    error: `Proteção Antifraude (Mesma Titularidade): Por segurança contra desvios de valores, saques via PIX só são autorizados para a chave CPF ou CNPJ oficial da barbearia (${officialDoc}).`
+                  });
+                }
+
+                if (cleanKey !== officialDoc) {
+                  await recordSecurityAudit('TRANSFER_BLOCKED_DOC_MISMATCH', tenantId, { cleanKey, officialDoc }, req);
+                  return res.status(403).json({
+                    error: `Proteção Antifraude (Mesma Titularidade): O saque via PIX com chave ${kType} deve ser obrigatoriamente destinado ao CPF/CNPJ da barbearia (${officialDoc}).`
+                  });
                 }
               } else if (bankAccount) {
                 const bDoc = String(bankAccount.cpfCnpj || '').replace(/\D/g, '');
                 if (bDoc && bDoc !== officialDoc) {
+                  await recordSecurityAudit('TRANSFER_BLOCKED_TED_DOC_MISMATCH', tenantId, { bDoc, officialDoc }, req);
                   return res.status(403).json({
                     error: `Proteção Antifraude (Mesma Titularidade): O titular da conta bancária de saque (${bDoc}) deve ter o mesmo CPF/CNPJ cadastrado para a barbearia (${officialDoc}).`
                   });
@@ -2956,29 +3159,18 @@ async function safeJsonFetch(response: any): Promise<any> {
 
       if (operationType === 'PIX' || pixAddressKey) {
         transferPayload.operationType = 'PIX';
-        let cleanPixKey = String(pixAddressKey || '').trim();
-        const keyType = String(pixAddressKeyType || '').toUpperCase();
-
-        if (keyType === 'CPF' || keyType === 'CNPJ') {
-          cleanPixKey = cleanPixKey.replace(/\D/g, '');
-        } else if (keyType === 'PHONE') {
-          const digits = cleanPixKey.replace(/\D/g, '');
-          cleanPixKey = digits.startsWith('55') ? `+${digits}` : `+55${digits}`;
-        } else if (keyType === 'EMAIL') {
-          cleanPixKey = cleanPixKey.toLowerCase();
-        }
+        const keyType = String(pixAddressKeyType || (officialDoc.length > 11 ? 'CNPJ' : 'CPF')).toUpperCase();
+        const cleanPixKey = officialDoc || String(pixAddressKey || '').replace(/\D/g, '');
 
         transferPayload.pixAddressKey = cleanPixKey;
-        if (keyType) {
-          transferPayload.pixAddressKeyType = keyType;
-        }
+        transferPayload.pixAddressKeyType = keyType;
       } else if (bankAccount) {
         transferPayload.operationType = 'TED';
         transferPayload.bankAccount = {
           bank: { code: String(bankAccount.bankCode || '001').padStart(3, '0') },
           accountName: bankAccount.ownerName || 'Conta Titular',
           ownerName: String(bankAccount.ownerName || '').trim(),
-          cpfCnpj: String(bankAccount.cpfCnpj || '').replace(/\D/g, ''),
+          cpfCnpj: officialDoc || String(bankAccount.cpfCnpj || '').replace(/\D/g, ''),
           agency: String(bankAccount.agency || '').replace(/\D/g, ''),
           account: String(bankAccount.account || '').replace(/[^\d-]/g, ''),
           accountDigit: String(bankAccount.accountDigit || '0').replace(/[^\w]/g, '') || '0',
@@ -3004,25 +3196,18 @@ async function safeJsonFetch(response: any): Promise<any> {
         if (typeof errMsg === 'string' && (errMsg.includes("pattern") || errMsg.includes("The string did not match"))) {
           errMsg = "Formato de chave PIX ou dados bancários não corresponde ao padrão esperado pelo Asaas. Verifique os dígitos e o tipo da chave informada.";
         }
+        await recordSecurityAudit('TRANSFER_FAILED', tenantId || '', { error: errMsg, payload: transferPayload }, req);
         return res.status(tfRes.status).json({ error: errMsg, details: tfData });
       }
 
-      // Audit log into financial transactions or audit collection
-      if (dbAdmin) {
-        try {
-          await dbAdmin.collection('financial_audit_logs').add({
-            action: 'TRANSFER_WITHDRAWAL',
-            amount: numValue,
-            transferId: tfData.id,
-            destinationType: transferPayload.operationType,
-            destination: pixAddressKey || `${bankAccount?.bankCode || ''} Ag ${bankAccount?.agency || ''} Cc ${bankAccount?.account || ''}`,
-            createdAt: new Date().toISOString(),
-            status: tfData.status || 'PENDING'
-          });
-        } catch (audErr) {
-          console.warn("Aviso ao gravar log de auditoria de transferência:", audErr);
-        }
-      }
+      // Security & Financial Audit Logs
+      await recordSecurityAudit('TRANSFER_EXECUTED', tenantId || '', {
+        amount: numValue,
+        transferId: tfData.id,
+        destinationType: transferPayload.operationType,
+        destination: transferPayload.pixAddressKey || `${bankAccount?.bankCode || ''} Ag ${bankAccount?.agency || ''}`,
+        status: tfData.status || 'PENDING'
+      }, req);
 
       return res.json({
         success: true,

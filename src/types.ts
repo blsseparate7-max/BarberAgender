@@ -4,7 +4,7 @@ export type TabId =
   | 'agenda' | 'agenda-main' | 'agenda-appointments' | 'agenda-recurring' | 'agenda-availability' | 'agenda-blocks' | 'agenda-operations' | 'agenda-resources'
   | 'cadastros' | 'cadastros-clientes' | 'cadastros-profissionais' | 'cadastros-servicos' | 'cadastros-combos' | 'cadastros-cupons' | 'cadastros-planos' | 'cadastros-produtos' | 'cadastros-categorias' | 'cadastros-metodos-pagamento' | 'cadastros-pacotes' | 'cadastros-tipos' | 'cadastros-mensagens' | 'cadastros-noticias' | 'cadastros-satisfacao' | 'cadastros-lembretes' | 'cadastros-assinaturas' | 'cadastros-assinantes' | 'cadastros-pacotes-meus' | 'cadastros-consumo'
   | 'comandas' | 'comandas-nova' | 'comandas-abertas' | 'comandas-historico' | 'comandas-fiadas' | 'comandas-checkout'
-  | 'financeiro' | 'financeiro-conta-digital' | 'financeiro-caixa' | 'financeiro-historico' | 'financeiro-entradas' | 'financeiro-saidas' | 'financeiro-contas-pagar' | 'financeiro-contas-receber' | 'financeiro-fluxo' | 'financeiro-assinaturas' | 'financeiro-comissoes'
+  | 'financeiro' | 'financeiro-conta-digital' | 'financeiro-caixa' | 'financeiro-historico' | 'financeiro-entradas' | 'financeiro-saidas' | 'financeiro-contas-pagar' | 'financeiro-contas-receber' | 'financeiro-fluxo' | 'financeiro-assinaturas' | 'financeiro-comissoes' | 'financeiro-dre' | 'financeiro-fiados' | 'financeiro-movimentacoes' | 'financeiro-inconsistencias' | 'financeiro-estoque' | 'financeiro-cartoes'
   | 'estoque' | 'estoque-produtos' | 'estoque-movimentacoes' | 'estoque-inventario'
   | 'relatorios' | 'relatorios-geral' | 'relatorios-agendamentos' | 'relatorios-clientes' | 'relatorios-financeiro'
   | 'fidelidade' | 'fidelidade-programa' | 'fidelidade-cashback' | 'fidelidade-vip' | 'fidelidade-campanhas'
@@ -63,6 +63,7 @@ export interface UserProfile {
   
   // Dados de Pessoa Física Completos
   cpf?: string;
+  cpfCnpj?: string;
   rg?: string;
   dataNascimento?: string;
   contatoEmergencia?: string;

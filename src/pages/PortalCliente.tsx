@@ -18,6 +18,8 @@ import {
   CalendarClock,
   Briefcase,
   ChevronRight,
+  ArrowLeft,
+  CheckCircle2,
   ShieldCheck,
   Star,
   Instagram,
@@ -170,6 +172,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [editNome, setEditNome] = useState(profile.nome || '');
   const [editTelefone, setEditTelefone] = useState(profile.telefone || profile.phone || '');
   const [editObservacoes, setEditObservacoes] = useState(profile.observacoes || profile.observations || '');
+  const [editCpf, setEditCpf] = useState(profile.cpf || (profile as any).cpfCnpj || '');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   // Reviews & Ratings States
@@ -196,7 +199,15 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const [isGeneratingPix, setIsGeneratingPix] = useState(false);
   const [checkingStatusSubId, setCheckingStatusSubId] = useState<string | null>(null);
   const [selectedPlanForCheckout, setSelectedPlanForCheckout] = useState<any | null>(null);
+  const [checkoutCpfCnpj, setCheckoutCpfCnpj] = useState<string>('');
   const [isSubscribingPlan, setIsSubscribingPlan] = useState(false);
+
+  useEffect(() => {
+    if (selectedPlanForCheckout && profile) {
+      const initialCpf = profile.cpf || (profile as any).cpfCnpj || editCpf || '';
+      setCheckoutCpfCnpj(formatCpfCnpjMask(initialCpf));
+    }
+  }, [selectedPlanForCheckout, profile]);
   const [clientCreatedChargeData, setClientCreatedChargeData] = useState<any | null>(null);
   const [showClientChargeModal, setShowClientChargeModal] = useState(false);
   const [subToCancel, setSubToCancel] = useState<any | null>(null);
@@ -246,10 +257,17 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   const handleCancelSubscriptionByClient = async () => {
     if (!subToCancel) return;
     setIsCancelingSub(true);
+    const cancelingId = subToCancel.id;
     try {
-      await subscriptionService.updateSubscriptionStatus(subToCancel.id, 'canceled');
+      // 1. Optimistically update local state so the pending alert and card vanish immediately
+      setSubscriptions(prev => prev.filter(s => s.id !== cancelingId));
+      
+      // 2. Persist cancellation in database
+      await subscriptionService.updateSubscriptionStatus(cancelingId, 'canceled');
       toast.success("Sua assinatura foi cancelada com sucesso.");
       setSubToCancel(null);
+      
+      // 3. Sync from backend to confirm database state
       if (profile?.uid) {
         const updated = await subscriptionService.getSubscriptions(profile.uid);
         setSubscriptions(updated);
@@ -257,6 +275,11 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     } catch (err: any) {
       console.error("Erro ao cancelar assinatura:", err);
       toast.error("Erro ao cancelar assinatura.");
+      // Rollback on error
+      if (profile?.uid) {
+        const updated = await subscriptionService.getSubscriptions(profile.uid);
+        setSubscriptions(updated);
+      }
     } finally {
       setIsCancelingSub(false);
     }
@@ -301,19 +324,115 @@ export function PortalCliente({ profile }: PortalClienteProps) {
     }
   };
 
+  // Helper validation & formatting for CPF/CNPJ
+  const isValidCPF = (cpf: string) => {
+    const clean = cpf.replace(/\D/g, '');
+    if (clean.length !== 11 || /^(\d)\1{10}$/.test(clean)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += parseInt(clean.charAt(i)) * (10 - i);
+    let rev = 11 - (sum % 11);
+    if (rev === 10 || rev === 11) rev = 0;
+    if (rev !== parseInt(clean.charAt(9))) return false;
+    sum = 0;
+    for (let i = 0; i < 10; i++) sum += parseInt(clean.charAt(i)) * (11 - i);
+    rev = 11 - (sum % 11);
+    if (rev === 10 || rev === 11) rev = 0;
+    if (rev !== parseInt(clean.charAt(10))) return false;
+    return true;
+  };
+
+  const isValidCNPJ = (cnpj: string) => {
+    const clean = cnpj.replace(/\D/g, '');
+    if (clean.length !== 14 || /^(\d)\1{13}$/.test(clean)) return false;
+    let size = clean.length - 2;
+    let numbers = clean.substring(0, size);
+    const digits = clean.substring(size);
+    let sum = 0;
+    let pos = size - 7;
+    for (let i = size; i >= 1; i--) {
+      sum += parseInt(numbers.charAt(size - i)) * pos--;
+      if (pos < 2) pos = 9;
+    }
+    let result = sum % 11 < 2 ? 0 : 11 - (sum % 11);
+    if (result !== parseInt(digits.charAt(0))) return false;
+    size = size + 1;
+    numbers = clean.substring(0, size);
+    sum = 0;
+    pos = size - 7;
+    for (let i = size; i >= 1; i--) {
+      sum += parseInt(numbers.charAt(size - i)) * pos--;
+      if (pos < 2) pos = 9;
+    }
+    result = sum % 11 < 2 ? 0 : 11 - (sum % 11);
+    if (result !== parseInt(digits.charAt(1))) return false;
+    return true;
+  };
+
+  const isValidCpfCnpj = (val: string) => {
+    const clean = val.replace(/\D/g, '');
+    if (clean.length === 11) return isValidCPF(clean);
+    if (clean.length === 14) return isValidCNPJ(clean);
+    return false;
+  };
+
+  const formatCpfCnpjMask = (value: string) => {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length <= 11) {
+      if (digits.length > 9) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+      if (digits.length > 6) return digits.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+      if (digits.length > 3) return digits.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+      return digits;
+    } else {
+      const formatted = digits.slice(0, 14);
+      if (digits.length > 12) return formatted.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{1,2})/, '$1.$2.$3/$4-$5');
+      if (digits.length > 8) return formatted.replace(/(\d{2})(\d{3})(\d{3})(\d{1,4})/, '$1.$2.$3/$4');
+      if (digits.length > 5) return formatted.replace(/(\d{2})(\d{3})(\d{1,3})/, '$1.$2.$3');
+      if (digits.length > 2) return formatted.replace(/(\d{2})(\d{1,3})/, '$1.$2');
+      return formatted;
+    }
+  };
+
   const handleClientSubscribePlan = async (plan: any, billingType: 'PIX' | 'CREDIT_CARD') => {
     if (!profile) {
       toast.error("Você precisa estar logado para assinar.");
       return;
     }
+
+    const cleanCpfCnpj = checkoutCpfCnpj.replace(/\D/g, '');
+    if (!cleanCpfCnpj || cleanCpfCnpj.length !== 11) {
+      toast.error("Por favor, informe um CPF válido (11 dígitos) para ativação da sua assinatura.");
+      return;
+    }
+
+    if (!isValidCPF(cleanCpfCnpj)) {
+      toast.error("O CPF informado é inválido. Por favor, verifique os números digitados.");
+      return;
+    }
+
     setIsSubscribingPlan(true);
     try {
+      // Save CPF to user profile in Firestore if present
+      if (profile.uid) {
+        try {
+          await updateDoc(doc(db, 'usuarios', profile.uid), {
+            cpf: cleanCpfCnpj,
+            cpfCnpj: cleanCpfCnpj,
+            updatedAt: serverTimestamp()
+          });
+          profile.cpf = cleanCpfCnpj;
+          (profile as any).cpfCnpj = cleanCpfCnpj;
+          setEditCpf(formatCpfCnpjMask(cleanCpfCnpj));
+        } catch (e) {
+          console.warn("Aviso ao salvar CPF no perfil do cliente:", e);
+        }
+      }
+
       const res = await subscriptionService.createAsaasSubscription({
         cliente_id: profile.uid,
         cliente_name: profile.nome || 'Cliente',
         plano_id: plan.id,
         ownerEmail: profile.email || '',
-        ownerCpfCnpj: profile.cpf || '12345678909',
+        ownerCpfCnpj: cleanCpfCnpj,
         billingType
       });
 
@@ -381,7 +500,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       }, {
         name: clientCardModalSub.cliente_name,
         email: profile.email || 'cliente@rull.com',
-        cpfCnpj: (profile as any).cpfCnpj || '12345678909'
+        cpfCnpj: (profile as any).cpfCnpj || profile.cpf || ''
       });
       if (res.success) {
         toast.success("Cartão de crédito atualizado com sucesso!");
@@ -496,6 +615,11 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       toast.error('O nome não pode estar vazio.');
       return;
     }
+    const cleanCpf = editCpf.replace(/\D/g, '');
+    if (cleanCpf && cleanCpf.length > 0 && !isValidCpfCnpj(cleanCpf)) {
+      toast.error('O CPF/CNPJ informado é inválido. Por favor verifique.');
+      return;
+    }
     setIsSavingProfile(true);
     try {
       await userService.updateUserProfile(profile.uid, {
@@ -504,7 +628,11 @@ export function PortalCliente({ profile }: PortalClienteProps) {
         phone: editTelefone.trim(),
         observacoes: editObservacoes.trim(),
         observations: editObservacoes.trim(),
+        cpf: cleanCpf,
+        cpfCnpj: cleanCpf,
       });
+      profile.cpf = cleanCpf;
+      (profile as any).cpfCnpj = cleanCpf;
       toast.success('Perfil atualizado com sucesso!');
     } catch (err: any) {
       console.error(err);
@@ -515,6 +643,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
   };
 
   // Scheduling State
+  const [bookingStep, setBookingStep] = useState<1 | 2 | 3 | 4>(1);
   const [selectedBarber, setSelectedBarber] = useState<UserProfile | null>(null);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
@@ -617,6 +746,15 @@ export function PortalCliente({ profile }: PortalClienteProps) {
       setAvailableSlots([]);
     }
   }, [selectedBarber, selectedService, selectedDate]);
+
+  useEffect(() => {
+    if (activeTab === 'schedule') {
+      setBookingStep(1);
+      setSelectedBarber(null);
+      setSelectedService(null);
+      setSelectedTime(null);
+    }
+  }, [activeTab]);
 
   // Fidelidade tab is available for client cashback view
 
@@ -1394,42 +1532,47 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               </div>
 
               {/* Subscriptions / Packages Widgets */}
-              {(subscriptions.length > 0 || packages.length > 0) && (
-                <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-                    <ShieldCheck className="text-emerald-500 animate-pulse" size={16} />
-                    Meus Planos e Combos Ativos
-                  </h3>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                    {/* Active Subscriptions */}
-                    {subscriptions.map((sub, sIdx) => (
-                      <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
-                        <div>
-                          <p className="text-xs font-black text-emerald-800">{sub.planName}</p>
-                          <p className="text-[10px] text-emerald-600/80 font-bold mt-1">Cortes: {sub.haircutsUsed} usados / Barbas: {sub.beardsUsed} usadas</p>
-                          <p className="text-[9px] text-slate-400 mt-1 font-semibold">Válido até: {format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')}</p>
-                        </div>
-                        <span className="bg-emerald-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Assinante</span>
-                      </div>
-                    ))}
+              {(() => {
+                const activeSubs = subscriptions.filter(s => s.status === 'active');
+                if (activeSubs.length === 0 && packages.length === 0) return null;
 
-                    {/* Active Packages */}
-                    {packages.map((pkg, pIdx) => (
-                      <div key={`active-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
-                        <div>
-                          <p className="text-xs font-black text-amber-800">{pkg.packageName || 'Combo de Serviços'}</p>
-                          <p className="text-[10px] text-amber-600/80 font-bold mt-1">
-                            Cortes Restantes: <span className="font-extrabold text-amber-800">{pkg.remainingCuts} de {pkg.totalCuts}</span>
-                          </p>
-                          <p className="text-[9px] text-slate-400 mt-1 font-semibold">Valor Pago: R$ {pkg.pricePaid?.toFixed(2)}</p>
+                return (
+                  <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
+                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                      <ShieldCheck className="text-emerald-500 animate-pulse" size={16} />
+                      Meus Planos e Combos Ativos
+                    </h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                      {/* Active Subscriptions */}
+                      {activeSubs.map((sub, sIdx) => (
+                        <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
+                          <div>
+                            <p className="text-xs font-black text-emerald-800">{sub.planName}</p>
+                            <p className="text-[10px] text-emerald-600/80 font-bold mt-1">Cortes: {sub.haircutsUsed} usados / Barbas: {sub.beardsUsed} usadas</p>
+                            <p className="text-[9px] text-slate-400 mt-1 font-semibold">Válido até: {sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</p>
+                          </div>
+                          <span className="bg-emerald-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Assinante</span>
                         </div>
-                        <span className="bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Pacote</span>
-                      </div>
-                    ))}
+                      ))}
+
+                      {/* Active Packages */}
+                      {packages.map((pkg, pIdx) => (
+                        <div key={`active-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
+                          <div>
+                            <p className="text-xs font-black text-amber-800">{pkg.packageName || 'Combo de Serviços'}</p>
+                            <p className="text-[10px] text-amber-600/80 font-bold mt-1">
+                              Cortes Restantes: <span className="font-extrabold text-amber-800">{pkg.remainingCuts} de {pkg.totalCuts}</span>
+                            </p>
+                            <p className="text-[9px] text-slate-400 mt-1 font-semibold">Valor Pago: R$ {pkg.pricePaid?.toFixed(2)}</p>
+                          </div>
+                          <span className="bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Pacote</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Booking Shortcut Board */}
               <div className="bg-gradient-to-r from-indigo-600 to-indigo-800 p-6 rounded-[32px] text-white shadow-lg relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-4">
@@ -1518,7 +1661,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-8"
             >
-              {subscriptions.length > 0 && !subscriptions.some(s => s.status === 'active') ? (
+              {subscriptions.filter(s => s.status !== 'canceled').length > 0 && !subscriptions.some(s => s.status === 'active') ? (
                 <div className="flex flex-col items-center justify-center text-center py-12 px-4 space-y-6">
                   <div className="w-20 h-20 bg-rose-50 border border-rose-100 rounded-3xl flex items-center justify-center text-rose-500 shadow-inner animate-pulse">
                     <AlertCircle size={36} className="text-red-500" />
@@ -1576,139 +1719,175 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         Sua reserva é confirmada instantaneamente na agenda do profissional.
                       </p>
                     </div>
-                    {/* Visual Progress Header */}
-                    <div className="flex items-center gap-1.5 self-start sm:self-center bg-slate-50 p-1.5 rounded-xl border border-slate-100">
-                      <span className={`w-2.5 h-2.5 rounded-full ${selectedBarber ? 'bg-indigo-600' : 'bg-slate-300 animate-ping'}`} />
-                      <span className={`w-2.5 h-2.5 rounded-full ${selectedService ? 'bg-indigo-600' : 'bg-slate-300'}`} />
-                      <span className={`w-2.5 h-2.5 rounded-full ${selectedTime ? 'bg-indigo-600' : 'bg-slate-300'}`} />
-                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">
-                        {!selectedBarber ? 'Profissional' : !selectedService ? 'Serviço' : !selectedTime ? 'Horário' : 'Pronto!'}
-                      </span>
-                    </div>
                   </div>
 
-                  {/* Step 1: Select Professional */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
-                        1. Selecione o Profissional
-                      </label>
-                      {selectedBarber && (
-                        <button 
-                          onClick={() => {
-                            setSelectedBarber(null);
-                            setSelectedService(null);
-                            setSelectedTime(null);
-                          }}
-                          className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-wider"
-                        >
-                          Alterar
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {barbers.map((b, bIdx) => {
-                        const isSelected = selectedBarber?.uid === b.uid;
-                        const isVirtual = b.uid === 'any';
-                        return (
+                  {/* Interactive Stepper Header */}
+                  <div className="w-full flex items-center justify-between bg-slate-50 border border-slate-100 p-3 sm:p-4 rounded-2xl">
+                    {[
+                      { step: 1, label: 'Profissional', icon: User },
+                      { step: 2, label: 'Serviço', icon: Scissors },
+                      { step: 3, label: 'Dia e Hora', icon: Clock },
+                      { step: 4, label: 'Confirmação', icon: CheckCircle2 }
+                    ].map((s, idx) => {
+                      const isActive = bookingStep === s.step;
+                      const isCompleted = bookingStep > s.step;
+                      return (
+                        <React.Fragment key={`step-head-${s.step}`}>
                           <button
-                            key={`barber-item-${b.uid || bIdx}-${bIdx}`}
                             type="button"
-                            onClick={() => {
-                              setSelectedBarber(b);
-                              setSelectedService(null);
-                              setSelectedTime(null);
-                            }}
-                            className={`p-4 rounded-2xl border transition-all text-left flex items-center gap-3 relative group ${
-                              isSelected 
-                                ? 'border-indigo-600 bg-indigo-50/40 shadow-md ring-2 ring-indigo-600/10' 
-                                : isVirtual
-                                  ? 'border-amber-100 bg-gradient-to-br from-amber-50/20 to-amber-50/40 hover:from-amber-50/40 hover:to-amber-50/60 hover:border-amber-200'
-                                  : 'border-slate-100 bg-slate-50/50 hover:bg-slate-100/70 hover:border-slate-200'
+                            disabled={s.step > bookingStep && !((s.step === 2 && selectedBarber) || (s.step === 3 && selectedBarber && selectedService) || (s.step === 4 && selectedBarber && selectedService && selectedTime))}
+                            onClick={() => setBookingStep(s.step as any)}
+                            className={`flex items-center gap-2 transition-all duration-200 ${
+                              isActive 
+                                ? 'text-indigo-600 font-black scale-105' 
+                                : isCompleted 
+                                  ? 'text-emerald-600 font-bold hover:text-indigo-650' 
+                                  : 'text-slate-400 cursor-not-allowed'
                             }`}
                           >
-                            {isSelected && (
-                              <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow">
-                                <Check size={10} />
-                              </div>
-                            )}
-                            
-                            {isVirtual && !isSelected && (
-                              <div className="absolute top-3 right-3 text-amber-500 animate-bounce">
-                                <Sparkles size={12} />
-                              </div>
-                            )}
-
-                            <div className={`w-11 h-11 rounded-full overflow-hidden flex items-center justify-center font-black text-xs transition-all flex-shrink-0 ${
-                              isSelected 
-                                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10' 
-                                : isVirtual 
-                                  ? 'bg-amber-100 text-amber-700' 
-                                  : 'bg-slate-200 text-slate-600'
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black transition-all ${
+                              isActive 
+                                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-650/20' 
+                                : isCompleted 
+                                  ? 'bg-emerald-500 text-white' 
+                                  : 'bg-slate-100 text-slate-400'
                             }`}>
-                              {isVirtual ? (
-                                <Sparkles size={16} />
-                              ) : b.fotoUrl || b.avatarUrl ? (
-                                <img 
-                                  src={b.fotoUrl || b.avatarUrl} 
-                                  alt={b.nome} 
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                (b.nome || 'B').substring(0, 2).toUpperCase()
-                              )}
+                              {isCompleted ? <Check size={12} className="stroke-[3]" /> : s.step}
                             </div>
-
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-black text-slate-800 truncate flex items-center gap-1">
-                                {b.nome}
-                                {isVirtual && (
-                                  <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider scale-90">
-                                    Rápido
-                                  </span>
-                                )}
-                              </p>
-                              <p className="text-[10px] text-slate-400 font-bold truncate mt-0.5">
-                                {b.especialidade || 'Barbeiro especialista'}
-                              </p>
-                            </div>
+                            <span className="hidden md:inline text-xs tracking-tight">{s.label}</span>
                           </button>
-                        );
-                      })}
-                    </div>
+                          {idx < 3 && (
+                            <div className={`flex-1 h-[2px] mx-1 hidden md:block ${bookingStep > s.step ? 'bg-emerald-500' : 'bg-slate-100'}`} />
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </div>
 
+                  {/* Back button for wizard steps */}
+                  {bookingStep > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setBookingStep((prev) => (prev - 1) as any)}
+                      className="flex items-center gap-1.5 text-[10px] font-black text-slate-500 hover:text-indigo-600 transition-colors uppercase tracking-wider border border-slate-200 bg-white hover:bg-slate-50 px-4 py-2 rounded-xl w-fit"
+                    >
+                      <ArrowLeft size={12} className="stroke-[3]" /> Voltar Passo
+                    </button>
+                  )}
+
+                  {/* STEP 1: SELECT BARBER */}
+                  {bookingStep === 1 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-4 animate-fadeIn"
+                    >
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
+                          Etapa 1. Com quem você deseja realizar o atendimento?
+                        </label>
+                        <p className="text-xs text-slate-500 font-medium">Selecione seu barbeiro preferido ou escolha a opção sem preferência.</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        {barbers.map((b, bIdx) => {
+                          const isSelected = selectedBarber?.uid === b.uid;
+                          const isVirtual = b.uid === 'any';
+                          return (
+                            <button
+                              key={`barber-item-${b.uid || bIdx}-${bIdx}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedBarber(b);
+                                setSelectedService(null);
+                                setSelectedTime(null);
+                                setBookingStep(2);
+                              }}
+                              className={`p-5 rounded-2xl border transition-all text-left flex items-center gap-4 relative group ${
+                                isSelected 
+                                  ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-2 ring-indigo-600/10' 
+                                  : isVirtual
+                                    ? 'border-amber-200 bg-gradient-to-br from-amber-50/30 to-amber-100/20 hover:from-amber-50/50 hover:to-amber-100/30 hover:border-amber-300'
+                                    : 'border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-200 shadow-sm'
+                              }`}
+                            >
+                              {isSelected && (
+                                <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow">
+                                  <Check size={10} />
+                                </div>
+                              )}
+                              
+                              {isVirtual && !isSelected && (
+                                <div className="absolute top-3 right-3 text-amber-500 animate-pulse">
+                                  <Sparkles size={14} className="fill-amber-400/20" />
+                                </div>
+                              )}
+
+                              <div className={`w-16 h-16 rounded-full overflow-hidden flex items-center justify-center font-black text-lg transition-all flex-shrink-0 border-2 ${
+                                isSelected 
+                                  ? 'border-indigo-600 bg-indigo-600 text-white' 
+                                  : isVirtual 
+                                    ? 'border-amber-200 bg-amber-100 text-amber-700' 
+                                    : 'border-white bg-slate-200 text-slate-600 shadow'
+                              }`}>
+                                {isVirtual ? (
+                                  <Sparkles size={24} className="fill-amber-400/20 text-amber-600" />
+                                ) : b.fotoUrl || b.avatarUrl ? (
+                                  <img 
+                                    src={b.fotoUrl || b.avatarUrl} 
+                                    alt={b.nome} 
+                                    className="w-full h-full object-cover"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  (b.nome || 'B').substring(0, 2).toUpperCase()
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-black text-slate-800 truncate flex items-center gap-1.5">
+                                  {b.nome}
+                                  {isVirtual && (
+                                    <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                                      Livre
+                                    </span>
+                                  )}
+                                </p>
+                                <p className="text-xs text-slate-500 font-semibold truncate mt-0.5">
+                                  {b.especialidade || 'Barbeiro especialista'}
+                                </p>
+                                <span className="text-[10px] text-indigo-600 font-extrabold hover:underline mt-2 inline-flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                                  Escolher <ChevronRight size={10} className="stroke-[3]" />
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )}
+
                   {/* Step 2: Select Service */}
-                  {selectedBarber && (
+                  {/* STEP 2: SELECT SERVICE */}
+                  {bookingStep === 2 && (
                     <motion.div 
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="space-y-4 border-t border-slate-100 pt-6"
+                      className="space-y-4 animate-fadeIn"
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="space-y-1">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
-                          2. Escolha o Serviço desejado
+                          Etapa 2. Qual serviço você deseja realizar?
                         </label>
-                        {selectedService && (
-                          <button 
-                            onClick={() => {
-                              setSelectedService(null);
-                              setSelectedTime(null);
-                            }}
-                            className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-wider"
-                          >
-                            Alterar
-                          </button>
-                        )}
+                        <p className="text-xs text-slate-500 font-medium">Selecione o procedimento desejado. Você está agendando com <strong>{selectedBarber?.nome}</strong>.</p>
                       </div>
 
                       {services.length === 0 ? (
-                        <div className="p-6 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
+                        <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
                           <p className="text-xs text-slate-400 font-semibold">Nenhum serviço disponível no portal no momento.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {services.map((s, sIdx) => {
                             const isSelected = selectedService?.id === s.id;
                             return (
@@ -1718,11 +1897,12 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                 onClick={() => {
                                   setSelectedService(s);
                                   setSelectedTime(null);
+                                  setBookingStep(3);
                                 }}
-                                className={`p-4 rounded-2xl border transition-all text-left flex justify-between items-center gap-3 relative group ${
+                                className={`p-5 rounded-2xl border transition-all text-left flex justify-between items-center gap-4 relative group ${
                                   isSelected 
-                                    ? 'border-indigo-600 bg-indigo-50/40 shadow-md ring-2 ring-indigo-600/10' 
-                                    : 'border-slate-100 bg-slate-50/50 hover:bg-slate-100/70 hover:border-slate-200'
+                                    ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-2 ring-indigo-600/10' 
+                                    : 'border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-200 shadow-sm'
                                 }`}
                               >
                                 {isSelected && (
@@ -1734,15 +1914,15 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                   <span className="px-2 py-0.5 bg-slate-100 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
                                     {s.categoria || 'Serviço'}
                                   </span>
-                                  <h4 className="text-xs font-black text-slate-800 truncate mt-1.5">{s.nome || s.name}</h4>
-                                  <p className="text-[10px] text-slate-450 font-semibold truncate mt-0.5">
+                                  <h4 className="text-sm font-black text-slate-800 truncate mt-2">{s.nome || s.name}</h4>
+                                  <p className="text-xs text-slate-500 font-semibold line-clamp-2 mt-1 leading-relaxed">
                                     {s.descricao || 'Atendimento com acabamento premium e toalha quente.'}
                                   </p>
-                                  <div className="flex items-center gap-3 mt-3 font-bold text-[10px]">
-                                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                                  <div className="flex items-center gap-3 mt-4 font-bold text-[10px]">
+                                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 font-extrabold text-xs">
                                       R$ {(s.preco || s.price || 0).toFixed(2)}
                                     </span>
-                                    <span className="text-slate-500 flex items-center gap-1 bg-slate-100/50 px-2 py-0.5 rounded-md">
+                                    <span className="text-slate-500 flex items-center gap-1 bg-slate-150/40 px-2.5 py-1 rounded-md">
                                       <Clock size={10} className="text-slate-400" /> {s.duracao_minutos || s.duration || 30} min
                                     </span>
                                   </div>
@@ -1755,18 +1935,21 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     </motion.div>
                   )}
 
-                  {/* Step 3: Select Date & Time */}
-                  {selectedBarber && selectedService && (
+                  {/* STEP 3: SELECT DATE & TIME */}
+                  {bookingStep === 3 && (
                     <motion.div 
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="space-y-6 border-t border-slate-100 pt-6"
+                      className="space-y-6 animate-fadeIn"
                     >
                       {/* Date Selector */}
                       <div className="space-y-3">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
-                          3. Escolha o Dia do Atendimento (Próximos 30 dias)
-                        </label>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
+                            Etapa 3. Selecione o dia do atendimento
+                          </label>
+                          <p className="text-xs text-slate-500 font-medium">Você está agendando com <strong>{selectedBarber?.nome}</strong> para o serviço <strong>{selectedService?.nome}</strong>.</p>
+                        </div>
                         <div className="flex gap-2 overflow-x-auto pb-3 pt-1 scrollbar-none custom-scrollbar-thin">
                           {dateOptions.map((opt, dIdx) => {
                             const isSelected = selectedDate === opt.dateStr;
@@ -1807,7 +1990,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                       <div className="space-y-3 border-t border-slate-100 pt-5">
                         <div className="flex items-center justify-between">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                            4. Horários Disponíveis para {format(parse(selectedDate, 'yyyy-MM-dd', new Date()), "dd 'de' MMMM", { locale: ptBR })}
+                            Escolha um dos horários livres para {format(parse(selectedDate, 'yyyy-MM-dd', new Date()), "dd 'de' MMMM", { locale: ptBR })}
                             {loadingSlots && <Clock className="animate-spin text-indigo-500" size={12} />}
                           </label>
                         </div>
@@ -1835,7 +2018,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                           <button
                                             key={`morning-slot-${time}-${tIdx}`}
                                             type="button"
-                                            onClick={() => setSelectedTime(time)}
+                                            onClick={() => {
+                                              setSelectedTime(time);
+                                              setBookingStep(4);
+                                            }}
                                             className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
                                               selectedTime === time 
                                                 ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-600/10 font-black shadow-sm' 
@@ -1860,7 +2046,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                           <button
                                             key={`afternoon-slot-${time}-${tIdx}`}
                                             type="button"
-                                            onClick={() => setSelectedTime(time)}
+                                            onClick={() => {
+                                              setSelectedTime(time);
+                                              setBookingStep(4);
+                                            }}
                                             className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
                                               selectedTime === time 
                                                 ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-600/10 font-black shadow-sm' 
@@ -1885,7 +2074,10 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                                           <button
                                             key={`evening-slot-${time}-${tIdx}`}
                                             type="button"
-                                            onClick={() => setSelectedTime(time)}
+                                            onClick={() => {
+                                              setSelectedTime(time);
+                                              setBookingStep(4);
+                                            }}
                                             className={`py-2.5 px-1.5 rounded-xl border text-center text-xs font-black transition-all ${
                                               selectedTime === time 
                                                 ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-600/10 font-black shadow-sm' 
@@ -1913,8 +2105,8 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                     </motion.div>
                   )}
 
-                  {/* Order Summary & Submit button (Apple Wallet Ticket Style) */}
-                  {selectedBarber && selectedService && selectedTime && (
+                  {/* STEP 4: CONFIRMATION & RESUMO (Apple Wallet Ticket Style) */}
+                  {bookingStep === 4 && selectedBarber && selectedService && selectedTime && (
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.98 }}
                       animate={{ opacity: 1, scale: 1 }}
@@ -1930,7 +2122,7 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                           </span>
                           <h4 className="text-sm font-black text-white tracking-tight pt-1">Confirmar Agendamento</h4>
                         </div>
-                        <CheckCircle size={24} className="text-amber-500" />
+                        <CheckCircle2 size={24} className="text-amber-500" />
                       </div>
 
                       {/* Ticket Content */}
@@ -2355,263 +2547,270 @@ export function PortalCliente({ profile }: PortalClienteProps) {
               className="space-y-6"
             >
               {/* Active client subscriptions */}
-              <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
-                <div>
-                  <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
-                    <ShieldCheck className="text-emerald-500" size={20} />
-                    Minha Assinatura Ativa
-                  </h3>
-                  <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                    Acompanhe o status e a utilização dos serviços inclusos no seu plano de assinatura mensal.
-                  </p>
-                </div>
+              {(() => {
+                const visibleSubscriptions = subscriptions.filter(s => s.status !== 'canceled');
+                const pendingOrExpiredSubscriptions = visibleSubscriptions.filter(s => s.status !== 'active');
 
-                {/* Expired/Past Due subscriptions Alert */}
-                {subscriptions.filter(s => s.status !== 'active').length > 0 && (
-                  <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-rose-600 text-white p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-white flex-shrink-0">
-                        <AlertCircle size={22} />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-black tracking-tight text-white">Assinatura Pendente de Renovação</h4>
-                        <p className="text-xs text-amber-100 font-medium mt-0.5">
-                          Sua assinatura do plano <span className="underline font-black text-white">{subscriptions.find(s => s.status !== 'active')?.planName}</span> está inativa ou aguardando pagamento.
-                        </p>
-                        <p className="text-[10px] text-amber-200 font-bold mt-1">
-                          ⚡ Clique abaixo para gerar a segunda via PIX ou renovar no cartão e reativar seus benefícios na hora!
-                        </p>
-                      </div>
+                return (
+                  <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
+                    <div>
+                      <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-slate-800">
+                        <ShieldCheck className="text-emerald-500" size={20} />
+                        Minha Assinatura Ativa
+                      </h3>
+                      <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                        Acompanhe o status e a utilização dos serviços inclusos no seu plano de assinatura mensal.
+                      </p>
                     </div>
-                    {(() => {
-                      const expiredSub = subscriptions.find(s => s.status !== 'active');
-                      if (!expiredSub) return null;
-                      const expPlanObj = availablePlans.find(p => p.id === expiredSub.plano_id);
-                      const expAllowed = expPlanObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
-                      const expSupportsPix = expAllowed.includes('PIX');
-                      const expSupportsCard = expAllowed.includes('CREDIT_CARD');
 
-                      const handleQuickRenew = () => {
-                        if (expSupportsCard && !expSupportsPix) {
-                          setClientCardModalSub(expiredSub);
-                        } else if (expSupportsPix && !expSupportsCard) {
-                          handleClientPayPix(expiredSub);
-                        } else {
-                          setRenewalModalSub(expiredSub);
-                        }
-                      };
-
-                      return (
-                        <div className="flex items-center gap-2 flex-wrap self-start sm:self-center">
-                          <button 
-                            onClick={handleQuickRenew}
-                            className="px-4 py-3 bg-slate-950 hover:bg-slate-900 text-amber-400 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer active:scale-95"
-                          >
-                            <RefreshCw size={14} className="animate-spin-slow" /> Renovar Agora
-                          </button>
+                    {/* Expired/Past Due subscriptions Alert (Excludes Canceled) */}
+                    {pendingOrExpiredSubscriptions.length > 0 && (
+                      <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-rose-600 text-white p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-white flex-shrink-0">
+                            <AlertCircle size={22} />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-black tracking-tight text-white">Assinatura Pendente de Renovação</h4>
+                            <p className="text-xs text-amber-100 font-medium mt-0.5">
+                              Sua assinatura do plano <span className="underline font-black text-white">{pendingOrExpiredSubscriptions[0]?.planName}</span> está inativa ou aguardando pagamento.
+                            </p>
+                            <p className="text-[10px] text-amber-200 font-bold mt-1">
+                              ⚡ Clique abaixo para gerar a segunda via PIX ou renovar no cartão e reativar seus benefícios na hora!
+                            </p>
+                          </div>
                         </div>
-                      );
-                    })()}
-                  </div>
-                )}
+                        {(() => {
+                          const expiredSub = pendingOrExpiredSubscriptions[0];
+                          if (!expiredSub) return null;
+                          const expPlanObj = availablePlans.find(p => p.id === expiredSub.plano_id);
+                          const expAllowed = expPlanObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
+                          const expSupportsPix = expAllowed.includes('PIX');
+                          const expSupportsCard = expAllowed.includes('CREDIT_CARD');
 
-                {subscriptions.length > 0 ? (
-                  <div className="space-y-4">
-                    {subscriptions.map((sub, sIdx) => {
-                      const isActive = sub.status === 'active';
-                      const isPending = sub.status === 'pending';
-                      const isOverdue = sub.status === 'overdue' || sub.status === 'expired' || sub.status === 'suspended';
-                      const statusColor = isPending ? 'bg-amber-500 text-white' : (isActive ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white');
-                      const statusLabel = isPending ? 'Aguardando Pagamento' : (isActive ? 'Plano Ativo' : 'Vencida / Em Atraso');
+                          const handleQuickRenew = () => {
+                            if (expSupportsCard && !expSupportsPix) {
+                              setClientCardModalSub(expiredSub);
+                            } else if (expSupportsPix && !expSupportsCard) {
+                              handleClientPayPix(expiredSub);
+                            } else {
+                              setRenewalModalSub(expiredSub);
+                            }
+                          };
 
-                      const planObj = availablePlans.find(p => p.id === sub.plano_id);
-                      const maxCuts = planObj?.haircutsPerMonth ?? 999;
-                      const maxBeards = planObj?.beardsPerMonth ?? 999;
-
-                      const cutsUnlimited = maxCuts >= 99 || maxCuts === 0;
-                      const beardsUnlimited = maxBeards >= 99 || maxBeards === 0;
-
-                      const cutsPercent = cutsUnlimited ? 100 : Math.min(100, (sub.haircutsUsed / (maxCuts || 1)) * 100);
-                      const beardsPercent = beardsUnlimited ? 100 : Math.min(100, (sub.beardsUsed / (maxBeards || 1)) * 100);
-
-                      return (
-                        <div key={`sub-card-${sub.id || sIdx}-${sIdx}`} className="bg-gradient-to-br from-slate-50 to-indigo-50/20 border border-slate-200 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm space-y-5">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/50 pb-4">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h4 className="text-base font-black text-slate-900">{sub.planName}</h4>
-                                <span className="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Clube de Assinatura</span>
-                              </div>
-                              <p className="text-[10px] text-slate-500 font-bold mt-1">
-                                Vigência do Ciclo: {sub.startDate ? format(parse(sub.startDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''} até <span className="text-slate-800 font-black">{sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</span>
-                              </p>
-                              <p className="text-[10px] text-slate-500 font-bold mt-0.5">
-                                Método de Cobrança: <span className="text-slate-800 font-black">{sub.paymentMethod === 'pix' || sub.billingType === 'PIX' ? 'PIX Recorrente' : 'Cartão de Crédito Recorrente (Asaas)'}</span>
-                              </p>
+                          return (
+                            <div className="flex items-center gap-2 flex-wrap self-start sm:self-center">
+                              <button 
+                                onClick={handleQuickRenew}
+                                className="px-4 py-3 bg-slate-950 hover:bg-slate-900 text-amber-400 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer active:scale-95"
+                              >
+                                <RefreshCw size={14} className="animate-spin-slow" /> Renovar Agora
+                              </button>
                             </div>
-                            <span className={`${statusColor} font-black text-xs px-3 py-1.5 rounded-xl shadow-sm self-start sm:self-center`}>{statusLabel}</span>
-                          </div>
+                          );
+                        })()}
+                      </div>
+                    )}
 
-                          {/* Consumption progress meters */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
-                              <div className="flex justify-between items-center text-xs font-bold">
-                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Cortes de Cabelo</span>
-                                <span className="text-indigo-600 font-black">
-                                  {sub.haircutsUsed} / {cutsUnlimited ? 'Ilimitados' : maxCuts}
-                                </span>
+                    {visibleSubscriptions.length > 0 ? (
+                      <div className="space-y-4">
+                        {visibleSubscriptions.map((sub, sIdx) => {
+                          const isActive = sub.status === 'active';
+                          const isPending = sub.status === 'pending';
+                          const isOverdue = sub.status === 'overdue' || sub.status === 'expired' || sub.status === 'suspended';
+                          const statusColor = isPending ? 'bg-amber-500 text-white' : (isActive ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white');
+                          const statusLabel = isPending ? 'Aguardando Pagamento' : (isActive ? 'Plano Ativo' : 'Vencida / Em Atraso');
+
+                          const planObj = availablePlans.find(p => p.id === sub.plano_id);
+                          const maxCuts = planObj?.haircutsPerMonth ?? 999;
+                          const maxBeards = planObj?.beardsPerMonth ?? 999;
+
+                          const cutsUnlimited = maxCuts >= 99 || maxCuts === 0;
+                          const beardsUnlimited = maxBeards >= 99 || maxBeards === 0;
+
+                          const cutsPercent = cutsUnlimited ? 100 : Math.min(100, (sub.haircutsUsed / (maxCuts || 1)) * 100);
+                          const beardsPercent = beardsUnlimited ? 100 : Math.min(100, (sub.beardsUsed / (maxBeards || 1)) * 100);
+
+                          return (
+                            <div key={`sub-card-${sub.id || sIdx}-${sIdx}`} className="bg-gradient-to-br from-slate-50 to-indigo-50/20 border border-slate-200 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm space-y-5">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/50 pb-4">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="text-base font-black text-slate-900">{sub.planName}</h4>
+                                    <span className="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Clube de Assinatura</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 font-bold mt-1">
+                                    Vigência do Ciclo: {sub.startDate ? format(parse(sub.startDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''} até <span className="text-slate-800 font-black">{sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</span>
+                                  </p>
+                                  <p className="text-[10px] text-slate-500 font-bold mt-0.5">
+                                    Método de Cobrança: <span className="text-slate-800 font-black">{sub.paymentMethod === 'pix' || sub.billingType === 'PIX' ? 'PIX Recorrente' : 'Cartão de Crédito Recorrente (Asaas)'}</span>
+                                  </p>
+                                </div>
+                                <span className={`${statusColor} font-black text-xs px-3 py-1.5 rounded-xl shadow-sm self-start sm:self-center`}>{statusLabel}</span>
                               </div>
-                              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                <div className="bg-indigo-600 h-full transition-all duration-500" style={{ width: `${cutsPercent}%` }} />
+
+                              {/* Consumption progress meters */}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
+                                  <div className="flex justify-between items-center text-xs font-bold">
+                                    <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Cortes de Cabelo</span>
+                                    <span className="text-indigo-600 font-black">
+                                      {sub.haircutsUsed} / {cutsUnlimited ? 'Ilimitados' : maxCuts}
+                                    </span>
+                                  </div>
+                                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                    <div className="bg-indigo-600 h-full transition-all duration-500" style={{ width: `${cutsPercent}%` }} />
+                                  </div>
+                                  <p className="text-[9px] text-slate-400 font-semibold">
+                                    {cutsUnlimited ? 'Aproveite seus cortes ilimitados no ciclo.' : `${Math.max(0, maxCuts - sub.haircutsUsed)} cortes restantes até a renovação.`}
+                                  </p>
+                                </div>
+
+                                <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
+                                  <div className="flex justify-between items-center text-xs font-bold">
+                                    <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Serviços de Barba</span>
+                                    <span className="text-amber-600 font-black">
+                                      {sub.beardsUsed} / {beardsUnlimited ? 'Ilimitadas' : maxBeards}
+                                    </span>
+                                  </div>
+                                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                    <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${beardsPercent}%` }} />
+                                  </div>
+                                  <p className="text-[9px] text-slate-400 font-semibold">
+                                    {beardsUnlimited ? 'Aproveite suas barbas ilimitadas no ciclo.' : `${Math.max(0, maxBeards - sub.beardsUsed)} barbas restantes até a renovação.`}
+                                  </p>
+                                </div>
                               </div>
-                              <p className="text-[9px] text-slate-400 font-semibold">
-                                {cutsUnlimited ? 'Aproveite seus cortes ilimitados no ciclo.' : `${Math.max(0, maxCuts - sub.haircutsUsed)} cortes restantes até a renovação.`}
-                              </p>
-                            </div>
 
-                            <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
-                              <div className="flex justify-between items-center text-xs font-bold">
-                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Serviços de Barba</span>
-                                <span className="text-amber-600 font-black">
-                                  {sub.beardsUsed} / {beardsUnlimited ? 'Ilimitadas' : maxBeards}
-                                </span>
-                              </div>
-                              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${beardsPercent}%` }} />
-                              </div>
-                              <p className="text-[9px] text-slate-400 font-semibold">
-                                {beardsUnlimited ? 'Aproveite suas barbas ilimitadas no ciclo.' : `${Math.max(0, maxBeards - sub.beardsUsed)} barbas restantes até a renovação.`}
-                              </p>
-                            </div>
-                          </div>
+                              {/* Action Buttons */}
+                              <div className="pt-3 border-t border-slate-200/50 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {(() => {
+                                    const allowedPaymentMethods = planObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
+                                    const supportsPix = allowedPaymentMethods.includes('PIX');
+                                    const supportsCard = allowedPaymentMethods.includes('CREDIT_CARD');
 
-                          {/* Action Buttons */}
-                          <div className="pt-3 border-t border-slate-200/50 flex flex-wrap items-center justify-between gap-3">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {(() => {
-                                const allowedPaymentMethods = planObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
-                                const supportsPix = allowedPaymentMethods.includes('PIX');
-                                const supportsCard = allowedPaymentMethods.includes('CREDIT_CARD');
-
-                                if (isActive) {
-                                  return (
-                                    <>
-                                      {supportsCard && (
-                                        <button
-                                          type="button"
-                                          onClick={() => setClientCardModalSub(sub)}
-                                          className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                        >
-                                          <CreditCard size={13} />
-                                          <span>Gerenciar Cartão de Crédito</span>
-                                        </button>
-                                      )}
-                                    </>
-                                  );
-                                }
-
-                                // If subscription is overdue, expired, pending, or suspended (NOT active)
-                                return (
-                                  <>
-                                    {supportsCard && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleCheckAsaasStatus(sub)}
-                                          disabled={checkingStatusSubId === sub.id}
-                                          className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                                        >
-                                          {checkingStatusSubId === sub.id ? (
-                                            <RefreshCw size={13} className="animate-spin" />
-                                          ) : (
-                                            <RefreshCw size={13} />
+                                    if (isActive) {
+                                      return (
+                                        <>
+                                          {supportsCard && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setClientCardModalSub(sub)}
+                                              className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                            >
+                                              <CreditCard size={13} />
+                                              <span>Gerenciar Cartão de Crédito</span>
+                                            </button>
                                           )}
-                                          <span>Tentar Cobrar Novamente</span>
-                                        </button>
+                                        </>
+                                      );
+                                    }
 
-                                        <button
-                                          type="button"
-                                          onClick={() => setClientCardModalSub(sub)}
-                                          className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                        >
-                                          <CreditCard size={13} />
-                                          <span>Atualizar Cartão & Cobrar</span>
-                                        </button>
-                                      </>
-                                    )}
+                                    // If subscription is overdue, expired, pending, or suspended (NOT active)
+                                    return (
+                                      <>
+                                        {supportsCard && (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleCheckAsaasStatus(sub)}
+                                              disabled={checkingStatusSubId === sub.id}
+                                              className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                            >
+                                              {checkingStatusSubId === sub.id ? (
+                                                <RefreshCw size={13} className="animate-spin" />
+                                              ) : (
+                                                <RefreshCw size={13} />
+                                              )}
+                                              <span>Tentar Cobrar Novamente</span>
+                                            </button>
 
-                                    {supportsPix && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleClientPayPix(sub)}
-                                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
-                                      >
-                                        <QrCode size={13} />
-                                        <span>Pagar Segunda Via (PIX)</span>
-                                      </button>
-                                    )}
-
-                                    {supportsPix && !supportsCard && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCheckAsaasStatus(sub)}
-                                        disabled={checkingStatusSubId === sub.id}
-                                        className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                                      >
-                                        {checkingStatusSubId === sub.id ? (
-                                          <RefreshCw size={13} className="animate-spin" />
-                                        ) : (
-                                          <CheckCircle size={13} className="text-emerald-600" />
+                                            <button
+                                              type="button"
+                                              onClick={() => setClientCardModalSub(sub)}
+                                              className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                            >
+                                              <CreditCard size={13} />
+                                              <span>Atualizar Cartão & Cobrar</span>
+                                            </button>
+                                          </>
                                         )}
-                                        <span>Verificar Status</span>
+
+                                        {supportsPix && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleClientPayPix(sub)}
+                                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                                          >
+                                            <QrCode size={13} />
+                                            <span>Pagar Segunda Via (PIX)</span>
+                                          </button>
+                                        )}
+
+                                        {supportsPix && !supportsCard && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleCheckAsaasStatus(sub)}
+                                            disabled={checkingStatusSubId === sub.id}
+                                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                          >
+                                            {checkingStatusSubId === sub.id ? (
+                                              <RefreshCw size={13} className="animate-spin" />
+                                            ) : (
+                                              <CheckCircle size={13} className="text-emerald-600" />
+                                            )}
+                                            <span>Verificar Status</span>
+                                          </button>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+
+                                  {(() => {
+                                    const canCancel = (sub as any).allowClientCancel !== false && (planObj?.allowClientCancel !== false);
+                                    if (!canCancel) return null;
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => setSubToCancel(sub)}
+                                        className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                      >
+                                        <Trash2 size={13} />
+                                        <span>Cancelar</span>
                                       </button>
-                                    )}
-                                  </>
-                                );
-                              })()}
+                                    );
+                                  })()}
+                                </div>
 
-                              {(() => {
-                                const canCancel = (sub as any).allowClientCancel !== false && (planObj?.allowClientCancel !== false);
-                                if (!canCancel) return null;
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={() => setSubToCancel(sub)}
-                                    className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                  >
-                                    <Trash2 size={13} />
-                                    <span>Cancelar</span>
-                                  </button>
-                                );
-                              })()}
+                                <button 
+                                  onClick={() => setActiveTab('schedule')}
+                                  className="text-indigo-600 hover:underline flex items-center gap-0.5 text-[10px] font-black uppercase tracking-wider"
+                                >
+                                  Agendar Atendimento <ChevronRight size={12} />
+                                </button>
+                              </div>
                             </div>
-
-                            <button 
-                              onClick={() => setActiveTab('schedule')}
-                              className="text-indigo-600 hover:underline flex items-center gap-0.5 text-[10px] font-black uppercase tracking-wider"
-                            >
-                              Agendar Atendimento <ChevronRight size={12} />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-8 px-4 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 space-y-4">
+                        <p className="text-xs text-slate-400 font-semibold">Você ainda não é um membro do nosso clube de assinatura.</p>
+                        <button 
+                          onClick={() => {
+                            const elem = document.getElementById('discover-subscriptions');
+                            elem?.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-100 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
+                        >
+                          Conhecer Clubes de Assinatura
+                        </button>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="py-8 px-4 text-center bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 space-y-4">
-                    <p className="text-xs text-slate-400 font-semibold">Você ainda não é um membro do nosso clube de assinatura.</p>
-                    <button 
-                      onClick={() => {
-                        const elem = document.getElementById('discover-subscriptions');
-                        elem?.scrollIntoView({ behavior: 'smooth' });
-                      }}
-                      className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-100 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
-                    >
-                      Conhecer Clubes de Assinatura
-                    </button>
-                  </div>
-                )}
-              </div>
+                );
+              })()}
 
               {/* Histórico de Faturas & Recibos de Pagamento */}
               {subscriptionInvoices.length > 0 && (
@@ -3240,6 +3439,20 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                         className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
                         placeholder="(11) 99999-9999"
                       />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">CPF (Pessoa Física)</label>
+                      <input 
+                        type="text" 
+                        value={editCpf}
+                        onChange={e => setEditCpf(formatCpfCnpjMask(e.target.value))}
+                        className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
+                        placeholder="000.000.000-00"
+                      />
+                      <p className="text-[10px] text-slate-400 font-medium ml-1">
+                        Necessário para a emissão de comprovantes e recibos dos serviços.
+                      </p>
                     </div>
 
                     <div className="space-y-1.5 sm:col-span-2">
@@ -3883,6 +4096,61 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                 </p>
               </div>
 
+              {/* Solicitação elegante do CPF caso ainda não esteja cadastrado ou validado */}
+              {(!profile?.cpf || !isValidCPF(profile.cpf.replace(/\D/g, ''))) ? (
+                <div className="space-y-2.5 text-left bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
+                  <div className="flex items-center gap-2 text-slate-800">
+                    <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
+                    <span className="text-xs font-black tracking-tight">Identificação do Assinante</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                    Para ativar sua assinatura do Clube e gerar seus recibos bancários, informe o seu CPF:
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                      CPF do Assinante
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="000.000.000-00"
+                      value={checkoutCpfCnpj}
+                      onChange={(e) => setCheckoutCpfCnpj(formatCpfCnpjMask(e.target.value))}
+                      className="w-full text-xs font-bold text-slate-800 bg-white rounded-xl p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between bg-emerald-50/70 border border-emerald-100 rounded-2xl px-4 py-3 text-left">
+                  <div className="flex items-center gap-2.5">
+                    <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
+                    <div>
+                      <p className="text-[11px] font-bold text-emerald-950">CPF Vinculado à Assinatura</p>
+                      <p className="text-[10px] text-emerald-700 font-medium">{formatCpfCnpjMask(profile.cpf)}</p>
+                    </div>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      const newCpf = prompt("Informe seu CPF (11 dígitos):", profile.cpf || "");
+                      if (newCpf) {
+                        const clean = newCpf.replace(/\D/g, "");
+                        if (isValidCPF(clean)) {
+                          setCheckoutCpfCnpj(formatCpfCnpjMask(clean));
+                          profile.cpf = clean;
+                          toast.success("CPF atualizado!");
+                        } else {
+                          toast.error("CPF inválido. Verifique os dígitos.");
+                        }
+                      }
+                    }}
+                    className="text-[10px] font-bold text-emerald-800 hover:text-emerald-950 underline cursor-pointer"
+                  >
+                    Alterar
+                  </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-3">
                 {(!selectedPlanForCheckout.allowedPaymentMethods || selectedPlanForCheckout.allowedPaymentMethods.includes('PIX')) && (
                   <button
@@ -4409,6 +4677,71 @@ export function PortalCliente({ profile }: PortalClienteProps) {
                   className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
                 >
                   Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Cancelamento de Assinatura pelo Cliente */}
+      <AnimatePresence>
+        {subToCancel && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 border border-slate-100 relative overflow-hidden"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-500 shrink-0">
+                  <AlertCircle size={24} />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-slate-800 tracking-tight">Cancelar Assinatura?</h3>
+                  <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                    Você tem certeza que deseja cancelar sua assinatura do plano <span className="font-bold text-slate-700">{subToCancel.planName}</span>?
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-rose-50/60 rounded-2xl border border-rose-100/80 text-xs text-rose-700 space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                  O que acontece ao cancelar:
+                </p>
+                <p className="text-[11px] text-rose-600/90 leading-tight">
+                  A cobrança recorrente será interrompida e as pendências em aberto serão removidas da sua tela. Seus agendamentos futuros não serão mais cobertos pelos benefícios do clube.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSubToCancel(null)}
+                  disabled={isCancelingSub}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer disabled:opacity-50"
+                >
+                  Manter Assinatura
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelSubscriptionByClient}
+                  disabled={isCancelingSub}
+                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-md shadow-rose-600/20 cursor-pointer disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isCancelingSub ? (
+                    <>
+                      <RefreshCw size={13} className="animate-spin" />
+                      <span>Cancelando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={13} />
+                      <span>Sim, Cancelar</span>
+                    </>
+                  )}
                 </button>
               </div>
             </motion.div>

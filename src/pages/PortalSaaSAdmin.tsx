@@ -211,6 +211,7 @@ export function PortalSaaSAdmin() {
   const [editTenantTrialEndDate, setEditTenantTrialEndDate] = useState('');
   const [editTenantSubscriptionsEnabled, setEditTenantSubscriptionsEnabled] = useState(false);
   const [editTenantAsaasApiKey, setEditTenantAsaasApiKey] = useState('');
+  const [editTenantAsaasEnv, setEditTenantAsaasEnv] = useState<'production' | 'sandbox'>('production');
 
   // Raio-X Tenant Support Modal State
   const [raioXTenant, setRaioXTenant] = useState<TenantProfile | null>(null);
@@ -342,6 +343,7 @@ export function PortalSaaSAdmin() {
     setEditTenantTrialEndDate(tenant.trialEndDate ? tenant.trialEndDate.substring(0, 10) : '');
     setEditTenantSubscriptionsEnabled(tenant.subscriptions_enabled ?? false);
     setEditTenantAsaasApiKey(tenant.asaas?.apiKey || '');
+    setEditTenantAsaasEnv(tenant.asaas?.environment === 'sandbox' ? 'sandbox' : 'production');
   };
 
   // Toggle Subscriptions Module Quick Action
@@ -404,7 +406,8 @@ export function PortalSaaSAdmin() {
         notes: editTenantNotes,
         asaas: {
           ...(editingTenant.asaas || {}),
-          apiKey: editTenantAsaasApiKey.trim()
+          apiKey: editTenantAsaasApiKey.trim(),
+          environment: editTenantAsaasEnv
         }
       }, { allowAsaasUpdate: true });
       toast.dismiss(toastId);
@@ -2484,17 +2487,30 @@ export function PortalSaaSAdmin() {
                       </div>
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Chave de API do Asaas (ApiKey da Barbearia)</label>
-                      <input 
-                        type="text"
-                        placeholder="Ex: $aact_YTU5Y... ou similar"
-                        value={editTenantAsaasApiKey}
-                        onChange={(e) => setEditTenantAsaasApiKey(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 font-mono"
-                      />
-                      <p className="text-[10px] text-slate-500 font-medium ml-1">Insira a chave de API da conta Asaas deste estabelecimento específico para isolar os recebimentos e webhooks.</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Chave de API do Asaas (ApiKey)</label>
+                        <input 
+                          type="text"
+                          placeholder="Ex: $aact_YTU5Y... ou similar"
+                          value={editTenantAsaasApiKey}
+                          onChange={(e) => setEditTenantAsaasApiKey(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ambiente do Gateway</label>
+                        <select
+                          value={editTenantAsaasEnv}
+                          onChange={(e) => setEditTenantAsaasEnv(e.target.value as 'production' | 'sandbox')}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-black text-slate-800 outline-none focus:border-indigo-500"
+                        >
+                          <option value="production">🟢 Produção Real (asaas.com)</option>
+                          <option value="sandbox">🟡 Sandbox (sandbox.asaas.com)</option>
+                        </select>
+                      </div>
                     </div>
+                    <p className="text-[10px] text-slate-500 font-medium ml-1">Insira a chave de API e selecione o ambiente para isolar os recebimentos e webhooks deste estabelecimento.</p>
 
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Notas Internas</label>

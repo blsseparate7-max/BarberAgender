@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { auth } from '../../firebase';
 import { 
   Landmark, 
   Wallet, 
@@ -159,11 +160,24 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
   const [adminPin, setAdminPin] = useState('');
   const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
 
+  const getAuthHeaders = async () => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      return {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+    } catch {
+      return { 'Content-Type': 'application/json' };
+    }
+  };
+
   const loadPayoutAccount = async () => {
     if (!tenantId) return;
     setLoadingPayout(true);
     try {
-      const res = await fetch(`/api/saas/gateway/digital-account/payout-account?tenantId=${encodeURIComponent(tenantId)}`);
+      const headers = await getAuthHeaders();
+      const res = await fetch(`/api/saas/gateway/digital-account/payout-account?tenantId=${encodeURIComponent(tenantId)}`, { headers });
       if (res.ok) {
         const data = await res.json();
         setOfficialCnpjCpf(data.officialCnpjCpf || '');
@@ -225,9 +239,10 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
         payload.bankAccountType = payoutFormBankAccountType;
       }
 
+      const headers = await getAuthHeaders();
       const res = await fetch(`/api/saas/gateway/digital-account/payout-account`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload)
       });
 
@@ -252,22 +267,24 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
     else setLoading(true);
 
     try {
+      const headers = await getAuthHeaders();
+
       // 1. Fetch Summary
-      const summaryRes = await fetch(`/api/saas/gateway/digital-account/summary?tenantId=${encodeURIComponent(tenantId || '')}`);
+      const summaryRes = await fetch(`/api/saas/gateway/digital-account/summary?tenantId=${encodeURIComponent(tenantId || '')}`, { headers });
       if (summaryRes.ok) {
         const summaryData = await summaryRes.json();
         setSummary(summaryData);
       }
 
       // 2. Fetch Statement
-      const statementRes = await fetch(`/api/saas/gateway/digital-account/statement?tenantId=${encodeURIComponent(tenantId || '')}&limit=50`);
+      const statementRes = await fetch(`/api/saas/gateway/digital-account/statement?tenantId=${encodeURIComponent(tenantId || '')}&limit=50`, { headers });
       if (statementRes.ok) {
         const statementData = await statementRes.json();
         setTransactions(statementData.transactions || []);
       }
 
       // 3. Fetch Transfers (Fase 3)
-      const transfersRes = await fetch(`/api/saas/gateway/digital-account/transfers?tenantId=${encodeURIComponent(tenantId || '')}&limit=30`);
+      const transfersRes = await fetch(`/api/saas/gateway/digital-account/transfers?tenantId=${encodeURIComponent(tenantId || '')}&limit=30`, { headers });
       if (transfersRes.ok) {
         const transfersData = await transfersRes.json();
         setTransfers(transfersData.transfers || []);
@@ -370,10 +387,12 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
 
     setRefunding(true);
     try {
+      const headers = await getAuthHeaders();
       const res = await fetch('/api/saas/gateway/digital-account/refund', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
+          tenantId: tenantId || '',
           paymentId: targetId,
           value: numericAmount,
           description: refundReason.trim() || 'Estorno solicitado via Conta Digital da Barbearia'
@@ -495,9 +514,10 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
         };
       }
 
+      const headers = await getAuthHeaders();
       const res = await fetch('/api/saas/gateway/digital-account/transfer', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload)
       });
 

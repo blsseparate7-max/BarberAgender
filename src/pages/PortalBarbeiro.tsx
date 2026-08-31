@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Calendar, 
   Users, 
@@ -32,10 +32,11 @@ import {
   ArrowDownRight,
   Info,
   ChevronDown,
-  Star
+  Star,
+  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
@@ -48,6 +49,7 @@ import { teamGoalService, TeamGoal } from '../services/teamGoalService';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
+import { ImageCropModal } from '../components/ImageCropModal';
 import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock, ProfessionalAdvance, ProfessionalPayment } from '../types';
 import { toast } from 'sonner';
 import { format, parse, addDays, startOfDay, endOfDay, isToday } from 'date-fns';
@@ -59,6 +61,77 @@ interface PortalBarbeiroProps {
 
 export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [activeTab, setActiveTab] = useState<'agenda' | 'clientes' | 'comissao' | 'estoque' | 'perfil' | 'avaliacoes'>('agenda');
+  
+  // Real-time synced profile state
+  const [currentProfile, setCurrentProfile] = useState<UserProfile>(profile);
+  const [tempImageSrc, setTempImageSrc] = useState<string>('');
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
+  const [isSavingPhoto, setIsSavingPhoto] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync profile document with Firestore in real-time
+  useEffect(() => {
+    if (!profile?.uid) return;
+    const unsub = onSnapshot(doc(db, 'usuarios', profile.uid), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setCurrentProfile({
+          uid: snap.id,
+          ...data,
+          fotoUrl: data.fotoUrl || data.avatarUrl || data.photoURL || '',
+          avatarUrl: data.avatarUrl || data.fotoUrl || data.photoURL || ''
+        } as UserProfile);
+      }
+    });
+    return () => unsub();
+  }, [profile?.uid]);
+
+  const handleFotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+    if (!isJpeg) {
+      toast.error('Por favor, selecione uma imagem no formato JPEG/JPG.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setTempImageSrc(event.target.result as string);
+        setIsCropModalOpen(true);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleSaveCroppedPhoto = async (croppedBase64: string) => {
+    setIsCropModalOpen(false);
+    setIsSavingPhoto(true);
+    try {
+      await updateDoc(doc(db, 'usuarios', profile.uid), {
+        fotoUrl: croppedBase64,
+        avatarUrl: croppedBase64,
+        photoURL: croppedBase64,
+        updatedAt: serverTimestamp()
+      });
+      setCurrentProfile(prev => ({
+        ...prev,
+        fotoUrl: croppedBase64,
+        avatarUrl: croppedBase64,
+        photoURL: croppedBase64
+      }));
+      toast.success("Foto de perfil atualizada e sincronizada com sucesso!");
+    } catch (err) {
+      console.error("Erro ao atualizar foto do barbeiro:", err);
+      toast.error("Erro ao salvar foto de perfil.");
+    } finally {
+      setIsSavingPhoto(false);
+    }
+  };
   
   // Tab states: Agenda
   const { isSaaSAdminUser, setOverrideRole } = useAuth();
@@ -583,20 +656,27 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
         <div className="max-w-md mx-auto flex items-center justify-between relative z-10">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner uppercase overflow-hidden">
-              {profile.fotoUrl || profile.avatarUrl ? (
+            <div 
+              onClick={() => fileInputRef.current?.click()}
+              className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner uppercase overflow-hidden relative group cursor-pointer"
+              title="Toque para alterar foto de perfil"
+            >
+              {currentProfile.fotoUrl || currentProfile.avatarUrl ? (
                 <img 
-                  src={profile.fotoUrl || profile.avatarUrl} 
-                  alt={profile.nome} 
+                  src={currentProfile.fotoUrl || currentProfile.avatarUrl} 
+                  alt={currentProfile.nome} 
                   className="w-full h-full object-cover"
                 />
               ) : (
-                profile.nome.substring(0, 2)
+                currentProfile.nome.substring(0, 2)
               )}
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                <Camera size={14} />
+              </div>
             </div>
             <div>
               <p className="text-[10px] uppercase font-black tracking-widest text-indigo-300">Painel do Barbeiro</p>
-              <h2 className="text-lg font-black tracking-tight">{profile.nome}</h2>
+              <h2 className="text-lg font-black tracking-tight">{currentProfile.nome}</h2>
             </div>
           </div>
           <button 
@@ -1453,20 +1533,39 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
             {/* Detailed Professional Card */}
             <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm space-y-4">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center text-3xl font-black uppercase shadow-inner overflow-hidden">
-                  {profile.fotoUrl || profile.avatarUrl ? (
-                    <img 
-                      src={profile.fotoUrl || profile.avatarUrl} 
-                      alt={profile.nome} 
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    profile.nome.substring(0, 2)
-                  )}
+                <div className="relative group">
+                  <div 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-20 h-20 rounded-3xl bg-indigo-50 border-2 border-indigo-200 text-indigo-600 flex items-center justify-center text-3xl font-black uppercase shadow-inner overflow-hidden cursor-pointer hover:border-indigo-600 transition-all"
+                    title="Alterar foto de perfil"
+                  >
+                    {currentProfile.fotoUrl || currentProfile.avatarUrl ? (
+                      <img 
+                        src={currentProfile.fotoUrl || currentProfile.avatarUrl} 
+                        alt={currentProfile.nome} 
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      currentProfile.nome.substring(0, 2)
+                    )}
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white rounded-3xl">
+                      <Camera size={18} />
+                      <span className="text-[8px] font-black uppercase mt-1">Alterar</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="absolute -bottom-1 -right-1 bg-indigo-600 text-white p-1.5 rounded-xl shadow-md hover:bg-indigo-700 transition"
+                    title="Alterar Foto"
+                  >
+                    <Camera size={12} />
+                  </button>
                 </div>
+
                 <div>
-                  <h3 className="text-base font-black text-slate-800 leading-tight">{profile.nome}</h3>
-                  <p className="text-xs text-slate-400 font-semibold mt-0.5">{profile.email}</p>
+                  <h3 className="text-base font-black text-slate-800 leading-tight">{currentProfile.nome}</h3>
+                  <p className="text-xs text-slate-400 font-semibold mt-0.5">{currentProfile.email}</p>
                   
                   <div className="flex items-center gap-1 mt-1.5 text-xs text-slate-500 font-semibold">
                     <Star size={12} fill="currentColor" className="text-amber-500" />
@@ -1488,23 +1587,23 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400 font-semibold">Sua Comissão de Contrato</span>
                   <span className="text-indigo-600 font-black text-sm">
-                    {profile.percentual_comissao || profile.commission_percentage || 0}%
+                    {currentProfile.percentual_comissao || currentProfile.commission_percentage || 0}%
                   </span>
                 </div>
                 
-                {profile.especialidade && (
+                {currentProfile.especialidade && (
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400 font-semibold">Sua Especialidade Principal</span>
                     <span className="text-slate-700 font-extrabold">
-                      {profile.especialidade}
+                      {currentProfile.especialidade}
                     </span>
                   </div>
                 )}
 
-                {profile.telefone && (
+                {currentProfile.telefone && (
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400 font-semibold">Telefone de Contato</span>
-                    <span className="text-slate-700 font-extrabold">{profile.telefone}</span>
+                    <span className="text-slate-700 font-extrabold">{currentProfile.telefone}</span>
                   </div>
                 )}
               </div>
@@ -1769,6 +1868,23 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           }}
         />
       )}
+
+      {/* Hidden File Input for photo upload */}
+      <input 
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFotoFileSelect}
+        accept="image/jpeg,image/jpg"
+        className="hidden"
+      />
+
+      {/* Photo Crop Modal */}
+      <ImageCropModal 
+        isOpen={isCropModalOpen}
+        imageSrc={tempImageSrc}
+        onClose={() => setIsCropModalOpen(false)}
+        onCropComplete={handleSaveCroppedPhoto}
+      />
 
     </div>
   );

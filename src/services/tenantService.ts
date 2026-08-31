@@ -77,6 +77,7 @@ export interface TenantProfile {
     walletId?: string; // WalletId da subconta
     accountStatus?: string; // APPROVED, PENDING, etc.
     cpfCnpj?: string;
+    environment?: 'production' | 'sandbox';
     createdAt?: string;
   };
 

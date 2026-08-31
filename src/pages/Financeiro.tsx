@@ -20,6 +20,7 @@ import {
   AlertCircle,
   AlertTriangle,
   Loader2,
+  ChevronLeft,
   ChevronRight,
   ArrowRightLeft,
   Lock,
@@ -112,15 +113,117 @@ import {
   Cell 
 } from 'recharts';
 
+function PaginationControl({
+  currentPage,
+  totalItems,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+  pageSizeOptions = [10, 25, 50, 100]
+}: {
+  currentPage: number;
+  totalItems: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange?: (size: number) => void;
+  pageSizeOptions?: number[];
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(totalItems, currentPage * pageSize);
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-slate-50 border-t border-slate-100 rounded-b-2xl">
+      <div className="flex items-center gap-3 text-xs text-muted font-bold">
+        <span>Exibindo <strong className="text-primary font-black">{startItem}-{endItem}</strong> de <strong className="text-primary font-black">{totalItems}</strong></span>
+        {onPageSizeChange && (
+          <div className="flex items-center gap-1.5 ml-2">
+            <span className="text-[10px] uppercase tracking-wider text-slate-400">Por pág:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                onPageSizeChange(Number(e.target.value));
+                onPageChange(1);
+              }}
+              className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-black text-primary focus:outline-none focus:ring-1 focus:ring-accent shadow-2xs"
+            >
+              {pageSizeOptions.map((opt) => (
+                <option key={opt} value={opt}>{opt === 9999 ? 'Todos' : opt}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage <= 1}
+          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-2xs cursor-pointer flex items-center gap-1"
+        >
+          <ChevronLeft size={14} />
+          Anterior
+        </button>
+        
+        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+          let pageNum = i + 1;
+          if (totalPages > 5 && currentPage > 3) {
+            pageNum = Math.min(totalPages - 4 + i, currentPage - 2 + i);
+          }
+          return (
+            <button
+              key={pageNum}
+              onClick={() => onPageChange(pageNum)}
+              className={`w-8 h-8 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                currentPage === pageNum
+                  ? 'bg-primary text-white shadow-2xs'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {pageNum}
+            </button>
+          );
+        })}
+
+        <button
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage >= totalPages}
+          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-2xs cursor-pointer flex items-center gap-1"
+        >
+          Próximo
+          <ChevronRight size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
   const { tenantId, tenant } = useTenant();
   const currentTenantId = tenantId || tenant?.id || profile?.tenantId || getActiveTenantId();
-  const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'digital-account' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'digital-account' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new' | 'accounts-receivable'>('overview');
   const [dateRange, setDateRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
   });
+
+  // Estados de Paginação e Filtros
+  const [entriesPageSize, setEntriesPageSize] = useState(10);
+  const [entriesCurrentPage, setEntriesCurrentPage] = useState(1);
+  const [txFilterType, setTxFilterType] = useState<'all' | 'income' | 'expense'>('all');
+
+  const [cashHistoryPageSize, setCashHistoryPageSize] = useState(10);
+  const [cashHistoryCurrentPage, setCashHistoryCurrentPage] = useState(1);
+
+  const [clientPageSize, setClientPageSize] = useState(10);
+  const [clientCurrentPage, setClientCurrentPage] = useState(1);
+
+  const [subPageSize, setSubPageSize] = useState(10);
+  const [subCurrentPage, setSubCurrentPage] = useState(1);
+
+  const [receivablesPageSize, setReceivablesPageSize] = useState(10);
+  const [receivablesCurrentPage, setReceivablesCurrentPage] = useState(1);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
   const [isSangriaModalOpen, setIsSangriaModalOpen] = useState(false);
@@ -189,15 +292,23 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     if (activeSubTab) {
       const tabMap: Record<string, typeof activeTab> = {
         'financeiro-conta-digital': 'digital-account',
+        'financeiro-fluxo': 'overview',
+        'financeiro-dre': 'dre',
         'financeiro-caixa': 'daily-cash',
         'financeiro-historico': 'cash-history',
-        'financeiro-comissoes': 'commissions',
         'financeiro-movimentacoes': 'entries-exits',
+        'financeiro-entradas': 'entries-exits',
+        'financeiro-saidas': 'entries-exits',
         'financeiro-fiados': 'client-accounts',
         'financeiro-contas-receber': 'accounts-receivable-new',
         'financeiro-contas-pagar': 'accounts-payable',
-        'financeiro-fluxo': 'overview',
-        'financeiro-assinaturas': 'subscriptions'
+        'financeiro-cartoes': 'receivables',
+        'financeiro-recebiveis': 'receivables',
+        'financeiro-assinaturas': 'subscriptions',
+        'financeiro-comissoes': 'commissions',
+        'financeiro-estoque': 'inventory-finance',
+        'financeiro-formas-pagamento': 'payment-methods',
+        'financeiro-inconsistencias': 'inconsistencies'
       };
       
       const targetTab = tabMap[activeSubTab];
@@ -207,10 +318,12 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
 
       if (activeSubTab === 'financeiro-entradas') {
         setActiveTab('entries-exits');
+        setTxFilterType('income');
         setTransactionType('income');
         setIsTransactionModalOpen(true);
       } else if (activeSubTab === 'financeiro-saidas') {
         setActiveTab('entries-exits');
+        setTxFilterType('expense');
         setTransactionType('expense');
         setIsTransactionModalOpen(true);
       }
@@ -768,6 +881,26 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       title: 'Conta do Cliente (Fiados)',
       subtitle: 'Gestão de fiados, limites de débito e acerto de contas.'
     },
+    'accounts-receivable-new': {
+      title: 'Contas a Receber',
+      subtitle: 'Controle de duplicatas, vendas a prazo e títulos a receber.'
+    },
+    'accounts-receivable': {
+      title: 'Contas a Receber (Fiados)',
+      subtitle: 'Gestão de fiados em aberto e recuperação de crédito.'
+    },
+    'accounts-payable': {
+      title: 'Contas a Pagar',
+      subtitle: 'Controle de fornecedores, despesas fixas e vencimentos.'
+    },
+    'receivables': {
+      title: 'Cartões & Recebíveis',
+      subtitle: 'Liquidação de cartões de débito/crédito e previsão de repasses.'
+    },
+    'commissions': {
+      title: 'Comissões & Repasses',
+      subtitle: 'Cálculo de comissões por barbeiro, taxas e fechamento financeiro.'
+    },
     'inventory-finance': {
       title: 'Financeiro de Estoque',
       subtitle: 'Valoração de estoque, custo de mercadorias e investimentos em produtos.'
@@ -790,6 +923,109 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     title: 'Gestão Financeira',
     subtitle: 'Controle de entradas, saídas e fluxo de caixa estratégico.'
   };
+
+  const navGroups = [
+    {
+      title: 'Visão Geral & Fluxo',
+      items: [
+        ...(isAdmin || isGerente ? (tenant?.subscriptions_enabled === true ? [{
+          id: 'digital-account',
+          label: 'Conta Digital Asaas',
+          icon: <Landmark className="text-emerald-500" size={16} />,
+          badge: 'Online',
+          badgeColor: 'bg-emerald-100 text-emerald-700'
+        }] : []) : []),
+        {
+          id: 'overview',
+          label: 'Fluxo de Caixa',
+          icon: <PieChart size={16} />
+        },
+        {
+          id: 'dre',
+          label: 'DRE Gerencial',
+          icon: <BarChart3 size={16} />
+        }
+      ]
+    },
+    {
+      title: 'Operação de Caixa',
+      items: [
+        {
+          id: 'daily-cash',
+          label: 'Caixa do Dia',
+          icon: <Receipt size={16} />,
+          badge: currentCash ? 'Aberto' : 'Fechado',
+          badgeColor: currentCash ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+        },
+        {
+          id: 'cash-history',
+          label: 'Histórico de Caixas',
+          icon: <History size={16} />
+        },
+        {
+          id: 'entries-exits',
+          label: 'Entradas e Saídas',
+          icon: <ArrowRightLeft size={16} />
+        }
+      ]
+    },
+    {
+      title: 'Contas & Cobrança',
+      items: [
+        {
+          id: 'client-accounts',
+          label: 'Conta do Cliente (Fiado)',
+          icon: <User size={16} />
+        },
+        {
+          id: 'accounts-receivable-new',
+          label: 'Contas a Receber',
+          icon: <TrendingUp size={16} />
+        },
+        {
+          id: 'accounts-payable',
+          label: 'Contas a Pagar',
+          icon: <TrendingDown size={16} />
+        },
+        {
+          id: 'receivables',
+          label: 'Cartões & Recebíveis',
+          icon: <CreditCard size={16} />
+        },
+        ...(isAdmin || isGerente ? [{
+          id: 'subscriptions',
+          label: 'Clube de Assinaturas',
+          icon: <Sparkles className="text-purple-500" size={16} />,
+          badge: 'VIP',
+          badgeColor: 'bg-purple-100 text-purple-700'
+        }] : [])
+      ]
+    },
+    {
+      title: 'Profissionais & Estoque',
+      items: [
+        {
+          id: 'commissions',
+          label: 'Comissões & Repasses',
+          icon: <Briefcase size={16} />
+        },
+        {
+          id: 'inventory-finance',
+          label: 'Estoque Financeiro',
+          icon: <BarChart3 size={16} />
+        },
+        ...(isAdmin || isGerente ? [{
+          id: 'payment-methods',
+          label: 'Meios de Pagamento',
+          icon: <CreditCard size={16} />
+        }, {
+          id: 'inconsistencies',
+          label: 'Auditoria & Inconsistências',
+          icon: <AlertTriangle size={16} />
+        }] : [])
+      ]
+    }
+  ];
 
   return (
     <div className="space-y-6 pb-10">
@@ -874,38 +1110,81 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         </div>
       </header>
 
-      {/* Tabs Navigation */}
-      <div className="flex border-b border-slate-200 overflow-x-auto custom-scrollbar no-scrollbar gap-2 py-1 scroll-smooth">
-        {(isAdmin || isGerente) && tenant?.subscriptions_enabled === true && (
-          <TabButton active={activeTab === 'digital-account'} onClick={() => setActiveTab('digital-account')} label="Conta Digital Asaas" icon={<Landmark className="text-emerald-500 scale-110" size={16} />} />
-        )}
-        <TabButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} label="Fluxo de Caixa" icon={<PieChart size={16} />} />
-        <TabButton active={activeTab === 'dre'} onClick={() => setActiveTab('dre')} label="DRE Gerencial" icon={<BarChart3 size={16} />} />
-        <TabButton active={activeTab === 'daily-cash'} onClick={() => setActiveTab('daily-cash')} label="Caixa" icon={<Receipt size={16} />} />
-        <TabButton active={activeTab === 'cash-history'} onClick={() => setActiveTab('cash-history')} label="Histórico de Caixas" icon={<History size={16} />} />
-        <TabButton active={activeTab === 'entries-exits'} onClick={() => setActiveTab('entries-exits')} label="Entradas e Saídas" icon={<ArrowRightLeft size={16} />} />
-        <TabButton active={activeTab === 'client-accounts'} onClick={() => setActiveTab('client-accounts')} label="Conta do Cliente" icon={<User size={16} />} />
-        <TabButton active={activeTab === 'inventory-finance'} onClick={() => setActiveTab('inventory-finance')} label="Estoque" icon={<BarChart3 size={16} />} />
-        {(isAdmin || isGerente) && (
-          <TabButton active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} label="Assinaturas" icon={<Sparkles className="text-purple-500 scale-110" size={16} />} />
-        )}
-        {(isAdmin || isGerente) && (
-          <TabButton active={activeTab === 'payment-methods'} onClick={() => setActiveTab('payment-methods')} label="Métodos de Pagamento" icon={<CreditCard size={16} />} />
-        )}
-        {(isAdmin || isGerente) && (
-          <TabButton active={activeTab === 'inconsistencies'} onClick={() => setActiveTab('inconsistencies')} label="Inconsistências" icon={<AlertTriangle size={16} />} />
-        )}
+      {/* Mobile Submenu Selector */}
+      <div className="lg:hidden bg-white border border-slate-200 rounded-2xl p-3 shadow-sm">
+        <label className="text-[10px] font-black uppercase tracking-wider text-muted block mb-1.5">Módulo Financeiro</label>
+        <select
+          value={activeTab}
+          onChange={(e) => setActiveTab(e.target.value as any)}
+          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+        >
+          {navGroups.map((group) => (
+            <optgroup key={group.title} label={group.title}>
+              {group.items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
       </div>
 
-      {/* Tab Content */}
-      <div className="min-h-[500px]">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-32 gap-4">
-            <Loader2 className="animate-spin text-accent" size={48} />
-            <p className="text-muted font-bold animate-pulse">Processando inteligência financeira...</p>
+      {/* Main Layout: Left Vertical Navigation (Desktop) + Right Content */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        {/* Vertical Submenu Navigation Panel */}
+        <aside className="hidden lg:block lg:col-span-3 sticky top-6 space-y-6">
+          <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-sm space-y-5">
+            {navGroups.map((group) => (
+              <div key={group.title} className="space-y-1">
+                <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  {group.title}
+                </div>
+                <div className="space-y-0.5">
+                  {group.items.map((item) => {
+                    const isActive = activeTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveTab(item.id as any)}
+                        className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                          isActive
+                            ? 'bg-primary text-white shadow-md shadow-primary/10'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-primary'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 truncate">
+                          <span className={isActive ? 'text-white' : 'text-slate-400'}>
+                            {item.icon}
+                          </span>
+                          <span className="truncate">{item.label}</span>
+                        </div>
+                        {item.badge && (
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${
+                            isActive ? 'bg-white/20 text-white' : (item.badgeColor || 'bg-slate-100 text-slate-600')
+                          }`}>
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
-        ) : (
-          <AnimatePresence mode="wait">
+        </aside>
+
+        {/* Tab Content (9 Cols on desktop) */}
+        <main className="lg:col-span-9 min-w-0">
+          <div className="min-h-[500px]">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-32 gap-4 bg-white border border-slate-200 rounded-3xl">
+                <Loader2 className="animate-spin text-accent" size={48} />
+                <p className="text-muted font-bold animate-pulse">Processando inteligência financeira...</p>
+              </div>
+            ) : (
+              <AnimatePresence mode="wait">
             {activeTab === 'digital-account' && (
               <motion.div 
                 key="digital-account"
@@ -1447,15 +1726,15 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                   </div>
 
                   <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-2xl p-1.5 shadow-sm">
-                    {['all', 'income', 'expense'].map((filterType) => (
+                    {(['all', 'income', 'expense'] as const).map((filterType) => (
                       <button
                         key={filterType}
                         onClick={() => {
-                          (window as any)._txFilterType = filterType;
-                          loadData();
+                          setTxFilterType(filterType);
+                          setEntriesCurrentPage(1);
                         }}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                          ((window as any)._txFilterType || 'all') === filterType
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          txFilterType === filterType
                             ? 'bg-primary text-white' 
                             : 'text-muted hover:text-primary bg-transparent'
                         }`}
@@ -1481,11 +1760,11 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                     <tbody className="divide-y divide-slate-50">
                       {transactions
                         .filter(t => {
-                          const currentF = (window as any)._txFilterType || 'all';
-                          if (currentF === 'income') return t.type === 'income';
-                          if (currentF === 'expense') return t.type === 'expense';
+                          if (txFilterType === 'income') return t.type === 'income';
+                          if (txFilterType === 'expense') return t.type === 'expense';
                           return true;
                         })
+                        .slice((entriesCurrentPage - 1) * entriesPageSize, entriesCurrentPage * entriesPageSize)
                         .map((t, index) => (
                         <tr key={`trans-rows-${t.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                           <td className="px-8 py-6">
@@ -1521,6 +1800,21 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                     </tbody>
                   </table>
                 </div>
+
+                <PaginationControl
+                  currentPage={entriesCurrentPage}
+                  totalItems={transactions.filter(t => {
+                    if (txFilterType === 'income') return t.type === 'income';
+                    if (txFilterType === 'expense') return t.type === 'expense';
+                    return true;
+                  }).length}
+                  pageSize={entriesPageSize}
+                  onPageChange={setEntriesCurrentPage}
+                  onPageSizeChange={(size) => {
+                    setEntriesPageSize(size);
+                    setEntriesCurrentPage(1);
+                  }}
+                />
               </motion.div>
             )}
 
@@ -1660,7 +1954,9 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {cashHistory.map((cash, index) => (
+                      {cashHistory
+                        .slice((cashHistoryCurrentPage - 1) * cashHistoryPageSize, cashHistoryCurrentPage * cashHistoryPageSize)
+                        .map((cash, index) => (
                         <tr key={`cash-hist-${cash.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                           <td className="px-8 py-6 text-sm font-bold text-primary">{format(new Date(cash.date), 'dd/MM/yyyy')}</td>
                           <td className="px-8 py-6">
@@ -1698,9 +1994,27 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                           )}
                         </tr>
                       ))}
+                      {cashHistory.length === 0 && (
+                        <tr>
+                          <td colSpan={(isAdmin || isGerente) ? 9 : 8} className="text-center py-16 text-muted italic text-sm">
+                            Nenhum histórico de caixa encontrado.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
+
+                <PaginationControl
+                  currentPage={cashHistoryCurrentPage}
+                  totalItems={cashHistory.length}
+                  pageSize={cashHistoryPageSize}
+                  onPageChange={setCashHistoryCurrentPage}
+                  onPageSizeChange={(size) => {
+                    setCashHistoryPageSize(size);
+                    setCashHistoryCurrentPage(1);
+                  }}
+                />
               </motion.div>
             )}
 
@@ -1775,6 +2089,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                      <tbody className="divide-y divide-slate-50">
                        {transactions
                         .filter(t => (t.paymentMethod === 'credito' || t.paymentMethod === 'debito'))
+                        .slice((receivablesCurrentPage - 1) * receivablesPageSize, receivablesCurrentPage * receivablesPageSize)
                         .map((t, index) => (
                           <tr key={`receivable-${t.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                             <td className="px-8 py-6">
@@ -1813,9 +2128,27 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                             </td>
                           </tr>
                         ))}
+                        {transactions.filter(t => (t.paymentMethod === 'credito' || t.paymentMethod === 'debito')).length === 0 && (
+                          <tr>
+                            <td colSpan={8} className="text-center py-16 text-muted italic text-sm">
+                              Nenhum recebível de cartão registrado.
+                            </td>
+                          </tr>
+                        )}
                      </tbody>
                    </table>
                 </div>
+
+                <PaginationControl
+                  currentPage={receivablesCurrentPage}
+                  totalItems={transactions.filter(t => (t.paymentMethod === 'credito' || t.paymentMethod === 'debito')).length}
+                  pageSize={receivablesPageSize}
+                  onPageChange={setReceivablesCurrentPage}
+                  onPageSizeChange={(size) => {
+                    setReceivablesPageSize(size);
+                    setReceivablesCurrentPage(1);
+                  }}
+                />
               </motion.div>
             )}
 
@@ -1985,6 +2318,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                              (clientFilter === 'debtors' && (c.balance || 0) < 0) || 
                              (clientFilter === 'creditors' && (c.balance || 0) > 0))
                           )
+                          .slice((clientCurrentPage - 1) * clientPageSize, clientCurrentPage * clientPageSize)
                           .map((client, index) => (
                           <tr key={`client-row-${client.uid || index}-${index}`} className="hover:bg-slate-50/50 transition-colors group">
                             <td className="px-8 py-6">
@@ -2013,7 +2347,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                               <div className="flex items-center justify-center gap-2">
                                 <button 
                                   onClick={() => setSelectedClientAccount(client.uid)}
-                                  className="p-2 text-muted hover:text-accent transition-all bg-white rounded-lg border border-slate-100 shadow-sm"
+                                  className="p-2 text-muted hover:text-accent transition-all bg-white rounded-lg border border-slate-100 shadow-sm cursor-pointer"
                                   title="Ver Detalhes Financeiros"
                                 >
                                   <Wallet size={16} />
@@ -2025,6 +2359,22 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                       </tbody>
                     </table>
                   </div>
+
+                  <PaginationControl
+                    currentPage={clientCurrentPage}
+                    totalItems={clients.filter(c => 
+                      c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) &&
+                      (clientFilter === 'all' || 
+                       (clientFilter === 'debtors' && (c.balance || 0) < 0) || 
+                       (clientFilter === 'creditors' && (c.balance || 0) > 0))
+                    ).length}
+                    pageSize={clientPageSize}
+                    onPageChange={setClientCurrentPage}
+                    onPageSizeChange={(size) => {
+                      setClientPageSize(size);
+                      setClientCurrentPage(1);
+                    }}
+                  />
                 </div>
               </motion.div>
             )}
@@ -2187,133 +2537,150 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                           );
                         }
 
-                        return filteredSubs.map((sub, idx) => {
-                          const plan = subscriptionPlans.find(p => p.id === sub.plano_id);
-                          const totalHaircuts = Number(plan?.haircutsPerMonth || 0);
-                          const totalBeards = Number(plan?.beardsPerMonth || 0);
-                          const hairProgress = totalHaircuts > 0 ? (Number(sub.haircutsUsed || 0) / totalHaircuts) * 100 : 0;
-                          const beardProgress = totalBeards > 0 ? (Number(sub.beardsUsed || 0) / totalBeards) * 100 : 0;
+                        const paginatedSubs = filteredSubs.slice((subCurrentPage - 1) * subPageSize, subCurrentPage * subPageSize);
 
-                          return (
-                            <div 
-                              key={`sub-member-${sub.id || idx}-${idx}`} 
-                              className="p-5 border border-slate-100 rounded-2xl bg-white hover:border-purple-200 hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
-                            >
-                              <div className="space-y-3 flex-1">
-                                <div className="flex items-center flex-wrap gap-2">
-                                  <span className="font-bold text-primary text-sm md:text-base leading-tight">
-                                    {sub.cliente_name}
-                                  </span>
-                                  <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded-full">
-                                    {sub.planName || "Plano Ativo"}
-                                  </span>
-                                  {sub.autoRenew && (
-                                    <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded" title="Renovação automática ativa">
-                                      Auto-Renova
-                                    </span>
-                                  )}
-                                  
-                                  {/* Badges de Status */}
-                                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ml-auto md:ml-0 ${
-                                    sub.status === 'active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
-                                    sub.status === 'paused' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
-                                    sub.status === 'canceled' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
-                                    'bg-slate-100 text-slate-500'
-                                  }`}>
-                                    {sub.status === 'active' ? 'Ativa' :
-                                     sub.status === 'paused' ? 'Pausada' :
-                                     sub.status === 'canceled' ? 'Cancelada' : 'Expirada'}
-                                  </span>
-                                </div>
+                        return (
+                          <>
+                            {paginatedSubs.map((sub, idx) => {
+                              const plan = subscriptionPlans.find(p => p.id === sub.plano_id);
+                              const totalHaircuts = Number(plan?.haircutsPerMonth || 0);
+                              const totalBeards = Number(plan?.beardsPerMonth || 0);
+                              const hairProgress = totalHaircuts > 0 ? (Number(sub.haircutsUsed || 0) / totalHaircuts) * 100 : 0;
+                              const beardProgress = totalBeards > 0 ? (Number(sub.beardsUsed || 0) / totalBeards) * 100 : 0;
 
-                                {/* Progress bars: Limits of consumption */}
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                                  {totalHaircuts > 0 && (
-                                    <div className="space-y-1">
-                                      <div className="flex justify-between text-[11px] font-semibold text-slate-500">
-                                        <span>Cortes no Mês</span>
-                                        <span className="font-bold text-slate-700">{sub.haircutsUsed} de {totalHaircuts}</span>
-                                      </div>
-                                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                        <div 
-                                          className="h-full bg-purple-600 rounded-full transition-all duration-300" 
-                                          style={{ width: `${Math.min(hairProgress, 100)}%` }}
-                                        />
-                                      </div>
+                              return (
+                                <div 
+                                  key={`sub-member-${sub.id || idx}-${idx}`} 
+                                  className="p-5 border border-slate-100 rounded-2xl bg-white hover:border-purple-200 hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                                >
+                                  <div className="space-y-3 flex-1">
+                                    <div className="flex items-center flex-wrap gap-2">
+                                      <span className="font-bold text-primary text-sm md:text-base leading-tight">
+                                        {sub.cliente_name}
+                                      </span>
+                                      <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded-full">
+                                        {sub.planName || "Plano Ativo"}
+                                      </span>
+                                      {sub.autoRenew && (
+                                        <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded" title="Renovação automática ativa">
+                                          Auto-Renova
+                                        </span>
+                                      )}
+                                      
+                                      {/* Badges de Status */}
+                                      <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ml-auto md:ml-0 ${
+                                        sub.status === 'active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                                        sub.status === 'paused' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
+                                        sub.status === 'canceled' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
+                                        'bg-slate-100 text-slate-500'
+                                      }`}>
+                                        {sub.status === 'active' ? 'Ativa' :
+                                         sub.status === 'paused' ? 'Pausada' :
+                                         sub.status === 'canceled' ? 'Cancelada' : 'Expirada'}
+                                      </span>
                                     </div>
-                                  )}
 
-                                  {totalBeards > 0 && (
-                                    <div className="space-y-1">
-                                      <div className="flex justify-between text-[11px] font-semibold text-slate-500">
-                                        <span>Barbas no Mês</span>
-                                        <span className="font-bold text-slate-700">{sub.beardsUsed} de {totalBeards}</span>
-                                      </div>
-                                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                        <div 
-                                          className="h-full bg-indigo-600 rounded-full transition-all duration-300" 
-                                          style={{ width: `${Math.min(beardProgress, 100)}%` }}
-                                        />
-                                      </div>
+                                    {/* Progress bars: Limits of consumption */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                                      {totalHaircuts > 0 && (
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+                                            <span>Cortes no Mês</span>
+                                            <span className="font-bold text-slate-700">{sub.haircutsUsed} de {totalHaircuts}</span>
+                                          </div>
+                                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                            <div 
+                                              className="h-full bg-purple-600 rounded-full transition-all duration-300" 
+                                              style={{ width: `${Math.min(hairProgress, 100)}%` }}
+                                            />
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {totalBeards > 0 && (
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+                                            <span>Barbas no Mês</span>
+                                            <span className="font-bold text-slate-700">{sub.beardsUsed} de {totalBeards}</span>
+                                          </div>
+                                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                            <div 
+                                              className="h-full bg-indigo-600 rounded-full transition-all duration-300" 
+                                              style={{ width: `${Math.min(beardProgress, 100)}%` }}
+                                            />
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
+
+                                    <div className="flex items-center gap-4 text-xs text-slate-400 font-semibold">
+                                      <span>Vencimento: <span className="font-bold text-slate-600">{sub.endDate ? format(new Date(sub.endDate + 'T00:00:00'), 'dd/MM/yyyy') : 'N/A'}</span></span>
+                                      <span>Início: <span className="font-bold text-slate-500">{sub.startDate ? format(new Date(sub.startDate + 'T00:00:00'), 'dd/MM/yyyy') : 'N/A'}</span></span>
+                                    </div>
+                                  </div>
+
+                                  {/* Interactive Actions bar */}
+                                  <div className="flex md:flex-col items-stretch justify-center gap-2 pl-0 md:pl-4 border-t md:border-t-0 md:border-l border-slate-100 pt-3 md:pt-0">
+                                    {sub.status === 'active' && (
+                                      <button
+                                        onClick={() => setSelectedSubForUsage(sub)}
+                                        className="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1 active:scale-95 shadow-inner cursor-pointer"
+                                      >
+                                        <Activity size={14} />
+                                        Lançar Uso
+                                      </button>
+                                    )}
+
+                                    <div className="flex gap-1 justify-end">
+                                      {sub.status === 'active' ? (
+                                        <button
+                                          onClick={() => handleUpdateStatus(sub.id, 'paused')}
+                                          className="p-2 hover:bg-amber-50 text-amber-600 hover:text-amber-700 rounded-xl transition-all border border-slate-100 active:scale-95 flex-1 flex justify-center items-center font-bold cursor-pointer"
+                                          title="Pausar Temporariamente"
+                                        >
+                                          <Pause size={14} />
+                                        </button>
+                                      ) : (sub.status === 'paused' || sub.status === 'canceled') ? (
+                                        <button
+                                          onClick={() => handleUpdateStatus(sub.id, 'active')}
+                                          className="p-2 hover:bg-emerald-50 text-emerald-600 hover:text-emerald-700 rounded-xl transition-all border border-slate-100 active:scale-95 flex-1 flex justify-center items-center font-bold cursor-pointer"
+                                          title="Reativar Assinatura"
+                                        >
+                                          <Play size={14} />
+                                        </button>
+                                      ) : null}
+
+                                      {sub.status !== 'canceled' && (
+                                        <button
+                                          onClick={() => {
+                                            if (confirm("Tem certeza que deseja cancelar em definitivo esta assinatura? O cliente perderá acesso aos limites vip de consumo imediatamente.")) {
+                                              handleUpdateStatus(sub.id, 'canceled');
+                                            }
+                                          }}
+                                          className="p-2 hover:bg-rose-50 text-rose-500 hover:text-rose-700 rounded-xl transition-all border border-slate-100 active:scale-95 flex-1 flex justify-center items-center font-bold cursor-pointer"
+                                          title="Cancelar Assinatura"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
-
-                                <div className="flex items-center gap-4 text-xs text-slate-400 font-semibold">
-                                  <span>Vencimento: <span className="font-bold text-slate-600">{sub.endDate ? format(new Date(sub.endDate + 'T00:00:00'), 'dd/MM/yyyy') : 'N/A'}</span></span>
-                                  <span>Início: <span className="font-bold text-slate-500">{sub.startDate ? format(new Date(sub.startDate + 'T00:00:00'), 'dd/MM/yyyy') : 'N/A'}</span></span>
-                                </div>
-                              </div>
-
-                              {/* Interactive Actions bar */}
-                              <div className="flex md:flex-col items-stretch justify-center gap-2 pl-0 md:pl-4 border-t md:border-t-0 md:border-l border-slate-100 pt-3 md:pt-0">
-                                {sub.status === 'active' && (
-                                  <button
-                                    onClick={() => setSelectedSubForUsage(sub)}
-                                    className="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1 active:scale-95 shadow-inner"
-                                  >
-                                    <Activity size={14} />
-                                    Lançar Uso
-                                  </button>
-                                )}
-
-                                <div className="flex gap-1 justify-end">
-                                  {sub.status === 'active' ? (
-                                    <button
-                                      onClick={() => handleUpdateStatus(sub.id, 'paused')}
-                                      className="p-2 hover:bg-amber-50 text-amber-600 hover:text-amber-700 rounded-xl transition-all border border-slate-100 active:scale-95 flex-1 flex justify-center items-center font-bold"
-                                      title="Pausar Temporariamente"
-                                    >
-                                      <Pause size={14} />
-                                    </button>
-                                  ) : (sub.status === 'paused' || sub.status === 'canceled') ? (
-                                    <button
-                                      onClick={() => handleUpdateStatus(sub.id, 'active')}
-                                      className="p-2 hover:bg-emerald-50 text-emerald-600 hover:text-emerald-700 rounded-xl transition-all border border-slate-100 active:scale-95 flex-1 flex justify-center items-center font-bold"
-                                      title="Reativar Assinatura"
-                                    >
-                                      <Play size={14} />
-                                    </button>
-                                  ) : null}
-
-                                  {sub.status !== 'canceled' && (
-                                    <button
-                                      onClick={() => {
-                                        if (confirm("Tem certeza que deseja cancelar em definitivo esta assinatura? O cliente perderá acesso aos limites vip de consumo imediatamente.")) {
-                                          handleUpdateStatus(sub.id, 'canceled');
-                                        }
-                                      }}
-                                      className="p-2 hover:bg-rose-50 text-rose-500 hover:text-rose-700 rounded-xl transition-all border border-slate-100 active:scale-95 flex-1 flex justify-center items-center font-bold"
-                                      title="Cancelar Assinatura"
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        });
+                              );
+                            })}
+                            
+                            <PaginationControl
+                              currentPage={subCurrentPage}
+                              totalItems={filteredSubs.length}
+                              pageSize={subPageSize}
+                              onPageChange={setSubCurrentPage}
+                              onPageSizeChange={(size) => {
+                                setSubPageSize(size);
+                                setSubCurrentPage(1);
+                              }}
+                            />
+                          </>
+                        );
                       })()}
                     </div>
                   </div>
@@ -2793,9 +3160,11 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 </div>
               </motion.div>
             )}
-          </AnimatePresence>
-        )}
-      </div>
+            </AnimatePresence>
+          )}
+        </div>
+      </main>
+    </div>
 
       {/* Modals */}
       <AnimatePresence>
@@ -3910,6 +4279,7 @@ function CashMovementList({ caixaId }: { caixaId: string }) {
   const [movements, setMovements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedMovement, setSelectedMovement] = useState<any | null>(null);
+  const [displayLimit, setDisplayLimit] = useState<number>(10);
 
   useEffect(() => {
     const unsubscribe = cashService.subscribeToMovementsByCashId(caixaId, (data) => {
@@ -3921,9 +4291,33 @@ function CashMovementList({ caixaId }: { caixaId: string }) {
 
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin text-accent" /></div>;
 
+  const visibleMovements = displayLimit >= 9999 ? movements : movements.slice(0, displayLimit);
+
   return (
     <div className="space-y-4">
-      {movements.map((m, index) => (
+      {/* Limit / Filter selector */}
+      <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+        <span className="text-xs text-muted font-bold">
+          Mostrando <strong className="text-primary">{visibleMovements.length}</strong> de <strong className="text-primary">{movements.length}</strong> movimentações
+        </span>
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+          {[10, 25, 50, 9999].map((limit) => (
+            <button
+              key={limit}
+              onClick={() => setDisplayLimit(limit)}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase transition-all cursor-pointer ${
+                displayLimit === limit
+                  ? 'bg-white text-primary shadow-xs'
+                  : 'text-slate-500 hover:text-primary'
+              }`}
+            >
+              {limit === 9999 ? 'Todas' : `${limit}`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {visibleMovements.map((m, index) => (
         <div 
           key={`movement-${m.id || index}-${index}`} 
           onClick={() => setSelectedMovement(m)}
@@ -3947,6 +4341,18 @@ function CashMovementList({ caixaId }: { caixaId: string }) {
           </div>
         </div>
       ))}
+      
+      {movements.length > displayLimit && displayLimit < 9999 && (
+        <div className="pt-2 flex justify-center">
+          <button
+            onClick={() => setDisplayLimit((prev) => prev + 10)}
+            className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-primary text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-2xs"
+          >
+            <span>Carregar mais movimentações (+10)</span>
+          </button>
+        </div>
+      )}
+
       {movements.length === 0 && (
         <div className="text-center py-10 text-muted italic text-sm">Nenhuma movimentação neste caixa.</div>
       )}

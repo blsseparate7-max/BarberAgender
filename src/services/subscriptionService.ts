@@ -646,6 +646,7 @@ export const subscriptionService = {
       }
     } catch (e: any) {
       console.warn("Erro de conexão ao gerar cobrança Asaas:", e);
+      throw e;
     }
 
     return { id: subId, paymentUrl, pixCopiaECola, pixQrCodeUrl };

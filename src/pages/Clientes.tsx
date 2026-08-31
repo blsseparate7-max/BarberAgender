@@ -73,6 +73,14 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
 
+const formatCpfMask = (value: string) => {
+  const digits = value.replace(/\D/g, '').slice(0, 11);
+  if (digits.length > 9) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+  if (digits.length > 6) return digits.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+  if (digits.length > 3) return digits.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+  return digits;
+};
+
 export function Clientes() {
   const { tenantId } = useTenant();
   const [customers, setCustomers] = useState<UserProfile[]>([]);
@@ -888,6 +896,7 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
   const [formData, setFormData] = useState({
     nome: customer?.nome || '',
     email: customer?.email || '',
+    cpf: customer?.cpf || (customer as any)?.cpfCnpj || '',
     telefone: customer?.telefone || customer?.phone || '',
     birthDate: customer?.birthDate || '',
     address: customer?.address || '',
@@ -899,13 +908,30 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
 
   const { execute: handleSubmit, isLoading: isSaving } = useAsyncAction(async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.email || !formData.email.trim() || !formData.email.includes('@')) {
+      toast.error("O E-mail é obrigatório para cadastrar o cliente (necessário para notificações e cobranças).");
+      return;
+    }
+
+    const cleanCpf = (formData.cpf || '').replace(/\D/g, '');
+    if (cleanCpf && cleanCpf.length !== 11) {
+      toast.error("O CPF deve conter exatamente 11 dígitos numéricos.");
+      return;
+    }
+
     try {
       if (customer) {
-        await userService.updateUserProfile(customer.uid, formData);
+        await userService.updateUserProfile(customer.uid, {
+          ...formData,
+          cpf: cleanCpf || null,
+          cpfCnpj: cleanCpf || null
+        });
         toast.success("Cliente atualizado com sucesso!");
       } else {
         await userService.createUser({
           ...formData,
+          cpf: cleanCpf || null,
+          cpfCnpj: cleanCpf || null,
           tipo: 'cliente',
           saldo_atual: 0,
           total_gasto: 0,
@@ -941,7 +967,7 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
         <form onSubmit={handleSubmit} className="p-8 overflow-y-auto space-y-8 custom-scrollbar">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Nome Completo</label>
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Nome Completo *</label>
               <input 
                 type="text"
                 required
@@ -952,13 +978,25 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">E-mail</label>
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">E-mail * (Obrigatório para Asaas)</label>
               <input 
                 type="email"
+                required
                 value={formData.email}
                 onChange={(e) => setFormData({...formData, email: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                placeholder="email@exemplo.com (Opcional)"
+                placeholder="email@exemplo.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">CPF (Obrigatório para Assinaturas)</label>
+              <input 
+                type="text"
+                maxLength={14}
+                value={formData.cpf}
+                onChange={(e) => setFormData({...formData, cpf: formatCpfMask(e.target.value)})}
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner font-mono"
+                placeholder="000.000.000-00"
               />
             </div>
             <div className="space-y-2">
@@ -972,7 +1010,7 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
                 placeholder="(00) 00000-0000"
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Data de Nascimento</label>
               <input 
                 type="date"

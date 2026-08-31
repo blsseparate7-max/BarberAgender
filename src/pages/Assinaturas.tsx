@@ -184,6 +184,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [assignActivationType, setAssignActivationType] = useState<'manual' | 'asaas'>('manual');
   const [assignSelectedClientId, setAssignSelectedClientId] = useState<string>('');
   const [assignClientCpf, setAssignClientCpf] = useState<string>('');
+  const [assignClientEmail, setAssignClientEmail] = useState<string>('');
 
   const isValidCPF = (cpf: string) => {
     const clean = cpf.replace(/\D/g, '');
@@ -627,6 +628,12 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const autoRenew = formData.get('autoRenew') === 'on';
 
     if (activationType === 'asaas') {
+      const rawEmail = assignClientEmail.trim() || client.email || '';
+      if (!rawEmail || !rawEmail.includes('@')) {
+        toast.error("O E-mail do cliente é obrigatório para cobranças via Asaas. Por favor, informe um e-mail válido.");
+        return;
+      }
+
       const rawCpf = assignClientCpf || (formData.get('clientCpf') as string) || client.cpf || (client as any).cpfCnpj || '';
       const cleanCpf = rawCpf.replace(/\D/g, '');
 
@@ -640,53 +647,61 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         return;
       }
 
-      // Salva o CPF no documento do cliente no Firestore se ainda não estiver salvo ou se tiver mudado
+      // Salva CPF e E-mail no documento do cliente no Firestore se ainda não estiver salvo ou se tiver mudado
       if (client.uid) {
         try {
           await updateDoc(doc(db, 'usuarios', client.uid), {
+            email: rawEmail,
             cpf: cleanCpf,
             cpfCnpj: cleanCpf,
             updatedAt: serverTimestamp()
           });
+          client.email = rawEmail;
           client.cpf = cleanCpf;
           (client as any).cpfCnpj = cleanCpf;
         } catch (e) {
-          console.warn("Aviso ao atualizar CPF do cliente em Assinaturas:", e);
+          console.warn("Aviso ao atualizar dados do cliente em Assinaturas:", e);
         }
       }
 
       const billingType = (formData.get('billingType') as 'PIX' | 'CREDIT_CARD') || 'PIX';
 
-      const res = await subscriptionService.createAsaasSubscription({
-        cliente_id: client.uid,
-        cliente_name: client.nome,
-        plano_id: selectedPlan.id,
-        ownerEmail: client.email || '',
-        ownerCpfCnpj: cleanCpf,
-        billingType
-      });
-
-      toast.success(`Assinatura via Asaas gerada como pendente para ${client.nome}!`);
-      setShowAssignModal(false);
-      setAssignSelectedClientId('');
-      setAssignClientCpf('');
-      loadData();
-
-      if (res) {
-        setCreatedChargeData({
-          id: res.id,
-          paymentUrl: res.paymentUrl,
-          pixCopiaECola: res.pixCopiaECola,
-          pixQrCodeUrl: res.pixQrCodeUrl,
-          planName: selectedPlan.name,
-          price: selectedPlan.price,
-          clientName: client.nome,
-          status: 'pending',
-          billingType: billingType
+      try {
+        const res = await subscriptionService.createAsaasSubscription({
+          cliente_id: client.uid,
+          cliente_name: client.nome,
+          plano_id: selectedPlan.id,
+          ownerEmail: rawEmail,
+          ownerCpfCnpj: cleanCpf,
+          billingType
         });
-        setShowCreatedChargeModal(true);
+
+        toast.success(`Assinatura via Asaas gerada com sucesso para ${client.nome}!`);
+        setShowAssignModal(false);
+        setAssignSelectedClientId('');
+        setAssignClientCpf('');
+        setAssignClientEmail('');
+        loadData();
+
+        if (res) {
+          setCreatedChargeData({
+            id: res.id,
+            paymentUrl: res.paymentUrl,
+            pixCopiaECola: res.pixCopiaECola,
+            pixQrCodeUrl: res.pixQrCodeUrl,
+            planName: selectedPlan.name,
+            price: selectedPlan.price,
+            clientName: client.nome,
+            status: 'pending',
+            billingType: billingType
+          });
+          setShowCreatedChargeModal(true);
+        }
+        setSelectedPlan(null);
+      } catch (err: any) {
+        console.error("Erro ao gerar assinatura Asaas:", err);
+        toast.error(err.message || "Erro ao conectar com Asaas para gerar cobrança.");
       }
-      setSelectedPlan(null);
     } else {
       setComandaInitialData({
         cliente_id: client.uid,
@@ -3908,6 +3923,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       const c = clients.find(cl => cl.uid === id);
                       const existingCpf = c?.cpf || (c as any)?.cpfCnpj || '';
                       setAssignClientCpf(formatCpfMask(existingCpf));
+                      setAssignClientEmail(c?.email || '');
                     }}
                     className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
                   >
@@ -3943,6 +3959,24 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     <div>
                       <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Cobrança Online):</p>
                       <p className="text-[11px] mt-0.5">A assinatura é criada como <strong className="text-purple-900 font-extrabold">pendente</strong> e é liberada quando o cliente conclui o Pix ou Cartão de Crédito.</p>
+                    </div>
+
+                    <div className="space-y-1 text-left">
+                      <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">
+                        E-mail do Cliente (Obrigatório Asaas)
+                      </label>
+                      <input 
+                        type="email" 
+                        name="clientEmail" 
+                        value={assignClientEmail}
+                        onChange={(e) => setAssignClientEmail(e.target.value)}
+                        placeholder="cliente@email.com" 
+                        className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
+                        required
+                      />
+                      <p className="text-[10px] text-purple-700 font-medium mt-1">
+                        Necessário para registrar o pagador e enviar o comprovante de pagamento no Asaas.
+                      </p>
                     </div>
 
                     <div className="space-y-1 text-left">

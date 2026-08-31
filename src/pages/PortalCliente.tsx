@@ -1107,6 +1107,10 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
           toast.error("Por favor, informe um WhatsApp válido com DDD.");
           return;
         }
+        if (!guestEmail.trim() || !guestEmail.includes('@')) {
+          toast.error("Por favor, informe um e-mail válido.");
+          return;
+        }
         if (!guestPassword || guestPassword.length < 6) {
           toast.error("Defina uma senha com no mínimo 6 dígitos para acompanhar seu horário.");
           return;
@@ -2405,7 +2409,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
                               <div>
                                 <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
-                                  E-mail (Opcional)
+                                  Seu E-mail * (Obrigatório)
                                 </label>
                                 <input
                                   type="email"

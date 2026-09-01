@@ -236,6 +236,7 @@ export interface Appointment {
   tenantId?: string;
   comanda_id?: string;
   comanda_number?: string;
+  isSubscription?: boolean;
   createdAt: any;
   updatedAt: any;
 }
@@ -453,6 +454,8 @@ export interface Comanda {
   payments: ComandaPayment[];
   
   observations?: string;
+  fechamento_tipo?: 'total_pago' | 'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube';
+  justificativa_zeramento?: string;
   logs?: ComandaLog[];
   reopenHistory?: ReopenLog[];
   openedAt: any;

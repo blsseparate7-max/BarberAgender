@@ -322,13 +322,45 @@ export function AgendaGeneral({
   const faltouCount = dayApps.filter(a => a.status === 'faltou' || a.status === 'cancelado').length;
 
   const getAppPrice = (a: Appointment) => {
-    const directPrice = a.price || (a as any).preco || (a as any).valor || 0;
-    if (directPrice > 0) return directPrice;
+    // 1. If explicitly marked as subscription, cortesia, or price 0
+    if (
+      a.isSubscription || 
+      (a as any).deductType === 'assinatura' || 
+      (a as any).origin === 'assinatura' || 
+      (a as any).isCortesia
+    ) {
+      return 0;
+    }
+
+    if (a.price === 0 || (a as any).preco === 0 || (a as any).valor === 0) {
+      return 0;
+    }
+
+    // 2. Check if client has an active subscription
+    const clientSubs = (subscriptions || []).filter(sub => 
+      sub.cliente_id === a.cliente_id || 
+      (a as any).clienteId === sub.cliente_id
+    );
+    const hasActiveSub = clientSubs.some(sub => sub.status === 'active' || sub.status === 'ativo');
+
+    // If client is an active subscriber and the appointment isn't explicitly marked as a separate paid non-subscription service
+    if (hasActiveSub && a.isSubscription !== false) {
+      return 0;
+    }
+
+    // 3. Direct appointment price if > 0
+    const directPrice = a.price ?? (a as any).preco ?? (a as any).valor;
+    if (directPrice !== undefined && directPrice !== null && Number(directPrice) > 0) {
+      return Number(directPrice);
+    }
+
+    // 4. Fallback to service table price for regular clients
     if (a.servico_id) {
       const srv = servicesList.find(s => s.id === a.servico_id);
-      if (srv && (srv.price || srv.preco)) return srv.price || srv.preco;
+      if (srv && (srv.price || srv.preco)) return Number(srv.price || srv.preco);
     }
-    return directPrice;
+
+    return Number(directPrice || 0);
   };
 
   const valorConcluido = dayApps.filter(a => a.status === 'concluído').reduce((acc, a) => acc + getAppPrice(a), 0);
@@ -735,7 +767,9 @@ export function AgendaGeneral({
 
                                     <div className="flex items-center justify-between text-[10px] font-bold text-slate-700">
                                       <span className="truncate">{app.servico_name}</span>
-                                      <span className="font-mono font-black shrink-0 text-slate-900 ml-1">R$ {(app.price || (app as any).preco || 0).toFixed(0)}</span>
+                                      <span className="font-mono font-black shrink-0 text-slate-900 ml-1">
+                                        {getAppPrice(app) === 0 ? 'CLUBE' : `R$ ${getAppPrice(app).toFixed(0)}`}
+                                      </span>
                                     </div>
 
                                     <div className="flex flex-wrap gap-1 mt-1">

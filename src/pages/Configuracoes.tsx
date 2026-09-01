@@ -35,6 +35,11 @@ import {
   Percent,
   Upload,
   Crop,
+  Copy,
+  ExternalLink,
+  Calendar,
+  Share2,
+  MessageCircle,
   HelpCircle as QuestionIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -727,6 +732,112 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       )}
                     </div>
                   )}
+
+                  {/* Links de Agendamento Online da Barbearia */}
+                  {(() => {
+                    const tenantSlug = tenant?.id || profile?.tenantId || 'gbcortes7';
+                    const bookingUrl = `${window.location.origin}/?tenant=${tenantSlug}&agendar=true`;
+                    const registerUrl = `${window.location.origin}/register?tenant=${tenantSlug}`;
+                    const whatsappMessage = encodeURIComponent(
+                      `Olá! Agende seu horário na ${tenant?.name || 'nossa barbearia'} de forma rápida e prática acessando o link:\n${bookingUrl}`
+                    );
+
+                    return (
+                      <div className="p-6 bg-gradient-to-br from-slate-900 via-slate-950 to-primary text-white rounded-3xl border border-slate-800 shadow-xl space-y-5 mt-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center border border-amber-500/30 shrink-0">
+                              <Calendar size={20} />
+                            </div>
+                            <div>
+                              <h4 className="text-base font-black tracking-tight text-white flex items-center gap-2">
+                                🔗 Link de Agendamento Online para Clientes
+                              </h4>
+                              <p className="text-xs text-slate-400 font-medium">
+                                Compartilhe este link com seus clientes para que eles agendem horários diretamente.
+                              </p>
+                            </div>
+                          </div>
+                          <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0 self-start sm:self-auto">
+                            🟢 Ativo para Agendamentos
+                          </span>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                              <span>Link Direto da Agenda (Agendamento Rápido)</span>
+                            </label>
+                            <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                              <input 
+                                type="text" 
+                                readOnly 
+                                value={bookingUrl}
+                                className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl py-3 px-4 text-xs font-mono font-bold text-amber-400 select-all shadow-inner focus:outline-none"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(bookingUrl);
+                                    toast.success('Link de agendamento copiado com sucesso!');
+                                  }}
+                                  className="flex-1 sm:flex-none px-4 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-2xl flex items-center justify-center gap-2 transition active:scale-95 shadow-md shadow-amber-500/20"
+                                >
+                                  <Copy size={15} />
+                                  <span>Copiar</span>
+                                </button>
+                                <a
+                                  href={`https://wa.me/?text=${whatsappMessage}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-2xl flex items-center justify-center gap-2 transition active:scale-95 shadow-md shadow-emerald-600/20"
+                                  title="Enviar pelo WhatsApp"
+                                >
+                                  <MessageCircle size={15} />
+                                  <span className="hidden sm:inline">WhatsApp</span>
+                                </a>
+                                <a
+                                  href={bookingUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-3.5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-2xl flex items-center justify-center transition active:scale-95"
+                                  title="Abrir e testar agendamento"
+                                >
+                                  <ExternalLink size={15} />
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                              Link de Cadastro e Fidelidade do Cliente
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="text" 
+                                readOnly 
+                                value={registerUrl}
+                                className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl py-2.5 px-4 text-xs font-mono text-slate-300 select-all shadow-inner focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(registerUrl);
+                                  toast.success('Link de cadastro copiado!');
+                                }}
+                                className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-2xl flex items-center gap-1.5 transition active:scale-95"
+                              >
+                                <Copy size={14} />
+                                <span>Copiar</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </section>
 
                 <div className="flex justify-end gap-4 pt-10 border-t border-slate-100">

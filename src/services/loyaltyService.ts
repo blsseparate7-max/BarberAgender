@@ -123,6 +123,13 @@ export const loyaltyService = {
             const pct = Number(config.cashbackPercentage) > 0 ? Number(config.cashbackPercentage) : 5;
             cashbackToAdd = (value * pct) / 100;
           }
+          // Also credit points per appointment if configured
+          const pointsPerApp = Number(config.pointsPerAppointment) || 0;
+          if (source === 'appointment' && pointsPerApp > 0) {
+            pointsToAdd = pointsPerApp;
+          } else if (amount > 0) {
+            pointsToAdd = amount;
+          }
         }
       }
 

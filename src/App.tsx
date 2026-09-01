@@ -372,7 +372,7 @@ function MainApp() {
     switch (activeTab) {
       case 'comissoes': return <Comissoes />;
       case 'marketing': return <Marketing />;
-      case 'insights': return <Insights />;
+      case 'insights': return <Insights setActiveTab={setActiveTab} />;
       default: return <Dashboard stats={initialStats} setActiveTab={setActiveTab} activeSubTab={activeTab} />;
     }
   };

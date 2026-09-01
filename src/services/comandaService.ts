@@ -225,11 +225,17 @@ export const comandaService = {
 
       if (linkedAppId) {
         try {
-          await updateDoc(doc(db, 'appointments', linkedAppId), {
+          const hasSubItem = (data.items || []).some((i: any) => i.deductType === 'assinatura' || i.isSubscription);
+          const appUpdate: any = {
             comanda_id: docRef.id,
             comanda_number: number,
             updatedAt: serverTimestamp()
-          });
+          };
+          if (hasSubItem) {
+            appUpdate.isSubscription = true;
+            appUpdate.price = 0;
+          }
+          await updateDoc(doc(db, 'appointments', linkedAppId), appUpdate);
         } catch (err) {
           console.warn("Could not link comanda_id on appointment:", err);
         }
@@ -1154,7 +1160,17 @@ export const comandaService = {
     }
   },
 
-  async closeComanda(id: string, userId: string, userName: string, status: ComandaStatus = 'fechada', dueDate?: string) {
+  async closeComanda(
+    id: string, 
+    userId: string, 
+    userName: string, 
+    status: ComandaStatus = 'fechada', 
+    dueDate?: string,
+    closureOptions?: {
+      closureType?: 'total_pago' | 'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube';
+      note?: string;
+    }
+  ) {
     const docRef = doc(db, COLLECTION, id);
     
     await runTransaction(db, async (transaction) => {
@@ -1193,8 +1209,12 @@ export const comandaService = {
         }
       }
 
+      // Determine closure type & status
+      const effectiveClosureType = closureOptions?.closureType || (comanda.pendingAmount > 0 ? 'fiado' : 'total_pago');
+      const closureNote = closureOptions?.note || '';
+
       // 5. Read barber snaps if status will be closed or nao_paga
-      const finalStatus = (status === 'fechada' && comanda.pendingAmount > 0) ? 'nao_paga' : status;
+      const finalStatus = (status === 'fechada' && comanda.pendingAmount > 0 && effectiveClosureType === 'fiado') ? 'nao_paga' : status;
       const isClosing = finalStatus === 'fechada' || finalStatus === 'nao_paga';
 
       const barberDataMap: Record<string, any> = {};
@@ -1246,10 +1266,10 @@ export const comandaService = {
         }
       }
       
-      // Se fechar sem pagamento total e não for cancelada, o resto vira fiado (não paga)
-      if (status === 'fechada' && comanda.pendingAmount > 0) {
+      // Se fechar com saldo pendente E a escolha for FIADO, lança débito na conta do cliente
+      if (status === 'fechada' && comanda.pendingAmount > 0 && effectiveClosureType === 'fiado') {
         if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
-          throw new Error("Não é possível fechar comanda com saldo pendente para cliente avulso. Por favor, registre o pagamento integral ou vincule um cliente cadastrado.");
+          throw new Error("Não é possível fechar comanda com saldo pendente como FIADO para cliente avulso. Por favor, vincule um cliente cadastrado ou selecione a opção de Permuta/Cortesia.");
         }
         const pending = comanda.pendingAmount;
         const debtRef = doc(collection(db, 'client_debts'));
@@ -1270,16 +1290,29 @@ export const comandaService = {
       }
 
       const logAction = finalStatus === 'cancelada' ? 'Comanda cancelada' : finalStatus === 'ausente' ? 'Cliente marcado ausente' : 'Comanda fechada';
+      let detailsText = 'Fechamento total';
+      if (comanda.pendingAmount > 0) {
+        if (effectiveClosureType === 'fiado') {
+          detailsText = `Saldo pendente de R$ ${comanda.pendingAmount.toFixed(2)} virou FIADO`;
+        } else {
+          detailsText = `Saldo restante de R$ ${comanda.pendingAmount.toFixed(2)} abativo por ${effectiveClosureType.toUpperCase()}${closureNote ? `: ${closureNote}` : ''}`;
+        }
+      } else if (effectiveClosureType !== 'total_pago') {
+        detailsText = `Fechamento por ${effectiveClosureType.toUpperCase()}${closureNote ? `: ${closureNote}` : ''}`;
+      }
+
       const newLog = {
         userId,
         userName,
         date: new Date().toISOString(),
         action: logAction,
-        details: comanda.pendingAmount > 0 ? `Saldo pendente de R$ ${comanda.pendingAmount.toFixed(2)} virou fiado` : 'Fechamento total'
+        details: detailsText
       };
 
       transaction.update(docRef, {
         status: finalStatus,
+        fechamento_tipo: effectiveClosureType,
+        justificativa_zeramento: closureNote || null,
         closedAt: serverTimestamp(),
         logs: [...(comanda.logs || []), newLog],
         updatedAt: serverTimestamp()

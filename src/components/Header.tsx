@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
-import { Search, Menu, Unlock, Lock } from 'lucide-react';
+import { Search, Menu, Unlock, Lock, Calendar, Copy, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cashService } from '../services/cashService';
 import { DailyCash } from '../types';
 import { NotificationBell } from './NotificationBell';
+import { toast } from 'sonner';
 
 interface HeaderProps {
   setSidebarOpen: (open: boolean) => void;
@@ -73,6 +74,23 @@ export function Header({ setSidebarOpen, onProfileClick }: HeaderProps) {
               </div>
             )}
           </div>
+        )}
+
+        {/* Botão Rápido: Copiar Link de Agendamento */}
+        {profile?.tenantId && (
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/?tenant=${profile.tenantId}&agendar=true`;
+              navigator.clipboard.writeText(url);
+              toast.success('Link de agendamento copiado para a área de transferência!');
+            }}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl font-bold text-xs transition active:scale-95 shadow-sm border border-slate-200/60"
+            title="Copiar link de agendamento online para enviar a clientes"
+          >
+            <Calendar size={14} className="text-amber-500" />
+            <span className="hidden lg:inline text-[11px] font-black uppercase tracking-wider">Link de Agendamento</span>
+            <Copy size={12} className="text-slate-500 ml-0.5" />
+          </button>
         )}
 
         <NotificationBell />

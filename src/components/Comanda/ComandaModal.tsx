@@ -30,7 +30,11 @@ import {
   Award,
   BellRing,
   Tag,
-  CalendarX
+  CalendarX,
+  Handshake,
+  Gift,
+  Crown,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc } from 'firebase/firestore';
@@ -75,7 +79,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
   
-  const [showItemSelector, setShowItemSelector] = useState<'service' | 'product' | null>(null);
+  const [showItemSelector, setShowItemSelector] = useState<'service' | 'product' | 'pacote' | null>(null);
+  const [packageConfigs, setPackageConfigs] = useState<any[]>([]);
   const [itemSearchQuery, setItemSearchQuery] = useState('');
   const [selectedServiceCategory, setSelectedServiceCategory] = useState<string>('todas');
 
@@ -127,10 +132,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [payingDebtMethod, setPayingDebtMethod] = useState('');
   const [selectedDebtToPay, setSelectedDebtToPay] = useState<ClientDebt | null>(null);
 
-  // States for finalizing comanda with remaining balance (fiado)
+  // States for finalizing comanda with remaining balance (fiado / permuta / cortesia / desconto)
   const [showFiadoConfirmationModal, setShowFiadoConfirmationModal] = useState(false);
   const [fiadoDueDate, setFiadoDueDate] = useState('');
   const [scheduleFiadoReminder, setScheduleFiadoReminder] = useState(true);
+  const [closureChoice, setClosureChoice] = useState<'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago'>('fiado');
+  const [closureNote, setClosureNote] = useState('');
 
   const [amountToPay, setAmountToPay] = useState<string>('');
   const [customTipValue, setCustomTipValue] = useState<string>('');
@@ -594,15 +601,22 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       setServices(data);
     });
 
+    const qPackages = query(collection(db, 'pacotes_config'), where('tenantId', '==', tenantId));
+    const unsubscribePackages = onSnapshot(qPackages, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setPackageConfigs(data.filter((p: any) => p.active !== false));
+    });
+
     return () => {
       unsubscribeBarbers();
       unsubscribeClients();
       unsubscribeProducts();
       unsubscribeServices();
+      unsubscribePackages();
     };
   }, []);
 
-  const handleOpenItemSelector = (type: 'service' | 'product') => {
+  const handleOpenItemSelector = (type: 'service' | 'product' | 'pacote') => {
     loadData();
     setItemSearchQuery('');
     setShowItemSelector(type);
@@ -970,6 +984,53 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
+  const addPackageItem = async (pkg: any) => {
+    if (!comanda || !user || loading) return;
+
+    setLoading(true);
+    try {
+      const price = pkg.promotionalPrice !== undefined && pkg.promotionalPrice !== null ? pkg.promotionalPrice : (pkg.originalPrice || 0);
+      const newItem: ComandaItem = {
+        id: `package-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        type: 'pacote' as const,
+        referencia_id: pkg.id,
+        name: `Venda Pacote: ${pkg.name}`,
+        quantity: 1,
+        unitPrice: price,
+        totalPrice: price,
+        profissional_id: comanda.profissional_id,
+        profissional_name: comanda.profissional_name,
+        isCortesia: false,
+        generateCommission: false,
+        metadata: {
+          cutsCount: pkg.cutsCount || 1,
+          pricePerService: pkg.pricePerService !== undefined ? pkg.pricePerService : null,
+          noExpiration: pkg.noExpiration || false,
+          expiresDays: pkg.expiresDays || 0,
+          serviceId: pkg.serviceId || '',
+          serviceName: pkg.serviceName || ''
+        }
+      };
+
+      const updatedItems = [...(comanda.items || []), newItem];
+      await comandaService.updateComandaItems(
+        comanda.id,
+        updatedItems,
+        comanda.discount,
+        comanda.tip,
+        user.uid,
+        profile?.nome || user.email || 'Usuário'
+      );
+      setShowItemSelector(null);
+      toast.success(`Pacote "${pkg.name}" adicionado à comanda.`);
+    } catch (err) {
+      console.error("Erro ao adicionar pacote à comanda:", err);
+      toast.error("Erro ao adicionar pacote à comanda.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const updateFinancials = async (updates: { tip?: number, discount?: number }) => {
     if (!comanda || !user || loading) return;
     
@@ -1217,17 +1278,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
-  const handleCloseComanda = async () => {
+  const handleCloseComandaWithChoice = async (
+    typeOverride?: 'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago',
+    noteOverride?: string
+  ) => {
     if (!comanda || !user || loading) return;
+    const finalType = typeOverride || closureChoice || (comanda.pendingAmount > 0 ? 'fiado' : 'total_pago');
+    const finalNote = noteOverride !== undefined ? noteOverride : closureNote;
+
+    if (finalType === 'fiado' && comanda.pendingAmount > 0) {
+      if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
+        toast.error("Para lançar o saldo restante como Fiado, selecione um cliente cadastrado.");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       // 1. Process package/subscription deductions before closing
       for (const item of comanda.items) {
         if (item.deductType === 'pacote' && item.packageSaleId) {
-          // Check if packageSaleId is a virtual package sale (sold in this exact comanda)
           const isVirtual = comanda.items.find(i => i.id === item.packageSaleId && i.type === 'pacote');
           if (isVirtual) {
-            console.log(`Skipping DB update for virtual package deduction ${item.packageSaleId} - will be handled upon creation.`);
+            console.log(`Skipping DB update for virtual package deduction ${item.packageSaleId}`);
           } else {
             const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
             const pkgSnap = await getDoc(pkgRef);
@@ -1245,7 +1318,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
                 usages: [...currentUsages, newUsage]
               });
-              console.log(`Deducted 1 cut from Package Sale ID ${item.packageSaleId}`);
             }
           }
         } else if (item.deductType === 'assinatura' && item.subscriptionId) {
@@ -1262,10 +1334,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             item.referencia_id || item.id,
             item.name
           );
-          console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
         } else if (item.type === 'pacote') {
-          // New Package sold! Create doc in pacotes_vendas
-          // Check if there are services in this comanda deducted using this package item's ID
           const deductedServicesInComanda = comanda.items.filter(i => i.deductType === 'pacote' && i.packageSaleId === item.id);
           const cutsUsedCount = deductedServicesInComanda.length;
           
@@ -1296,123 +1365,24 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             serviceId: item.metadata?.serviceId || '',
             serviceName: item.metadata?.serviceName || ''
           });
-          console.log(`Created new Package Sale for Client ${comanda.cliente_name} with ${cutsUsedCount} immediate usages.`);
-        } else if (item.type === 'assinatura') {
-          // Handled atomicly in comanda closure transaction
-          console.log(`Subscription sale detected. Will be created inside closeComanda transaction.`);
         }
       }
 
       // 2. Actually close the comanda
-      await comandaService.closeComanda(comanda.id, user.uid, profile?.nome || user.email || 'Usuário', 'fechada');
-      toast.success("Comanda fechada com sucesso!");
-      setConfirmClose(false);
-      onSave();
-    } catch (error) {
-      console.error("Erro ao fechar comanda com deduções:", error);
-      toast.error("Erro ao fechar comanda: " + (error instanceof Error ? error.message : String(error)));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCloseComandaWithFiado = async () => {
-    if (!comanda || !user || loading) return;
-    setLoading(true);
-    try {
-      // 1. Process package/subscription deductions before closing
-      for (const item of comanda.items) {
-        if (item.deductType === 'pacote' && item.packageSaleId) {
-          // Check if packageSaleId is a virtual package sale (sold in this exact comanda)
-          const isVirtual = comanda.items.find(i => i.id === item.packageSaleId && i.type === 'pacote');
-          if (isVirtual) {
-            console.log(`Skipping DB update for virtual package deduction ${item.packageSaleId} - will be handled upon creation.`);
-          } else {
-            const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
-            const pkgSnap = await getDoc(pkgRef);
-            if (pkgSnap.exists()) {
-              const pkgData = pkgSnap.data();
-              const currentUsages = pkgData.usages || [];
-              const newIndex = currentUsages.length + 1;
-              const newUsage = {
-                usedAt: new Date().toISOString(),
-                notes: `Consumo automático na Comanda #${comanda.number}`,
-                index: newIndex,
-                comanda_id: comanda.id
-              };
-              await updateDoc(pkgRef, {
-                remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
-                usages: [...currentUsages, newUsage]
-              });
-              console.log(`Deducted 1 cut from Package Sale ID ${item.packageSaleId}`);
-            }
-          }
-        } else if (item.deductType === 'assinatura' && item.subscriptionId) {
-          const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
-          const typeLabel: 'haircut' | 'beard' = isCut ? 'haircut' : 'beard';
-          
-          await subscriptionService.registerUsage(
-            item.subscriptionId, 
-            typeLabel, 
-            comanda.agendamento_id,
-            item.profissional_id || comanda.profissional_id || null,
-            item.profissional_name || comanda.profissional_name || null,
-            item.unitPrice || item.totalPrice || 0,
-            item.referencia_id || item.id,
-            item.name
-          );
-          console.log(`Registered subscription usage on ID ${item.subscriptionId} for ${typeLabel}`);
-        } else if (item.type === 'pacote') {
-          // New Package sold! Create doc in pacotes_vendas
-          // Check if there are services in this comanda deducted using this package item's ID
-          const deductedServicesInComanda = comanda.items.filter(i => i.deductType === 'pacote' && i.packageSaleId === item.id);
-          const cutsUsedCount = deductedServicesInComanda.length;
-          
-          const totalCuts = item.metadata?.cutsCount || 1;
-          const remainingCuts = Math.max(0, totalCuts - cutsUsedCount);
-          
-          const initialUsages = deductedServicesInComanda.map((ds, idx) => ({
-            usedAt: new Date().toISOString(),
-            notes: `Consumo automático na venda do Pacote (Comanda #${comanda.number})`,
-            index: idx + 1,
-            comanda_id: comanda.id
-          }));
-
-          await addDoc(collection(db, 'pacotes_vendas'), {
-            tenantId: comanda.tenantId || getActiveTenantId(),
-            clientId: comanda.cliente_id,
-            clientName: comanda.cliente_name,
-            packageId: item.referencia_id,
-            packageName: item.name.replace('Venda Pacote: ', ''),
-            totalCuts,
-            remainingCuts,
-            pricePaid: item.totalPrice,
-            pricePerService: item.metadata?.pricePerService !== undefined ? item.metadata?.pricePerService : null,
-            noExpiration: item.metadata?.noExpiration || false,
-            expiresDays: item.metadata?.expiresDays || 0,
-            soldAt: new Date().toISOString(),
-            usages: initialUsages,
-            serviceId: item.metadata?.serviceId || '',
-            serviceName: item.metadata?.serviceName || ''
-          });
-          console.log(`Created new Package Sale for Client ${comanda.cliente_name} with ${cutsUsedCount} immediate usages.`);
-        } else if (item.type === 'assinatura') {
-          // Handled atomicly in comanda closure transaction
-          console.log(`Subscription sale detected. Will be created inside closeComanda transaction.`);
-        }
-      }
-
-      // 2. Actually close the comanda with the custom due date
       await comandaService.closeComanda(
         comanda.id, 
         user.uid, 
         profile?.nome || user.email || 'Usuário', 
         'fechada', 
-        fiadoDueDate
+        finalType === 'fiado' ? fiadoDueDate : undefined,
+        {
+          closureType: finalType,
+          note: finalNote
+        }
       );
 
       // 3. Schedule automated billing reminder if requested
-      if (scheduleFiadoReminder && fiadoDueDate) {
+      if (finalType === 'fiado' && scheduleFiadoReminder && fiadoDueDate) {
         const clientObj = clients.find(c => c.uid === comanda.cliente_id);
         const phone = clientObj?.telefone || clientObj?.phone || '';
         
@@ -1426,16 +1396,28 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         });
       }
 
-      toast.success("Comanda fechada com sucesso!");
+      toast.success(
+        finalType === 'fiado' 
+          ? "Comanda fechada com saldo restante em Fiado!" 
+          : finalType === 'permuta' 
+          ? "Comanda encerrada via Permuta Comercial!" 
+          : finalType === 'cortesia' 
+          ? "Comanda encerrada como Cortesia!" 
+          : "Comanda finalizada com sucesso!"
+      );
       setShowFiadoConfirmationModal(false);
+      setConfirmClose(false);
       onSave();
     } catch (error) {
-      console.error("Erro ao fechar comanda com fiado:", error);
+      console.error("Erro ao fechar comanda:", error);
       toast.error("Erro ao fechar comanda: " + (error instanceof Error ? error.message : String(error)));
     } finally {
       setLoading(false);
     }
   };
+
+  const handleCloseComanda = () => handleCloseComandaWithChoice('total_pago');
+  const handleCloseComandaWithFiado = () => handleCloseComandaWithChoice();
 
   const handleConfirmPayDebt = async () => {
     if (!comanda?.cliente_id || !user) return;
@@ -1998,17 +1980,24 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <div className="flex gap-2">
                         <button 
                           onClick={() => handleOpenItemSelector('service')}
-                          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-primary rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95"
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 text-primary rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95 cursor-pointer"
                         >
                           <Plus size={14} />
                           <span>Serviço</span>
                         </button>
                         <button 
                           onClick={() => handleOpenItemSelector('product')}
-                          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-primary rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95"
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 text-primary rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95 cursor-pointer"
                         >
                           <Plus size={14} />
                           <span>Produto</span>
+                        </button>
+                        <button 
+                          onClick={() => handleOpenItemSelector('pacote')}
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer"
+                        >
+                          <Plus size={14} />
+                          <span>Pacote</span>
                         </button>
                       </div>
                     )}
@@ -2256,7 +2245,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                   <p className="text-muted text-xs mt-0.5">Adicione um serviço ou produto para compor o atendimento.</p>
                                 </div>
                                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                                  <div className="flex items-center justify-center gap-2.5 mt-2">
+                                  <div className="flex flex-wrap items-center justify-center gap-2.5 mt-2">
                                     <button
                                       type="button"
                                       onClick={() => handleOpenItemSelector('service')}
@@ -2272,6 +2261,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                     >
                                       <Package size={14} />
                                       Adicionar Produto
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenItemSelector('pacote')}
+                                      className="flex items-center gap-1.5 px-4 py-2.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-xs font-bold hover:bg-purple-100 transition-all shadow-sm active:scale-95 cursor-pointer"
+                                    >
+                                      <Award size={14} />
+                                      Adicionar Pacote
                                     </button>
                                   </div>
                                 )}
@@ -2814,18 +2811,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   <>
                     <button 
                       onClick={() => {
+                        const nextWeek = new Date();
+                        nextWeek.setDate(nextWeek.getDate() + 7);
+                        setFiadoDueDate(nextWeek.toISOString().split('T')[0]);
                         if (comanda.pendingAmount > 0) {
-                          if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
-                            toast.error(`Para deixar o saldo de R$ ${comanda.pendingAmount.toFixed(2)} como Fiado, selecione um cliente cadastrado.`);
-                            return;
-                          }
-                          const nextWeek = new Date();
-                          nextWeek.setDate(nextWeek.getDate() + 7);
-                          setFiadoDueDate(nextWeek.toISOString().split('T')[0]);
-                          setShowFiadoConfirmationModal(true);
+                          setClosureChoice('fiado');
                         } else {
-                          setConfirmClose(true);
+                          setClosureChoice('total_pago');
                         }
+                        setClosureNote('');
+                        setShowFiadoConfirmationModal(true);
                       }}
                       disabled={loading}
                       className={`w-full py-4 text-white rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all cursor-pointer ${
@@ -2946,25 +2941,56 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="bg-surface border border-border w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden my-auto flex flex-col max-h-[85vh]"
             >
-              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50 shrink-0">
+              <div className="p-6 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/50 shrink-0">
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm border ${
-                    showItemSelector === 'service' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'
+                    showItemSelector === 'service' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : showItemSelector === 'product' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-purple-50 text-purple-600 border-purple-100'
                   }`}>
-                    {showItemSelector === 'service' ? <Scissors size={20} /> : <Package size={20} />}
+                    {showItemSelector === 'service' ? <Scissors size={20} /> : showItemSelector === 'product' ? <Package size={20} /> : <Award size={20} />}
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-primary">
-                      {showItemSelector === 'service' ? 'Adicionar Serviço' : 'Adicionar Produto'}
+                      {showItemSelector === 'service' ? 'Adicionar Serviço' : showItemSelector === 'product' ? 'Adicionar Produto' : 'Adicionar Pacote'}
                     </h3>
                     <p className="text-[10px] text-muted font-bold uppercase tracking-widest">
-                      {showItemSelector === 'service' ? `${services.length} serviços disponíveis` : `${products.length} produtos disponíveis`}
+                      {showItemSelector === 'service' ? `${services.length} serviços disponíveis` : showItemSelector === 'product' ? `${products.length} produtos disponíveis` : `${packageConfigs.length} modelos de pacote`}
                     </p>
                   </div>
                 </div>
-                <button onClick={() => setShowItemSelector(null)} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm cursor-pointer">
-                  <X size={20} />
-                </button>
+                <div className="flex items-center justify-between sm:justify-end gap-2">
+                  <div className="flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setShowItemSelector('service')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        showItemSelector === 'service' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Serviço
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowItemSelector('product')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        showItemSelector === 'product' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Produto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowItemSelector('pacote')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        showItemSelector === 'pacote' ? 'bg-white text-purple-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Pacote
+                    </button>
+                  </div>
+                  <button onClick={() => setShowItemSelector(null)} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm cursor-pointer">
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
 
               {/* Search Bar & Category Filter */}
@@ -2975,7 +3001,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     type="text"
                     value={itemSearchQuery}
                     onChange={(e) => setItemSearchQuery(e.target.value)}
-                    placeholder={showItemSelector === 'service' ? 'Buscar serviço por nome ou categoria...' : 'Buscar produto por nome...'}
+                    placeholder={showItemSelector === 'service' ? 'Buscar serviço por nome ou categoria...' : showItemSelector === 'product' ? 'Buscar produto por nome...' : 'Buscar pacote por nome ou serviço...'}
                     className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-primary font-medium focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary transition-all"
                   />
                   {itemSearchQuery && (
@@ -3127,7 +3153,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
                     return filtered.map((s, index) => renderServiceCard(s, index));
                   })()
-                ) : (
+                ) : showItemSelector === 'product' ? (
                   (() => {
                     const filtered = products.filter(p => {
                       if (!itemSearchQuery.trim()) return true;
@@ -3169,6 +3195,67 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           <p className="font-black text-primary text-sm shrink-0">
                             R$ {prodPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </p>
+                        </div>
+                      );
+                    });
+                  })()
+                ) : (
+                  (() => {
+                    const filtered = packageConfigs.filter(p => {
+                      if (!itemSearchQuery.trim()) return true;
+                      const q = itemSearchQuery.toLowerCase().trim();
+                      const name = (p.name || '').toLowerCase();
+                      const sName = (p.serviceName || '').toLowerCase();
+                      return name.includes(q) || sName.includes(q);
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="py-12 text-center text-slate-400 space-y-2">
+                          <Award size={32} className="mx-auto text-slate-300" />
+                          <p className="text-xs font-bold">Nenhum pacote encontrado</p>
+                          <p className="text-[11px]">Verifique se há pacotes ativos catalogados na aba de Pacotes.</p>
+                        </div>
+                      );
+                    }
+
+                    return filtered.map((pkg, index) => {
+                      const price = pkg.promotionalPrice !== undefined && pkg.promotionalPrice !== null ? pkg.promotionalPrice : (pkg.originalPrice || 0);
+                      return (
+                        <div 
+                          key={`modal-pkg-opt-${pkg.id || index}-${index}`}
+                          onClick={() => addPackageItem(pkg)}
+                          className="w-full p-4 sm:p-5 bg-white border border-slate-100 rounded-2xl flex items-center justify-between hover:border-purple-300 hover:bg-purple-50/30 transition-all group shadow-sm cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3.5">
+                            <div className="w-10 h-10 bg-purple-50 rounded-xl flex items-center justify-center text-purple-600 group-hover:scale-110 transition-transform border border-purple-100 shrink-0">
+                              <Award size={18} />
+                            </div>
+                            <div className="text-left">
+                              <p className="font-bold text-primary group-hover:text-purple-700 transition-colors text-sm">{pkg.name}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] text-emerald-600 font-extrabold uppercase tracking-widest">{pkg.cutsCount} utilizações</span>
+                                {pkg.serviceName && (
+                                  <span className="text-[9px] bg-amber-50 text-amber-700 border border-amber-100 font-bold px-2 py-0.5 rounded-md">
+                                    🛠️ {pkg.serviceName}
+                                  </span>
+                                )}
+                                <span className="text-[9px] text-slate-400 font-semibold">
+                                  {pkg.noExpiration ? 'Sem expiração' : `${pkg.expiresDays} dias`}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div>
+                              {pkg.originalPrice > price && (
+                                <p className="text-[9px] text-slate-400 line-through font-bold text-right">R$ {pkg.originalPrice.toFixed(2)}</p>
+                              )}
+                              <p className="font-black text-purple-700 text-sm text-right">
+                                R$ {price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       );
                     });
@@ -3526,15 +3613,21 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               exit={{ scale: 0.95, y: 15 }}
               className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col my-auto"
             >
-              <div className="p-6 sm:p-8 border-b border-slate-100 flex items-center justify-between bg-rose-50/40">
+              <div className={`p-6 sm:p-8 border-b flex items-center justify-between ${
+                comanda.pendingAmount > 0 ? 'bg-amber-50/50 border-amber-100' : 'bg-emerald-50/50 border-emerald-100'
+              }`}>
                 <div className="flex items-center gap-3.5">
-                  <div className="w-12 h-12 bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-600/20 shrink-0">
-                    <AlertCircle size={24} />
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg shrink-0 ${
+                    comanda.pendingAmount > 0 ? 'bg-amber-600 shadow-amber-600/20' : 'bg-emerald-600 shadow-emerald-600/20'
+                  }`}>
+                    <CheckCircle2 size={24} />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-rose-950">Finalizar com Saldo Fiado</h3>
-                    <p className="text-[10px] text-rose-600 font-bold uppercase tracking-widest leading-none mt-1">
-                      Saldo restante: R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    <h3 className="text-xl font-bold text-slate-900">
+                      {comanda.pendingAmount > 0 ? 'Finalizar e Tratar Saldo' : 'Confirmar Fechamento'}
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider leading-none mt-1">
+                      Comanda #{comanda.number} {comanda.cliente_name ? `• ${comanda.cliente_name}` : ''}
                     </p>
                   </div>
                 </div>
@@ -3555,55 +3648,231 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     <span className="font-bold text-slate-900">R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-xs text-emerald-700">
-                    <span>Valor Recebido Agora:</span>
+                    <span>Valor Recebido:</span>
                     <span className="font-bold">R$ {(comanda.paidAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
-                  <div className="border-t border-slate-200 pt-2.5 flex justify-between items-center text-sm font-black text-rose-700">
-                    <span>Ficará como FIADO (em aberto):</span>
+                  <div className={`border-t border-slate-200 pt-2.5 flex justify-between items-center text-sm font-black ${
+                    comanda.pendingAmount > 0 ? 'text-amber-700' : 'text-emerald-700'
+                  }`}>
+                    <span>Saldo Pendente:</span>
                     <span className="text-base">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-600 leading-relaxed font-medium">
-                  O valor restante de <strong className="text-rose-600 font-bold">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> ficará registrado como débito na conta do cliente <strong className="text-slate-900">{comanda.cliente_name}</strong>. O profissional receberá sua comissão normalmente e o débito poderá ser quitado a qualquer momento no caixa.
-                </p>
+                {comanda.pendingAmount > 0 ? (
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
+                      Como deseja tratar o saldo restante de R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?
+                    </label>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Data Prometida para Pagamento</label>
-                  <input 
-                    id="fiado-due-date-input"
-                    type="date"
-                    value={fiadoDueDate}
-                    onChange={(e) => setFiadoDueDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/10 focus:border-rose-500 transition-all text-primary font-bold shadow-inner"
-                  />
-                </div>
+                    {/* Seletor de Opções */}
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('fiado')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
+                          closureChoice === 'fiado' 
+                            ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 text-rose-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertCircle size={18} className={closureChoice === 'fiado' ? 'text-rose-600' : 'text-slate-400'} />
+                          <span className="text-xs font-black">📌 FIADO</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-medium">Lançar débito para o cliente</span>
+                      </button>
 
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100/80 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 shrink-0">
-                      <BellRing size={18} />
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('permuta')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
+                          closureChoice === 'permuta' 
+                            ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/20 text-indigo-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Handshake size={18} className={closureChoice === 'permuta' ? 'text-indigo-600' : 'text-slate-400'} />
+                          <span className="text-xs font-black">🤝 PERMUTA</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-medium">Troca por serviço/produto</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('cortesia')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
+                          closureChoice === 'cortesia' 
+                            ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-500/20 text-amber-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Gift size={18} className={closureChoice === 'cortesia' ? 'text-amber-600' : 'text-slate-400'} />
+                          <span className="text-xs font-black">🎁 CORTESIA</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-medium">Gratuidade comercial VIP</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('desconto')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
+                          closureChoice === 'desconto' 
+                            ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20 text-emerald-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Tag size={18} className={closureChoice === 'desconto' ? 'text-emerald-600' : 'text-slate-400'} />
+                          <span className="text-xs font-black">🏷️ DESCONTO</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-medium">Abater saldo restante</span>
+                      </button>
                     </div>
-                    <div>
-                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Lembrete Automático</h4>
-                      <p className="text-[10px] text-slate-500 font-medium">Notificar no dia do vencimento prometido</p>
-                    </div>
+
+                    {/* Condicional FIADO */}
+                    {closureChoice === 'fiado' && (
+                      <div className="space-y-4 pt-2 border-t border-slate-100">
+                        {(!comanda.cliente_id || comanda.cliente_id === 'avulso') && (
+                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+                            <AlertCircle size={16} className="shrink-0 text-rose-600" />
+                            <span><strong>Atenção:</strong> Para lançar como Fiado, você precisa vincular um cliente cadastrado à comanda.</span>
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Data Prometida para Pagamento</label>
+                          <input 
+                            id="fiado-due-date-input"
+                            type="date"
+                            value={fiadoDueDate}
+                            onChange={(e) => setFiadoDueDate(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/10 focus:border-rose-500 transition-all text-primary font-bold shadow-inner"
+                          />
+                        </div>
+
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100/80 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 shrink-0">
+                              <BellRing size={18} />
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Lembrete Automático</h4>
+                              <p className="text-[10px] text-slate-500 font-medium">Notificar no WhatsApp no dia do vencimento</p>
+                            </div>
+                          </div>
+                          <button
+                            id="toggle-fiado-reminder-btn"
+                            type="button"
+                            onClick={() => setScheduleFiadoReminder(!scheduleFiadoReminder)}
+                            className={`w-12 h-7 rounded-full transition-colors relative focus:outline-none cursor-pointer ${
+                              scheduleFiadoReminder ? 'bg-indigo-600' : 'bg-slate-200'
+                            }`}
+                          >
+                            <span 
+                              className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${
+                                scheduleFiadoReminder ? 'translate-x-5' : ''
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Condicional PERMUTA / CORTESIA / DESCONTO */}
+                    {closureChoice !== 'fiado' && (
+                      <div className="space-y-2 pt-2 border-t border-slate-100">
+                        <label className="text-[10px] font-bold text-slate-600 uppercase tracking-widest ml-1">
+                          Detalhes / Justificativa do Abatimento ({closureChoice.toUpperCase()})
+                        </label>
+                        <input
+                          type="text"
+                          value={closureNote}
+                          onChange={(e) => setClosureNote(e.target.value)}
+                          placeholder="Ex: Troca por serviço de pintura da fachada, acordo VIP, etc."
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary shadow-inner"
+                        />
+                      </div>
+                    )}
                   </div>
-                  <button
-                    id="toggle-fiado-reminder-btn"
-                    type="button"
-                    onClick={() => setScheduleFiadoReminder(!scheduleFiadoReminder)}
-                    className={`w-12 h-7 rounded-full transition-colors relative focus:outline-none cursor-pointer ${
-                      scheduleFiadoReminder ? 'bg-indigo-600' : 'bg-slate-200'
-                    }`}
-                  >
-                    <span 
-                      className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${
-                        scheduleFiadoReminder ? 'translate-x-5' : ''
-                      }`}
-                    />
-                  </button>
-                </div>
+                ) : (
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
+                      Classificação do Fechamento (Comanda Quitada)
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('total_pago')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
+                          closureChoice === 'total_pago' 
+                            ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20 text-emerald-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black">💳 PAGAMENTO TOTAL</span>
+                        <span className="text-[10px] text-slate-500 font-medium">100% Pago em dinheiro/cartão/PIX</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('permuta')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
+                          closureChoice === 'permuta' 
+                            ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/20 text-indigo-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black">🤝 PERMUTA COMERCIAL</span>
+                        <span className="text-[10px] text-slate-500 font-medium">Parceria / Troca de serviços</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('cortesia')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
+                          closureChoice === 'cortesia' 
+                            ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-500/20 text-amber-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black">🎁 CORTESIA VIP</span>
+                        <span className="text-[10px] text-slate-500 font-medium">Atendimento gratuito / Cortesia</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setClosureChoice('clube')}
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
+                          closureChoice === 'clube' 
+                            ? 'bg-purple-50 border-purple-300 ring-2 ring-purple-500/20 text-purple-950 font-bold' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black">👑 CLUBE / PACOTE</span>
+                        <span className="text-[10px] text-slate-500 font-medium">Consumo coberto no plano</span>
+                      </button>
+                    </div>
+
+                    {(closureChoice === 'permuta' || closureChoice === 'cortesia') && (
+                      <div className="space-y-2 pt-2 border-t border-slate-100">
+                        <label className="text-[10px] font-bold text-slate-600 uppercase tracking-widest ml-1">
+                          Justificativa / Detalhes do Acordo
+                        </label>
+                        <input
+                          type="text"
+                          value={closureNote}
+                          onChange={(e) => setClosureNote(e.target.value)}
+                          placeholder="Ex: Parceria de permuta comercial, etc."
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary shadow-inner"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex gap-3 pt-2">
                   <button 
@@ -3615,14 +3884,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   </button>
                   <button 
                     id="confirm-fiado-modal-btn"
-                    onClick={handleCloseComandaWithFiado}
-                    disabled={loading || !fiadoDueDate}
-                    className="flex-[2] py-3.5 bg-rose-600 text-white rounded-2xl font-bold text-sm hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20 flex items-center justify-center gap-2.5 disabled:opacity-50 active:scale-95 cursor-pointer"
+                    onClick={() => handleCloseComandaWithChoice()}
+                    disabled={
+                      loading || 
+                      (comanda.pendingAmount > 0 && closureChoice === 'fiado' && (!fiadoDueDate || !comanda.cliente_id || comanda.cliente_id === 'avulso'))
+                    }
+                    className={`flex-[2] py-3.5 text-white rounded-2xl font-bold text-sm transition-all shadow-lg flex items-center justify-center gap-2.5 disabled:opacity-50 active:scale-95 cursor-pointer ${
+                      closureChoice === 'fiado' 
+                        ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/20' 
+                        : closureChoice === 'permuta' 
+                        ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20' 
+                        : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                    }`}
                   >
                     {loading ? <Loader2 className="animate-spin" size={18} /> : (
                       <>
                         <CheckCircle2 size={18} />
-                        <span>Confirmar e Deixar Fiado</span>
+                        <span>
+                          {comanda.pendingAmount > 0
+                            ? closureChoice === 'fiado'
+                              ? 'Confirmar e Deixar Fiado'
+                              : `Confirmar (${closureChoice.toUpperCase()})`
+                            : 'Finalizar Comanda'}
+                        </span>
                       </>
                     )}
                   </button>

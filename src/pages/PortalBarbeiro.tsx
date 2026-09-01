@@ -46,6 +46,7 @@ import { commissionService } from '../services/commissionService';
 import { inventoryService } from '../services/inventoryService';
 import { agendaBlockService } from '../services/agendaBlockService';
 import { teamGoalService, TeamGoal } from '../services/teamGoalService';
+import { subscriptionService } from '../services/subscriptionService';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
@@ -138,6 +139,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const { isSaaSAdminUser, setOverrideRole } = useAuth();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
 
   // New Modals State for Barber manual control
@@ -263,6 +265,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     const unsubscribe = userService.subscribeToAllClients(true, (data) => {
       setClientes(data);
     });
+    subscriptionService.getAllSubscriptionsSystem().then(setSubscriptions).catch(() => {});
     return () => unsubscribe();
   }, []);
 
@@ -827,6 +830,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 barbers={[profile]}
                 appointments={appointments}
                 clients={clientes}
+                subscriptions={subscriptions}
                 blocks={blocks}
                 onNewAppointment={handleNewAppointment}
                 onOpenAppointment={handleOpenAppointment}

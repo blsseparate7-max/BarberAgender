@@ -560,10 +560,33 @@ export function Pacotes({ defaultTab }: PacotesProps) {
               type="button"
               disabled={packages.filter(p => p.active).length === 0}
               onClick={() => {
-                setSelectedClientId('');
-                setSelectedPkgId('');
-                setSalePrice('');
-                setShowSaleModal(true);
+                const activePkgs = packages.filter(p => p.active);
+                const firstPkg = activePkgs.length > 0 ? activePkgs[0] : null;
+                setComandaInitialData({
+                  origin: 'balcao' as const,
+                  items: firstPkg ? [
+                    {
+                      id: `package-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                      type: 'pacote' as const,
+                      referencia_id: firstPkg.id,
+                      name: `Venda Pacote: ${firstPkg.name}`,
+                      quantity: 1,
+                      unitPrice: firstPkg.promotionalPrice,
+                      totalPrice: firstPkg.promotionalPrice,
+                      isCortesia: false,
+                      generateCommission: false,
+                      metadata: {
+                        cutsCount: firstPkg.cutsCount,
+                        pricePerService: firstPkg.pricePerService !== undefined ? firstPkg.pricePerService : null,
+                        noExpiration: firstPkg.noExpiration || false,
+                        expiresDays: firstPkg.expiresDays || 0,
+                        serviceId: firstPkg.serviceId || '',
+                        serviceName: firstPkg.serviceName || ''
+                      }
+                    }
+                  ] : []
+                });
+                setShowComandaModal(true);
               }}
               className="px-5 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
@@ -1344,14 +1367,53 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                       </div>
                     </div>
 
-                    <div className="pt-5 border-t border-slate-100 mt-6 flex items-end justify-between">
+                    <div className="pt-5 border-t border-slate-100 mt-6 flex items-center justify-between">
                       <div>
                         <p className="text-[9px] text-slate-400 line-through font-bold leading-none mb-1">R$ {pkg.originalPrice.toFixed(2)}</p>
                         <p className="text-xl font-black text-emerald-600 leading-none">R$ {pkg.promotionalPrice.toFixed(2)}</p>
                       </div>
-                      <span className="text-[9px] text-slate-500 font-extrabold bg-slate-100/60 px-3 py-1.5 rounded-xl border border-slate-200/45">
-                        {pkg.noExpiration ? 'Sem expiração' : `Válido por ${pkg.expiresDays} dias`}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-slate-500 font-extrabold bg-slate-100/60 px-2.5 py-1.5 rounded-xl border border-slate-200/45">
+                          {pkg.noExpiration ? 'Sem expiração' : `${pkg.expiresDays} dias`}
+                        </span>
+                        {canManage && profile?.tipo !== 'cliente' && (
+                          <button 
+                            type="button"
+                            disabled={!pkg.active}
+                            onClick={() => {
+                              setComandaInitialData({
+                                origin: 'balcao' as const,
+                                items: [
+                                  {
+                                    id: `package-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                                    type: 'pacote' as const,
+                                    referencia_id: pkg.id,
+                                    name: `Venda Pacote: ${pkg.name}`,
+                                    quantity: 1,
+                                    unitPrice: pkg.promotionalPrice,
+                                    totalPrice: pkg.promotionalPrice,
+                                    isCortesia: false,
+                                    generateCommission: false,
+                                    metadata: {
+                                      cutsCount: pkg.cutsCount,
+                                      pricePerService: pkg.pricePerService !== undefined ? pkg.pricePerService : null,
+                                      noExpiration: pkg.noExpiration || false,
+                                      expiresDays: pkg.expiresDays || 0,
+                                      serviceId: pkg.serviceId || '',
+                                      serviceName: pkg.serviceName || ''
+                                    }
+                                  }
+                                ]
+                              });
+                              setShowComandaModal(true);
+                            }}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                          >
+                            <ShoppingBag size={13} />
+                            <span>Vender</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {!pkg.active && (
@@ -1712,107 +1774,6 @@ export function Pacotes({ defaultTab }: PacotesProps) {
                   className="col-span-2 py-4 bg-primary hover:bg-slate-800 text-white rounded-2xl text-[10px] uppercase tracking-widest font-black transition shadow-lg shadow-slate-900/10 cursor-pointer"
                 >
                   {editingPackage ? 'Salvar Regulamento' : 'Registrar Modelo'}
-                </button>
-              </div>
-            </motion.form>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* MODAL: VENDER PACOTE PARA CLIENTE */}
-      <AnimatePresence>
-        {showSaleModal && (
-          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <motion.form 
-              onSubmit={handleSellPackage}
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="bg-white border rounded-[2rem] shadow-2xl p-8 w-full max-w-sm space-y-6 text-primary outline-none"
-            >
-              <div className="flex justify-between items-center pb-4 border-b">
-                <div>
-                  <h3 className="text-xl font-black uppercase tracking-tight">Associar Pacote a Cliente</h3>
-                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-400 mt-1">Efetue a venda do pacote de cortes pré-pago</p>
-                </div>
-                <button type="button" onClick={() => setShowSaleModal(false)} className="bg-slate-100 p-2 rounded-xl text-slate-500 hover:text-primary transition">
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="space-y-4 font-bold text-sm">
-                <div>
-                  <label className="text-[10px] uppercase text-slate-400 block mb-1">Selecionar Cliente Proprietário</label>
-                  <select 
-                    required
-                    value={selectedClientId}
-                    onChange={e => setSelectedClientId(e.target.value)}
-                    className="w-full bg-slate-50 border p-3 rounded-xl cursor-pointer font-extrabold outline-none focus:bg-white"
-                  >
-                    <option value="">-- Escolher Cliente --</option>
-                    {clients.map((c, cIdx) => (
-                      <option key={`pkg-cli-opt-${c.uid || cIdx}-${cIdx}`} value={c.uid}>{c.nome}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[10px] uppercase text-slate-400 block mb-1">Selecionar Pacote Catalogado</label>
-                  <select 
-                    required
-                    value={selectedPkgId}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setSelectedPkgId(val);
-                      const matched = packages.find(p => p.id === val);
-                      if (matched) {
-                        setSalePrice(matched.promotionalPrice);
-                      } else {
-                        setSalePrice('');
-                      }
-                    }}
-                    className="w-full bg-slate-50 border p-3 rounded-xl cursor-pointer font-extrabold outline-none focus:bg-white"
-                  >
-                    <option value="">-- Escolher Regulamento --</option>
-                    {packages.filter(p => p.active).map((p, pIdx) => (
-                      <option key={`pkg-reg-opt-${p.id || pIdx}-${pIdx}`} value={p.id}>
-                        {p.name} (Sessões: {p.cutsCount} | Preço: R$ {p.promotionalPrice.toFixed(2)})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[10px] uppercase text-slate-400 block mb-1">Preço Efetivado de Venda</label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">R$</span>
-                    <input 
-                      required
-                      type="number" 
-                      min="1"
-                      step="0.01"
-                      value={salePrice} 
-                      onChange={e => setSalePrice(e.target.value === '' ? '' : Number(e.target.value))}
-                      className="w-full bg-slate-50 border py-3 pl-9 pr-4 rounded-xl font-black outline-none focus:bg-white"
-                    />
-                  </div>
-                  <p className="text-[9px] text-slate-400 font-bold mt-1.5 leading-tight">Gera automaticamente uma transação consolidada nas contas do sistema.</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3 pt-4">
-                <button 
-                  type="button" 
-                  onClick={() => setShowSaleModal(false)}
-                  className="py-4 border border-slate-205 hover:bg-slate-50 text-slate-500 rounded-2xl text-[10px] uppercase tracking-widest font-black"
-                >
-                  Fechar
-                </button>
-                <button 
-                  type="submit"
-                  className="col-span-2 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-[10px] uppercase tracking-widest font-black transition shadow-lg shadow-emerald-500/10 cursor-pointer"
-                >
-                  Confirmar Faturamento
                 </button>
               </div>
             </motion.form>

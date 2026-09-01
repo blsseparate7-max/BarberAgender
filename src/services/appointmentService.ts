@@ -50,6 +50,42 @@ function removeUndefinedFields<T>(obj: T): T {
   return cleaned;
 }
 
+async function resolveProfessionalSchedule(profissional_id: string): Promise<any> {
+  try {
+    const barberProfile = await userService.getUserProfile(profissional_id);
+    if (barberProfile && barberProfile.horario_de_trabalho && barberProfile.horario_de_trabalho.length > 0) {
+      return {
+        profissional_id,
+        workingHours: barberProfile.horario_de_trabalho,
+        exceptions: [],
+        vacations: []
+      };
+    }
+  } catch (err) {
+    console.warn("Could not load user profile working hours:", err);
+  }
+
+  const schedule = await professionalScheduleService.getSchedule(profissional_id);
+  if (schedule && schedule.workingHours && schedule.workingHours.length > 0) {
+    return schedule;
+  }
+
+  return {
+    profissional_id,
+    workingHours: [
+      { dayOfWeek: 1, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+      { dayOfWeek: 2, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+      { dayOfWeek: 3, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+      { dayOfWeek: 4, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+      { dayOfWeek: 5, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+      { dayOfWeek: 6, isOpen: true, startTime: '09:00', endTime: '17:00', lunchStart: '12:00', lunchEnd: '13:00' },
+      { dayOfWeek: 0, isOpen: false, startTime: '09:00', endTime: '19:00' },
+    ],
+    exceptions: [],
+    vacations: []
+  };
+}
+
 export const appointmentService = {
   async createAppointment(data: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>) {
     const tenantId = (data as any).tenantId || getActiveTenantId();
@@ -242,7 +278,7 @@ export const appointmentService = {
 
   async checkAvailability(profissional_id: string, date: string, startTime: string, endTime: string, excludeId?: string): Promise<{ available: boolean; reason?: string }> {
     // 1. Check Professional Schedule
-    const schedule = await professionalScheduleService.getSchedule(profissional_id);
+    const schedule = await resolveProfessionalSchedule(profissional_id);
     if (!schedule) return { available: true }; // If no schedule, assume 24/7 (not ideal, but fallback)
 
     const dateObj = parse(date, 'yyyy-MM-dd', new Date());
@@ -748,39 +784,7 @@ export const appointmentService = {
       }
     }
 
-    let schedule = await professionalScheduleService.getSchedule(profissional_id);
-    if (!schedule || !schedule.workingHours || schedule.workingHours.length === 0) {
-      try {
-        const barberProfile = await userService.getUserProfile(profissional_id);
-        if (barberProfile && barberProfile.horario_de_trabalho && barberProfile.horario_de_trabalho.length > 0) {
-          schedule = {
-            profissional_id,
-            workingHours: barberProfile.horario_de_trabalho,
-            exceptions: [],
-            vacations: []
-          } as any;
-        }
-      } catch (err) {
-        console.warn("Could not load user profile working hours:", err);
-      }
-    }
-
-    if (!schedule) {
-      // Fallback default schedule if none exists yet, so the professional is immediately bookable
-      schedule = {
-        workingHours: [
-          { dayOfWeek: 1, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-          { dayOfWeek: 2, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-          { dayOfWeek: 3, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-          { dayOfWeek: 4, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-          { dayOfWeek: 5, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-          { dayOfWeek: 6, isOpen: true, startTime: '09:00', endTime: '17:00', lunchStart: '12:00', lunchEnd: '13:00' },
-          { dayOfWeek: 0, isOpen: false, startTime: '09:00', endTime: '19:00' },
-        ],
-        exceptions: [],
-        vacations: []
-      } as any;
-    }
+    let schedule = await resolveProfessionalSchedule(profissional_id);
 
     const dateObj = parse(date, 'yyyy-MM-dd', new Date());
     const dayOfWeek = getDay(dateObj);

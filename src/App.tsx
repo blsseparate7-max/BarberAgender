@@ -6,7 +6,7 @@ import { Header } from './components/Header';
 import { PaymentMethodManager } from './components/PaymentMethodManager';
 import { CashWidget } from './components/Financeiro/CashWidget';
 import { TabId, Stats } from './types';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { TenantProvider, useTenant } from './contexts/TenantContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -109,6 +109,38 @@ function MainApp() {
       setShowOnboarding(false);
     }
   }, [profile]);
+
+  // Auto-redirect to Comandas if today is Ordem de Chegada (Walk-In) only
+  useEffect(() => {
+    if (!tenant?.openingHours || !profile) return;
+    const role = profile.tipo;
+    if (role === 'admin' || role === 'gerente' || role === 'barbeiro') {
+      try {
+        const today = new Date();
+        const dayOfWeek = today.getDay(); // 0 is Sunday, 1 is Monday, etc.
+        const DAYS_PT = [
+          'Domingo',
+          'Segunda-feira',
+          'Terça-feira',
+          'Quarta-feira',
+          'Quinta-feira',
+          'Sexta-feira',
+          'Sábado'
+        ];
+        const dayNamePT = DAYS_PT[dayOfWeek];
+        const dayConfig = tenant.openingHours.find((h: any) => h.day === dayNamePT);
+        if (dayConfig && dayConfig.open && dayConfig.isWalkInOnly) {
+          // If we are currently on dashboard, redirect to comandas
+          if (activeTab === 'dashboard' || activeTab === 'dashboard-overview') {
+            setActiveTab('comandas-abertas' as any);
+            toast.info(`Hoje o expediente (${dayNamePT}) é por Ordem de Chegada! Você foi direcionado para o Painel de Comandas.`);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }, [tenant, profile, activeTab]);
 
   // Redirect to permitted tabs based on role to avoid missing permissions errors on mounted pages
   useEffect(() => {

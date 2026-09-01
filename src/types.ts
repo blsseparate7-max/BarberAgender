@@ -62,6 +62,7 @@ export interface UserProfile {
   horario_de_trabalho?: WorkingHours[]; // Integrado conforme pedido
   pontos?: number;
   points?: number;
+  cashback?: number;
   
   // Dados de Pessoa Física Completos
   cpf?: string;

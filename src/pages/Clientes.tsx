@@ -69,6 +69,7 @@ import { parseDate } from '../lib/utils';
 import { debtService } from '../services/debtService';
 import { comandaService } from '../services/comandaService';
 import { userService } from '../services/userService';
+import { loyaltyService } from '../services/loyaltyService';
 import { useAuth } from '../contexts/AuthContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
@@ -1217,6 +1218,14 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
   const [newNoteText, setNewNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
 
+  // Loyalty / Points adjustment form states
+  const [showLoyaltyForm, setShowLoyaltyForm] = useState(false);
+  const [loyaltyType, setLoyaltyType] = useState<'points' | 'cashback'>('points');
+  const [loyaltyAction, setLoyaltyAction] = useState<'add' | 'remove' | 'set'>('add');
+  const [loyaltyValue, setLoyaltyValue] = useState('');
+  const [loyaltyDescription, setLoyaltyDescription] = useState('');
+  const [submittingLoyalty, setSubmittingLoyalty] = useState(false);
+
   useEffect(() => {
     const q = query(
       collection(db, 'appointments'),
@@ -1636,6 +1645,38 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
     }
   };
 
+  const handleAdjustLoyalty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseFloat(loyaltyValue);
+    if (isNaN(val) || val < 0) {
+      toast.error('Informe um valor válido!');
+      return;
+    }
+    if (!loyaltyDescription.trim()) {
+      toast.error('Informe a descrição/motivo do ajuste!');
+      return;
+    }
+    setSubmittingLoyalty(true);
+    try {
+      await loyaltyService.manualAdjustPoints(
+        customer.uid,
+        loyaltyAction,
+        loyaltyType,
+        val,
+        loyaltyDescription.trim()
+      );
+      toast.success('Fidelidade ajustada com sucesso!');
+      setLoyaltyValue('');
+      setLoyaltyDescription('');
+      setShowLoyaltyForm(false);
+    } catch (error) {
+      console.error("Erro ao ajustar fidelidade:", error);
+      toast.error('Erro ao ajustar os pontos/cashback.');
+    } finally {
+      setSubmittingLoyalty(false);
+    }
+  };
+
   const handleWhatsApp = () => {
     const rawPhone = customer.telefone || customer.phone || '';
     const phoneClean = rawPhone.replace(/\D/g, '');
@@ -1803,6 +1844,19 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                 <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-blue-50 text-blue-700 border border-blue-100 rounded-full shadow-inner text-[11px] font-black">
                   ⭐ {pontosFidelidade} PONTOS FIDELIDADE
                 </div>
+
+                <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-amber-50 text-amber-700 border border-amber-100 rounded-full shadow-inner text-[11px] font-black">
+                  💰 R$ {(customer.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CASHBACK
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowLoyaltyForm(!showLoyaltyForm)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-full text-[11px] font-black transition-all shadow-sm active:scale-95 cursor-pointer"
+                >
+                  <Edit2 size={11} />
+                  <span>Ajustar Saldo</span>
+                </button>
               </div>
 
               <div className="pt-3">
@@ -2026,6 +2080,86 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                     className="w-full py-2.5 bg-red-650 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md hover:bg-red-700 transition"
                   >
                     {submittingDebt ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirmar Registro de Fiado'}
+                  </button>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* COLLAPSIBLE LOYALTY / POINTS FORM */}
+          <AnimatePresence>
+            {showLoyaltyForm && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }} 
+                animate={{ opacity: 1, height: 'auto' }} 
+                exit={{ opacity: 0, height: 0 }}
+                className="bg-blue-50/70 border border-blue-100 p-6 rounded-[2rem] space-y-4 shadow-inner overflow-hidden"
+              >
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black uppercase text-blue-800 tracking-wider">Ajustar Pontos / Cashback</h4>
+                  <button type="button" onClick={() => setShowLoyaltyForm(false)} className="text-blue-800 hover:text-black">
+                    <X size={14} />
+                  </button>
+                </div>
+                <form onSubmit={handleAdjustLoyalty} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="text-[9px] font-black text-blue-800 block mb-1 uppercase tracking-wider">TIPO DE SALDO</label>
+                      <select 
+                        value={loyaltyType} 
+                        onChange={(e) => setLoyaltyType(e.target.value as any)}
+                        className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs text-primary font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="points">Pontos de Fidelidade</option>
+                        <option value="cashback">Saldo Cashback (R$)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-blue-800 block mb-1 uppercase tracking-wider">OPERAÇÃO</label>
+                      <select 
+                        value={loyaltyAction} 
+                        onChange={(e) => setLoyaltyAction(e.target.value as any)}
+                        className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs text-primary font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="add">➕ Adicionar</option>
+                        <option value="remove">➖ Remover</option>
+                        <option value="set">🎯 Definir Saldo Fixo</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-blue-800 block mb-1 uppercase tracking-wider">VALOR / QUANTIDADE</label>
+                      <input 
+                        type="number" 
+                        step={loyaltyType === 'cashback' ? '0.01' : '1'} 
+                        required
+                        value={loyaltyValue} 
+                        onChange={(e) => setLoyaltyValue(e.target.value)}
+                        className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-sm text-primary font-bold focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                        placeholder={loyaltyType === 'cashback' ? '0,00' : '0'}
+                        min="0"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] font-black text-blue-800 block mb-1 uppercase tracking-wider">DESCRIÇÃO / MOTIVO DO AJUSTE</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={loyaltyDescription} 
+                      onChange={(e) => setLoyaltyDescription(e.target.value)}
+                      className="w-full bg-white border border-blue-200 rounded-xl py-2.5 px-3 text-xs text-primary font-bold focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                      placeholder="Ex: Bônus de aniversário, Correção manual de saldo, Cortesia..."
+                      maxLength={60}
+                    />
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    disabled={submittingLoyalty}
+                    className="w-full py-2.5 bg-blue-600 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md hover:bg-blue-700 transition animate-pulse"
+                  >
+                    {submittingLoyalty ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirmar Ajuste de Fidelidade'}
                   </button>
                 </form>
               </motion.div>

@@ -57,7 +57,7 @@ import { inventoryService } from '../services/inventoryService';
 import { getActiveTenantId, tenantService, TenantProfile } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher } from '../types';
-import { format, parse, addMinutes, isAfter, isBefore, isEqual } from 'date-fns';
+import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 function formatPhone(value: string) {
@@ -680,6 +680,34 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadingSlots, setLoadingSlots] = useState(false);
 
+  const getIsWalkInOnly = () => {
+    if (!tenantInfo?.openingHours || !selectedDate) return { isWalkInOnly: false, message: '' };
+    try {
+      const dateObj = parse(selectedDate, 'yyyy-MM-dd', new Date());
+      const dayOfWeek = getDay(dateObj);
+      const DAYS_PT = [
+        'Domingo',
+        'Segunda-feira',
+        'Terça-feira',
+        'Quarta-feira',
+        'Quinta-feira',
+        'Sexta-feira',
+        'Sábado'
+      ];
+      const dayNamePT = DAYS_PT[dayOfWeek];
+      const dayConfig = tenantInfo.openingHours.find((h: any) => h.day === dayNamePT);
+      if (dayConfig && dayConfig.open && dayConfig.isWalkInOnly) {
+        return { 
+          isWalkInOnly: true, 
+          message: dayConfig.walkInMessage || `Hoje o atendimento é exclusivamente por ordem de chegada das ${dayConfig.start} às ${dayConfig.end}! Chegue cedo para garantir seu horário.` 
+        };
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    return { isWalkInOnly: false, message: '' };
+  };
+
   const handleToggleService = (s: Service) => {
     let updated: Service[] = [];
     if (selectedServices.some(item => item.id === s.id)) {
@@ -1072,6 +1100,13 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
   const loadSlots = async () => {
     if (!selectedBarber || !selectedService) return;
+    
+    if (getIsWalkInOnly().isWalkInOnly) {
+      setAvailableSlots([]);
+      setSelectedTime(null);
+      return;
+    }
+
     setLoadingSlots(true);
     try {
       const duration = selectedService.duracao_minutos || selectedService.duration || 30;
@@ -1842,35 +1877,57 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     </div>
 
                     {services.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {services.map((service, sIdx) => (
-                          <div 
-                            key={`showcase-svc-${service.id || sIdx}`}
-                            className="p-4 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100/80 hover:border-slate-200 transition-all flex flex-col justify-between gap-3 group"
-                          >
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between gap-2">
-                                <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
-                                <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
-                                  R$ {Number(service.preco || 0).toFixed(2)}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                                {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
-                              </p>
+                      <div className="space-y-8">
+                        {(Object.entries(
+                          services.reduce((acc, service) => {
+                            const cat = service.categoria || 'Geral';
+                            if (!acc[cat]) acc[cat] = [];
+                            acc[cat].push(service);
+                            return acc;
+                          }, {} as Record<string, Service[]>)
+                        ) as [string, Service[]][]).map(([categoryName, catServices]) => (
+                          <div key={`category-group-${categoryName}`} className="space-y-4">
+                            <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
+                              <h4 className="text-xs font-black uppercase text-indigo-600 tracking-wider flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                                {categoryName}
+                              </h4>
+                              <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500 font-bold">
+                                {catServices.length} {catServices.length === 1 ? 'serviço' : 'serviços'}
+                              </span>
                             </div>
-                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-100/50">
-                              <span className="flex items-center gap-1"><Clock size={11} /> {service.tempo_estimado || 30} min</span>
-                              <button 
-                                onClick={() => {
-                                  setSelectedService(service);
-                                  setBookingStep(1); // Go choose professional
-                                  setActiveTab('schedule');
-                                }}
-                                className="text-indigo-600 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-indigo-700"
-                              >
-                                Agendar este <ChevronRight size={10} />
-                              </button>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {catServices.map((service, sIdx) => (
+                                <div 
+                                  key={`showcase-svc-${service.id || sIdx}`}
+                                  className="p-4 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100/80 hover:border-slate-200 transition-all flex flex-col justify-between gap-3 group"
+                                >
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
+                                      <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
+                                        R$ {Number(service.preco || 0).toFixed(2)}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                                      {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-100/50">
+                                    <span className="flex items-center gap-1"><Clock size={11} /> {service.duracao_minutos || service.duration || 30} min</span>
+                                    <button 
+                                      onClick={() => {
+                                        setSelectedService(service);
+                                        setBookingStep(1); // Go choose professional
+                                        setActiveTab('schedule');
+                                      }}
+                                      className="text-indigo-600 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-indigo-700"
+                                    >
+                                      Agendar este <ChevronRight size={10} />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         ))}
@@ -2770,7 +2827,18 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                           </label>
                         </div>
 
-                        {loadingSlots ? (
+                        {getIsWalkInOnly().isWalkInOnly ? (
+                          <div className="p-8 text-center bg-amber-500/10 border border-dashed border-amber-300 rounded-[2rem] space-y-3 animate-in fade-in duration-300">
+                            <div className="w-12 h-12 bg-amber-500/20 text-amber-600 rounded-full flex items-center justify-center mx-auto text-xl animate-pulse">
+                              🚶‍♂️
+                            </div>
+                            <h4 className="text-sm font-black text-slate-800 tracking-tight">Atendimento por Ordem de Chegada</h4>
+                            <p className="text-xs text-slate-600 font-semibold max-w-sm mx-auto leading-relaxed">
+                              {getIsWalkInOnly().message}
+                            </p>
+                            <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Não é necessário agendamento prévio!</p>
+                          </div>
+                        ) : loadingSlots ? (
                           <div className="py-12 flex flex-col items-center justify-center gap-2">
                             <Clock className="animate-spin text-indigo-500" size={24} />
                             <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest animate-pulse">Sincronizando Agenda do Profissional...</span>

@@ -672,13 +672,23 @@ export const comandaService = {
 
         if (uData.cliente_id) {
           try {
-            await loyaltyService.addPoints(
-              uData.cliente_id,
-              0,
-              uData.paidAmount || uData.totalAmount || 0,
-              `Cashback - Comanda #${uData.number}`,
-              'appointment'
-            );
+            // Calcular o valor pago real desconsiderando a forma de pagamento 'fiado'
+            const payments = uData.payments || [];
+            const actualPaidAmount = payments.reduce((acc: number, p: any) => {
+              const method = String(p.method || '').toLowerCase();
+              if (method === 'fiado') return acc;
+              return acc + (p.amount || 0);
+            }, 0);
+
+            if (actualPaidAmount > 0) {
+              await loyaltyService.addPoints(
+                uData.cliente_id,
+                0,
+                actualPaidAmount,
+                `Cashback - Comanda #${uData.number}`,
+                'appointment'
+              );
+            }
           } catch (loyaltyErr) {
             console.warn("Could not calculate/credit cashback for closed comanda:", loyaltyErr);
           }
@@ -1467,6 +1477,25 @@ export const comandaService = {
         createdAt: serverTimestamp()
       });
     });
+
+    // Creditar pontos / cashback após a quitação com sucesso
+    try {
+      const debtSnap = await getDoc(debtRef);
+      if (debtSnap.exists()) {
+        const debt = debtSnap.data() as ClientDebt;
+        if (debt.cliente_id && amount > 0) {
+          await loyaltyService.addPoints(
+            debt.cliente_id,
+            0,
+            amount,
+            `Pontos por Recebimento Fiado - Dívida quitada`,
+            'appointment'
+          );
+        }
+      }
+    } catch (loyaltyErr) {
+      console.warn("Could not calculate/credit cashback for debt payment:", loyaltyErr);
+    }
   },
 
   async updateComandaClient(id: string, clientData: { id: string, name: string }, userId: string, userName: string) {

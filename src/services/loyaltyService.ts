@@ -135,6 +135,18 @@ export const loyaltyService = {
         updatedAt: serverTimestamp()
       });
 
+      // Sincronizar com a coleção de 'usuarios'
+      const userRef = doc(db, 'usuarios', cliente_id);
+      const userSnap = await transaction.get(userRef);
+      if (userSnap.exists()) {
+        transaction.update(userRef, {
+          pontos: newPoints,
+          points: newPoints,
+          cashback: newCashback,
+          updatedAt: serverTimestamp()
+        });
+      }
+
       const historyRef = doc(collection(db, HISTORY_COLLECTION));
       transaction.set(historyRef, {
         cliente_id,
@@ -165,11 +177,26 @@ export const loyaltyService = {
       if (data.points < points) throw new Error("Pontos insuficientes");
       if (data.cashback < cashback) throw new Error("Cashback insuficiente");
 
+      const newPoints = Math.max(0, data.points - points);
+      const newCashback = Math.max(0, data.cashback - cashback);
+
       transaction.update(pointsRef, {
-        points: increment(-points),
-        cashback: increment(-cashback),
+        points: newPoints,
+        cashback: newCashback,
         updatedAt: serverTimestamp()
       });
+
+      // Sincronizar com a coleção de 'usuarios'
+      const userRef = doc(db, 'usuarios', cliente_id);
+      const userSnap = await transaction.get(userRef);
+      if (userSnap.exists()) {
+        transaction.update(userRef, {
+          pontos: newPoints,
+          points: newPoints,
+          cashback: newCashback,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       const historyRef = doc(collection(db, HISTORY_COLLECTION));
       transaction.set(historyRef, {
@@ -236,11 +263,24 @@ export const loyaltyService = {
         throw new Error(`Pontos insuficientes. Você possui ${data.points || 0} pts e são necessários ${params.points_spent} pts.`);
       }
 
+      const newPoints = Math.max(0, (data.points || 0) - params.points_spent);
+
       // Deduct points
       transaction.update(pointsRef, {
-        points: increment(-params.points_spent),
+        points: newPoints,
         updatedAt: serverTimestamp()
       });
+
+      // Sincronizar com a coleção de 'usuarios'
+      const userRef = doc(db, 'usuarios', params.cliente_id);
+      const userSnap = await transaction.get(userRef);
+      if (userSnap.exists()) {
+        transaction.update(userRef, {
+          pontos: newPoints,
+          points: newPoints,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       // Record in loyalty history
       const historyRef = doc(collection(db, HISTORY_COLLECTION));
@@ -334,6 +374,90 @@ export const loyaltyService = {
       const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
       const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
       return bTime - aTime;
+    });
+  },
+
+  async manualAdjustPoints(cliente_id: string, action: 'add' | 'remove' | 'set', type: 'points' | 'cashback', value: number, description: string) {
+    const activeTenantId = getActiveTenantId();
+    return await runTransaction(db, async (transaction) => {
+      const docId = `${activeTenantId}_${cliente_id}`;
+      const pointsRef = doc(db, POINTS_COLLECTION, docId);
+      const pointsSnap = await transaction.get(pointsRef);
+
+      let currentPoints = 0;
+      let currentCashback = 0;
+
+      if (pointsSnap.exists()) {
+        const data = pointsSnap.data() as LoyaltyPoints;
+        currentPoints = data.points || 0;
+        currentCashback = data.cashback || 0;
+      }
+
+      let newPoints = currentPoints;
+      let newCashback = currentCashback;
+
+      let changePoints = 0;
+      let changeCashback = 0;
+
+      if (type === 'points') {
+        if (action === 'add') {
+          newPoints = currentPoints + value;
+          changePoints = value;
+        } else if (action === 'remove') {
+          newPoints = Math.max(0, currentPoints - value);
+          changePoints = -value;
+        } else {
+          newPoints = Math.max(0, value);
+          changePoints = newPoints - currentPoints;
+        }
+      } else {
+        if (action === 'add') {
+          newCashback = currentCashback + value;
+          changeCashback = value;
+        } else if (action === 'remove') {
+          newCashback = Math.max(0, currentCashback - value);
+          changeCashback = -value;
+        } else {
+          newCashback = Math.max(0, value);
+          changeCashback = newCashback - currentCashback;
+        }
+      }
+
+      transaction.set(pointsRef, {
+        cliente_id,
+        tenantId: activeTenantId,
+        points: newPoints,
+        cashback: newCashback,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      // Sync with the 'usuarios' collection
+      const userRef = doc(db, 'usuarios', cliente_id);
+      const userSnap = await transaction.get(userRef);
+      if (userSnap.exists()) {
+        transaction.update(userRef, {
+          pontos: newPoints,
+          points: newPoints,
+          cashback: newCashback,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      // Record adjustment in history
+      const historyRef = doc(collection(db, HISTORY_COLLECTION));
+      transaction.set(historyRef, {
+        cliente_id,
+        tenantId: activeTenantId,
+        type: action === 'add' ? 'earn' : action === 'remove' ? 'redeem' : 'adjust',
+        source: 'manual',
+        points: changePoints,
+        cashback: changeCashback,
+        description: description || 'Ajuste manual administrativo',
+        date: format(new Date(), 'yyyy-MM-dd'),
+        createdAt: serverTimestamp()
+      });
+
+      return { points: newPoints, cashback: newCashback };
     });
   }
 };

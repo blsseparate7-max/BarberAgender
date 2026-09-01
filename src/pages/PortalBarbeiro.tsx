@@ -650,10 +650,11 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       )}
 
       {/* Header Banner */}
-      <header className="bg-slate-900 text-white pt-6 pb-12 px-4 shadow-md rounded-b-[2rem] relative overflow-hidden shrink-0">
-        <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 opacity-95" />
-        <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
-        <div className="absolute top-1/2 left-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
+      <header className="bg-slate-900 text-white pt-6 pb-12 px-4 shadow-md rounded-b-[2rem] relative shrink-0 z-30">
+        <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 opacity-95 rounded-b-[2rem] overflow-hidden pointer-events-none">
+          <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl" />
+          <div className="absolute top-1/2 left-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-xl" />
+        </div>
 
         <div className="max-w-md mx-auto flex items-center justify-between relative z-10">
           <div className="flex items-center gap-3">

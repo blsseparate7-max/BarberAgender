@@ -133,6 +133,10 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       if (tPlan) {
         setSelectedPlan(tenant.planId || tPlan.toLowerCase());
       }
+
+      if (tenant.openingHours && tenant.openingHours.length > 0) {
+        setHours(tenant.openingHours);
+      }
     }
   }, [tenant]);
 
@@ -521,8 +525,16 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     toast.success("Regras estratégicas de rodízio atualizadas!");
   };
 
-  const handleSaveHours = () => {
-    toast.success("Grade horária de atendimento salva com sucesso!");
+  const handleSaveHours = async () => {
+    try {
+      await updateTenantProfile({
+        openingHours: hours
+      });
+      toast.success("Grade horária de atendimento salva com sucesso!");
+    } catch (err: any) {
+      console.error("Erro ao salvar horários:", err);
+      toast.error("Erro ao salvar horário de funcionamento.");
+    }
   };
 
   const handleSendTicket = (e: React.FormEvent) => {
@@ -1216,46 +1228,107 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                 
                 <div className="space-y-4 border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
                   {hours.map((h, i) => (
-                    <div key={h.day} className="flex flex-col sm:flex-row sm:items-center justify-between p-6 bg-slate-50/50 border-b border-slate-100 last:border-0 gap-4">
-                      <div className="flex items-center gap-4">
-                        <input 
-                          type="checkbox" 
-                          checked={h.open} 
-                          onChange={() => {
-                            const updated = [...hours];
-                            updated[i].open = !updated[i].open;
-                            setHours(updated);
-                          }}
-                          className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent"
-                        />
-                        <span className="font-bold text-sm text-primary w-28">{h.day}</span>
-                        <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border ${h.open ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'}`}>
-                          {h.open ? 'Expediente' : 'Fechada'}
-                        </span>
-                      </div>
-                      
-                      {h.open && (
-                        <div className="flex items-center gap-3">
+                    <div key={h.day} className="flex flex-col p-6 bg-slate-50/50 border-b border-slate-100 last:border-0 gap-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
                           <input 
-                            type="text" 
-                            value={h.start} 
-                            onChange={(e) => {
+                            type="checkbox" 
+                            checked={h.open} 
+                            onChange={() => {
                               const updated = [...hours];
-                              updated[i].start = e.target.value;
+                              updated[i].open = !updated[i].open;
                               setHours(updated);
                             }}
-                            className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-center w-20 focus:outline-none focus:border-accent"
+                            className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent"
                           />
-                          <span className="text-slate-400 text-xs font-bold">até</span>
+                          <span className="font-bold text-sm text-primary w-28">{h.day}</span>
+                          <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border ${
+                            !h.open 
+                              ? 'bg-red-50 text-red-600 border-red-100' 
+                              : (h as any).isWalkInOnly 
+                                ? 'bg-amber-50 text-amber-600 border-amber-100' 
+                                : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          }`}>
+                            {!h.open ? 'Fechada' : (h as any).isWalkInOnly ? 'Ordem de Chegada' : 'Agendamento'}
+                          </span>
+                        </div>
+                        
+                        {h.open && (
+                          <div className="flex flex-wrap items-center gap-4">
+                            {/* Seletor de Tipo */}
+                            <div className="flex items-center gap-2 bg-white border border-slate-100 p-1 rounded-xl">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...hours];
+                                  (updated[i] as any).isWalkInOnly = false;
+                                  setHours(updated);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                  !(h as any).isWalkInOnly 
+                                    ? 'bg-primary text-white shadow-sm' 
+                                    : 'text-slate-500 hover:text-primary'
+                                }`}
+                              >
+                                Agendamento
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...hours];
+                                  (updated[i] as any).isWalkInOnly = true;
+                                  setHours(updated);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                  (h as any).isWalkInOnly 
+                                    ? 'bg-amber-500 text-white shadow-sm' 
+                                    : 'text-slate-500 hover:text-amber-500'
+                                }`}
+                              >
+                                Fila / Ordem
+                              </button>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="text" 
+                                value={h.start} 
+                                onChange={(e) => {
+                                  const updated = [...hours];
+                                  updated[i].start = e.target.value;
+                                  setHours(updated);
+                                }}
+                                className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-center w-20 focus:outline-none focus:border-accent"
+                              />
+                              <span className="text-slate-400 text-xs font-bold">até</span>
+                              <input 
+                                type="text" 
+                                value={h.end} 
+                                onChange={(e) => {
+                                  const updated = [...hours];
+                                  updated[i].end = e.target.value;
+                                  setHours(updated);
+                                }}
+                                className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-center w-20 focus:outline-none focus:border-accent"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {h.open && (h as any).isWalkInOnly && (
+                        <div className="bg-amber-50/50 border border-amber-100 rounded-2xl p-4 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                          <label className="text-[10px] font-black text-amber-700 uppercase tracking-wider block">Mensagem informativa para o cliente</label>
                           <input 
-                            type="text" 
-                            value={h.end} 
+                            type="text"
+                            placeholder="Ex: Hoje atendemos apenas por ordem de chegada. Venha nos visitar!"
+                            value={(h as any).walkInMessage || ''}
                             onChange={(e) => {
                               const updated = [...hours];
-                              updated[i].end = e.target.value;
+                              (updated[i] as any).walkInMessage = e.target.value;
                               setHours(updated);
                             }}
-                            className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-center w-20 focus:outline-none focus:border-accent"
+                            className="w-full bg-white border border-amber-150 rounded-xl py-2.5 px-4 text-xs font-bold text-primary placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-amber-500"
                           />
                         </div>
                       )}

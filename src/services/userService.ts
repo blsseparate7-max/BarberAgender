@@ -25,57 +25,65 @@ const COLLECTION = 'usuarios';
 
 export const userService = {
   async getUsersByRole(role: UserRole, onlyActive = true, tenantId?: string) {
-    const tid = tenantId || getActiveTenantId();
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
     let q = query(
       collection(db, COLLECTION), 
-      where('tipo', '==', role),
-      where('tenantId', '==', tid)
+      where('tipo', '==', role)
     );
     
-    if (onlyActive) {
-      q = query(q, where('ativo', '==', true));
-    }
-
     const querySnapshot = await getDocs(q);
-    const users = querySnapshot.docs
+    let users = querySnapshot.docs
       .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-      .filter(u => !tid || u.tenantId === tid);
+      .filter(u => {
+        if (!tid) return true;
+        const uTenant = (u.tenantId || '').trim().toLowerCase();
+        return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
+      });
+    
+    if (onlyActive) {
+      users = users.filter(u => u.ativo !== false);
+    }
     return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
   subscribeToUsersByRole(role: UserRole, onlyActive = true, callback: (users: UserProfile[]) => void) {
-    const tid = getActiveTenantId();
+    const tid = (getActiveTenantId()).trim().toLowerCase();
     let q = query(
       collection(db, COLLECTION), 
-      where('tipo', '==', role),
-      where('tenantId', '==', tid)
+      where('tipo', '==', role)
     );
-    
-    if (onlyActive) {
-      q = query(q, where('ativo', '==', true));
-    }
 
     return onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs
+      let users = snapshot.docs
         .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-        .filter(u => !tid || u.tenantId === tid);
+        .filter(u => {
+          if (!tid) return true;
+          const uTenant = (u.tenantId || '').trim().toLowerCase();
+          return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
+        });
+      if (onlyActive) {
+        users = users.filter(u => u.ativo !== false);
+      }
       const sorted = users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       callback(sorted);
     });
   },
 
   subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void, tenantId?: string) {
-    const tid = tenantId || getActiveTenantId();
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
     const q = query(
       collection(db, COLLECTION), 
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
-      where('tenantId', '==', tid)
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
     );
 
     return onSnapshot(q, (snapshot) => {
       let users = snapshot.docs
         .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-        .filter(u => !tid || u.tenantId === tid);
+        .filter(u => {
+          if (!tid) return true;
+          const uTenant = (u.tenantId || '').trim().toLowerCase();
+          return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
+        });
       if (onlyActive) {
         users = users.filter(u => u.ativo !== false);
       }
@@ -89,16 +97,19 @@ export const userService = {
   },
 
   async getAllBarbers(onlyActive = true, tenantId?: string) {
-    const tid = tenantId || getActiveTenantId();
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
     const q = query(
       collection(db, COLLECTION),
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
-      where('tenantId', '==', tid)
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
     );
     const querySnapshot = await getDocs(q);
     let users = querySnapshot.docs
       .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-      .filter(u => !tid || u.tenantId === tid);
+      .filter(u => {
+        if (!tid) return true;
+        const uTenant = (u.tenantId || '').trim().toLowerCase();
+        return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
+      });
     if (onlyActive) {
       users = users.filter(u => u.ativo !== false);
     }

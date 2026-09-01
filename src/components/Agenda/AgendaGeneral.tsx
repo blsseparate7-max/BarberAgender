@@ -161,16 +161,51 @@ export function AgendaGeneral({
     return badges;
   };
 
+  // Dynamically compute time slots for the agenda grid based on barbers' working hours
   useEffect(() => {
+    let minHour = 8;
+    let maxHour = 20;
+
+    const dayOfWeek = selectedDate.getDay(); // 0 = Domingo, 1 = Segunda, etc.
+
+    if (barbers && barbers.length > 0) {
+      let computedMinsStart = 24 * 60;
+      let computedMinsEnd = 0;
+
+      barbers.forEach(b => {
+        const whList = b.horario_de_trabalho || [];
+        const whToday = whList.find((w: any) => w.dayOfWeek === dayOfWeek || w.dia === String(dayOfWeek)) as any;
+        if (whToday && whToday.isOpen !== false && (whToday.startTime || whToday.inicio)) {
+          const startStr = whToday.startTime || whToday.inicio || '08:00';
+          const endStr = whToday.endTime || whToday.fim || '20:00';
+          const [iH, iM] = startStr.split(':').map(Number);
+          const [fH, fM] = endStr.split(':').map(Number);
+          const startM = (iH || 8) * 60 + (iM || 0);
+          const endM = (fH || 20) * 60 + (fM || 0);
+          if (startM < computedMinsStart) computedMinsStart = startM;
+          if (endM > computedMinsEnd) computedMinsEnd = endM;
+        } else {
+          // Fallback default hours if barber has no specific shift configured for today
+          if (8 * 60 < computedMinsStart) computedMinsStart = 8 * 60;
+          if (20 * 60 > computedMinsEnd) computedMinsEnd = 20 * 60;
+        }
+      });
+
+      if (computedMinsStart < computedMinsEnd) {
+        minHour = Math.floor(computedMinsStart / 60);
+        maxHour = Math.ceil(computedMinsEnd / 60);
+      }
+    }
+
     const slots = [];
-    let current = parse('08:00', 'HH:mm', new Date());
-    const end = parse('21:00', 'HH:mm', new Date());
+    let current = parse(String(minHour).padStart(2, '0') + ':00', 'HH:mm', new Date());
+    const end = parse(String(maxHour).padStart(2, '0') + ':00', 'HH:mm', new Date());
     while (isBefore(current, end) || isEqual(current, end)) {
       slots.push(format(current, 'HH:mm'));
       current = addMinutes(current, 30);
     }
-    setTimeSlots(slots);
-  }, []);
+    setTimeSlots(slots.length > 0 ? slots : ['08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00', '19:30', '20:00']);
+  }, [barbers, selectedDate]);
 
   const getBarberAppointments = (barber: UserProfile, time: string) => {
     try {

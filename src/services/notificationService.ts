@@ -92,13 +92,16 @@ export const notificationService = {
     const tenantId = getActiveTenantId();
     const q = query(
       collection(db, COLLECTION),
-      where('tenantId', '==', tenantId),
-      where('recipientId', 'in', [recipientId, 'admin']),
-      orderBy('createdAt', 'desc')
+      where('tenantId', '==', tenantId)
     );
 
     return onSnapshot(q, (snapshot) => {
-      const notifications = snapshot.docs.map(docSnap => {
+      const filteredDocs = snapshot.docs.filter(docSnap => {
+        const rId = docSnap.data().recipientId;
+        return rId === recipientId || rId === 'admin';
+      });
+
+      const notifications = filteredDocs.map(docSnap => {
         const data = docSnap.data();
         return {
           id: docSnap.id,
@@ -107,6 +110,13 @@ export const notificationService = {
           createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate() : data.createdAt) : new Date()
         } as InAppNotification;
       });
+
+      notifications.sort((a, b) => {
+        const timeA = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime() || 0;
+        const timeB = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime() || 0;
+        return timeB - timeA;
+      });
+
       callback(notifications);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, COLLECTION);
@@ -135,17 +145,20 @@ export const notificationService = {
     const tenantId = getActiveTenantId();
     const q = query(
       collection(db, COLLECTION),
-      where('tenantId', '==', tenantId),
-      where('recipientId', 'in', [recipientId, 'admin']),
-      where('read', '==', false)
+      where('tenantId', '==', tenantId)
     );
 
     try {
       const snapshot = await getDocs(q);
-      if (snapshot.empty) return;
+      const filtered = snapshot.docs.filter(docSnap => {
+        const data = docSnap.data();
+        const rId = data.recipientId;
+        return (rId === recipientId || rId === 'admin') && data.read === false;
+      });
+      if (filtered.length === 0) return;
 
       const batch = writeBatch(db);
-      snapshot.docs.forEach((docSnap) => {
+      filtered.forEach((docSnap) => {
         batch.update(doc(db, COLLECTION, docSnap.id), {
           read: true,
           updatedAt: serverTimestamp()

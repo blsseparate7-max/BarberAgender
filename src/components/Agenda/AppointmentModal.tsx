@@ -417,6 +417,42 @@ export function AppointmentModal({
               </div>
             </div>
 
+            {/* Tipo de Agendamento (Apenas para Profissionais) */}
+            {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') && (
+              <div className="col-span-full bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2 text-left">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Tipo de Agendamento</label>
+                <div className="flex gap-6 mt-1">
+                  <label className="flex items-center gap-2 text-xs text-primary font-black cursor-pointer select-none">
+                    <input 
+                      type="radio"
+                      name="origin"
+                      value="agenda"
+                      checked={formData.origin !== 'encaixe'}
+                      onChange={() => setFormData({...formData, origin: 'agenda'})}
+                      className="text-accent focus:ring-accent rounded-full border-slate-300"
+                    />
+                    Padrão (Valida Horário)
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-indigo-700 font-black cursor-pointer select-none">
+                    <input 
+                      type="radio"
+                      name="origin"
+                      value="encaixe"
+                      checked={formData.origin === 'encaixe'}
+                      onChange={() => setFormData({...formData, origin: 'encaixe'})}
+                      className="text-indigo-600 focus:ring-indigo-600 rounded-full border-slate-300"
+                    />
+                    Encaixe (Ignora Horário/Expediente)
+                  </label>
+                </div>
+                {formData.origin === 'encaixe' && (
+                  <p className="text-[10px] text-indigo-600 font-bold leading-normal pt-1 animate-in fade-in duration-200">
+                    ★ Modo Encaixe Ativo: O agendamento ignorará o horário comercial e de almoço do profissional selecionado.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Benefícios Globais do Cliente */}
             {formData.cliente_id && (clientPackages.some(p => p.remainingCuts > 0) || clientSubscriptions.some(s => s.status === 'active')) && (
               <div className="col-span-full flex flex-wrap gap-2 pt-2 animate-in fade-in duration-300">
@@ -474,14 +510,33 @@ export function AppointmentModal({
 
           {/* Seleção de Horário */}
           <div className="space-y-3 text-left">
-            <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Horários Disponíveis</label>
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Horário Selecionado: {formData.startTime || 'Nenhum'}</label>
+              {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Definir Manual:</span>
+                  <input
+                    type="time"
+                    value={formData.startTime}
+                    onChange={(e) => setFormData({...formData, startTime: e.target.value})}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-primary focus:outline-none focus:ring-1 focus:ring-accent w-24 cursor-pointer"
+                  />
+                </div>
+              )}
+            </div>
+
             {!formData.profissional_id || !formData.servico_id ? (
               <div className="p-6 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center text-muted text-xs font-medium">
                 Selecione um profissional e um serviço para ver os horários
               </div>
             ) : availableSlots.length === 0 ? (
-              <div className="p-6 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center text-muted text-xs font-medium">
-                Nenhum horário disponível para esta data
+              <div className="p-6 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center text-muted text-xs font-medium space-y-2">
+                <p>Nenhum horário automático disponível para esta data.</p>
+                {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') && (
+                  <p className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-wide">
+                    💡 Use o seletor "Definir Manual" acima para escolher um horário de encaixe.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">

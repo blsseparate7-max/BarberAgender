@@ -672,11 +672,44 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const [bookingStep, setBookingStep] = useState<1 | 2 | 3 | 4>(1);
   const [selectedBarber, setSelectedBarber] = useState<UserProfile | null>(null);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
+  const [selectedServices, setSelectedServices] = useState<Service[]>([]);
+  const [activeCategoryTab, setActiveCategoryTab] = useState<string>('Todos');
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadingSlots, setLoadingSlots] = useState(false);
+
+  const handleToggleService = (s: Service) => {
+    let updated: Service[] = [];
+    if (selectedServices.some(item => item.id === s.id)) {
+      updated = selectedServices.filter(item => item.id !== s.id);
+    } else {
+      updated = [...selectedServices, s];
+    }
+    setSelectedServices(updated);
+
+    if (updated.length === 0) {
+      setSelectedService(null);
+    } else if (updated.length === 1) {
+      setSelectedService(updated[0]);
+    } else {
+      const combined: Service = {
+        id: 'combined_' + updated.map(x => x.id).join('_'),
+        nome: updated.map(x => x.nome || x.name).join(' + '),
+        name: updated.map(x => x.nome || x.name).join(' + '),
+        preco: updated.reduce((sum, x) => sum + (x.preco || x.price || 0), 0),
+        price: updated.reduce((sum, x) => sum + (x.preco || x.price || 0), 0),
+        duracao_minutos: updated.reduce((sum, x) => sum + (x.duracao_minutos || x.duration || 30), 0),
+        duration: updated.reduce((sum, x) => sum + (x.duracao_minutos || x.duration || 30), 0),
+        categoria: 'Combo Personalizado',
+        showInPortal: true,
+        active: true,
+        permite_cortesia: false
+      };
+      setSelectedService(combined);
+    }
+  };
 
   // Auto-heal/sync appointments with closed comandas
   const syncClientAppointmentsWithComandas = async (clientUid: string, apps: Appointment[]) => {
@@ -780,6 +813,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
       setBookingStep(1);
       setSelectedBarber(null);
       setSelectedService(null);
+      setSelectedServices([]);
       setSelectedTime(null);
     }
   }, [activeTab]);
@@ -1252,7 +1286,13 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         status: 'agendado' as const,
         origin: (profile ? 'cliente' : 'guest_first') as any,
         tenantId: activeTenantId,
-        notes: profile ? 'Agendado via Portal do Cliente' : 'Agendamento Online Rápido (Guest-First Booking)'
+        notes: profile ? 'Agendado via Portal do Cliente' : 'Agendamento Online Rápido (Guest-First Booking)',
+        selectedServices: selectedServices.map(s => ({
+          id: s.id,
+          nome: s.nome || s.name || '',
+          preco: s.preco || s.price || 0,
+          duracao: s.duracao_minutos || s.duration || 30
+        }))
       };
 
       const createdApp = await appointmentService.createAppointment(newApp);
@@ -1277,6 +1317,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
       // Reset Scheduling Form
       setSelectedBarber(null);
       setSelectedService(null);
+      setSelectedServices([]);
       setSelectedTime(null);
       setBookingStep(1);
       
@@ -2472,7 +2513,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
                           Etapa 2. Qual serviço você deseja realizar?
                         </label>
-                        <p className="text-xs text-slate-500 font-medium">Selecione o procedimento desejado. Você está agendando com <strong>{selectedBarber?.nome}</strong>.</p>
+                        <p className="text-xs text-slate-500 font-medium">Você pode escolher um ou mais procedimentos para o mesmo agendamento. Você está agendando com <strong>{selectedBarber?.nome}</strong>.</p>
                       </div>
 
                       {services.length === 0 ? (
@@ -2480,103 +2521,190 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                           <p className="text-xs text-slate-400 font-semibold">Nenhum serviço disponível no portal no momento.</p>
                         </div>
                       ) : (
-                        <div className="space-y-8 pt-2">
-                          {(() => {
-                            const grouped: Record<string, typeof services> = {};
-                            services.forEach(s => {
-                              const cat = s.categoria || 'Geral';
-                              if (!grouped[cat]) grouped[cat] = [];
-                              grouped[cat].push(s);
-                            });
-
-                            return Object.entries(grouped).map(([catName, sList]) => {
-                              const isCabelo = catName.toLowerCase().includes('cabelo') || catName.toLowerCase().includes('corte');
-                              const isBarba = catName.toLowerCase().includes('barba');
-                              const isCombo = catName.toLowerCase().includes('combo');
+                        <div className="space-y-6 pt-2">
+                          {/* Categorias - Abas Estilo Pills Horizontais */}
+                          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none snap-x">
+                            {['Todos', ...Array.from(new Set(services.map(s => s.categoria || 'Geral')))].map((cat) => {
+                              const isSelected = activeCategoryTab === cat;
+                              const count = cat === 'Todos' 
+                                ? services.length 
+                                : services.filter(s => (s.categoria || 'Geral') === cat).length;
 
                               return (
-                                <div key={`cat-section-${catName}`} className="space-y-4">
-                                  {/* Premium Category Header */}
-                                  <div className="border-l-4 border-indigo-600 pl-3.5 py-1 bg-gradient-to-r from-indigo-50/10 to-transparent">
-                                    <h4 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                                      {catName}
-                                      <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold px-2 py-0.5 rounded-full">
-                                        {sList.length} {sList.length === 1 ? 'opção' : 'opções'}
-                                      </span>
-                                    </h4>
-                                    <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
-                                      {isCabelo ? 'Estilos modernos, clássicos e acabamento personalizado de alta precisão.' :
-                                       isBarba ? 'Tratamento com toalha quente, navalha e óleos hidratantes premium.' :
-                                       isCombo ? 'Os melhores serviços combinados em experiências completas e vantajosas.' :
-                                       'Procedimentos sob medida executados com produtos de alta performance.'}
-                                    </p>
-                                  </div>
+                                <button
+                                  key={`cat-pill-${cat}`}
+                                  type="button"
+                                  onClick={() => setActiveCategoryTab(cat)}
+                                  className={`px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap border snap-start ${
+                                    isSelected
+                                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                      : 'bg-white text-slate-600 border-slate-100 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {cat} ({count})
+                                </button>
+                              );
+                            })}
+                          </div>
 
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    {sList.map((s, sIdx) => {
-                                      const isSelected = selectedService?.id === s.id;
-                                      return (
-                                        <button
-                                          key={`srv-item-${s.id || sIdx}-${sIdx}`}
-                                          type="button"
-                                          onClick={() => {
-                                            setSelectedService(s);
-                                            setSelectedTime(null);
-                                            setBookingStep(3);
-                                          }}
-                                          className={`p-4 rounded-2xl border transition-all text-left flex items-start gap-4 relative group ${
-                                            isSelected 
-                                              ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-2 ring-indigo-600/10' 
-                                              : 'border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-200 shadow-sm'
-                                          }`}
-                                        >
-                                          {isSelected && (
-                                            <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow z-10">
-                                              <Check size={10} />
-                                            </div>
-                                          )}
+                          {/* Lista de Serviços */}
+                          <div className="space-y-8 pt-2">
+                            {(() => {
+                              const grouped: Record<string, typeof services> = {};
+                              const sourceList = activeCategoryTab === 'Todos'
+                                ? services
+                                : services.filter(s => (s.categoria || 'Geral') === activeCategoryTab);
 
-                                          {/* Foto do Serviço */}
-                                          <div className={`w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center transition-all shrink-0 border-2 bg-slate-100 text-slate-650 shadow-sm ${
-                                            isSelected ? 'border-indigo-600 bg-white' : 'border-white bg-slate-50'
-                                          }`}>
-                                            {s.fotoUrl ? (
-                                              <img 
-                                                src={s.fotoUrl} 
-                                                alt={s.nome || s.name} 
-                                                className="w-full h-full object-cover"
-                                                referrerPolicy="no-referrer"
-                                              />
-                                            ) : (
-                                              <Scissors size={20} className="text-slate-400" />
+                              sourceList.forEach(s => {
+                                const cat = s.categoria || 'Geral';
+                                if (!grouped[cat]) grouped[cat] = [];
+                                grouped[cat].push(s);
+                              });
+
+                              return Object.entries(grouped).map(([catName, sList]) => {
+                                const isCabelo = catName.toLowerCase().includes('cabelo') || catName.toLowerCase().includes('corte');
+                                const isBarba = catName.toLowerCase().includes('barba');
+                                const isCombo = catName.toLowerCase().includes('combo');
+
+                                return (
+                                  <div key={`cat-section-${catName}`} className="space-y-4">
+                                    {/* Premium Category Header */}
+                                    <div className="border-l-4 border-indigo-600 pl-3.5 py-1 bg-gradient-to-r from-indigo-50/10 to-transparent">
+                                      <h4 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                                        {catName}
+                                        <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold px-2 py-0.5 rounded-full">
+                                          {sList.length} {sList.length === 1 ? 'opção' : 'opções'}
+                                        </span>
+                                      </h4>
+                                      <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
+                                        {isCabelo ? 'Estilos modernos, clássicos e acabamento personalizado de alta precisão.' :
+                                         isBarba ? 'Tratamento com toalha quente, navalha e óleos hidratantes premium.' :
+                                         isCombo ? 'Os melhores serviços combinados em experiências completas e vantajosas.' :
+                                         'Procedimentos sob medida executados com produtos de alta performance.'}
+                                      </p>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                      {sList.map((s, sIdx) => {
+                                        const isSelected = selectedServices.some(item => item.id === s.id);
+                                        return (
+                                          <button
+                                            key={`srv-item-${s.id || sIdx}-${sIdx}`}
+                                            type="button"
+                                            onClick={() => handleToggleService(s)}
+                                            className={`p-4 rounded-2xl border transition-all text-left flex items-start gap-4 relative group ${
+                                              isSelected 
+                                                ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-2 ring-indigo-600/10' 
+                                                : 'border-slate-100 bg-slate-50/30 hover:bg-slate-50 hover:border-slate-200 shadow-sm'
+                                            }`}
+                                          >
+                                            {isSelected && (
+                                              <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow z-10 animate-scaleIn">
+                                                <Check size={10} />
+                                              </div>
                                             )}
-                                          </div>
 
-                                          <div className="min-w-0 flex-1">
-                                            <span className="px-2 py-0.5 bg-slate-150/50 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
-                                              {s.categoria || 'Serviço'}
-                                            </span>
-                                            <h4 className="text-sm font-black text-slate-800 truncate mt-1">{s.nome || s.name}</h4>
-                                            <p className="text-xs text-slate-500 font-semibold line-clamp-2 mt-1 leading-relaxed">
-                                              {s.descricao || 'Atendimento com acabamento premium e toalha quente.'}
-                                            </p>
-                                            <div className="flex items-center gap-3 mt-3 font-bold text-[10px]">
-                                              <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 font-extrabold text-xs">
-                                                R$ {(s.preco || s.price || 0).toFixed(2)}
-                                              </span>
-                                              <span className="text-slate-500 flex items-center gap-1 bg-slate-150/40 px-2.5 py-1 rounded-md">
-                                                <Clock size={10} className="text-slate-400" /> {s.duracao_minutos || s.duration || 30} min
-                                              </span>
+                                            {/* Foto do Serviço */}
+                                            <div className={`w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center transition-all shrink-0 border-2 bg-slate-100 text-slate-650 shadow-sm ${
+                                              isSelected ? 'border-indigo-600 bg-white' : 'border-white bg-slate-50'
+                                            }`}>
+                                              {s.fotoUrl ? (
+                                                <img 
+                                                  src={s.fotoUrl} 
+                                                  alt={s.nome || s.name} 
+                                                  className="w-full h-full object-cover"
+                                                  referrerPolicy="no-referrer"
+                                                />
+                                              ) : (
+                                                <Scissors size={20} className="text-slate-400" />
+                                              )}
                                             </div>
-                                          </div>
+
+                                            <div className="min-w-0 flex-1">
+                                              <span className="px-2 py-0.5 bg-slate-150/50 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
+                                                {s.categoria || 'Serviço'}
+                                              </span>
+                                              <h4 className="text-sm font-black text-slate-800 truncate mt-1">{s.nome || s.name}</h4>
+                                              <p className="text-xs text-slate-500 font-semibold line-clamp-2 mt-1 leading-relaxed">
+                                                {s.descricao || 'Atendimento com acabamento premium e toalha quente.'}
+                                              </p>
+                                              <div className="flex items-center gap-3 mt-3 font-bold text-[10px]">
+                                                <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 font-extrabold text-xs">
+                                                  R$ {(s.preco || s.price || 0).toFixed(2)}
+                                                </span>
+                                                <span className="text-slate-500 flex items-center gap-1 bg-slate-150/40 px-2.5 py-1 rounded-md">
+                                                  <Clock size={10} className="text-slate-400" /> {s.duracao_minutos || s.duration || 30} min
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              });
+                            })()}
+                          </div>
+
+                          {/* Resumo do Carrinho & Botão Avançar */}
+                          {selectedServices.length > 0 && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 15 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="bg-indigo-50/50 rounded-2xl border border-indigo-100 p-4 space-y-3 shadow-sm mt-4"
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div className="space-y-0.5">
+                                  <h5 className="text-[10px] font-black uppercase text-indigo-700 tracking-wider">Serviços Selecionados ({selectedServices.length})</h5>
+                                  <div className="flex flex-wrap gap-1.5 pt-1">
+                                    {selectedServices.map(s => (
+                                      <span 
+                                        key={`cart-badge-${s.id}`} 
+                                        className="bg-white border border-indigo-100 text-slate-700 text-[10px] font-extrabold px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm"
+                                      >
+                                        {s.nome || s.name}
+                                        <button 
+                                          type="button" 
+                                          onClick={() => handleToggleService(s)}
+                                          className="text-red-500 hover:text-red-700 font-bold ml-0.5"
+                                        >
+                                          ✕
                                         </button>
-                                      );
-                                    })}
+                                      </span>
+                                    ))}
                                   </div>
                                 </div>
-                              );
-                            });
-                          })()}
+                                <div className="flex items-center justify-between sm:justify-end gap-6 border-t sm:border-t-0 pt-2 sm:pt-0 border-indigo-100/40">
+                                  <div className="text-right">
+                                    <span className="text-[9px] font-black text-slate-400 block uppercase tracking-wider">Preço Total</span>
+                                    <span className="text-sm font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg inline-block mt-0.5 shadow-sm">
+                                      R$ {selectedServices.reduce((sum, s) => sum + (s.preco || s.price || 0), 0).toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="text-[9px] font-black text-slate-400 block uppercase tracking-wider">Tempo Total</span>
+                                    <span className="text-xs text-slate-700 font-extrabold flex items-center gap-1 bg-slate-100 px-2.5 py-1 rounded-lg inline-block mt-0.5 shadow-sm">
+                                      {selectedServices.reduce((sum, s) => sum + (s.duracao_minutos || s.duration || 30), 0)} min
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-end pt-3 border-t border-indigo-100/40">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedTime(null);
+                                    setBookingStep(3);
+                                  }}
+                                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition active:scale-95"
+                                >
+                                  Avançar para Data e Horário <ChevronRight size={14} className="stroke-[3]" />
+                                </button>
+                              </div>
+                            </motion.div>
+                          )}
                         </div>
                       )}
                     </motion.div>

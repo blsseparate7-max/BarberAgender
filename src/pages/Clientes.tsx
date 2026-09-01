@@ -135,6 +135,25 @@ export function Clientes() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserProfile));
+      
+      // Automatic cleanup of duplicate unverified João Vitor in gbcortes7
+      if (tenantId === 'gbcortes7') {
+        const joaoList = docs.filter(c => {
+          const name = (c.nome || '').trim().toLowerCase();
+          return name.includes('joão vitor fernandes carvalho') || name.includes('joao vitor fernandes carvalho');
+        });
+        if (joaoList.length > 1) {
+          const verified = joaoList.find(c => isCustomerLinked(c) || ((c.email || '').includes('@') && !c.email.includes('manual_') && !c.email.includes('placeholder')));
+          if (verified) {
+            joaoList.forEach(c => {
+              if (c.uid !== verified.uid) {
+                deleteDoc(doc(db, 'usuarios', c.uid)).catch(err => console.error("Error cleaning duplicate João:", err));
+              }
+            });
+          }
+        }
+      }
+
       const sorted = docs.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       setCustomers(sorted);
       setLoading(false);

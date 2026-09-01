@@ -1613,6 +1613,42 @@ export const comandaService = {
         }
       });
 
+      // Subscription Usages reversion if items used subscription
+      for (const item of (comanda.items || [])) {
+        if (item.deductType === 'assinatura' && item.subscriptionId) {
+          const subRef = doc(db, 'subscriptions', item.subscriptionId);
+          const subSnap = await transaction.get(subRef);
+          if (subSnap.exists()) {
+            const subData = subSnap.data() as any;
+            const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
+            const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
+            
+            const updatedServiceUsages = { ...(subData.serviceUsages || {}) };
+            if (item.referencia_id && updatedServiceUsages[item.referencia_id] > 0) {
+              updatedServiceUsages[item.referencia_id] = Math.max(0, updatedServiceUsages[item.referencia_id] - 1);
+            }
+
+            transaction.update(subRef, {
+              haircutsUsed: isCut ? increment(-1) : subData.haircutsUsed,
+              beardsUsed: isBeard ? increment(-1) : subData.beardsUsed,
+              serviceUsages: updatedServiceUsages,
+              updatedAt: serverTimestamp()
+            });
+
+            // Also delete the corresponding usage record in subscription_usages
+            const usageQuery = query(
+              collection(db, 'subscription_usages'),
+              where('assinatura_id', '==', item.subscriptionId),
+              where('agendamento_id', '==', comanda.agendamento_id || '')
+            );
+            const usageSnap = await getDocs(usageQuery);
+            usageSnap.docs.forEach(uDoc => {
+              transaction.delete(uDoc.ref);
+            });
+          }
+        }
+      }
+
       // Inventory
       inventoryMovements.docs.forEach(d => {
         const movement = d.data();

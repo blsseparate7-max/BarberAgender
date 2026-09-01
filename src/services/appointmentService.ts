@@ -538,19 +538,34 @@ export const appointmentService = {
         const comSnap = await getDocs(comQuery);
         
         if (comSnap.empty && !appointment.comanda_id) {
-          const items = [{
-            id: `item-${appointment.id}-${Date.now()}`,
-            type: 'servico' as const,
-            referencia_id: appointment.servico_id || '',
-            name: appointment.servico_name || '',
-            quantity: 1,
-            unitPrice: appointment.price || 0,
-            totalPrice: appointment.price || 0,
-            profissional_id: appointment.profissional_id,
-            profissional_name: appointment.profissional_name,
-            isCortesia: false,
-            generateCommission: true
-          }];
+          const sServices = (appointment as any).selectedServices || [];
+          const items = sServices.length > 0 
+            ? sServices.map((s: any, idx: number) => ({
+                id: `item-${appointment.id}-${idx}-${Date.now()}`,
+                type: 'servico' as const,
+                referencia_id: s.id || '',
+                name: s.nome || s.name || '',
+                quantity: 1,
+                unitPrice: s.preco || s.price || 0,
+                totalPrice: s.preco || s.price || 0,
+                profissional_id: appointment.profissional_id,
+                profissional_name: appointment.profissional_name,
+                isCortesia: false,
+                generateCommission: true
+              }))
+            : [{
+                id: `item-${appointment.id}-${Date.now()}`,
+                type: 'servico' as const,
+                referencia_id: appointment.servico_id || '',
+                name: appointment.servico_name || '',
+                quantity: 1,
+                unitPrice: appointment.price || 0,
+                totalPrice: appointment.price || 0,
+                profissional_id: appointment.profissional_id,
+                profissional_name: appointment.profissional_name,
+                isCortesia: false,
+                generateCommission: true
+              }];
           
           const newComanda = await comandaService.openComanda({
             cliente_id: appointment.cliente_id || 'avulso',

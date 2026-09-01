@@ -35,6 +35,7 @@ import { Appointment, AppointmentStatus, UserProfile, AgendaBlock } from '../../
 import { appointmentService } from '../../services/appointmentService';
 import { userService } from '../../services/userService';
 import { agendaBlockService } from '../../services/agendaBlockService';
+import { serviceService } from '../../services/serviceService';
 import { toast } from 'sonner';
 import { format, addDays, subDays, isSameDay, parse, isEqual, isAfter, isBefore, addMinutes } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -68,7 +69,13 @@ export function AgendaGeneral({
 }: AgendaGeneralProps) {
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [nowTime, setNowTime] = useState<Date>(new Date());
+  const [servicesList, setServicesList] = useState<any[]>([]);
   const displayedBarbers = barbers;
+
+  // Load services for price fallback on subscription/zero-priced appointments
+  useEffect(() => {
+    serviceService.getServices(true).then(setServicesList).catch(() => {});
+  }, []);
 
   // Update real-time clock indicator every 30 seconds
   useEffect(() => {
@@ -239,8 +246,18 @@ export function AgendaGeneral({
   const agendadosCount = dayApps.filter(a => a.status === 'agendado' || a.status === 'confirmado').length;
   const faltouCount = dayApps.filter(a => a.status === 'faltou' || a.status === 'cancelado').length;
 
-  const valorConcluido = dayApps.filter(a => a.status === 'concluído').reduce((acc, a) => acc + (a.price || (a as any).preco || (a as any).valor || 0), 0);
-  const valorPrevisto = dayApps.filter(a => a.status !== 'cancelado' && a.status !== 'faltou').reduce((acc, a) => acc + (a.price || (a as any).preco || (a as any).valor || 0), 0);
+  const getAppPrice = (a: Appointment) => {
+    const directPrice = a.price || (a as any).preco || (a as any).valor || 0;
+    if (directPrice > 0) return directPrice;
+    if (a.servico_id) {
+      const srv = servicesList.find(s => s.id === a.servico_id);
+      if (srv && (srv.price || srv.preco)) return srv.price || srv.preco;
+    }
+    return directPrice;
+  };
+
+  const valorConcluido = dayApps.filter(a => a.status === 'concluído').reduce((acc, a) => acc + getAppPrice(a), 0);
+  const valorPrevisto = dayApps.filter(a => a.status !== 'cancelado' && a.status !== 'faltou').reduce((acc, a) => acc + getAppPrice(a), 0);
 
   // Barber occupancy check for current moment
   const barbersOccupiedNow = barbers.filter(b => {

@@ -1532,15 +1532,15 @@ export const comandaService = {
     const comandaDate = initialComanda.createdAt?.toDate ? initialComanda.createdAt.toDate() : new Date();
     const dateStr = comandaDate.toISOString().split('T')[0];
 
+    // RULE: Check if there is any open cash session or session for the comanda date
     const cashQuery = query(
       collection(db, 'cash_sessions'), 
-      where('date', '==', dateStr),
       where('status', 'in', ['open', 'reopened'])
     );
     const cashSnapshot = await getDocs(cashQuery);
     
     if (cashSnapshot.empty) {
-      throw new Error(`Para reabrir esta comanda, é necessário reabrir o caixa do dia correspondente (${dateStr.split('-').reverse().join('/')})`);
+      throw new Error(`Para reabrir esta comanda, é necessário abrir ou reabrir o caixa no sistema.`);
     }
 
     // 1. Fetch all related documents before transaction

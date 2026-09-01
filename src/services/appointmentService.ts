@@ -749,6 +749,22 @@ export const appointmentService = {
     }
 
     let schedule = await professionalScheduleService.getSchedule(profissional_id);
+    if (!schedule || !schedule.workingHours || schedule.workingHours.length === 0) {
+      try {
+        const barberProfile = await userService.getUserProfile(profissional_id);
+        if (barberProfile && barberProfile.horario_de_trabalho && barberProfile.horario_de_trabalho.length > 0) {
+          schedule = {
+            profissional_id,
+            workingHours: barberProfile.horario_de_trabalho,
+            exceptions: [],
+            vacations: []
+          } as any;
+        }
+      } catch (err) {
+        console.warn("Could not load user profile working hours:", err);
+      }
+    }
+
     if (!schedule) {
       // Fallback default schedule if none exists yet, so the professional is immediately bookable
       schedule = {

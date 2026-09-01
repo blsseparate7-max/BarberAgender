@@ -88,7 +88,11 @@ export const loyaltyService = {
     return await runTransaction(db, async (transaction) => {
       const docId = `${activeTenantId}_${cliente_id}`;
       const pointsRef = doc(db, POINTS_COLLECTION, docId);
+      const userRef = doc(db, 'usuarios', cliente_id);
+      
+      // Perform all reads first
       const pointsSnap = await transaction.get(pointsRef);
+      const userSnap = await transaction.get(userRef);
       
       let currentPoints = 0;
       let currentCashback = 0;
@@ -126,6 +130,7 @@ export const loyaltyService = {
       const newCashback = currentCashback + cashbackToAdd;
       const isVip = (config.vipThreshold && newPoints >= config.vipThreshold) || false;
 
+      // Perform all writes after reads
       transaction.set(pointsRef, {
         cliente_id,
         tenantId: activeTenantId,
@@ -135,9 +140,6 @@ export const loyaltyService = {
         updatedAt: serverTimestamp()
       });
 
-      // Sincronizar com a coleção de 'usuarios'
-      const userRef = doc(db, 'usuarios', cliente_id);
-      const userSnap = await transaction.get(userRef);
       if (userSnap.exists()) {
         transaction.update(userRef, {
           pontos: newPoints,
@@ -169,7 +171,11 @@ export const loyaltyService = {
     return await runTransaction(db, async (transaction) => {
       const docId = `${activeTenantId}_${cliente_id}`;
       const pointsRef = doc(db, POINTS_COLLECTION, docId);
+      const userRef = doc(db, 'usuarios', cliente_id);
+      
+      // Perform all reads first
       const pointsSnap = await transaction.get(pointsRef);
+      const userSnap = await transaction.get(userRef);
       
       if (!pointsSnap.exists()) throw new Error("Cliente não possui pontos");
       const data = pointsSnap.data() as LoyaltyPoints;
@@ -180,15 +186,13 @@ export const loyaltyService = {
       const newPoints = Math.max(0, data.points - points);
       const newCashback = Math.max(0, data.cashback - cashback);
 
+      // Perform all writes after reads
       transaction.update(pointsRef, {
         points: newPoints,
         cashback: newCashback,
         updatedAt: serverTimestamp()
       });
 
-      // Sincronizar com a coleção de 'usuarios'
-      const userRef = doc(db, 'usuarios', cliente_id);
-      const userSnap = await transaction.get(userRef);
       if (userSnap.exists()) {
         transaction.update(userRef, {
           pontos: newPoints,
@@ -252,7 +256,11 @@ export const loyaltyService = {
     return await runTransaction(db, async (transaction) => {
       const docId = `${activeTenantId}_${params.cliente_id}`;
       const pointsRef = doc(db, POINTS_COLLECTION, docId);
+      const userRef = doc(db, 'usuarios', params.cliente_id);
+
+      // Perform all reads first
       const pointsSnap = await transaction.get(pointsRef);
+      const userSnap = await transaction.get(userRef);
       
       if (!pointsSnap.exists()) {
         throw new Error("Cliente não possui pontos acumulados.");
@@ -265,15 +273,12 @@ export const loyaltyService = {
 
       const newPoints = Math.max(0, (data.points || 0) - params.points_spent);
 
-      // Deduct points
+      // Perform all writes after reads
       transaction.update(pointsRef, {
         points: newPoints,
         updatedAt: serverTimestamp()
       });
 
-      // Sincronizar com a coleção de 'usuarios'
-      const userRef = doc(db, 'usuarios', params.cliente_id);
-      const userSnap = await transaction.get(userRef);
       if (userSnap.exists()) {
         transaction.update(userRef, {
           pontos: newPoints,
@@ -382,7 +387,11 @@ export const loyaltyService = {
     return await runTransaction(db, async (transaction) => {
       const docId = `${activeTenantId}_${cliente_id}`;
       const pointsRef = doc(db, POINTS_COLLECTION, docId);
+      const userRef = doc(db, 'usuarios', cliente_id);
+
+      // Perform all reads first
       const pointsSnap = await transaction.get(pointsRef);
+      const userSnap = await transaction.get(userRef);
 
       let currentPoints = 0;
       let currentCashback = 0;
@@ -423,6 +432,7 @@ export const loyaltyService = {
         }
       }
 
+      // Perform all writes after reads
       transaction.set(pointsRef, {
         cliente_id,
         tenantId: activeTenantId,
@@ -431,9 +441,6 @@ export const loyaltyService = {
         updatedAt: serverTimestamp()
       }, { merge: true });
 
-      // Sync with the 'usuarios' collection
-      const userRef = doc(db, 'usuarios', cliente_id);
-      const userSnap = await transaction.get(userRef);
       if (userSnap.exists()) {
         transaction.update(userRef, {
           pontos: newPoints,

@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
+import { auth } from '../firebase';
 import { userService } from '../services/userService';
 import { subscriptionService } from '../services/subscriptionService';
 import { resetService } from '../services/resetService';
@@ -466,9 +467,15 @@ export function PortalSaaSAdmin() {
       let createdAsaasSubaccount: any = null;
       if (newTenantSubscriptionsEnabled && (newTenantCnpjCpf.trim() || newTenantEmail.trim())) {
         try {
+          const idToken = await auth.currentUser?.getIdToken();
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (idToken) {
+            headers['Authorization'] = `Bearer ${idToken}`;
+          }
+
           const subaccountRes = await fetch('/api/saas/tenants/create-subaccount', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
               tenantId: cleanSlug,
               name: newTenantName.trim(),

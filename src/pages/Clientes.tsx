@@ -1851,7 +1851,17 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
 
                 <button
                   type="button"
-                  onClick={() => setShowLoyaltyForm(!showLoyaltyForm)}
+                  onClick={() => {
+                    const next = !showLoyaltyForm;
+                    setShowLoyaltyForm(next);
+                    if (next) {
+                      setShowCreditForm(false);
+                      setShowDebtForm(false);
+                      setTimeout(() => {
+                        document.getElementById('loyalty-form-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }, 100);
+                    }
+                  }}
                   className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-full text-[11px] font-black transition-all shadow-sm active:scale-95 cursor-pointer"
                 >
                   <Edit2 size={11} />
@@ -1920,7 +1930,17 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                 </div>
               </div>
               <button 
-                onClick={() => { setShowCreditForm(!showCreditForm); setShowDebtForm(false); }}
+                onClick={() => { 
+                  const next = !showCreditForm;
+                  setShowCreditForm(next); 
+                  setShowDebtForm(false); 
+                  setShowLoyaltyForm(false);
+                  if (next) {
+                    setTimeout(() => {
+                      document.getElementById('credit-form-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 100);
+                  }
+                }}
                 className="text-[9px] font-black uppercase text-emerald-600 hover:text-emerald-700 hover:underline mt-1 self-start flex items-center gap-1 bg-white border border-slate-200 shadow-sm py-1 px-2.5 rounded-lg"
               >
                 <Plus size={10} /> Adicionar Crédito
@@ -1940,7 +1960,17 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                 </div>
               </div>
               <button 
-                onClick={() => { setShowDebtForm(!showDebtForm); setShowCreditForm(false); }}
+                onClick={() => { 
+                  const next = !showDebtForm;
+                  setShowDebtForm(next); 
+                  setShowCreditForm(false); 
+                  setShowLoyaltyForm(false);
+                  if (next) {
+                    setTimeout(() => {
+                      document.getElementById('debt-form-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 100);
+                  }
+                }}
                 className="text-[9px] font-black uppercase text-red-600 hover:text-red-700 hover:underline mt-1 self-start flex items-center gap-1 bg-white border border-slate-200 shadow-sm py-1 px-2.5 rounded-lg"
               >
                 <Plus size={10} /> Registrar Fiado
@@ -1955,6 +1985,7 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
           <AnimatePresence>
             {showCreditForm && (
               <motion.div 
+                id="credit-form-container"
                 initial={{ opacity: 0, height: 0 }} 
                 animate={{ opacity: 1, height: 'auto' }} 
                 exit={{ opacity: 0, height: 0 }}
@@ -2025,6 +2056,7 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
           <AnimatePresence>
             {showDebtForm && (
               <motion.div 
+                id="debt-form-container"
                 initial={{ opacity: 0, height: 0 }} 
                 animate={{ opacity: 1, height: 'auto' }} 
                 exit={{ opacity: 0, height: 0 }}
@@ -2090,6 +2122,7 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
           <AnimatePresence>
             {showLoyaltyForm && (
               <motion.div 
+                id="loyalty-form-container"
                 initial={{ opacity: 0, height: 0 }} 
                 animate={{ opacity: 1, height: 'auto' }} 
                 exit={{ opacity: 0, height: 0 }}

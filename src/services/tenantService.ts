@@ -256,8 +256,17 @@ export const tenantService = {
         createdAt: new Date(),
         updatedAt: new Date()
       };
+
+      // Sanitize undefined fields to prevent firestore setDoc crash
+      const cleanedTenant: any = {};
+      for (const [key, value] of Object.entries(newTenant)) {
+        if (value !== undefined) {
+          cleanedTenant[key] = value;
+        }
+      }
+
       await setDoc(docRef, {
-        ...newTenant,
+        ...cleanedTenant,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });

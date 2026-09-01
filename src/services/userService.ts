@@ -136,10 +136,16 @@ export const userService = {
   },
 
   async getUserProfile(uid: string) {
+    if (!uid) return null;
     const docRef = doc(db, COLLECTION, uid);
     const docSnap = await getDoc(docRef);
-    if (docSnap.exists() && docSnap.data().tenantId === getActiveTenantId()) {
-      return { uid: docSnap.id, ...docSnap.data() } as UserProfile;
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const tid = (getActiveTenantId() || '').trim().toLowerCase();
+      const uTenant = (data.tenantId || '').trim().toLowerCase();
+      if (!tid || uTenant === tid || (!data.tenantId && tid === 'gbcortes7')) {
+        return { uid: docSnap.id, ...data } as UserProfile;
+      }
     }
     return null;
   },

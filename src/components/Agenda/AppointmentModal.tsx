@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2, ChevronDown, Search, Plus, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -9,6 +9,7 @@ import { appointmentService } from '../../services/appointmentService';
 import { serviceService } from '../../services/serviceService';
 import { userService } from '../../services/userService';
 import { format, addMinutes, parse } from 'date-fns';
+import { ClientSelectCombobox } from '../Common/ClientSelectCombobox';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -57,6 +58,17 @@ export function AppointmentModal({
 
   const [clientPackages, setClientPackages] = useState<any[]>([]);
   const [clientSubscriptions, setClientSubscriptions] = useState<any[]>([]);
+
+  // Group services by category for clean, categorized selection
+  const categorizedServices = useMemo(() => {
+    const groups: { [cat: string]: Service[] } = {};
+    services.forEach(s => {
+      const cat = (s as any).categoria || (s as any).category || 'Geral';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(s);
+    });
+    return groups;
+  }, [services]);
 
   useEffect(() => {
     if (isOpen && formData.cliente_id) {
@@ -318,32 +330,30 @@ export function AppointmentModal({
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
-            {/* Seleção de Cliente (Admin/Gerente) */}
+            {/* Seleção de Cliente (Admin/Gerente/Barbeiro) */}
             {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') && (
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Cliente</label>
-                  <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                    <select 
-                      required
-                      value={formData.cliente_id}
-                      onChange={(e) => {
-                        const cid = e.target.value;
-                        setFormData({
-                          ...formData, 
-                          cliente_id: cid,
-                          cliente_name: cid === 'sem_cadastro' ? 'Sem Cadastro' : (clients.find(c => c.uid === cid)?.nome || '')
-                        });
-                      }}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
-                    >
-                      <option value="" className="text-muted">Selecione o cliente</option>
-                      <option value="sem_cadastro" className="text-indigo-600 font-bold">★ Sem Cadastro (Avulso) ★</option>
-                      {clients.map(c => <option key={c.uid} value={c.uid} className="text-primary font-medium">{c.nome}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" size={18} />
+                  <div className="flex items-center justify-between ml-1">
+                    <label className="text-xs font-bold text-muted uppercase tracking-wider">Cliente</label>
+                    <span className="text-[10px] text-slate-400 font-medium">5 primeiros exibidos • Busque para filtrar</span>
                   </div>
+                  <ClientSelectCombobox
+                    clients={clients}
+                    selectedClientId={formData.cliente_id}
+                    onSelectClient={(cid, cname) => {
+                      setFormData({
+                        ...formData,
+                        cliente_id: cid,
+                        cliente_name: cid === 'sem_cadastro' ? 'Sem Cadastro' : cname
+                      });
+                    }}
+                    placeholder="Selecione ou busque o cliente..."
+                    allowAvulso={true}
+                    avulsoLabel="★ Sem Cadastro (Avulso) ★"
+                    avulsoValue="sem_cadastro"
+                    required
+                  />
                 </div>
 
                 {formData.cliente_id === 'sem_cadastro' && (
@@ -383,7 +393,7 @@ export function AppointmentModal({
               </div>
             </div>
 
-            {/* Seleção de Serviço */}
+            {/* Seleção de Serviço (Organizado por Categoria) */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Serviço</label>
               <div className="relative">
@@ -395,7 +405,20 @@ export function AppointmentModal({
                   className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none"
                 >
                   <option value="" className="text-muted">Selecione o serviço</option>
-                  {services.map(s => <option key={s.id} value={s.id} className="text-primary font-medium">{s.name} ({s.duration} min - R$ {s.price})</option>)}
+                  {Object.entries(categorizedServices).map(([categoryName, catServices]) => (
+                    <optgroup key={`cat-group-${categoryName}`} label={`📁 ${categoryName.toUpperCase()}`}>
+                      {(catServices as Service[]).map(s => {
+                        const sName = (s as any).nome || s.name || 'Serviço';
+                        const sDur = (s as any).duracao_minutos || s.duration || 30;
+                        const sPrice = (s as any).preco ?? s.price ?? 0;
+                        return (
+                          <option key={s.id} value={s.id} className="text-primary font-medium">
+                            {sName} ({sDur} min - R$ {sPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  ))}
                 </select>
                 <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" size={18} />
               </div>

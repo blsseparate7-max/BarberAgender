@@ -42,7 +42,8 @@ import {
   Megaphone,
   ChevronDown,
   ShoppingBag,
-  Menu
+  Menu,
+  Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
@@ -222,12 +223,15 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const [checkingStatusSubId, setCheckingStatusSubId] = useState<string | null>(null);
   const [selectedPlanForCheckout, setSelectedPlanForCheckout] = useState<any | null>(null);
   const [checkoutCpfCnpj, setCheckoutCpfCnpj] = useState<string>('');
+  const [checkoutEmail, setCheckoutEmail] = useState<string>('');
   const [isSubscribingPlan, setIsSubscribingPlan] = useState(false);
 
   useEffect(() => {
     if (selectedPlanForCheckout && profile) {
       const initialCpf = profile.cpf || (profile as any).cpfCnpj || editCpf || '';
       setCheckoutCpfCnpj(formatCpfCnpjMask(initialCpf));
+      const initialEmail = profile.email || '';
+      setCheckoutEmail(initialEmail.includes('manual_') || initialEmail.includes('placeholder') ? '' : initialEmail);
     }
   }, [selectedPlanForCheckout, profile]);
   const [clientCreatedChargeData, setClientCreatedChargeData] = useState<any | null>(null);
@@ -431,21 +435,29 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
       return;
     }
 
+    const cleanEmail = checkoutEmail.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      toast.error("Por favor, informe um e-mail válido para ativação da sua assinatura.");
+      return;
+    }
+
     setIsSubscribingPlan(true);
     try {
-      // Save CPF to user profile in Firestore if present
+      // Save CPF and Email to user profile in Firestore if present
       if (profile.uid) {
         try {
           await updateDoc(doc(db, 'usuarios', profile.uid), {
             cpf: cleanCpfCnpj,
             cpfCnpj: cleanCpfCnpj,
+            email: cleanEmail,
             updatedAt: serverTimestamp()
           });
           profile.cpf = cleanCpfCnpj;
           (profile as any).cpfCnpj = cleanCpfCnpj;
+          profile.email = cleanEmail;
           setEditCpf(formatCpfCnpjMask(cleanCpfCnpj));
         } catch (e) {
-          console.warn("Aviso ao salvar CPF no perfil do cliente:", e);
+          console.warn("Aviso ao salvar CPF e Email no perfil do cliente:", e);
         }
       }
 
@@ -453,7 +465,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         cliente_id: profile.uid,
         cliente_name: profile.nome || 'Cliente',
         plano_id: plan.id,
-        ownerEmail: profile.email || '',
+        ownerEmail: cleanEmail,
         ownerCpfCnpj: cleanCpfCnpj,
         billingType
       });
@@ -4988,58 +5000,105 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                 </p>
               </div>
 
-              {/* Solicitação elegante do CPF caso ainda não esteja cadastrado ou validado */}
-              {(!profile?.cpf || !isValidCPF(profile.cpf.replace(/\D/g, ''))) ? (
+              {/* Solicitação elegante do CPF e E-mail caso ainda não estejam cadastrados ou validados */}
+              {(!profile?.cpf || !isValidCPF(profile.cpf.replace(/\D/g, '')) || !profile?.email || !profile.email.includes('@') || profile.email.includes('manual_') || profile.email.includes('placeholder')) ? (
                 <div className="space-y-2.5 text-left bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
                   <div className="flex items-center gap-2 text-slate-800">
                     <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
                     <span className="text-xs font-black tracking-tight">Identificação do Assinante</span>
                   </div>
                   <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                    Para ativar sua assinatura do Clube e gerar seus recibos bancários, informe o seu CPF:
+                    Para ativar sua assinatura do Clube e gerar seus recibos bancários, informe seus dados:
                   </p>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                      CPF do Assinante
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="000.000.000-00"
-                      value={checkoutCpfCnpj}
-                      onChange={(e) => setCheckoutCpfCnpj(formatCpfCnpjMask(e.target.value))}
-                      className="w-full text-xs font-bold text-slate-800 bg-white rounded-xl p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all"
-                    />
-                  </div>
+                  
+                  {(!profile?.cpf || !isValidCPF(profile.cpf.replace(/\D/g, ''))) && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                        CPF do Assinante
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="000.000.000-00"
+                        value={checkoutCpfCnpj}
+                        onChange={(e) => setCheckoutCpfCnpj(formatCpfCnpjMask(e.target.value))}
+                        className="w-full text-xs font-bold text-slate-800 bg-white rounded-xl p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all font-mono"
+                      />
+                    </div>
+                  )}
+
+                  {(!profile?.email || !profile.email.includes('@') || profile.email.includes('manual_') || profile.email.includes('placeholder')) && (
+                    <div className="space-y-1 mt-2">
+                      <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                        E-mail do Assinante
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        placeholder="seu-email@exemplo.com"
+                        value={checkoutEmail}
+                        onChange={(e) => setCheckoutEmail(e.target.value)}
+                        className="w-full text-xs font-bold text-slate-800 bg-white rounded-xl p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all"
+                      />
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="flex items-center justify-between bg-emerald-50/70 border border-emerald-100 rounded-2xl px-4 py-3 text-left">
-                  <div className="flex items-center gap-2.5">
-                    <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
-                    <div>
-                      <p className="text-[11px] font-bold text-emerald-950">CPF Vinculado à Assinatura</p>
-                      <p className="text-[10px] text-emerald-700 font-medium">{formatCpfCnpjMask(profile.cpf)}</p>
+                <div className="flex flex-col gap-2 bg-emerald-50/70 border border-emerald-100 rounded-2xl p-4 text-left">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
+                      <div>
+                        <p className="text-[11px] font-bold text-emerald-950">CPF Vinculado à Assinatura</p>
+                        <p className="text-[10px] text-emerald-700 font-medium">{formatCpfCnpjMask(profile.cpf)}</p>
+                      </div>
                     </div>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      const newCpf = prompt("Informe seu CPF (11 dígitos):", profile.cpf || "");
-                      if (newCpf) {
-                        const clean = newCpf.replace(/\D/g, "");
-                        if (isValidCPF(clean)) {
-                          setCheckoutCpfCnpj(formatCpfCnpjMask(clean));
-                          profile.cpf = clean;
-                          toast.success("CPF atualizado!");
-                        } else {
-                          toast.error("CPF inválido. Verifique os dígitos.");
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        const newCpf = prompt("Informe seu CPF (11 dígitos):", profile.cpf || "");
+                        if (newCpf) {
+                          const clean = newCpf.replace(/\D/g, "");
+                          if (isValidCPF(clean)) {
+                            setCheckoutCpfCnpj(formatCpfCnpjMask(clean));
+                            profile.cpf = clean;
+                            toast.success("CPF atualizado!");
+                          } else {
+                            toast.error("CPF inválido. Verifique os dígitos.");
+                          }
                         }
-                      }
-                    }}
-                    className="text-[10px] font-bold text-emerald-800 hover:text-emerald-950 underline cursor-pointer"
-                  >
-                    Alterar
-                  </button>
+                      }}
+                      className="text-[10px] font-bold text-emerald-800 hover:text-emerald-950 underline cursor-pointer"
+                    >
+                      Alterar
+                    </button>
+                  </div>
+                  <div className="border-t border-emerald-100/50 my-1" />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <Mail size={16} className="text-emerald-600 shrink-0" />
+                      <div>
+                        <p className="text-[11px] font-bold text-emerald-950">E-mail de Cobrança</p>
+                        <p className="text-[10px] text-emerald-700 font-medium">{profile.email}</p>
+                      </div>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        const newEmail = prompt("Informe seu e-mail:", profile.email || "");
+                        if (newEmail && newEmail.includes('@')) {
+                          setCheckoutEmail(newEmail);
+                          profile.email = newEmail;
+                          toast.success("E-mail atualizado!");
+                        } else if (newEmail) {
+                          toast.error("E-mail inválido.");
+                        }
+                      }}
+                      className="text-[10px] font-bold text-emerald-800 hover:text-emerald-950 underline cursor-pointer"
+                    >
+                      Alterar
+                    </button>
+                  </div>
                 </div>
               )}
 

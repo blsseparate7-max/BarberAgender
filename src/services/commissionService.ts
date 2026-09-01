@@ -444,5 +444,83 @@ export const commissionService = {
       totalBase,
       count: commissions.length
     };
+  },
+
+  async cleanAndSettlePreviousMonths(cutoffDate: string = '2026-09-01', targetTenantId: string = 'gbcortes7') {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return;
+
+      // 1. Settle/Archive old pending advances before cutoff date
+      const advancesSnap = await getDocs(query(
+        collection(db, ADVANCES_COLLECTION),
+        where('tenantId', '==', activeTenant)
+      ));
+      
+      const batch = writeBatch(db);
+      let count = 0;
+
+      advancesSnap.docs.forEach(docSnap => {
+        const adv = docSnap.data() as ProfessionalAdvance;
+        const advDate = adv.date || (adv.createdAt ? new Date((adv.createdAt as any).seconds * 1000).toISOString().split('T')[0] : '');
+        if (advDate < cutoffDate && (adv.status === 'pendente' || !adv.status)) {
+          batch.update(docSnap.ref, {
+            status: 'deduzido',
+            updatedAt: serverTimestamp(),
+            settledReason: 'Fechamento de meses anteriores (Início de Setembro/2026)'
+          });
+          count++;
+        }
+      });
+
+      // 2. Settle/Archive old pending commissions before cutoff date
+      const commissionsSnap = await getDocs(query(
+        collection(db, COMMISSIONS_COLLECTION),
+        where('tenantId', '==', activeTenant)
+      ));
+
+      commissionsSnap.docs.forEach(docSnap => {
+        const comm = docSnap.data() as Commission;
+        const commDate = comm.date || (comm.createdAt ? new Date((comm.createdAt as any).seconds * 1000).toISOString().split('T')[0] : '');
+        if (commDate < cutoffDate && (comm.status === 'pendente' || !comm.status)) {
+          batch.update(docSnap.ref, {
+            status: 'pago',
+            updatedAt: serverTimestamp(),
+            settledReason: 'Fechamento de meses anteriores (Início de Setembro/2026)'
+          });
+          count++;
+        }
+      });
+
+      // 3. Mark matching old payables as paid if they were marked as adiantamentos
+      const payablesSnap = await getDocs(query(
+        collection(db, 'accounts_payable'),
+        where('tenantId', '==', activeTenant)
+      ));
+
+      payablesSnap.docs.forEach(docSnap => {
+        const p = docSnap.data() as any;
+        const pDate = p.dueDate || p.paidAt || (p.createdAt ? new Date(p.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+        if (pDate < cutoffDate && p.status === 'pending') {
+          const cat = (p.category || '').toLowerCase();
+          const desc = (p.description || '').toLowerCase();
+          if (cat.includes('vale') || cat.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) {
+            batch.update(docSnap.ref, {
+              status: 'paid',
+              paidAt: pDate,
+              updatedAt: serverTimestamp()
+            });
+            count++;
+          }
+        }
+      });
+
+      if (count > 0) {
+        await batch.commit();
+        console.log(`[commissionService] Cleaned and settled ${count} past records before ${cutoffDate} for ${activeTenant}`);
+      }
+    } catch (err) {
+      console.error("[commissionService] Error settling previous months:", err);
+    }
   }
 };

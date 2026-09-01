@@ -30,6 +30,7 @@ import { getActiveTenantId } from '../../services/tenantService';
 import { Appointment, AppointmentStatus, UserProfile, AgendaBlock } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
 import { agendaBlockService } from '../../services/agendaBlockService';
+import { computeOverlappingLayout, ItemPosition, LayoutItem } from '../../lib/calendarLayout';
 import { toast } from 'sonner';
 import { format, addDays, subDays, isSameDay, parse, isEqual, isAfter, isBefore, addMinutes, startOfWeek, endOfWeek, eachDayOfInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -250,6 +251,45 @@ export function AgendaProfessional({
     }
   };
 
+  // Pre-calculate non-overlapping side-by-side layout for each day in week view
+  const weekDayLayoutsMap = React.useMemo(() => {
+    const map = new Map<string, Map<string, ItemPosition>>();
+    const targetBarber = barbers.find(b => b.uid === selectedProfissionalId || b.id === selectedProfissionalId);
+
+    weekDays.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      
+      const dayApps = appointments.filter(app => {
+        const matchProf = app.profissional_id === selectedProfissionalId || (targetBarber && (app.profissional_id === targetBarber.uid || app.profissional_id === targetBarber.id));
+        return matchProf && app.date === dateStr && app.status !== 'cancelado';
+      });
+
+      const dayBlocks = (blocks || []).filter(block => {
+        if (block.date !== dateStr) return false;
+        const matchProf = block.profissional_id === selectedProfissionalId || (targetBarber && (block.profissional_id === targetBarber.uid || block.profissional_id === targetBarber.id));
+        return block.isGeneral || matchProf;
+      });
+
+      const items: LayoutItem[] = [
+        ...dayApps.map(a => ({
+          id: a.id,
+          startTime: a.startTime,
+          endTime: a.endTime,
+        })),
+        ...dayBlocks.map(b => ({
+          id: b.id || `block-${b.startTime}`,
+          startTime: b.startTime,
+          endTime: b.endTime,
+        }))
+      ];
+
+      const layout = computeOverlappingLayout(items);
+      map.set(dateStr, layout);
+    });
+
+    return map;
+  }, [weekDays, appointments, blocks, selectedProfissionalId, barbers]);
+
   const getStatusColor = (status: AppointmentStatus) => {
     switch (status) {
       case 'confirmado': return 'bg-indigo-50 border-indigo-100 text-indigo-600';
@@ -333,6 +373,8 @@ export function AgendaProfessional({
                       const slotEnd = addMinutes(slotStart, 30);
                       return (isEqual(bStart, slotStart) || isAfter(bStart, slotStart)) && isBefore(bStart, slotEnd);
                     })();
+                    const layoutMap = weekDayLayoutsMap.get(dateStr);
+
                     return (
                       <div 
                         key={`prof-cell-${dateStr}-${time}-${dayIdx}`} 
@@ -345,60 +387,66 @@ export function AgendaProfessional({
                           block ? 'bg-rose-50/50 cursor-not-allowed' : apps.length > 0 ? 'bg-slate-50/20 cursor-pointer' : 'hover:bg-accent/5 cursor-pointer'
                         } ${isSameDay(day, new Date()) ? 'bg-accent/5' : ''}`}
                       >
-                        {isBlockStart && (
-                          <motion.div
-                            key={`prof-block-${block.id || 'block'}-${dateStr}-${time}`}
-                            layoutId={block.id ? `block-layout-${block.id}` : undefined}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
-                                agendaBlockService.deleteBlock(block.id)
-                                  .then(() => {
-                                    toast.success("Bloqueio removido com sucesso!");
-                                  })
-                                  .catch((err) => {
-                                    console.error("Erro ao deletar bloqueio:", err);
-                                    toast.error("Erro ao remover bloqueio.");
-                                  });
-                              }
-                            }}
-                            style={{
-                              height: (() => {
-                                const bStart = parse(block.startTime, 'HH:mm', new Date());
-                                const bEnd = parse(block.endTime, 'HH:mm', new Date());
-                                if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return '53px';
-                                const bDur = Math.max(15, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
-                                return `${(bDur / 30) * 61 - 8}px`;
-                              })(),
-                              top: (() => {
-                                const bStart = parse(block.startTime, 'HH:mm', new Date());
-                                const slotStart = parse(time, 'HH:mm', new Date());
-                                if (isNaN(bStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
-                                const diffMin = (bStart.getTime() - slotStart.getTime()) / (1000 * 60);
-                                return `${4 + (diffMin / 30) * 61}px`;
-                              })(),
-                              left: '4px',
-                              right: '4px'
-                            }}
-                            className="absolute rounded-xl border border-rose-200 bg-rose-50/95 text-rose-700 p-2 flex flex-col justify-between shadow-sm z-10 transition-transform active:scale-[0.98] cursor-pointer hover:border-rose-400 group/block"
-                          >
-                            <div className="overflow-hidden">
-                              <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider mb-0.5 text-rose-600">
-                                <Lock size={10} />
-                                <span>Bloqueado</span>
+                        {isBlockStart && (() => {
+                          const blockPos = layoutMap?.get(block.id || `block-${block.startTime}`) || { colIndex: 0, totalCols: 1 };
+                          const colWidth = 100 / blockPos.totalCols;
+                          const leftPos = blockPos.colIndex * colWidth;
+
+                          return (
+                            <motion.div
+                              key={`prof-block-${block.id || 'block'}-${dateStr}-${time}`}
+                              layoutId={block.id ? `block-layout-${block.id}` : undefined}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
+                                  agendaBlockService.deleteBlock(block.id)
+                                    .then(() => {
+                                      toast.success("Bloqueio removido com sucesso!");
+                                    })
+                                    .catch((err) => {
+                                      console.error("Erro ao deletar bloqueio:", err);
+                                      toast.error("Erro ao remover bloqueio.");
+                                    });
+                                }
+                              }}
+                              style={{
+                                height: (() => {
+                                  const bStart = parse(block.startTime, 'HH:mm', new Date());
+                                  const bEnd = parse(block.endTime, 'HH:mm', new Date());
+                                  if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return '53px';
+                                  const bDur = Math.max(15, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
+                                  return `${(bDur / 30) * 61 - 8}px`;
+                                })(),
+                                top: (() => {
+                                  const bStart = parse(block.startTime, 'HH:mm', new Date());
+                                  const slotStart = parse(time, 'HH:mm', new Date());
+                                  if (isNaN(bStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
+                                  const diffMin = (bStart.getTime() - slotStart.getTime()) / (1000 * 60);
+                                  return `${4 + (diffMin / 30) * 61}px`;
+                                })(),
+                                left: blockPos.totalCols === 1 ? '4px' : `calc(${leftPos}% + 2px)`,
+                                width: blockPos.totalCols === 1 ? 'calc(100% - 8px)' : `calc(${colWidth}% - 4px)`
+                              }}
+                              className="absolute rounded-xl border border-rose-200 bg-rose-50/95 text-rose-700 p-1.5 sm:p-2 flex flex-col justify-between shadow-sm z-10 transition-transform active:scale-[0.98] cursor-pointer hover:border-rose-400 group/block overflow-hidden"
+                            >
+                              <div className="overflow-hidden">
+                                <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider mb-0.5 text-rose-600">
+                                  <Lock size={10} className="shrink-0" />
+                                  <span className="truncate">Bloqueado</span>
+                                </div>
+                                <p className="text-[10px] font-bold uppercase leading-tight truncate">{block.reason || 'Bloqueado'}</p>
+                                {block.isGeneral && (
+                                  <span className="inline-flex items-center px-1 py-0.5 mt-0.5 rounded bg-rose-100 text-rose-950 border border-rose-200 text-[7px] font-black uppercase tracking-wider">
+                                    Geral
+                                  </span>
+                                )}
                               </div>
-                              <p className="text-[10px] font-bold uppercase leading-tight truncate">{block.reason || 'Bloqueado'}</p>
-                              {block.isGeneral && (
-                                <span className="inline-flex items-center px-1 py-0.5 mt-0.5 rounded bg-rose-100 text-rose-950 border border-rose-200 text-[7px] font-black uppercase tracking-wider">
-                                  Geral
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center justify-between text-[7px] font-black text-rose-600/80 mt-1">
-                              <span>{block.startTime}</span>
-                            </div>
-                          </motion.div>
-                        )}
+                              <div className="flex items-center justify-between text-[7px] font-black text-rose-600/80 mt-1">
+                                <span>{block.startTime}</span>
+                              </div>
+                            </motion.div>
+                          );
+                        })()}
 
                         {apps.map((app, appIdx) => {
                           const isStart = (() => {
@@ -427,6 +475,10 @@ export function AgendaProfessional({
                               ? '!border-rose-500 !ring-4 !ring-red-500/20 bg-rose-50/20' 
                               : '';
 
+                          const appPos = layoutMap?.get(app.id) || { colIndex: 0, totalCols: 1 };
+                          const colWidth = 100 / appPos.totalCols;
+                          const leftPos = appPos.colIndex * colWidth;
+
                           return (
                             <motion.div
                               key={`prof-app-${app.id || 'app'}-${dateStr}-${time}-${appIdx}`}
@@ -450,52 +502,52 @@ export function AgendaProfessional({
                                   const diffMin = (appStart.getTime() - slotStart.getTime()) / (1000 * 60);
                                   return `${4 + (diffMin / 30) * 61}px`;
                                 })(),
-                                left: '4px',
-                                right: '4px'
+                                left: appPos.totalCols === 1 ? '4px' : `calc(${leftPos}% + 2px)`,
+                                width: appPos.totalCols === 1 ? 'calc(100% - 8px)' : `calc(${colWidth}% - 4px)`
                               }}
-                              className={`absolute rounded-xl border p-2 flex flex-col justify-between shadow-sm z-10 ${getStatusColor(app.status)} ${subscriptionBorderClass}`}
+                              className={`absolute rounded-xl border ${appPos.totalCols > 1 ? 'p-1 sm:p-1.5' : 'p-2'} flex flex-col justify-between shadow-sm z-10 overflow-hidden ${getStatusColor(app.status)} ${subscriptionBorderClass} hover:z-20`}
                             >
-                              <div>
+                              <div className="overflow-hidden">
                                 <p className="text-[10px] font-bold uppercase leading-none mb-1 truncate">{app.cliente_name}</p>
                                 <p className="text-[8px] opacity-80 truncate font-medium">{app.servico_name}</p>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {app.origin === 'encaixe' && (
-                                      <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 text-amber-800 text-[8px] font-black uppercase tracking-wider">
-                                        Encaixe
-                                      </span>
-                                    )}
-                                    {app.comanda_number && (
-                                      <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[8px] font-black uppercase tracking-wider">
-                                        Comanda #{app.comanda_number}
-                                      </span>
-                                    )}
-                                    {clientsWithPackages.has(app.cliente_id) && (
-                                      <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-50 text-amber-700 text-[7px] font-black uppercase tracking-wider border border-amber-200">
-                                        <Award size={8} />
-                                        PACOTE
-                                      </span>
-                                    )}
-                                    {clientsWithSubscriptions.has(app.cliente_id) && (
-                                      <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[7px] font-black uppercase tracking-wider border border-indigo-200">
-                                        <Sparkles size={8} />
-                                        CLUBE
-                                      </span>
-                                    )}
-                                    {getClientClassification(app.cliente_id, app.cliente_name).map((badge, idx) => (
-                                      <span 
-                                        key={`badge-${badge.label || idx}-${idx}`} 
-                                        title={badge.label}
-                                        className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[7px] font-black uppercase tracking-wider border ${badge.className}`}
-                                      >
-                                        {badge.icon}
-                                        <span>{badge.label}</span>
-                                      </span>
-                                    ))}
-                                  </div>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {app.origin === 'encaixe' && (
+                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 text-amber-800 text-[8px] font-black uppercase tracking-wider">
+                                      Encaixe
+                                    </span>
+                                  )}
+                                  {app.comanda_number && (
+                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[8px] font-black uppercase tracking-wider">
+                                      #{app.comanda_number}
+                                    </span>
+                                  )}
+                                  {clientsWithPackages.has(app.cliente_id) && (
+                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-50 text-amber-700 text-[7px] font-black uppercase tracking-wider border border-amber-200">
+                                      <Award size={8} />
+                                      {appPos.totalCols === 1 && 'PACOTE'}
+                                    </span>
+                                  )}
+                                  {clientsWithSubscriptions.has(app.cliente_id) && (
+                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[7px] font-black uppercase tracking-wider border border-indigo-200">
+                                      <Sparkles size={8} />
+                                      {appPos.totalCols === 1 && 'CLUBE'}
+                                    </span>
+                                  )}
+                                  {getClientClassification(app.cliente_id, app.cliente_name).map((badge, idx) => (
+                                    <span 
+                                      key={`badge-${badge.label || idx}-${idx}`} 
+                                      title={badge.label}
+                                      className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[7px] font-black uppercase tracking-wider border ${badge.className}`}
+                                    >
+                                      {badge.icon}
+                                      {appPos.totalCols === 1 && <span>{badge.label}</span>}
+                                    </span>
+                                  ))}
+                                </div>
                               </div>
-                              <div className="flex items-center justify-between mt-1">
-                                <span className="text-[8px] font-bold">{app.startTime}</span>
-                                <div className="flex items-center gap-1">
+                              <div className="flex items-center justify-between mt-1 pt-0.5 border-t border-black/5 gap-0.5">
+                                <span className="text-[8px] font-bold truncate">{app.startTime}</span>
+                                <div className="flex items-center gap-1 shrink-0">
                                   {(app.status === 'agendado' || app.status === 'confirmado') && (
                                     <button
                                       onClick={async (e) => {

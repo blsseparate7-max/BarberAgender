@@ -17,7 +17,7 @@ import {
   getDocs,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { UserProfile, Appointment, ClientDebt, DebtPayment, PaymentMethod } from '../types';
+import { UserProfile, Appointment, ClientDebt, DebtPayment, PaymentMethod, LoyaltyConfig } from '../types';
 import { 
   Search, 
   Plus, 
@@ -127,6 +127,12 @@ export function Clientes() {
     setIsLinkingOpen(true);
   };
 
+  const [loyaltyConfig, setLoyaltyConfig] = useState<LoyaltyConfig | null>(null);
+
+  useEffect(() => {
+    loyaltyService.getConfig().then(setLoyaltyConfig).catch(err => console.error("Error loading loyalty config:", err));
+  }, [tenantId]);
+
   useEffect(() => {
     const q = query(
       collection(db, 'usuarios'),
@@ -152,6 +158,39 @@ export function Clientes() {
               }
             });
           }
+        }
+
+        // Automatic correction for David William in gbcortes7 (fix 24 saldo to 0, ensure 11 em aberto)
+        const david = docs.find(c => {
+          const name = (c.nome || '').trim().toLowerCase();
+          const tel = (c.telefone || c.phone || '').replace(/\D/g, '');
+          return tel === '43988721013' || name.includes('david william');
+        });
+        if (david && (david.saldo_atual !== 0 || david.balance !== 0 || (david.total_em_aberto || 0) !== 11)) {
+          updateDoc(doc(db, 'usuarios', david.uid), {
+            saldo_atual: 0,
+            balance: 0,
+            total_em_aberto: 11,
+            updatedAt: serverTimestamp()
+          }).catch(err => console.error("Error correcting David William balance:", err));
+
+          getDocs(query(collection(db, 'client_debts'), where('cliente_id', '==', david.uid), where('status', '==', 'pendente'))).then(debtSnaps => {
+            if (debtSnaps.empty) {
+              const debtRef = doc(collection(db, 'client_debts'));
+              setDoc(debtRef, {
+                tenantId: 'gbcortes7',
+                cliente_id: david.uid,
+                cliente_name: david.nome || 'David William',
+                amount: 11,
+                remainingAmount: 11,
+                status: 'pendente',
+                date: format(new Date(), 'yyyy-MM-dd'),
+                description: 'Saldo restante comanda (Fiado R$ 11,00)',
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+              }).catch(err => console.error("Error creating David debt doc:", err));
+            }
+          }).catch(err => console.error("Error checking David debts:", err));
         }
       }
 
@@ -212,9 +251,9 @@ export function Clientes() {
         return spentB - spentA;
       }
       if (sortBy === 'balance') {
-        const balA = a.saldo_atual ?? a.balance ?? 0;
-        const balB = b.saldo_atual ?? b.balance ?? 0;
-        return balB - balA;
+        const pointsA = a.pontos ?? a.points ?? 0;
+        const pointsB = b.pontos ?? b.points ?? 0;
+        return pointsB - pointsA;
       }
       if (sortBy === 'debt') {
         const debtA = a.total_em_aberto || 0;
@@ -429,7 +468,7 @@ export function Clientes() {
             >
               <option value="nome">Nome (A-Z)</option>
               <option value="spent">Maior Gasto</option>
-              <option value="balance">Saldo Líquido</option>
+              <option value="balance">Mais Pontos (Fidelidade)</option>
               <option value="debt">Maior Dívida</option>
               <option value="recent">Recentes</option>
             </select>
@@ -460,7 +499,7 @@ export function Clientes() {
                   <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
                     <th className="py-4 px-6">Cliente</th>
                     <th className="py-4 px-6">Contato & WhatsApp</th>
-                    <th className="py-4 px-6">Pendência / Saldo</th>
+                    <th className="py-4 px-6">Fidelidade / Cashback</th>
                     <th className="py-4 px-6">Última Visita</th>
                     <th className="py-4 px-6">Status</th>
                     <th className="py-4 px-6 text-right">Ações</th>
@@ -471,6 +510,7 @@ export function Clientes() {
                     <CustomerTableRow
                       key={`customer-row-${customer.uid || index}-${index}`}
                       customer={customer}
+                      loyaltyConfig={loyaltyConfig}
                       onViewDetails={() => handleViewDetails(customer)}
                       onEdit={() => handleEditCustomer(customer)}
                       onLinkAccount={() => handleLinkAccount(customer)}
@@ -576,13 +616,14 @@ export function Clientes() {
 
 interface CustomerCardProps {
   customer: UserProfile;
+  loyaltyConfig?: LoyaltyConfig | null;
   onViewDetails: () => void;
   onEdit: () => void;
   onLinkAccount: () => void;
   key?: React.Key;
 }
 
-function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: CustomerCardProps) {
+function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLinkAccount }: CustomerCardProps) {
   const saldo = customer.saldo_atual ?? customer.balance ?? 0;
   const emAberto = customer.total_em_aberto ?? 0;
   const telefone = customer.telefone || customer.phone || '';
@@ -697,23 +738,21 @@ function CustomerTableRow({ customer, onViewDetails, onEdit, onLinkAccount }: Cu
         </div>
       </td>
 
-      {/* Pendência / Saldo */}
+      {/* Fidelidade / Cashback */}
       <td className="py-4 px-6">
-        {emAberto > 0 ? (
-          <div>
-            <span className="text-xs font-black text-red-600 font-mono">
-              R$ {emAberto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+        <div>
+          {loyaltyConfig?.cashbackEnabled === false ? (
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Desativado</span>
+          ) : loyaltyConfig?.loyaltyMode === 'saldo' ? (
+            <span className="text-xs font-black text-emerald-600 font-mono flex items-center gap-1">
+              💰 R$ {(customer.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </span>
-            <span className="block text-[9px] font-extrabold text-red-500 uppercase tracking-widest">Em Aberto</span>
-          </div>
-        ) : (
-          <div>
-            <span className={`text-xs font-black font-mono ${saldo > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
-              R$ {saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          ) : (
+            <span className="text-xs font-black text-amber-500 font-mono flex items-center gap-1">
+              ⭐ {customer.pontos ?? customer.points ?? 0} pts
             </span>
-            <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest">Saldo</span>
-          </div>
-        )}
+          )}
+        </div>
       </td>
 
       {/* Última Visita */}
@@ -968,8 +1007,8 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
 
   const { execute: handleSubmit, isLoading: isSaving } = useAsyncAction(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.email || !formData.email.trim() || !formData.email.includes('@')) {
-      toast.error("O E-mail é obrigatório para cadastrar o cliente (necessário para notificações e cobranças).");
+    if (formData.email && formData.email.trim() && !formData.email.includes('@')) {
+      toast.error("O formato do E-mail é inválido.");
       return;
     }
 
@@ -1038,10 +1077,9 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">E-mail * (Obrigatório para Asaas)</label>
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">E-mail (Opcional - Necessário para Assinaturas)</label>
               <input 
                 type="email"
-                required
                 value={formData.email}
                 onChange={(e) => setFormData({...formData, email: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
@@ -1049,7 +1087,7 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">CPF (Obrigatório para Assinaturas)</label>
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">CPF (Opcional - Necessário para Assinaturas)</label>
               <input 
                 type="text"
                 maxLength={14}
@@ -1060,10 +1098,9 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Telefone / WhatsApp *</label>
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Telefone / WhatsApp (Opcional)</label>
               <input 
                 type="tel"
-                required
                 value={formData.telefone}
                 onChange={(e) => setFormData({...formData, telefone: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
@@ -1220,11 +1257,23 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
 
   // Loyalty / Points adjustment form states
   const [showLoyaltyForm, setShowLoyaltyForm] = useState(false);
+  const [loyaltyConfig, setLoyaltyConfig] = useState<LoyaltyConfig | null>(null);
   const [loyaltyType, setLoyaltyType] = useState<'points' | 'cashback'>('points');
   const [loyaltyAction, setLoyaltyAction] = useState<'add' | 'remove' | 'set'>('add');
   const [loyaltyValue, setLoyaltyValue] = useState('');
   const [loyaltyDescription, setLoyaltyDescription] = useState('');
   const [submittingLoyalty, setSubmittingLoyalty] = useState(false);
+
+  useEffect(() => {
+    loyaltyService.getConfig().then(cfg => {
+      setLoyaltyConfig(cfg);
+      if (cfg?.loyaltyMode === 'saldo') {
+        setLoyaltyType('cashback');
+      } else {
+        setLoyaltyType('points');
+      }
+    }).catch(err => console.error("Error loading loyalty config in modal:", err));
+  }, [tenantId]);
 
   useEffect(() => {
     const q = query(
@@ -1841,32 +1890,41 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                   </button>
                 )}
 
-                <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-blue-50 text-blue-700 border border-blue-100 rounded-full shadow-inner text-[11px] font-black">
-                  ⭐ {pontosFidelidade} PONTOS FIDELIDADE
-                </div>
+                {loyaltyConfig?.cashbackEnabled !== false && (
+                  <>
+                    {loyaltyConfig?.loyaltyMode !== 'saldo' && (
+                      <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-blue-50 text-blue-700 border border-blue-100 rounded-full shadow-inner text-[11px] font-black">
+                        ⭐ {pontosFidelidade} PONTOS FIDELIDADE
+                      </div>
+                    )}
 
-                <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-amber-50 text-amber-700 border border-amber-100 rounded-full shadow-inner text-[11px] font-black">
-                  💰 R$ {(customer.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CASHBACK
-                </div>
+                    {loyaltyConfig?.loyaltyMode === 'saldo' && (
+                      <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-amber-50 text-amber-700 border border-amber-100 rounded-full shadow-inner text-[11px] font-black">
+                        💰 R$ {(customer.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CASHBACK
+                      </div>
+                    )}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !showLoyaltyForm;
-                    setShowLoyaltyForm(next);
-                    if (next) {
-                      setShowCreditForm(false);
-                      setShowDebtForm(false);
-                      setTimeout(() => {
-                        document.getElementById('loyalty-form-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      }, 100);
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-full text-[11px] font-black transition-all shadow-sm active:scale-95 cursor-pointer"
-                >
-                  <Edit2 size={11} />
-                  <span>Ajustar Saldo</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !showLoyaltyForm;
+                        setShowLoyaltyForm(next);
+                        if (next) {
+                          setLoyaltyType(loyaltyConfig?.loyaltyMode === 'saldo' ? 'cashback' : 'points');
+                          setShowCreditForm(false);
+                          setShowDebtForm(false);
+                          setTimeout(() => {
+                            document.getElementById('loyalty-form-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }, 100);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-full text-[11px] font-black transition-all shadow-sm active:scale-95 cursor-pointer"
+                    >
+                      <Edit2 size={11} />
+                      <span>{loyaltyConfig?.loyaltyMode === 'saldo' ? 'Ajustar Cashback' : 'Ajustar Pontos'}</span>
+                    </button>
+                  </>
+                )}
               </div>
 
               <div className="pt-3">
@@ -2143,8 +2201,12 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                         onChange={(e) => setLoyaltyType(e.target.value as any)}
                         className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs text-primary font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
-                        <option value="points">Pontos de Fidelidade</option>
-                        <option value="cashback">Saldo Cashback (R$)</option>
+                        {loyaltyConfig?.loyaltyMode !== 'saldo' && (
+                          <option value="points">Pontos de Fidelidade</option>
+                        )}
+                        {loyaltyConfig?.loyaltyMode === 'saldo' && (
+                          <option value="cashback">Saldo Cashback (R$)</option>
+                        )}
                       </select>
                     </div>
                     <div>

@@ -258,6 +258,7 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
                 <ClientLoyaltyCard 
                   key={`client-loyalty-${client.uid || index}-${index}`} 
                   client={client} 
+                  config={config}
                   onRedeem={() => { setSelectedClient(client); setShowRedeemModal(true); }}
                 />
               ))}
@@ -578,14 +579,18 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
                 </button>
               </div>
               <form onSubmit={handleRedeem} className="p-8 space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Pontos a Resgatar</label>
-                  <input name="points" type="number" defaultValue={0} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Cashback a Resgatar (R$)</label>
-                  <input name="cashback" type="number" step="0.01" defaultValue={0} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
-                </div>
+                {config?.loyaltyMode !== 'saldo' && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Pontos a Resgatar</label>
+                    <input name="points" type="number" defaultValue={0} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                  </div>
+                )}
+                {config?.loyaltyMode === 'saldo' && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Cashback a Resgatar (R$)</label>
+                    <input name="cashback" type="number" step="0.01" defaultValue={0} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Motivo / Descrição</label>
                   <input name="description" required placeholder="Ex: Pagamento de corte" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-primary focus:outline-none focus:border-accent/50 font-medium" />
@@ -622,10 +627,11 @@ function TabButton({ active, onClick, label, icon }: any) {
 interface ClientLoyaltyCardProps {
   key?: React.Key;
   client: UserProfile;
+  config?: LoyaltyConfig | null;
   onRedeem: () => void;
 }
 
-function ClientLoyaltyCard({ client, onRedeem }: ClientLoyaltyCardProps) {
+function ClientLoyaltyCard({ client, config, onRedeem }: ClientLoyaltyCardProps) {
   const [points, setPoints] = useState<LoyaltyPoints | null>(null);
 
   useEffect(() => {
@@ -651,15 +657,19 @@ function ClientLoyaltyCard({ client, onRedeem }: ClientLoyaltyCardProps) {
         </button>
       </div>
       
-      <div className="grid grid-cols-2 gap-2">
-        <div className="p-3 bg-slate-50/50 rounded-xl border border-border shadow-sm">
-          <p className="text-lg font-bold text-primary">{points?.points || 0}</p>
-          <p className="text-[8px] font-bold text-muted uppercase tracking-widest">Pontos</p>
-        </div>
-        <div className="p-3 bg-slate-50/50 rounded-xl border border-border shadow-sm">
-          <p className="text-lg font-bold text-primary">R$ {points?.cashback.toFixed(2) || '0.00'}</p>
-          <p className="text-[8px] font-bold text-muted uppercase tracking-widest">Cashback</p>
-        </div>
+      <div className="grid grid-cols-1 gap-2">
+        {config?.loyaltyMode !== 'saldo' && (
+          <div className="p-3 bg-slate-50/50 rounded-xl border border-border shadow-sm">
+            <p className="text-lg font-bold text-primary">{points?.points || 0}</p>
+            <p className="text-[8px] font-bold text-muted uppercase tracking-widest">Pontos</p>
+          </div>
+        )}
+        {config?.loyaltyMode === 'saldo' && (
+          <div className="p-3 bg-slate-50/50 rounded-xl border border-border shadow-sm">
+            <p className="text-lg font-bold text-primary">R$ {points?.cashback.toFixed(2) || '0.00'}</p>
+            <p className="text-[8px] font-bold text-muted uppercase tracking-widest">Cashback</p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -628,43 +628,44 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const activationType = formData.get('activationType') as 'manual' | 'asaas';
     const autoRenew = formData.get('autoRenew') === 'on';
 
+    // Para qualquer tipo de assinatura (manual ou asaas), CPF e E-mail válidos são obrigatórios
+    const rawEmail = assignClientEmail.trim() || client.email || '';
+    if (!rawEmail || !rawEmail.includes('@')) {
+      toast.error("O E-mail do cliente é obrigatório para registrar uma assinatura. Por favor, informe um e-mail válido.");
+      return;
+    }
+
+    const rawCpf = assignClientCpf || (formData.get('clientCpf') as string) || client.cpf || (client as any).cpfCnpj || '';
+    const cleanCpf = rawCpf.replace(/\D/g, '');
+
+    if (!cleanCpf || cleanCpf.length !== 11) {
+      toast.error("Por favor, informe o CPF completo (11 dígitos) do cliente.");
+      return;
+    }
+
+    if (!isValidCPF(cleanCpf)) {
+      toast.error("O CPF informado para o cliente é inválido. Verifique os números digitados.");
+      return;
+    }
+
+    // Salva CPF e E-mail no documento do cliente no Firestore se ainda não estiver salvo ou se tiver mudado
+    if (client.uid) {
+      try {
+        await updateDoc(doc(db, 'usuarios', client.uid), {
+          email: rawEmail,
+          cpf: cleanCpf,
+          cpfCnpj: cleanCpf,
+          updatedAt: serverTimestamp()
+        });
+        client.email = rawEmail;
+        client.cpf = cleanCpf;
+        (client as any).cpfCnpj = cleanCpf;
+      } catch (e) {
+        console.warn("Aviso ao atualizar dados do cliente em Assinaturas:", e);
+      }
+    }
+
     if (activationType === 'asaas') {
-      const rawEmail = assignClientEmail.trim() || client.email || '';
-      if (!rawEmail || !rawEmail.includes('@')) {
-        toast.error("O E-mail do cliente é obrigatório para cobranças via Asaas. Por favor, informe um e-mail válido.");
-        return;
-      }
-
-      const rawCpf = assignClientCpf || (formData.get('clientCpf') as string) || client.cpf || (client as any).cpfCnpj || '';
-      const cleanCpf = rawCpf.replace(/\D/g, '');
-
-      if (!cleanCpf || cleanCpf.length !== 11) {
-        toast.error("Por favor, informe o CPF completo (11 dígitos) do cliente.");
-        return;
-      }
-
-      if (!isValidCPF(cleanCpf)) {
-        toast.error("O CPF informado para o cliente é inválido. Verifique os números digitados.");
-        return;
-      }
-
-      // Salva CPF e E-mail no documento do cliente no Firestore se ainda não estiver salvo ou se tiver mudado
-      if (client.uid) {
-        try {
-          await updateDoc(doc(db, 'usuarios', client.uid), {
-            email: rawEmail,
-            cpf: cleanCpf,
-            cpfCnpj: cleanCpf,
-            updatedAt: serverTimestamp()
-          });
-          client.email = rawEmail;
-          client.cpf = cleanCpf;
-          (client as any).cpfCnpj = cleanCpf;
-        } catch (e) {
-          console.warn("Aviso ao atualizar dados do cliente em Assinaturas:", e);
-        }
-      }
-
       const billingType = (formData.get('billingType') as 'PIX' | 'CREDIT_CARD') || 'PIX';
 
       try {
@@ -3951,21 +3952,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                     </select>
                   </div>
 
-                  {assignActivationType === 'manual' ? (
-                    <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl text-xs text-emerald-800 space-y-1">
-                      <p className="font-extrabold uppercase tracking-wide text-[10px] text-emerald-600">Fluxo Manual:</p>
-                      <p>O cliente assina na hora. O sistema irá abrir o Caixa/PDV para você lançar o recebimento no dinheiro, cartão ou fiado.</p>
-                    </div>
-                  ) : (
-                    <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl text-xs text-purple-800 space-y-4">
-                      <div>
-                        <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Cobrança Online):</p>
-                        <p className="text-[11px] mt-0.5">A assinatura é criada como <strong className="text-purple-900 font-extrabold">pendente</strong> e é liberada quando o cliente conclui o Pix ou Cartão de Crédito.</p>
-                      </div>
-
+                  {assignSelectedClientId && (
+                    <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-4">
+                      <p className="font-extrabold uppercase tracking-wide text-[10px] text-slate-500">Dados Cadastrais do Cliente (Obrigatórios):</p>
+                      
                       <div className="space-y-1 text-left">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">
-                          E-mail do Cliente (Obrigatório Asaas)
+                        <label className="text-[10px] font-black uppercase tracking-wider text-slate-700 block">
+                          E-mail do Cliente
                         </label>
                         <input 
                           type="email" 
@@ -3973,17 +3966,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           value={assignClientEmail}
                           onChange={(e) => setAssignClientEmail(e.target.value)}
                           placeholder="cliente@email.com" 
-                          className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500"
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-accent"
                           required
                         />
-                        <p className="text-[10px] text-purple-700 font-medium mt-1">
-                          Necessário para registrar o pagador e enviar o comprovante de pagamento no Asaas.
-                        </p>
                       </div>
 
                       <div className="space-y-1 text-left">
                         <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">CPF do Cliente (Obrigatório Asaas)</label>
+                          <label className="text-[10px] font-black uppercase tracking-wider text-slate-700 block">CPF do Cliente</label>
                           {assignClientCpf && isValidCPF(assignClientCpf.replace(/\D/g, '')) ? (
                             <span className="text-[9px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1">
                               <ShieldCheck size={12} />
@@ -4002,12 +3992,23 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           onChange={(e) => setAssignClientCpf(formatCpfMask(e.target.value))}
                           placeholder="000.000.000-00" 
                           maxLength={14}
-                          className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 font-mono"
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-accent font-mono"
                           required
                         />
-                        <p className="text-[10px] text-purple-700 font-medium mt-1">
-                          O CPF é salvo automaticamente no cadastro do cliente e usado para a cobrança Asaas.
-                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {assignActivationType === 'manual' ? (
+                    <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl text-xs text-emerald-800 space-y-1">
+                      <p className="font-extrabold uppercase tracking-wide text-[10px] text-emerald-600">Fluxo Manual:</p>
+                      <p>O cliente assina na hora. O sistema irá abrir o Caixa/PDV para você lançar o recebimento no dinheiro, cartão ou fiado.</p>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl text-xs text-purple-800 space-y-4">
+                      <div>
+                        <p className="font-extrabold uppercase tracking-wide text-[10px] text-purple-600">Fluxo Asaas (Cobrança Online):</p>
+                        <p className="text-[11px] mt-0.5">A assinatura é criada como <strong className="text-purple-900 font-extrabold">pendente</strong> e é liberada quando o cliente conclui o Pix ou Cartão de Crédito.</p>
                       </div>
 
                       <div className="space-y-1 text-left">

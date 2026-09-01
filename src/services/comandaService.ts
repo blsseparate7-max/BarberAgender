@@ -484,15 +484,22 @@ export const comandaService = {
       };
 
       // 4. Transactional Writes
-      transaction.update(docRef, {
+      const updateData: Record<string, any> = {
         payments: finalPayments,
         paidAmount: finalPaidAmount,
         pendingAmount: finalPendingAmount,
         status,
         logs: [...(comanda.logs || []), newLog],
-        updatedAt: serverTimestamp(),
-        closedAt: (comanda.status !== 'fechada' && status === 'fechada') ? serverTimestamp() : comanda.closedAt // Maintain closedAt if already closed
-      });
+        updatedAt: serverTimestamp()
+      };
+
+      if (comanda.status !== 'fechada' && status === 'fechada') {
+        updateData.closedAt = serverTimestamp();
+      } else if (comanda.closedAt !== undefined && comanda.closedAt !== null) {
+        updateData.closedAt = comanda.closedAt;
+      }
+
+      transaction.update(docRef, updateData);
 
       // Update Client Statistics for the payment (not just the closure)
       if (comanda.cliente_id && !methodConfig.goesToClientAccount && clientSnap?.exists()) {
@@ -500,8 +507,6 @@ export const comandaService = {
         transaction.update(clientRef, {
           total_pago: increment(payment.amount),
           totalPaid: increment(payment.amount), // Legacy
-          saldo_atual: increment(payment.amount),
-          balance: increment(payment.amount), // Legacy
           updatedAt: serverTimestamp()
         });
       }
@@ -921,7 +926,7 @@ export const comandaService = {
       });
     }
 
-    // 2. Update Client Statistics and History (Total Spent)
+    // 2. Update Client Statistics and History (Total Spent & Total Em Aberto)
     if (comanda.cliente_id && clientExists) {
       const clientRef = doc(db, 'usuarios', comanda.cliente_id);
       transaction.update(clientRef, {
@@ -929,48 +934,11 @@ export const comandaService = {
         ativo: true,
         total_gasto: increment(comanda.totalAmount),
         totalSpent: increment(comanda.totalAmount), // Legacy
-        saldo_atual: increment(-comanda.totalAmount),
-        balance: increment(-comanda.totalAmount), // Legacy
         total_em_aberto: increment(finalPendingAmountLeft > 0 ? finalPendingAmountLeft : 0),
         appointmentsCount: increment(1),
         lastServiceAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
-
-      // 2.1 Loyalty Points & Cashback
-      // Cashback and Points are calculated STRICTLY on the actual paid amount (comanda.totalAmount).
-      // Zeroed subscription items yield 0 cashback and 0 points because the subscriber already paid their subscription fee separately.
-      const effectiveAmountForPoints = comanda.totalAmount || 0;
-      const pointsToAdd = Math.floor(effectiveAmountForPoints); // 1 point per Real paid
-      const cashbackToAdd = (effectiveAmountForPoints * 5) / 100; // 5% cashback on actual paid amount
-
-      if (pointsToAdd > 0 || cashbackToAdd > 0) {
-        const activeTenantId = comanda.tenantId || getActiveTenantId();
-        const pointsDocId = `${activeTenantId}_${comanda.cliente_id}`;
-
-        const pointsRef = doc(db, 'loyalty_points', pointsDocId);
-        // We use set with merge: true to create if not exists
-        transaction.set(pointsRef, {
-          cliente_id: comanda.cliente_id,
-          tenantId: activeTenantId,
-          points: increment(pointsToAdd),
-          cashback: increment(cashbackToAdd),
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-
-        const historyRef = doc(collection(db, 'loyalty_history'));
-        transaction.set(historyRef, {
-          cliente_id: comanda.cliente_id,
-          tenantId: activeTenantId,
-          type: 'earn',
-          source: comanda.origin === 'agenda' ? 'appointment' : 'purchase',
-          points: pointsToAdd,
-          cashback: cashbackToAdd,
-          description: `Comanda #${comanda.number}`,
-          date: new Date().toISOString().split('T')[0],
-          createdAt: serverTimestamp()
-        });
-      }
     }
 
     // 3. Generate Commissions and Update Inventory
@@ -1751,8 +1719,6 @@ export const comandaService = {
           transaction.update(clientRef!, {
             total_gasto: increment(-comanda.totalAmount),
             totalSpent: increment(-comanda.totalAmount), // Legacy
-            saldo_atual: increment(comanda.totalAmount - cashPaidOnComanda), // Revert spending but NOT the cash paid
-            balance: increment(comanda.totalAmount - cashPaidOnComanda), // Legacy
             total_pago: increment(-cashPaidOnComanda),
             totalPaid: increment(-cashPaidOnComanda), // Legacy
             total_em_aberto: increment(-currentOpenAmountFromThisComanda),

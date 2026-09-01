@@ -74,7 +74,10 @@ export function Comissoes() {
 
   useEffect(() => {
     loadBarbers();
-  }, []);
+    if (tenantId === 'gbcortes7') {
+      commissionService.cleanAndSettlePreviousMonths('2026-09-01', 'gbcortes7');
+    }
+  }, [tenantId]);
 
   // Live Subscription for all commissions and advances of the tenant
   useEffect(() => {

@@ -36,6 +36,7 @@ import { appointmentService } from '../../services/appointmentService';
 import { userService } from '../../services/userService';
 import { agendaBlockService } from '../../services/agendaBlockService';
 import { serviceService } from '../../services/serviceService';
+import { computeOverlappingLayout, ItemPosition, LayoutItem } from '../../lib/calendarLayout';
 import { toast } from 'sonner';
 import { format, addDays, subDays, isSameDay, parse, isEqual, isAfter, isBefore, addMinutes } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -252,6 +253,45 @@ export function AgendaGeneral({
       return undefined;
     }
   };
+
+  // Pre-calculate non-overlapping side-by-side layout for each barber's appointments and blocks on selected date
+  const barberLayoutsMap = React.useMemo(() => {
+    const map = new Map<string, Map<string, ItemPosition>>();
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
+
+    displayedBarbers.forEach(barber => {
+      const bUid = barber.uid || barber.id || '';
+
+      const barberApps = appointments.filter(app => {
+        const matchProf = app.profissional_id === bUid || (barber.id && app.profissional_id === barber.id);
+        return matchProf && app.date === dateStr && app.status !== 'cancelado';
+      });
+
+      const barberBlocks = (blocks || []).filter(block => {
+        if (block.date !== dateStr) return false;
+        const matchProf = block.profissional_id === bUid || (barber.id && block.profissional_id === barber.id);
+        return block.isGeneral || matchProf;
+      });
+
+      const items: LayoutItem[] = [
+        ...barberApps.map(a => ({
+          id: a.id,
+          startTime: a.startTime,
+          endTime: a.endTime,
+        })),
+        ...barberBlocks.map(b => ({
+          id: b.id || `block-${b.startTime}`,
+          startTime: b.startTime,
+          endTime: b.endTime,
+        }))
+      ];
+
+      const layout = computeOverlappingLayout(items);
+      map.set(bUid, layout);
+    });
+
+    return map;
+  }, [displayedBarbers, appointments, blocks, selectedDate]);
 
   const getStatusColor = (status: AppointmentStatus) => {
     switch (status) {
@@ -545,6 +585,9 @@ export function AgendaGeneral({
                           ? 'min-w-0 flex-1'
                           : 'min-w-[180px] sm:min-w-[220px] flex-1';
 
+                        const barberKey = barber.uid || barber.id || '';
+                        const layoutMap = barberLayoutsMap.get(barberKey);
+
                         return (
                           <div 
                             key={`barber-col-${barber.uid || barber.id || bIdx}-${bIdx}`} 
@@ -558,58 +601,64 @@ export function AgendaGeneral({
                             }`}
                           >
                             {/* Block Element */}
-                            {isBlockStart && (
-                              <motion.div
-                                key={`block-start-${block.id || 'block'}-${time}`}
-                                layoutId={block.id ? `block-layout-${block.id}` : undefined}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
-                                    agendaBlockService.deleteBlock(block.id)
-                                      .then(() => {
-                                        toast.success("Bloqueio removido com sucesso!");
-                                      })
-                                      .catch((err) => {
-                                        console.error("Erro ao deletar bloqueio:", err);
-                                        toast.error("Erro ao remover bloqueio.");
-                                      });
-                                  }
-                                }}
-                                style={{
-                                  height: (() => {
-                                    const bStart = parse(block.startTime, 'HH:mm', new Date());
-                                    const bEnd = parse(block.endTime, 'HH:mm', new Date());
-                                    if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return '64px';
-                                    const bDur = Math.max(15, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
-                                    return `${(bDur / 30) * 72 - 8}px`;
-                                  })(),
-                                  top: (() => {
-                                    const bStart = parse(block.startTime, 'HH:mm', new Date());
-                                    const slotStart = parse(time, 'HH:mm', new Date());
-                                    if (isNaN(bStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
-                                    const diffMin = (bStart.getTime() - slotStart.getTime()) / (1000 * 60);
-                                    return `${4 + (diffMin / 30) * 72}px`;
-                                  })(),
-                                  left: '4px',
-                                  right: '4px'
-                                }}
-                                className="absolute rounded-xl border border-rose-300 bg-rose-50/95 text-rose-800 p-2.5 flex flex-col justify-between shadow-sm z-10 transition-all active:scale-[0.98] cursor-pointer hover:border-rose-500 group/block"
-                              >
-                                <div>
-                                  <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider mb-1 text-rose-700">
-                                    <Lock size={12} />
-                                    <span>Horário Bloqueado</span>
+                            {isBlockStart && (() => {
+                              const blockPos = layoutMap?.get(block.id || `block-${block.startTime}`) || { colIndex: 0, totalCols: 1 };
+                              const colWidth = 100 / blockPos.totalCols;
+                              const leftPos = blockPos.colIndex * colWidth;
+
+                              return (
+                                <motion.div
+                                  key={`block-start-${block.id || 'block'}-${time}`}
+                                  layoutId={block.id ? `block-layout-${block.id}` : undefined}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
+                                      agendaBlockService.deleteBlock(block.id)
+                                        .then(() => {
+                                          toast.success("Bloqueio removido com sucesso!");
+                                        })
+                                        .catch((err) => {
+                                          console.error("Erro ao deletar bloqueio:", err);
+                                          toast.error("Erro ao remover bloqueio.");
+                                        });
+                                    }
+                                  }}
+                                  style={{
+                                    height: (() => {
+                                      const bStart = parse(block.startTime, 'HH:mm', new Date());
+                                      const bEnd = parse(block.endTime, 'HH:mm', new Date());
+                                      if (isNaN(bStart.getTime()) || isNaN(bEnd.getTime())) return '64px';
+                                      const bDur = Math.max(15, (bEnd.getTime() - bStart.getTime()) / (1000 * 60));
+                                      return `${(bDur / 30) * 72 - 8}px`;
+                                    })(),
+                                    top: (() => {
+                                      const bStart = parse(block.startTime, 'HH:mm', new Date());
+                                      const slotStart = parse(time, 'HH:mm', new Date());
+                                      if (isNaN(bStart.getTime()) || isNaN(slotStart.getTime())) return '4px';
+                                      const diffMin = (bStart.getTime() - slotStart.getTime()) / (1000 * 60);
+                                      return `${4 + (diffMin / 30) * 72}px`;
+                                    })(),
+                                    left: blockPos.totalCols === 1 ? '4px' : `calc(${leftPos}% + 2px)`,
+                                    width: blockPos.totalCols === 1 ? 'calc(100% - 8px)' : `calc(${colWidth}% - 4px)`
+                                  }}
+                                  className="absolute rounded-xl border border-rose-300 bg-rose-50/95 text-rose-800 p-2 sm:p-2.5 flex flex-col justify-between shadow-sm z-10 transition-all active:scale-[0.98] cursor-pointer hover:border-rose-500 group/block overflow-hidden"
+                                >
+                                  <div className="overflow-hidden">
+                                    <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider mb-1 text-rose-700">
+                                      <Lock size={12} className="shrink-0" />
+                                      <span className="truncate">Horário Bloqueado</span>
+                                    </div>
+                                    <p className="text-xs font-black uppercase leading-tight truncate">{block.reason || 'Bloqueado'}</p>
                                   </div>
-                                  <p className="text-xs font-black uppercase leading-tight truncate">{block.reason || 'Bloqueado'}</p>
-                                </div>
-                                <div className="flex items-center justify-between text-[9px] font-bold text-rose-700">
-                                  <span>{block.startTime} - {block.endTime}</span>
-                                  <span className="opacity-0 group-hover/block:opacity-100 text-[9px] uppercase tracking-widest text-rose-900 font-extrabold transition-opacity">
-                                    [Remover]
-                                  </span>
-                                </div>
-                              </motion.div>
-                            )}
+                                  <div className="flex items-center justify-between text-[9px] font-bold text-rose-700 mt-1">
+                                    <span className="truncate">{block.startTime} - {block.endTime}</span>
+                                    <span className="opacity-0 group-hover/block:opacity-100 text-[9px] uppercase tracking-widest text-rose-900 font-extrabold transition-opacity shrink-0 ml-1">
+                                      [Remover]
+                                    </span>
+                                  </div>
+                                </motion.div>
+                              );
+                            })()}
 
                             {/* Appointments Elements */}
                             {apps.map((app, appIdx) => {
@@ -642,6 +691,10 @@ export function AgendaGeneral({
                                   ? '!border-rose-600 !ring-4 !ring-red-500/30' 
                                   : '';
 
+                              const appPos = layoutMap?.get(app.id) || { colIndex: 0, totalCols: 1 };
+                              const colWidth = 100 / appPos.totalCols;
+                              const leftPos = appPos.colIndex * colWidth;
+
                               return (
                                 <motion.div
                                   key={`app-start-${app.id || 'app'}-${time}-${appIdx}`}
@@ -665,17 +718,17 @@ export function AgendaGeneral({
                                       const diffMin = (appStart.getTime() - slotStart.getTime()) / (1000 * 60);
                                       return `${4 + (diffMin / 30) * 72}px`;
                                     })(),
-                                    left: '4px',
-                                    right: '4px'
+                                    left: appPos.totalCols === 1 ? '4px' : `calc(${leftPos}% + 2px)`,
+                                    width: appPos.totalCols === 1 ? 'calc(100% - 8px)' : `calc(${colWidth}% - 4px)`
                                   }}
-                                  className={`absolute rounded-xl p-2.5 flex flex-col justify-between shadow-md z-10 transition-all cursor-pointer ${getStatusColor(app.status)} ${subscriptionBorderClass}`}
+                                  className={`absolute rounded-xl ${appPos.totalCols > 1 ? 'p-1.5 sm:p-2' : 'p-2.5'} flex flex-col justify-between shadow-md z-10 transition-all cursor-pointer overflow-hidden ${getStatusColor(app.status)} ${subscriptionBorderClass} hover:z-20`}
                                 >
-                                  <div>
+                                  <div className="overflow-hidden">
                                     <div className="flex items-center justify-between gap-1 mb-1">
                                       <p className="text-xs font-black uppercase leading-tight truncate tracking-tight">{app.cliente_name}</p>
                                       {app.status === 'em_atendimento' && (
                                         <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded font-black text-[8px] uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0">
-                                          <Scissors size={10} /> NA CADEIRA
+                                          <Scissors size={10} /> {appPos.totalCols === 1 && 'NA CADEIRA'}
                                         </span>
                                       )}
                                     </div>
@@ -685,7 +738,7 @@ export function AgendaGeneral({
                                       <span className="font-mono font-black shrink-0 text-slate-900 ml-1">R$ {(app.price || (app as any).preco || 0).toFixed(0)}</span>
                                     </div>
 
-                                    <div className="flex flex-wrap gap-1 mt-1.5">
+                                    <div className="flex flex-wrap gap-1 mt-1">
                                       {app.origin === 'encaixe' && (
                                         <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 text-[8px] font-black uppercase tracking-wider">
                                           Encaixe
@@ -703,16 +756,16 @@ export function AgendaGeneral({
                                           className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${badge.className}`}
                                         >
                                           {badge.icon}
-                                          <span>{badge.label}</span>
+                                          {appPos.totalCols === 1 && <span>{badge.label}</span>}
                                         </span>
                                       ))}
                                     </div>
                                   </div>
 
-                                  <div className="flex items-center justify-between mt-2 pt-1 border-t border-black/5">
-                                    <span className="text-[10px] font-black font-mono text-slate-800">{app.startTime} - {app.endTime}</span>
+                                  <div className="flex items-center justify-between mt-1.5 pt-1 border-t border-black/5 gap-1">
+                                    <span className="text-[10px] font-black font-mono text-slate-800 truncate">{app.startTime}{appPos.totalCols === 1 ? ` - ${app.endTime}` : ''}</span>
                                     
-                                    <div className="flex items-center gap-1">
+                                    <div className="flex items-center gap-1 shrink-0">
                                       {/* WhatsApp Quick Action */}
                                       {cleanPhone && (
                                         <a
@@ -735,7 +788,7 @@ export function AgendaGeneral({
                                           className="px-1.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs"
                                         >
                                           <Play size={10} fill="currentColor" />
-                                          <span>Iniciar</span>
+                                          {appPos.totalCols === 1 && <span>Iniciar</span>}
                                         </button>
                                       )}
 
@@ -750,13 +803,13 @@ export function AgendaGeneral({
                                           className="px-1.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs"
                                         >
                                           <Receipt size={10} />
-                                          <span>Caixa</span>
+                                          {appPos.totalCols === 1 && <span>Caixa</span>}
                                         </button>
                                       )}
 
                                       {app.status === 'concluído' && (
                                         <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[8px] font-black uppercase">
-                                          <CheckCircle2 size={10} /> Pago
+                                          <CheckCircle2 size={10} /> {appPos.totalCols === 1 && 'Pago'}
                                         </span>
                                       )}
                                     </div>

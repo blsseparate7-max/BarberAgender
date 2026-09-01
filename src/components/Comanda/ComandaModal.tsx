@@ -56,6 +56,7 @@ import { InputModal } from '../InputModal';
 import { parseDate } from '../../lib/utils';
 import { QuickClientSelector } from './QuickClientSelector';
 import { QuickProfSelector } from './QuickProfSelector';
+import { ClientSelectCombobox } from '../Common/ClientSelectCombobox';
 
 interface ComandaModalProps {
   comanda_id?: string;
@@ -75,6 +76,18 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
   
   const [showItemSelector, setShowItemSelector] = useState<'service' | 'product' | null>(null);
+  const [itemSearchQuery, setItemSearchQuery] = useState('');
+  const [selectedServiceCategory, setSelectedServiceCategory] = useState<string>('todas');
+
+  // Extract distinct service categories for organized selection
+  const serviceCategories = React.useMemo(() => {
+    const cats = new Set<string>();
+    services.forEach(s => {
+      const cat = ((s as any).categoria || (s as any).category || '').trim();
+      if (cat) cats.add(cat);
+    });
+    return Array.from(cats).sort();
+  }, [services]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -591,6 +604,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   const handleOpenItemSelector = (type: 'service' | 'product') => {
     loadData();
+    setItemSearchQuery('');
     setShowItemSelector(type);
   };
 
@@ -927,7 +941,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             profissional_id: comanda.profissional_id,
             profissional_name: comanda.profissional_name,
             servico_id: item.id,
-            servico_name: item.name,
+            servico_name: (item as Service).nome || item.name || 'Serviço',
             date: dateStr,
             startTime: startTimeStr,
             endTime: endTimeStr,
@@ -1613,18 +1627,19 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
           <div className="p-8 space-y-6">
             <div className="space-y-2">
-              <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Cliente</label>
-              <select 
-                value={formData.cliente_id}
-                onChange={(e) => setFormData({...formData, cliente_id: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium"
-              >
-                <option value="">Selecione um cliente</option>
-                <option value="avulso">👤 Cliente Avulso (Sem Cadastro)</option>
-                {clients.map((c, index) => (
-                  <option key={`client-opt-${c.uid || index}-${index}`} value={c.uid}>{c.nome}</option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between ml-1">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider">Cliente</label>
+                <span className="text-[10px] text-slate-400 font-medium">5 primeiros exibidos • Busque para filtrar</span>
+              </div>
+              <ClientSelectCombobox
+                clients={clients}
+                selectedClientId={formData.cliente_id}
+                onSelectClient={(cid) => setFormData({ ...formData, cliente_id: cid })}
+                placeholder="Selecione ou busque um cliente..."
+                allowAvulso={true}
+                avulsoLabel="👤 Cliente Avulso (Sem Cadastro)"
+                avulsoValue="avulso"
+              />
             </div>
 
             <div className="space-y-2">
@@ -2231,10 +2246,35 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         })}
                         {comanda.items.length === 0 && (
                           <tr>
-                            <td colSpan={5} className="px-6 py-16 text-center">
-                              <div className="flex flex-col items-center gap-2">
-                                <Receipt className="text-slate-200" size={40} />
-                                <p className="text-muted text-sm font-medium">Nenhum item adicionado ainda.</p>
+                            <td colSpan={5} className="px-6 py-12 text-center">
+                              <div className="flex flex-col items-center gap-3 max-w-sm mx-auto">
+                                <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400">
+                                  <Receipt size={24} />
+                                </div>
+                                <div>
+                                  <p className="text-slate-800 font-bold text-sm">Nenhum item lançado na comanda</p>
+                                  <p className="text-muted text-xs mt-0.5">Adicione um serviço ou produto para compor o atendimento.</p>
+                                </div>
+                                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                                  <div className="flex items-center justify-center gap-2.5 mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenItemSelector('service')}
+                                      className="flex items-center gap-1.5 px-4 py-2.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all shadow-sm active:scale-95 cursor-pointer"
+                                    >
+                                      <Scissors size={14} />
+                                      Adicionar Serviço
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenItemSelector('product')}
+                                      className="flex items-center gap-1.5 px-4 py-2.5 bg-white text-slate-700 border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95 cursor-pointer"
+                                    >
+                                      <Package size={14} />
+                                      Adicionar Produto
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -2760,11 +2800,25 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
               {/* Main Actions Bar */}
               <div className="space-y-3 pt-6 border-t border-slate-200">
+                {comanda.pendingAmount > 0 && (!comanda.cliente_id || comanda.cliente_id === 'avulso') && (
+                  <div className="p-3.5 bg-amber-50 border border-amber-200/80 rounded-2xl text-amber-900 text-xs flex items-start gap-2.5">
+                    <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Saldo pendente: R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      <p className="text-[11px] text-amber-700 leading-relaxed mt-0.5">Para lançar o saldo restante como Fiado na conta do cliente, vincule um cliente cadastrado acima.</p>
+                    </div>
+                  </div>
+                )}
+
                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? (
                   <>
                     <button 
                       onClick={() => {
                         if (comanda.pendingAmount > 0) {
+                          if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
+                            toast.error(`Para deixar o saldo de R$ ${comanda.pendingAmount.toFixed(2)} como Fiado, selecione um cliente cadastrado.`);
+                            return;
+                          }
                           const nextWeek = new Date();
                           nextWeek.setDate(nextWeek.getDate() + 7);
                           setFiadoDueDate(nextWeek.toISOString().split('T')[0]);
@@ -2773,8 +2827,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           setConfirmClose(true);
                         }
                       }}
-                      disabled={loading || (comanda.pendingAmount > 0 && comanda.cliente_id === 'avulso')}
-                      className={`w-full py-4 text-white rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all ${
+                      disabled={loading}
+                      className={`w-full py-4 text-white rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all cursor-pointer ${
                         comanda.pendingAmount === 0 
                           ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/10' 
                           : 'bg-primary hover:bg-slate-800 shadow-primary/10'
@@ -2890,73 +2944,235 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-surface border border-border w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden my-auto"
+              className="bg-surface border border-border w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden my-auto flex flex-col max-h-[85vh]"
             >
-              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50">
+              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50 shrink-0">
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm border ${
                     showItemSelector === 'service' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'
                   }`}>
                     {showItemSelector === 'service' ? <Scissors size={20} /> : <Package size={20} />}
                   </div>
-                  <h3 className="text-xl font-bold text-primary">
-                    {showItemSelector === 'service' ? 'Adicionar Serviço' : 'Adicionar Produto'}
-                  </h3>
+                  <div>
+                    <h3 className="text-xl font-bold text-primary">
+                      {showItemSelector === 'service' ? 'Adicionar Serviço' : 'Adicionar Produto'}
+                    </h3>
+                    <p className="text-[10px] text-muted font-bold uppercase tracking-widest">
+                      {showItemSelector === 'service' ? `${services.length} serviços disponíveis` : `${products.length} produtos disponíveis`}
+                    </p>
+                  </div>
                 </div>
-                <button onClick={() => setShowItemSelector(null)} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm">
+                <button onClick={() => setShowItemSelector(null)} className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm cursor-pointer">
                   <X size={20} />
                 </button>
               </div>
-              <div className="p-6 max-h-[60vh] overflow-y-auto space-y-3 custom-scrollbar">
-                {showItemSelector === 'service' ? (
-                  services.map((s, index) => (
-                    <div 
-                      key={`${s.id || 'service'}-${index}`}
-                      onClick={() => addItem(s, 'servico')}
-                      className="w-full p-5 bg-white border border-slate-100 rounded-2xl flex items-center justify-between hover:border-accent/30 hover:bg-slate-50/50 transition-all group shadow-sm cursor-pointer"
+
+              {/* Search Bar & Category Filter */}
+              <div className="p-4 border-b border-border bg-slate-50/50 shrink-0 space-y-3">
+                <div className="relative">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input
+                    type="text"
+                    value={itemSearchQuery}
+                    onChange={(e) => setItemSearchQuery(e.target.value)}
+                    placeholder={showItemSelector === 'service' ? 'Buscar serviço por nome ou categoria...' : 'Buscar produto por nome...'}
+                    className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-primary font-medium focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary transition-all"
+                  />
+                  {itemSearchQuery && (
+                    <button
+                      onClick={() => setItemSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:text-accent transition-colors border border-slate-100">
-                          <Scissors size={18} />
-                        </div>
-                        <div className="text-left">
-                          <p className="font-bold text-primary group-hover:text-accent transition-colors">{s.name}</p>
-                          <p className="text-[10px] text-muted font-bold uppercase tracking-widest">{s.duration} min</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            addItem(s, 'servico', true);
-                          }}
-                          className="px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all border border-emerald-100"
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Category Chips for Services */}
+                {showItemSelector === 'service' && serviceCategories.length > 0 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedServiceCategory('todas')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                        selectedServiceCategory === 'todas'
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                      }`}
+                    >
+                      Todos ({services.length})
+                    </button>
+                    {serviceCategories.map(cat => {
+                      const count = services.filter(s => ((s as any).categoria || (s as any).category || '').trim().toLowerCase() === cat.toLowerCase()).length;
+                      return (
+                        <button
+                          key={`cat-pill-${cat}`}
+                          type="button"
+                          onClick={() => setSelectedServiceCategory(cat)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                            selectedServiceCategory.toLowerCase() === cat.toLowerCase()
+                              ? 'bg-primary text-white shadow-sm'
+                              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                          }`}
                         >
-                          CORTESIA
+                          {cat} ({count})
                         </button>
-                        <p className="font-black text-primary min-w-[90px] text-right">R$ {(s.price ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                      </div>
-                    </div>
-                  ))
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-3 custom-scrollbar flex-1">
+                {showItemSelector === 'service' ? (
+                  (() => {
+                    const filtered = services.filter(s => {
+                      if (selectedServiceCategory !== 'todas') {
+                        const cat = ((s as any).categoria || (s as any).category || '').trim().toLowerCase();
+                        if (cat !== selectedServiceCategory.toLowerCase()) return false;
+                      }
+                      if (!itemSearchQuery.trim()) return true;
+                      const q = itemSearchQuery.toLowerCase().trim();
+                      const name = ((s as any).nome || s.name || '').toLowerCase();
+                      const cat = ((s as any).categoria || (s as any).category || '').toLowerCase();
+                      return name.includes(q) || cat.includes(q);
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="py-12 text-center text-slate-400 space-y-2">
+                          <Scissors size={32} className="mx-auto text-slate-300" />
+                          <p className="text-xs font-bold">Nenhum serviço encontrado</p>
+                          <p className="text-[11px]">Verifique os filtros de busca ou selecione outra categoria.</p>
+                        </div>
+                      );
+                    }
+
+                    const renderServiceCard = (s: any, index: number) => {
+                      const serviceName = s.nome || s.name || 'Serviço';
+                      const serviceDuration = s.duracao_minutos || s.duration || 30;
+                      const servicePrice = s.preco ?? s.price ?? 0;
+                      const serviceCat = s.categoria || s.category;
+
+                      return (
+                        <div 
+                          key={`${s.id || 'service'}-${index}`}
+                          onClick={() => addItem(s, 'servico')}
+                          className="w-full p-4 sm:p-5 bg-white border border-slate-100 rounded-2xl flex items-center justify-between hover:border-accent/30 hover:bg-slate-50/50 transition-all group shadow-sm cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3.5">
+                            <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:text-accent transition-colors border border-slate-100 shrink-0">
+                              <Scissors size={18} />
+                            </div>
+                            <div className="text-left">
+                              <p className="font-bold text-primary group-hover:text-accent transition-colors text-sm">{serviceName}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] text-muted font-bold uppercase tracking-widest">{serviceDuration} min</span>
+                                {serviceCat && (
+                                  <span className="text-[9px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-md">
+                                    {serviceCat}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                addItem(s, 'servico', true);
+                              }}
+                              className="px-2.5 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all border border-emerald-100"
+                              title="Marcar como cortesia nesta comanda"
+                            >
+                              CORTESIA
+                            </button>
+                            <p className="font-black text-primary min-w-[80px] text-right text-sm">
+                              R$ {servicePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    };
+
+                    // Group by category when 'todas' is selected and no query is typed
+                    if (selectedServiceCategory === 'todas' && !itemSearchQuery.trim()) {
+                      const grouped: { [key: string]: typeof filtered } = {};
+                      filtered.forEach(s => {
+                        const cat = ((s as any).categoria || (s as any).category || 'Geral').trim() || 'Geral';
+                        if (!grouped[cat]) grouped[cat] = [];
+                        grouped[cat].push(s);
+                      });
+
+                      return (
+                        <div className="space-y-6">
+                          {Object.entries(grouped).map(([catName, catItems]) => (
+                            <div key={`group-sec-${catName}`} className="space-y-2">
+                              <div className="flex items-center justify-between px-1 border-b border-slate-100 pb-1.5">
+                                <span className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                                  <span>📁</span> {catName}
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded-full">
+                                  {catItems.length} {catItems.length === 1 ? 'serviço' : 'serviços'}
+                                </span>
+                              </div>
+                              <div className="space-y-2">
+                                {catItems.map((s, index) => renderServiceCard(s, index))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+
+                    return filtered.map((s, index) => renderServiceCard(s, index));
+                  })()
                 ) : (
-                  products.map((p, index) => (
-                    <div 
-                      key={`${p.id || 'product'}-${index}`}
-                      onClick={() => addItem(p, 'product')}
-                      className="w-full p-5 bg-white border border-slate-100 rounded-2xl flex items-center justify-between hover:border-accent/30 hover:bg-slate-50/50 transition-all group shadow-sm cursor-pointer"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:text-accent transition-colors border border-slate-100">
-                          <Package size={18} />
+                  (() => {
+                    const filtered = products.filter(p => {
+                      if (!itemSearchQuery.trim()) return true;
+                      const q = itemSearchQuery.toLowerCase().trim();
+                      const name = ((p as any).name || (p as any).nome || '').toLowerCase();
+                      return name.includes(q);
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="py-12 text-center text-slate-400 space-y-2">
+                          <Package size={32} className="mx-auto text-slate-300" />
+                          <p className="text-xs font-bold">Nenhum produto encontrado</p>
+                          <p className="text-[11px]">Verifique se há produtos cadastrados no estoque.</p>
                         </div>
-                        <div className="text-left">
-                          <p className="font-bold text-primary group-hover:text-accent transition-colors">{p.name}</p>
-                          <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Estoque: {p.currentStock}</p>
+                      );
+                    }
+
+                    return filtered.map((p, index) => {
+                      const prodName = (p as any).name || (p as any).nome || 'Produto';
+                      const prodStock = p.currentStock ?? (p as any).estoque ?? 0;
+                      const prodPrice = p.salePrice ?? (p as any).preco ?? 0;
+
+                      return (
+                        <div 
+                          key={`${p.id || 'product'}-${index}`}
+                          onClick={() => addItem(p, 'product')}
+                          className="w-full p-4 sm:p-5 bg-white border border-slate-100 rounded-2xl flex items-center justify-between hover:border-accent/30 hover:bg-slate-50/50 transition-all group shadow-sm cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3.5">
+                            <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:text-accent transition-colors border border-slate-100 shrink-0">
+                              <Package size={18} />
+                            </div>
+                            <div className="text-left">
+                              <p className="font-bold text-primary group-hover:text-accent transition-colors text-sm">{prodName}</p>
+                              <p className="text-[10px] text-muted font-bold uppercase tracking-widest mt-0.5">Estoque: {prodStock}</p>
+                            </div>
+                          </div>
+                          <p className="font-black text-primary text-sm shrink-0">
+                            R$ {prodPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
                         </div>
-                      </div>
-                      <p className="font-black text-primary">R$ {((p.salePrice ?? (p as any).preco ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                  ))
+                      );
+                    });
+                  })()
                 )}
               </div>
             </motion.div>
@@ -3310,58 +3526,74 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               exit={{ scale: 0.95, y: 15 }}
               className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col my-auto"
             >
-              <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-rose-50/30">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-600/20">
+              <div className="p-6 sm:p-8 border-b border-slate-100 flex items-center justify-between bg-rose-50/40">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 bg-rose-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-600/20 shrink-0">
                     <AlertCircle size={24} />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-rose-900">Finalizar com Fiado</h3>
+                    <h3 className="text-xl font-bold text-rose-950">Finalizar com Saldo Fiado</h3>
                     <p className="text-[10px] text-rose-600 font-bold uppercase tracking-widest leading-none mt-1">
-                      Saldo pendente: R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      Saldo restante: R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </p>
                   </div>
                 </div>
                 <button 
                   id="close-fiado-modal-btn"
                   onClick={() => setShowFiadoConfirmationModal(false)} 
-                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm"
+                  className="p-2 text-muted hover:text-primary transition-colors bg-white rounded-lg border border-slate-100 shadow-sm cursor-pointer"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="p-8 space-y-6">
-                <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  A comanda possui um saldo pendente de <span className="text-rose-600 font-bold">R$ ${(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>. Este valor será lançado como FIADO para o cliente <span className="font-bold text-slate-800">{comanda.cliente_name}</span>. O profissional receberá a comissão normalmente.
+              <div className="p-6 sm:p-8 space-y-6">
+                {/* Resumo dos Valores */}
+                <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-4 space-y-2.5">
+                  <div className="flex justify-between text-xs text-slate-600">
+                    <span>Total da Comanda:</span>
+                    <span className="font-bold text-slate-900">R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-emerald-700">
+                    <span>Valor Recebido Agora:</span>
+                    <span className="font-bold">R$ {(comanda.paidAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="border-t border-slate-200 pt-2.5 flex justify-between items-center text-sm font-black text-rose-700">
+                    <span>Ficará como FIADO (em aberto):</span>
+                    <span className="text-base">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                  O valor restante de <strong className="text-rose-600 font-bold">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> ficará registrado como débito na conta do cliente <strong className="text-slate-900">{comanda.cliente_name}</strong>. O profissional receberá sua comissão normalmente e o débito poderá ser quitado a qualquer momento no caixa.
                 </p>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Data Prometida de Pagamento</label>
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Data Prometida para Pagamento</label>
                   <input 
                     id="fiado-due-date-input"
                     type="date"
                     value={fiadoDueDate}
                     onChange={(e) => setFiadoDueDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/10 focus:border-rose-500 transition-all text-primary font-bold shadow-inner"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/10 focus:border-rose-500 transition-all text-primary font-bold shadow-inner"
                   />
                 </div>
 
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100/80 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 shrink-0">
                       <BellRing size={18} />
                     </div>
                     <div>
                       <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Lembrete Automático</h4>
-                      <p className="text-[10px] text-slate-500 font-medium">Notificar cliente no dia do vencimento</p>
+                      <p className="text-[10px] text-slate-500 font-medium">Notificar no dia do vencimento prometido</p>
                     </div>
                   </div>
                   <button
                     id="toggle-fiado-reminder-btn"
                     type="button"
                     onClick={() => setScheduleFiadoReminder(!scheduleFiadoReminder)}
-                    className={`w-12 h-7 rounded-full transition-colors relative focus:outline-none ${
+                    className={`w-12 h-7 rounded-full transition-colors relative focus:outline-none cursor-pointer ${
                       scheduleFiadoReminder ? 'bg-indigo-600' : 'bg-slate-200'
                     }`}
                   >
@@ -3377,20 +3609,20 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   <button 
                     id="cancel-fiado-modal-btn"
                     onClick={() => setShowFiadoConfirmationModal(false)}
-                    className="flex-1 py-4 bg-slate-100 text-primary rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all active:scale-95"
+                    className="flex-1 py-3.5 bg-slate-100 text-primary rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all active:scale-95 cursor-pointer"
                   >
-                    Cancelar
+                    Voltar
                   </button>
                   <button 
                     id="confirm-fiado-modal-btn"
                     onClick={handleCloseComandaWithFiado}
                     disabled={loading || !fiadoDueDate}
-                    className="flex-[2] py-4 bg-rose-600 text-white rounded-2xl font-bold text-sm hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20 flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 cursor-pointer"
+                    className="flex-[2] py-3.5 bg-rose-600 text-white rounded-2xl font-bold text-sm hover:bg-rose-700 transition-all shadow-lg shadow-rose-600/20 flex items-center justify-center gap-2.5 disabled:opacity-50 active:scale-95 cursor-pointer"
                   >
-                    {loading ? <Loader2 className="animate-spin" size={20} /> : (
+                    {loading ? <Loader2 className="animate-spin" size={18} /> : (
                       <>
-                        <CheckCircle2 size={20} />
-                        <span>Confirmar Fiado</span>
+                        <CheckCircle2 size={18} />
+                        <span>Confirmar e Deixar Fiado</span>
                       </>
                     )}
                   </button>

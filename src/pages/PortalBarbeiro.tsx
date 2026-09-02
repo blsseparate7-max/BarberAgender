@@ -269,53 +269,56 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     return () => unsubscribe();
   }, []);
 
-  // 3. Fetch Commissions and Financial Data when entering Comissão tab
+  // 3. Fetch Commissions and Financial Data in real-time
   useEffect(() => {
-    if ((activeTab === 'comissao' || activeTab === 'agenda') && profile?.uid) {
+    if (profile?.uid) {
       setLoadingCommissions(true);
       const proTenant = profile.tenantId || getActiveTenantId();
 
-      const refreshAdvances = async () => {
+      const refreshAllFinancial = async () => {
         try {
-          const advs = await commissionService.getAdvances({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant });
-          setAdvances(advs);
+          const [commsData, advsData, payoutsData] = await Promise.all([
+            commissionService.getCommissions({ profissional_id: profile.uid, tenantId: proTenant }),
+            commissionService.getAdvances({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant }),
+            commissionService.getPayouts(profile.uid, proTenant)
+          ]);
+          setCommissions(commsData);
+          setAdvances(advsData);
+          setPayouts(payoutsData);
         } catch (e) {
-          console.warn("Error refreshing advances in PortalBarbeiro:", e);
+          console.warn("Error refreshing financial data in PortalBarbeiro:", e);
+        } finally {
+          setLoadingCommissions(false);
         }
       };
 
-      Promise.all([
-        commissionService.getCommissions({ profissional_id: profile.uid, tenantId: proTenant }),
-        commissionService.getAdvances({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant }),
-        commissionService.getPayouts(profile.uid, proTenant)
-      ]).then(([commsData, advsData, payoutsData]) => {
-        setCommissions(commsData);
-        setAdvances(advsData);
-        setPayouts(payoutsData);
-        setLoadingCommissions(false);
-      }).catch(err => {
-        console.error(err);
-        toast.error('Erro ao carregar dados financeiros.');
-        setLoadingCommissions(false);
-      });
+      refreshAllFinancial();
 
-      // Realtime listeners for updates
+      // Realtime listeners for commissions, comandas, advances, accounts payable, cash movements
+      const qComms = query(collection(db, 'commissions'), where('profissional_id', '==', profile.uid));
+      const unsubComms = onSnapshot(qComms, () => { refreshAllFinancial(); }, (e) => console.warn(e));
+
+      const qComandas = query(collection(db, 'comandas'));
+      const unsubComandas = onSnapshot(qComandas, () => { refreshAllFinancial(); }, (e) => console.warn(e));
+
       const qAdvs = query(collection(db, 'professional_advances'));
-      const unsubAdvs = onSnapshot(qAdvs, () => { refreshAdvances(); }, (e) => console.warn(e));
+      const unsubAdvs = onSnapshot(qAdvs, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
       const qPay = query(collection(db, 'accounts_payable'));
-      const unsubPay = onSnapshot(qPay, () => { refreshAdvances(); }, (e) => console.warn(e));
+      const unsubPay = onSnapshot(qPay, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
       const qCash = query(collection(db, 'cash_movements'));
-      const unsubCash = onSnapshot(qCash, () => { refreshAdvances(); }, (e) => console.warn(e));
+      const unsubCash = onSnapshot(qCash, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
       return () => {
+        unsubComms();
+        unsubComandas();
         unsubAdvs();
         unsubPay();
         unsubCash();
       };
     }
-  }, [activeTab, profile?.uid, profile?.tenantId]);
+  }, [profile?.uid, profile?.tenantId, profile?.nome]);
 
   // Tab states: Avaliações
   const [reviews, setReviews] = useState<any[]>([]);

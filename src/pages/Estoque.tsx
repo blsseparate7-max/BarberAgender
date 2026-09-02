@@ -32,6 +32,7 @@ import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '../contexts/AuthContext';
 import { inventoryService } from '../services/inventoryService';
+import { billService } from '../services/billService';
 import { Product, ProductCategory, InventoryMovement, MovementType, ProductType } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { collection, query, orderBy, where, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -99,6 +100,7 @@ export function Estoque() {
   const [comissoesPorProfissional, setComissoesPorProfissional] = useState<Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>>({});
   const [showInPortal, setShowInPortal] = useState(true);
   const [pontosResgate, setPontosResgate] = useState<number | ''>('');
+  const [addAsAccountsPayable, setAddAsAccountsPayable] = useState(false);
 
   // Custom Alert / Confirm Modal States
   const [alertModal, setAlertModal] = useState<{
@@ -144,6 +146,7 @@ export function Estoque() {
         setComissoesPorProfissional({});
         setShowInPortal(true);
         setPontosResgate('');
+        setAddAsAccountsPayable(false);
       }
     } else {
       setSelectedCategoryId('');
@@ -313,8 +316,28 @@ export function Estoque() {
         await inventoryService.updateProduct(editingProduct.id, productData);
         toast.success('Produto atualizado com sucesso!');
       } else {
-        await inventoryService.createProduct(productData);
-        toast.success('Produto criado com sucesso!');
+        const newProductId = await inventoryService.createProduct(productData);
+        
+        // If "Adicionar a Contas a Pagar" is checked, create a pending bill
+        if (addAsAccountsPayable && costPrice > 0) {
+          const qty = Number(formData.get('currentStock')) || 1;
+          const totalCost = costPrice * qty;
+          const todayStr = format(new Date(), 'yyyy-MM-dd');
+          const supplierName = suppliers.find(s => s.id === selectedSupplierId)?.name || 'Fornecedor';
+          
+          await billService.createPayable({
+            description: `Compra Estoque: ${productData.name} (${qty} un)`,
+            category: 'Produtos',
+            amount: totalCost,
+            dueDate: todayStr,
+            supplier: supplierName,
+            status: 'pending',
+            recurrence: 'none'
+          });
+          toast.success('Produto criado e conta a pagar gerada com sucesso!');
+        } else {
+          toast.success('Produto criado com sucesso!');
+        }
       }
       setShowProductModal(false);
       setEditingProduct(null);
@@ -1091,6 +1114,28 @@ export function Estoque() {
                           Pontos necessários para o cliente resgatar este produto no Portal do Cliente.
                         </p>
                       </div>
+
+                      {!editingProduct && (
+                        <div className="space-y-2 md:col-span-2 pt-2">
+                          <div className="bg-amber-50/60 border border-amber-200/80 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                            <div>
+                              <h5 className="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+                                <span>📋 Adicionar a Contas a Pagar</span>
+                              </h5>
+                              <p className="text-[10px] text-amber-700/80 font-medium mt-0.5">
+                                Gerar registro em contas a pagar com o preço de custo total (não debita o caixa agora).
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setAddAsAccountsPayable(!addAsAccountsPayable)}
+                              className={`w-12 h-6 rounded-full transition relative shrink-0 ${addAsAccountsPayable ? 'bg-amber-600' : 'bg-slate-350'}`}
+                            >
+                              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition shadow-md ${addAsAccountsPayable ? 'left-7' : 'left-1'}`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

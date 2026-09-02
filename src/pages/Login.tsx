@@ -19,6 +19,72 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding, onG
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const checkAndMigrateLink = async (userUid: string, userEmail: string, displayName: string) => {
+    const params = new URLSearchParams(window.location.search);
+    const linkClientId = params.get('link_client_id') || params.get('link_id');
+    if (!linkClientId || linkClientId === userUid) return;
+
+    try {
+      const { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, writeBatch, serverTimestamp } = await import('firebase/firestore');
+      const { getActiveTenantId } = await import('../services/tenantService');
+
+      const oldDocRef = doc(db, 'usuarios', linkClientId);
+      const oldSnap = await getDoc(oldDocRef);
+      let oldData: any = {};
+      if (oldSnap.exists()) {
+        oldData = oldSnap.data();
+      }
+
+      const activeTenantId = getActiveTenantId();
+      await setDoc(doc(db, 'usuarios', userUid), {
+        ...oldData,
+        uid: userUid,
+        nome: displayName || oldData.nome || 'Cliente',
+        email: userEmail.toLowerCase().trim(),
+        tipo: 'cliente',
+        isLinked: true,
+        linkedAt: serverTimestamp(),
+        ativo: true,
+        tenantId: activeTenantId || null,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      try { await deleteDoc(oldDocRef); } catch (e) {}
+      try {
+        await updateDoc(oldDocRef, {
+          ativo: false,
+          isLinked: true,
+          mergedInto: userUid,
+          updatedAt: serverTimestamp()
+        });
+      } catch (e) {}
+
+      // Migrate appointments
+      const apptQuery = query(collection(db, 'appointments'), where('cliente_id', '==', linkClientId));
+      const apptSnapshot = await getDocs(apptQuery);
+      if (!apptSnapshot.empty) {
+        const batch = writeBatch(db);
+        apptSnapshot.docs.forEach((docSnap) => {
+          batch.update(docSnap.ref, { cliente_id: userUid, updatedAt: serverTimestamp() });
+        });
+        await batch.commit();
+      }
+
+      // Migrate comandas
+      const comandasQuery = query(collection(db, 'comandas'), where('cliente_id', '==', linkClientId));
+      const comandasSnapshot = await getDocs(comandasQuery);
+      if (!comandasSnapshot.empty) {
+        const batch = writeBatch(db);
+        comandasSnapshot.docs.forEach((docSnap) => {
+          batch.update(docSnap.ref, { cliente_id: userUid, updatedAt: serverTimestamp() });
+        });
+        await batch.commit();
+      }
+    } catch (err) {
+      console.warn("Link migration warning during login:", err);
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -35,6 +101,8 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding, onG
         setError('Sua conta está inativa. Entre em contato com a administração da barbearia.');
         return;
       }
+
+      await checkAndMigrateLink(userCred.user.uid, userCred.user.email || email, userCred.user.displayName || '');
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/operation-not-allowed') {
@@ -63,6 +131,8 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding, onG
 
       const docRef = doc(db, 'usuarios', user.uid);
       const docSnap = await getDoc(docRef);
+
+      await checkAndMigrateLink(user.uid, user.email || '', user.displayName || '');
 
       if (!docSnap.exists()) {
         const usersRef = collection(db, 'usuarios');

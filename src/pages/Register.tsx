@@ -81,7 +81,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
   };
 
   const migrateClientProfile = async (userUid: string, userEmail: string, userDisplayName: string) => {
-    const { doc, setDoc, getDoc, deleteDoc, collection, query, where, getDocs, writeBatch, serverTimestamp } = await import('firebase/firestore');
+    const { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs, writeBatch, serverTimestamp } = await import('firebase/firestore');
     
     // Fetch manual client profile
     const oldDocRef = doc(db, 'usuarios', linkClientId || '');
@@ -109,9 +109,23 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       updatedAt: serverTimestamp(),
     });
 
-    // 2. Delete old manual client doc if different
+    // 2. Safely deactivate and attempt to delete old manual client doc
     if (linkClientId && linkClientId !== userUid) {
-      await deleteDoc(oldDocRef);
+      try {
+        await deleteDoc(oldDocRef);
+      } catch (delErr) {
+        console.warn("Could not delete old manual profile doc (permission constraint), marking inactive/merged:", delErr);
+      }
+      try {
+        await updateDoc(oldDocRef, {
+          ativo: false,
+          isLinked: true,
+          mergedInto: userUid,
+          updatedAt: serverTimestamp()
+        });
+      } catch (updateErr) {
+        console.warn("Could not mark old manual client doc as inactive:", updateErr);
+      }
     }
 
     // 3. Migrate appointments
@@ -404,11 +418,10 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       const docRef = doc(db, 'usuarios', user.uid);
       const docSnap = await getDoc(docRef);
   
-      if (!docSnap.exists()) {
-        if (linkClientId) {
-          await migrateClientProfile(user.uid, user.email || '', user.displayName || '');
-        } else {
-          const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
+      if (linkClientId) {
+        await migrateClientProfile(user.uid, user.email || '', user.displayName || '');
+      } else if (!docSnap.exists()) {
+        const { collection, query, where, getDocs, deleteDoc } = await import('firebase/firestore');
           const usersRef = collection(db, 'usuarios');
           const q = query(usersRef, where('email', '==', user.email?.toLowerCase().trim()));
           const querySnapshot = await getDocs(q);
@@ -461,7 +474,6 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             });
           }
         }
-      }
     } catch (err: any) {
       console.error(err);
       setError('Erro ao entrar com Google. Tente novamente.');

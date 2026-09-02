@@ -15,6 +15,7 @@ import {
   setDoc,
   runTransaction,
   getDocs,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, Appointment, ClientDebt, DebtPayment, PaymentMethod, LoyaltyConfig } from '../types';
@@ -141,27 +142,55 @@ export function Clientes() {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserProfile));
+      const rawDocs = snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserProfile));
+      const activeDocs = rawDocs.filter(c => c.ativo !== false && !(c as any).mergedInto);
       
-      // Automatic cleanup of duplicate unverified João Vitor in gbcortes7
-      if (tenantId === 'gbcortes7') {
-        const joaoList = docs.filter(c => {
-          const name = (c.nome || '').trim().toLowerCase();
-          return name.includes('joão vitor fernandes carvalho') || name.includes('joao vitor fernandes carvalho');
-        });
-        if (joaoList.length > 1) {
-          const verified = joaoList.find(c => isCustomerLinked(c) || ((c.email || '').includes('@') && !c.email.includes('manual_') && !c.email.includes('placeholder')));
+      // Automatic cleanup of duplicate profiles (e.g. Gabriel Gasque in gbcortes7)
+      const nameGroups: Record<string, UserProfile[]> = {};
+      rawDocs.forEach(c => {
+        if (c.ativo === false || (c as any).mergedInto) return;
+        const normName = (c.nome || '').trim().toLowerCase();
+        if (normName.length > 2) {
+          if (!nameGroups[normName]) nameGroups[normName] = [];
+          nameGroups[normName].push(c);
+        }
+      });
+
+      Object.values(nameGroups).forEach(group => {
+        if (group.length > 1) {
+          const verified = group.find(c => isCustomerLinked(c) || ((c.email || '').includes('@') && !c.email.includes('manual_') && !c.email.includes('placeholder')));
           if (verified) {
-            joaoList.forEach(c => {
-              if (c.uid !== verified.uid) {
-                deleteDoc(doc(db, 'usuarios', c.uid)).catch(err => console.error("Error cleaning duplicate João:", err));
+            group.forEach(async (manual) => {
+              if (manual.uid !== verified.uid) {
+                try {
+                  // Migrate appointments & comandas if any
+                  const apptQuery = query(collection(db, 'appointments'), where('cliente_id', '==', manual.uid));
+                  const apptSnap = await getDocs(apptQuery);
+                  if (!apptSnap.empty) {
+                    const batch = writeBatch(db);
+                    apptSnap.docs.forEach(d => batch.update(d.ref, { cliente_id: verified.uid, updatedAt: serverTimestamp() }));
+                    await batch.commit();
+                  }
+
+                  await updateDoc(doc(db, 'usuarios', manual.uid), {
+                    ativo: false,
+                    isLinked: true,
+                    mergedInto: verified.uid,
+                    updatedAt: serverTimestamp()
+                  });
+                  await deleteDoc(doc(db, 'usuarios', manual.uid));
+                } catch (err) {
+                  console.warn("Auto cleanup of duplicate customer warning:", err);
+                }
               }
             });
           }
         }
+      });
 
-        // Automatic correction for David William in gbcortes7 (fix 24 saldo to 0, ensure 11 em aberto)
-        const david = docs.find(c => {
+      // Automatic correction for David William in gbcortes7 (fix 24 saldo to 0, ensure 11 em aberto)
+      if (tenantId === 'gbcortes7') {
+        const david = activeDocs.find(c => {
           const name = (c.nome || '').trim().toLowerCase();
           const tel = (c.telefone || c.phone || '').replace(/\D/g, '');
           return tel === '43988721013' || name.includes('david william');
@@ -194,7 +223,7 @@ export function Clientes() {
         }
       }
 
-      const sorted = docs.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      const sorted = activeDocs.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       setCustomers(sorted);
       setLoading(false);
     }, (error) => {

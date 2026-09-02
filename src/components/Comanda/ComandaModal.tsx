@@ -820,8 +820,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     if (!comanda || !user || loading) return;
 
     if (type === 'product' && (item as Product).currentStock <= 0) {
-      toast.error("Produto sem estoque disponível ou insuficiente.");
-      return;
+      toast.warning("Atenção: Produto com estoque zerado ou negativo adicionado à comanda.");
     }
 
     // Duplication protection: check if item is already being added
@@ -2290,7 +2289,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {comanda.payments.map((p, index) => (
-                        <div key={p.id || `pay-${index}`} className="bg-emerald-50 border border-emerald-100 p-5 rounded-2xl flex items-center justify-between shadow-sm group hover:bg-emerald-100/50 transition-all">
+                        <div key={`pay-registered-${p.id || index}-${index}`} className="bg-emerald-50 border border-emerald-100 p-5 rounded-2xl flex items-center justify-between shadow-sm group hover:bg-emerald-100/50 transition-all">
                           <div className="flex items-center gap-4">
                             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-emerald-600 shadow-sm border border-emerald-100">
                               <CreditCard size={18} />
@@ -2715,7 +2714,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       <div className="space-y-2">
                         <span className="text-[9px] font-black text-muted uppercase tracking-widest ml-1 block">Clique no método para registrar</span>
                         <div className="grid grid-cols-2 gap-2">
-                          {paymentMethods.map((method, index) => {
+                          {paymentMethods.filter(method => method.type !== 'fiado' && !method.goesToClientAccount).map((method, index) => {
                             const valToPay = Number(amountToPay) || comanda.pendingAmount;
                             const isFiado = method.type === 'fiado' || method.goesToClientAccount;
                             
@@ -2810,17 +2809,17 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? (
                   <>
                     <button 
-                      onClick={() => {
-                        const nextWeek = new Date();
-                        nextWeek.setDate(nextWeek.getDate() + 7);
-                        setFiadoDueDate(nextWeek.toISOString().split('T')[0]);
+                      onClick={async () => {
                         if (comanda.pendingAmount > 0) {
+                          const nextMonth = new Date();
+                          nextMonth.setDate(nextMonth.getDate() + 30);
+                          setFiadoDueDate(nextMonth.toISOString().split('T')[0]);
                           setClosureChoice('fiado');
+                          setClosureNote('');
+                          setShowFiadoConfirmationModal(true);
                         } else {
-                          setClosureChoice('total_pago');
+                          await handleCloseComandaWithChoice('total_pago');
                         }
-                        setClosureNote('');
-                        setShowFiadoConfirmationModal(true);
                       }}
                       disabled={loading}
                       className={`w-full py-4 text-white rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all cursor-pointer ${
@@ -3383,7 +3382,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       );
                     })()
                   )}
-                  {paymentMethods.map((method, index) => {
+                  {paymentMethods.filter(method => method.type !== 'fiado' && !method.goesToClientAccount).map((method, index) => {
                     const amount = partialAmount ? Number(partialAmount) : comanda.pendingAmount;
                     const isFiado = method.type === 'fiado' || method.goesToClientAccount;
                     
@@ -3613,18 +3612,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               exit={{ scale: 0.95, y: 15 }}
               className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden flex flex-col my-auto"
             >
-              <div className={`p-6 sm:p-8 border-b flex items-center justify-between ${
-                comanda.pendingAmount > 0 ? 'bg-amber-50/50 border-amber-100' : 'bg-emerald-50/50 border-emerald-100'
-              }`}>
+              <div className="p-6 sm:p-8 border-b border-amber-100 bg-amber-50/50 flex items-center justify-between">
                 <div className="flex items-center gap-3.5">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg shrink-0 ${
-                    comanda.pendingAmount > 0 ? 'bg-amber-600 shadow-amber-600/20' : 'bg-emerald-600 shadow-emerald-600/20'
-                  }`}>
-                    <CheckCircle2 size={24} />
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg bg-amber-600 shadow-amber-600/20 shrink-0">
+                    <AlertCircle size={24} />
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-slate-900">
-                      {comanda.pendingAmount > 0 ? 'Finalizar e Tratar Saldo' : 'Confirmar Fechamento'}
+                      Saldo Devedor Identificado
                     </h3>
                     <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider leading-none mt-1">
                       Comanda #{comanda.number} {comanda.cliente_name ? `• ${comanda.cliente_name}` : ''}
@@ -3641,272 +3636,90 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               </div>
 
               <div className="p-6 sm:p-8 space-y-6">
-                {/* Resumo dos Valores */}
-                <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-4 space-y-2.5">
-                  <div className="flex justify-between text-xs text-slate-600">
-                    <span>Total da Comanda:</span>
-                    <span className="font-bold text-slate-900">R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                  </div>
-                  <div className="flex justify-between text-xs text-emerald-700">
-                    <span>Valor Recebido:</span>
-                    <span className="font-bold">R$ {(comanda.paidAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                  </div>
-                  <div className={`border-t border-slate-200 pt-2.5 flex justify-between items-center text-sm font-black ${
-                    comanda.pendingAmount > 0 ? 'text-amber-700' : 'text-emerald-700'
-                  }`}>
-                    <span>Saldo Pendente:</span>
-                    <span className="text-base">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                  </div>
+                <div className="text-sm text-slate-600 leading-relaxed">
+                  Identificamos que ficou um débito pendente de <strong className="text-amber-700 text-base font-black">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> para o cliente <strong className="text-slate-900">{comanda.cliente_name || 'Não Identificado'}</strong>.
                 </div>
 
-                {comanda.pendingAmount > 0 ? (
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
-                      Como deseja tratar o saldo restante de R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?
-                    </label>
-
-                    {/* Seletor de Opções */}
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('fiado')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
-                          closureChoice === 'fiado' 
-                            ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 text-rose-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <AlertCircle size={18} className={closureChoice === 'fiado' ? 'text-rose-600' : 'text-slate-400'} />
-                          <span className="text-xs font-black">📌 FIADO</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 font-medium">Lançar débito para o cliente</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('permuta')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
-                          closureChoice === 'permuta' 
-                            ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/20 text-indigo-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Handshake size={18} className={closureChoice === 'permuta' ? 'text-indigo-600' : 'text-slate-400'} />
-                          <span className="text-xs font-black">🤝 PERMUTA</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 font-medium">Troca por serviço/produto</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('cortesia')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
-                          closureChoice === 'cortesia' 
-                            ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-500/20 text-amber-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Gift size={18} className={closureChoice === 'cortesia' ? 'text-amber-600' : 'text-slate-400'} />
-                          <span className="text-xs font-black">🎁 CORTESIA</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 font-medium">Gratuidade comercial VIP</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('desconto')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
-                          closureChoice === 'desconto' 
-                            ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20 text-emerald-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Tag size={18} className={closureChoice === 'desconto' ? 'text-emerald-600' : 'text-slate-400'} />
-                          <span className="text-xs font-black">🏷️ DESCONTO</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 font-medium">Abater saldo restante</span>
-                      </button>
+                {(!comanda.cliente_id || comanda.cliente_id === 'avulso') ? (
+                  <div className="p-4 bg-rose-50 border border-rose-200/80 rounded-2xl text-rose-900 text-xs flex items-start gap-2.5">
+                    <AlertCircle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Cliente Avulso Detectado</p>
+                      <p className="text-[11px] text-rose-700 leading-relaxed mt-0.5">
+                        Não é possível lançar débito na conta de um "Cliente Avulso". Você pode clicar em <strong>"Não Lançar"</strong> para finalizar sem salvar a diferença, ou fechar este aviso para vincular um cliente cadastrado à comanda.
+                      </p>
                     </div>
-
-                    {/* Condicional FIADO */}
-                    {closureChoice === 'fiado' && (
-                      <div className="space-y-4 pt-2 border-t border-slate-100">
-                        {(!comanda.cliente_id || comanda.cliente_id === 'avulso') && (
-                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
-                            <AlertCircle size={16} className="shrink-0 text-rose-600" />
-                            <span><strong>Atenção:</strong> Para lançar como Fiado, você precisa vincular um cliente cadastrado à comanda.</span>
-                          </div>
-                        )}
-
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Data Prometida para Pagamento</label>
-                          <input 
-                            id="fiado-due-date-input"
-                            type="date"
-                            value={fiadoDueDate}
-                            onChange={(e) => setFiadoDueDate(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/10 focus:border-rose-500 transition-all text-primary font-bold shadow-inner"
-                          />
-                        </div>
-
-                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100/80 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 shrink-0">
-                              <BellRing size={18} />
-                            </div>
-                            <div>
-                              <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Lembrete Automático</h4>
-                              <p className="text-[10px] text-slate-500 font-medium">Notificar no WhatsApp no dia do vencimento</p>
-                            </div>
-                          </div>
-                          <button
-                            id="toggle-fiado-reminder-btn"
-                            type="button"
-                            onClick={() => setScheduleFiadoReminder(!scheduleFiadoReminder)}
-                            className={`w-12 h-7 rounded-full transition-colors relative focus:outline-none cursor-pointer ${
-                              scheduleFiadoReminder ? 'bg-indigo-600' : 'bg-slate-200'
-                            }`}
-                          >
-                            <span 
-                              className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${
-                                scheduleFiadoReminder ? 'translate-x-5' : ''
-                              }`}
-                            />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Condicional PERMUTA / CORTESIA / DESCONTO */}
-                    {closureChoice !== 'fiado' && (
-                      <div className="space-y-2 pt-2 border-t border-slate-100">
-                        <label className="text-[10px] font-bold text-slate-600 uppercase tracking-widest ml-1">
-                          Detalhes / Justificativa do Abatimento ({closureChoice.toUpperCase()})
-                        </label>
-                        <input
-                          type="text"
-                          value={closureNote}
-                          onChange={(e) => setClosureNote(e.target.value)}
-                          placeholder="Ex: Troca por serviço de pintura da fachada, acordo VIP, etc."
-                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary shadow-inner"
-                        />
-                      </div>
-                    )}
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
-                      Classificação do Fechamento (Comanda Quitada)
-                    </label>
+                  <div className="space-y-4 pt-1">
+                    <p className="text-xs font-bold text-slate-700">Deseja lançar este débito para o cliente acertar depois (Fiado)?</p>
 
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('total_pago')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
-                          closureChoice === 'total_pago' 
-                            ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20 text-emerald-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <span className="text-xs font-black">💳 PAGAMENTO TOTAL</span>
-                        <span className="text-[10px] text-slate-500 font-medium">100% Pago em dinheiro/cartão/PIX</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('permuta')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
-                          closureChoice === 'permuta' 
-                            ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/20 text-indigo-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <span className="text-xs font-black">🤝 PERMUTA COMERCIAL</span>
-                        <span className="text-[10px] text-slate-500 font-medium">Parceria / Troca de serviços</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('cortesia')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
-                          closureChoice === 'cortesia' 
-                            ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-500/20 text-amber-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <span className="text-xs font-black">🎁 CORTESIA VIP</span>
-                        <span className="text-[10px] text-slate-500 font-medium">Atendimento gratuito / Cortesia</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setClosureChoice('clube')}
-                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
-                          closureChoice === 'clube' 
-                            ? 'bg-purple-50 border-purple-300 ring-2 ring-purple-500/20 text-purple-950 font-bold' 
-                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <span className="text-xs font-black">👑 CLUBE / PACOTE</span>
-                        <span className="text-[10px] text-slate-500 font-medium">Consumo coberto no plano</span>
-                      </button>
-                    </div>
-
-                    {(closureChoice === 'permuta' || closureChoice === 'cortesia') && (
-                      <div className="space-y-2 pt-2 border-t border-slate-100">
-                        <label className="text-[10px] font-bold text-slate-600 uppercase tracking-widest ml-1">
-                          Justificativa / Detalhes do Acordo
-                        </label>
-                        <input
-                          type="text"
-                          value={closureNote}
-                          onChange={(e) => setClosureNote(e.target.value)}
-                          placeholder="Ex: Parceria de permuta comercial, etc."
-                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary shadow-inner"
+                    <div className="space-y-2.5 bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Data Prometida para Pagamento</label>
+                        <input 
+                          id="fiado-due-date-input"
+                          type="date"
+                          value={fiadoDueDate}
+                          onChange={(e) => setFiadoDueDate(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500 transition-all text-slate-800 font-bold shadow-sm"
                         />
                       </div>
-                    )}
+
+                      <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/50">
+                        <div className="flex items-center gap-2">
+                          <BellRing size={16} className="text-slate-400 shrink-0" />
+                          <div>
+                            <h4 className="text-[11px] font-black text-slate-700 uppercase tracking-wider leading-none">Lembrete Automático</h4>
+                            <p className="text-[9px] text-slate-500 font-medium">Notificar no WhatsApp no vencimento</p>
+                          </div>
+                        </div>
+                        <button
+                          id="toggle-fiado-reminder-btn"
+                          type="button"
+                          onClick={() => setScheduleFiadoReminder(!scheduleFiadoReminder)}
+                          className={`w-10 h-6 rounded-full transition-colors relative focus:outline-none cursor-pointer shrink-0 ${
+                            scheduleFiadoReminder ? 'bg-amber-600' : 'bg-slate-200'
+                          }`}
+                        >
+                          <span 
+                            className={`absolute top-0.5 left-0.5 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${
+                              scheduleFiadoReminder ? 'translate-x-4' : ''
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                <div className="flex gap-3 pt-2">
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
                   <button 
-                    id="cancel-fiado-modal-btn"
-                    onClick={() => setShowFiadoConfirmationModal(false)}
-                    className="flex-1 py-3.5 bg-slate-100 text-primary rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all active:scale-95 cursor-pointer"
+                    id="confirm-cancel-fiado-btn"
+                    type="button"
+                    onClick={() => handleCloseComandaWithChoice('desconto', 'Diferença não cobrada')}
+                    disabled={loading}
+                    className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
                   >
-                    Voltar
+                    <span>Não Lançar Débito</span>
                   </button>
+
                   <button 
                     id="confirm-fiado-modal-btn"
-                    onClick={() => handleCloseComandaWithChoice()}
+                    type="button"
+                    onClick={() => handleCloseComandaWithChoice('fiado')}
                     disabled={
                       loading || 
-                      (comanda.pendingAmount > 0 && closureChoice === 'fiado' && (!fiadoDueDate || !comanda.cliente_id || comanda.cliente_id === 'avulso'))
+                      !comanda.cliente_id || 
+                      comanda.cliente_id === 'avulso' || 
+                      !fiadoDueDate
                     }
-                    className={`flex-[2] py-3.5 text-white rounded-2xl font-bold text-sm transition-all shadow-lg flex items-center justify-center gap-2.5 disabled:opacity-50 active:scale-95 cursor-pointer ${
-                      closureChoice === 'fiado' 
-                        ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/20' 
-                        : closureChoice === 'permuta' 
-                        ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20' 
-                        : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
-                    }`}
+                    className="flex-1 py-3.5 text-white bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-600/20 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
                   >
                     {loading ? <Loader2 className="animate-spin" size={18} /> : (
                       <>
                         <CheckCircle2 size={18} />
-                        <span>
-                          {comanda.pendingAmount > 0
-                            ? closureChoice === 'fiado'
-                              ? 'Confirmar e Deixar Fiado'
-                              : `Confirmar (${closureChoice.toUpperCase()})`
-                            : 'Finalizar Comanda'}
-                        </span>
+                        <span>Sim, Lançar Fiado</span>
                       </>
                     )}
                   </button>

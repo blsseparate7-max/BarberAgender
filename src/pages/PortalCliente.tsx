@@ -720,6 +720,87 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     return { isWalkInOnly: false, message: '' };
   };
 
+  // Helper to check if a specific service is covered by the user's active subscription
+  const getServiceSubscriptionStatus = (service: Service | null | undefined) => {
+    if (!service || !profile) {
+      return { isCovered: false, effectivePrice: service ? (service.preco || service.price || 0) : 0, planName: null };
+    }
+
+    const activeSub = subscriptions.find(s => s.status === 'active');
+    if (!activeSub) {
+      return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null };
+    }
+
+    const plan = availablePlans.find(p => p.id === activeSub.plano_id);
+    const serviceName = (service.nome || service.name || '').toLowerCase().trim();
+
+    // 1. Specific services declared in plan.services (e.g. Acabamento, Barboterapia, etc.)
+    if (plan?.services && plan.services.length > 0) {
+      const planService = plan.services.find((ps: any) => 
+        (ps.serviceId && ps.serviceId === service.id) ||
+        (ps.name && ps.name.toLowerCase().trim() === serviceName)
+      );
+
+      if (planService) {
+        const used = (activeSub.serviceUsages && (activeSub.serviceUsages[planService.serviceId] || activeSub.serviceUsages[service.id])) || 0;
+        const isUnlimited = planService.isUnlimited || planService.limit >= 99 || planService.limit === 0;
+        if (isUnlimited || used < planService.limit) {
+          return { 
+            isCovered: true, 
+            effectivePrice: 0, 
+            planName: activeSub.planName || plan.name, 
+            limit: planService.limit, 
+            used, 
+            isUnlimited 
+          };
+        }
+      }
+    } else if (plan) {
+      // 2. Legacy fallback for plans with haircutsPerMonth or beardsPerMonth
+      const isCorte = serviceName.includes('corte') || serviceName.includes('cabelo') || serviceName.includes('acabamento') || serviceName.includes('pezinho') || serviceName.includes('hair');
+      const isBarba = serviceName.includes('barba') || serviceName.includes('beard');
+
+      if (isCorte && (plan.haircutsPerMonth > 0 || plan.haircutsPerMonth >= 99)) {
+        const used = activeSub.haircutsUsed || 0;
+        const isUnlimited = plan.haircutsPerMonth >= 99 || plan.haircutsPerMonth === 0;
+        if (isUnlimited || used < plan.haircutsPerMonth) {
+          return { 
+            isCovered: true, 
+            effectivePrice: 0, 
+            planName: activeSub.planName || plan.name, 
+            limit: plan.haircutsPerMonth, 
+            used, 
+            isUnlimited 
+          };
+        }
+      }
+
+      if (isBarba && (plan.beardsPerMonth > 0 || plan.beardsPerMonth >= 99)) {
+        const used = activeSub.beardsUsed || 0;
+        const isUnlimited = plan.beardsPerMonth >= 99 || plan.beardsPerMonth === 0;
+        if (isUnlimited || used < plan.beardsPerMonth) {
+          return { 
+            isCovered: true, 
+            effectivePrice: 0, 
+            planName: activeSub.planName || plan.name, 
+            limit: plan.beardsPerMonth, 
+            used, 
+            isUnlimited 
+          };
+        }
+      }
+    }
+
+    return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null };
+  };
+
+  const calculateEffectivePrice = (serviceList: Service[]) => {
+    return serviceList.reduce((sum, s) => {
+      const status = getServiceSubscriptionStatus(s);
+      return sum + (status.isCovered ? 0 : (s.preco || s.price || 0));
+    }, 0);
+  };
+
   const handleToggleService = (s: Service) => {
     let updated: Service[] = [];
     if (selectedServices.some(item => item.id === s.id)) {
@@ -1317,6 +1398,10 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         }
       }
 
+      const effectivePrice = calculateEffectivePrice(selectedServices.length > 0 ? selectedServices : [selectedService]);
+      const hasCoveredService = selectedServices.some(s => getServiceSubscriptionStatus(s).isCovered) || getServiceSubscriptionStatus(selectedService).isCovered;
+      const activeSub = subscriptions.find(s => s.status === 'active');
+
       const newApp = {
         cliente_id: clientId!,
         cliente_name: clientName,
@@ -1329,17 +1414,26 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         startTime: selectedTime,
         endTime: endTimeStr,
         duration: duration,
-        price: selectedService.preco || selectedService.price || 0,
+        price: effectivePrice,
+        isSubscriptionCovered: hasCoveredService,
+        subscriptionPlanName: hasCoveredService ? (activeSub?.planName || 'Clube de Assinatura') : undefined,
         status: 'agendado' as const,
         origin: (profile ? 'cliente' : 'guest_first') as any,
         tenantId: activeTenantId,
-        notes: profile ? 'Agendado via Portal do Cliente' : 'Agendamento Online Rápido (Guest-First Booking)',
-        selectedServices: selectedServices.map(s => ({
-          id: s.id,
-          nome: s.nome || s.name || '',
-          preco: s.preco || s.price || 0,
-          duracao: s.duracao_minutos || s.duration || 30
-        }))
+        notes: hasCoveredService 
+          ? (profile ? `Agendado via Portal do Cliente (Benefício do Clube: ${activeSub?.planName || 'Assinatura Ativa'} - Comanda Zerada)` : 'Agendado via Portal do Cliente') 
+          : (profile ? 'Agendado via Portal do Cliente' : 'Agendamento Online Rápido (Guest-First Booking)'),
+        selectedServices: (selectedServices.length > 0 ? selectedServices : [selectedService]).map(s => {
+          const subStatus = getServiceSubscriptionStatus(s);
+          return {
+            id: s.id,
+            nome: s.nome || s.name || '',
+            preco: subStatus.isCovered ? 0 : (s.preco || s.price || 0),
+            originalPrice: s.preco || s.price || 0,
+            isSubscriptionCovered: subStatus.isCovered,
+            duracao: s.duracao_minutos || s.duration || 30
+          };
+        })
       };
 
       const createdApp = await appointmentService.createAppointment(newApp);
@@ -2656,6 +2750,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                       {sList.map((s, sIdx) => {
                                         const isSelected = selectedServices.some(item => item.id === s.id);
+                                        const subStatus = getServiceSubscriptionStatus(s);
+                                        const origPrice = s.preco || s.price || 0;
+
                                         return (
                                           <button
                                             key={`srv-item-${s.id || sIdx}-${sIdx}`}
@@ -2668,8 +2765,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                             }`}
                                           >
                                             {isSelected && (
-                                              <div className="absolute top-3 right-3 bg-indigo-600 text-white p-0.5 rounded-full shadow z-10 animate-scaleIn">
-                                                <Check size={10} />
+                                              <div className="absolute top-3 right-3 bg-indigo-600 text-white p-1 rounded-full shadow z-10 animate-scaleIn">
+                                                <Check size={12} className="stroke-[3]" />
                                               </div>
                                             )}
 
@@ -2690,17 +2787,37 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                             </div>
 
                                             <div className="min-w-0 flex-1">
-                                              <span className="px-2 py-0.5 bg-slate-150/50 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
-                                                {s.categoria || 'Serviço'}
-                                              </span>
+                                              <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="px-2 py-0.5 bg-slate-150/50 text-[8px] font-black uppercase text-slate-500 rounded-md tracking-wider">
+                                                  {s.categoria || 'Serviço'}
+                                                </span>
+                                                {subStatus.isCovered && (
+                                                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[8px] font-black uppercase rounded-md tracking-wider border border-emerald-200/80 flex items-center gap-1">
+                                                    ✨ No Plano ({subStatus.planName || 'Assinatura'})
+                                                  </span>
+                                                )}
+                                              </div>
                                               <h4 className="text-sm font-black text-slate-800 truncate mt-1">{s.nome || s.name}</h4>
                                               <p className="text-xs text-slate-500 font-semibold line-clamp-2 mt-1 leading-relaxed">
                                                 {s.descricao || 'Atendimento com acabamento premium e toalha quente.'}
                                               </p>
                                               <div className="flex items-center gap-3 mt-3 font-bold text-[10px]">
-                                                <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 font-extrabold text-xs">
-                                                  R$ {(s.preco || s.price || 0).toFixed(2)}
-                                                </span>
+                                                {subStatus.isCovered ? (
+                                                  <div className="flex items-center gap-1.5">
+                                                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 font-black text-xs">
+                                                      R$ 0,00
+                                                    </span>
+                                                    {origPrice > 0 && (
+                                                      <span className="text-slate-400 line-through text-[10px]">
+                                                        R$ {origPrice.toFixed(2)}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 font-extrabold text-xs">
+                                                    R$ {origPrice.toFixed(2)}
+                                                  </span>
+                                                )}
                                                 <span className="text-slate-500 flex items-center gap-1 bg-slate-150/40 px-2.5 py-1 rounded-md">
                                                   <Clock size={10} className="text-slate-400" /> {s.duracao_minutos || s.duration || 30} min
                                                 </span>
@@ -2718,61 +2835,140 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
                           {/* Resumo do Carrinho & Botão Avançar */}
                           {selectedServices.length > 0 && (
-                            <motion.div 
-                              initial={{ opacity: 0, y: 15 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className="bg-indigo-50/50 rounded-2xl border border-indigo-100 p-4 space-y-3 shadow-sm mt-4"
-                            >
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                <div className="space-y-0.5">
-                                  <h5 className="text-[10px] font-black uppercase text-indigo-700 tracking-wider">Serviços Selecionados ({selectedServices.length})</h5>
-                                  <div className="flex flex-wrap gap-1.5 pt-1">
-                                    {selectedServices.map(s => (
-                                      <span 
-                                        key={`cart-badge-${s.id}`} 
-                                        className="bg-white border border-indigo-100 text-slate-700 text-[10px] font-extrabold px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm"
-                                      >
-                                        {s.nome || s.name}
-                                        <button 
-                                          type="button" 
-                                          onClick={() => handleToggleService(s)}
-                                          className="text-red-500 hover:text-red-700 font-bold ml-0.5"
-                                        >
-                                          ✕
-                                        </button>
-                                      </span>
-                                    ))}
+                            <>
+                              {/* Static Summary Container in flow */}
+                              <motion.div 
+                                initial={{ opacity: 0, y: 15 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="bg-indigo-50/50 rounded-2xl border border-indigo-100 p-4 space-y-3 shadow-sm mt-4"
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                  <div className="space-y-0.5">
+                                    <h5 className="text-[10px] font-black uppercase text-indigo-700 tracking-wider">Serviços Selecionados ({selectedServices.length})</h5>
+                                    <div className="flex flex-wrap gap-1.5 pt-1">
+                                      {selectedServices.map(s => {
+                                        const subSt = getServiceSubscriptionStatus(s);
+                                        return (
+                                          <span 
+                                            key={`cart-badge-${s.id}`} 
+                                            className="bg-white border border-indigo-100 text-slate-700 text-[10px] font-extrabold px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm"
+                                          >
+                                            {s.nome || s.name}
+                                            {subSt.isCovered && <span className="text-[8px] bg-emerald-50 text-emerald-700 font-black px-1 rounded">R$ 0,00</span>}
+                                            <button 
+                                              type="button" 
+                                              onClick={() => handleToggleService(s)}
+                                              className="text-red-500 hover:text-red-700 font-bold ml-0.5 cursor-pointer"
+                                            >
+                                              ✕
+                                            </button>
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
                                   </div>
-                                </div>
-                                <div className="flex items-center justify-between sm:justify-end gap-6 border-t sm:border-t-0 pt-2 sm:pt-0 border-indigo-100/40">
-                                  <div className="text-right">
-                                    <span className="text-[9px] font-black text-slate-400 block uppercase tracking-wider">Preço Total</span>
-                                    <span className="text-sm font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg inline-block mt-0.5 shadow-sm">
-                                      R$ {selectedServices.reduce((sum, s) => sum + (s.preco || s.price || 0), 0).toFixed(2)}
-                                    </span>
-                                  </div>
-                                  <div className="text-right">
-                                    <span className="text-[9px] font-black text-slate-400 block uppercase tracking-wider">Tempo Total</span>
-                                    <span className="text-xs text-slate-700 font-extrabold flex items-center gap-1 bg-slate-100 px-2.5 py-1 rounded-lg inline-block mt-0.5 shadow-sm">
-                                      {selectedServices.reduce((sum, s) => sum + (s.duracao_minutos || s.duration || 30), 0)} min
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
+                                  <div className="flex items-center justify-between sm:justify-end gap-6 border-t sm:border-t-0 pt-2 sm:pt-0 border-indigo-100/40">
+                                    <div className="text-right">
+                                      <span className="text-[9px] font-black text-slate-400 block uppercase tracking-wider">Preço Total</span>
+                                      {(() => {
+                                        const effectiveTotal = calculateEffectivePrice(selectedServices);
+                                        const origTotal = selectedServices.reduce((sum, s) => sum + (s.preco || s.price || 0), 0);
+                                        const isDiscounted = origTotal > effectiveTotal;
 
-                              <div className="flex items-center justify-end pt-3 border-t border-indigo-100/40">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedTime(null);
-                                    setBookingStep(3);
-                                  }}
-                                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition active:scale-95"
-                                >
-                                  Avançar para Data e Horário <ChevronRight size={14} className="stroke-[3]" />
-                                </button>
-                              </div>
-                            </motion.div>
+                                        return (
+                                          <div className="flex items-baseline gap-1.5 justify-end">
+                                            <span className="text-sm font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg inline-block mt-0.5 shadow-sm">
+                                              R$ {effectiveTotal.toFixed(2)}
+                                            </span>
+                                            {isDiscounted && (
+                                              <span className="text-[10px] text-slate-400 line-through">
+                                                R$ {origTotal.toFixed(2)}
+                                              </span>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+                                    <div className="text-right">
+                                      <span className="text-[9px] font-black text-slate-400 block uppercase tracking-wider">Tempo Total</span>
+                                      <span className="text-xs text-slate-700 font-extrabold flex items-center gap-1 bg-slate-100 px-2.5 py-1 rounded-lg inline-block mt-0.5 shadow-sm">
+                                        {selectedServices.reduce((sum, s) => sum + (s.duracao_minutos || s.duration || 30), 0)} min
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center justify-end pt-3 border-t border-indigo-100/40">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedTime(null);
+                                      setBookingStep(3);
+                                    }}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                                  >
+                                    Avançar para Data e Horário <ChevronRight size={14} className="stroke-[3]" />
+                                  </button>
+                                </div>
+                              </motion.div>
+
+                              {/* Floating Sticky Action Dock at bottom of viewport */}
+                              <motion.div 
+                                initial={{ opacity: 0, y: 40 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 40 }}
+                                className="fixed bottom-4 left-4 right-4 max-w-xl mx-auto z-50 pointer-events-auto"
+                              >
+                                <div className="bg-slate-950/95 backdrop-blur-md text-white p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-800 flex items-center justify-between gap-3 ring-1 ring-white/10">
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 font-black text-sm shadow-inner">
+                                      {selectedServices.length}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-black text-white truncate block">
+                                          {selectedServices.length === 1 
+                                            ? (selectedServices[0].nome || selectedServices[0].name)
+                                            : `${selectedServices.length} serviços selecionados`}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 font-bold">
+                                        {(() => {
+                                          const effTotal = calculateEffectivePrice(selectedServices);
+                                          const origTotal = selectedServices.reduce((sum, s) => sum + (s.preco || s.price || 0), 0);
+                                          return (
+                                            <>
+                                              <span className="text-emerald-400 font-black text-xs">
+                                                R$ {effTotal.toFixed(2)}
+                                              </span>
+                                              {origTotal > effTotal && (
+                                                <span className="line-through text-slate-500 text-[10px]">
+                                                  R$ {origTotal.toFixed(2)}
+                                                </span>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
+                                        <span>•</span>
+                                        <span>{selectedServices.reduce((sum, s) => sum + (s.duracao_minutos || s.duration || 30), 0)} min</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedTime(null);
+                                      setBookingStep(3);
+                                    }}
+                                    className="bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-amber-500/25 flex items-center gap-1.5 transition shrink-0 cursor-pointer"
+                                  >
+                                    <span>Avançar</span>
+                                    <ChevronRight size={14} className="stroke-[3]" />
+                                  </button>
+                                </div>
+                              </motion.div>
+                            </>
                           )}
                         </div>
                       )}
@@ -3002,10 +3198,41 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                         </div>
                         <div className="col-span-2 border-t border-slate-850 pt-4 flex items-center justify-between">
                           <div>
-                            <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Valor do Serviço</p>
-                            <p className="text-2xl font-black text-amber-400 mt-1">
-                              R$ {(selectedService.preco || selectedService.price || 0).toFixed(2)}
-                            </p>
+                            <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Valor do Atendimento</p>
+                            {(() => {
+                              const effPrice = calculateEffectivePrice(selectedServices.length > 0 ? selectedServices : [selectedService]);
+                              const origPrice = selectedServices.length > 0 
+                                ? selectedServices.reduce((sum, s) => sum + (s.preco || s.price || 0), 0)
+                                : (selectedService.preco || selectedService.price || 0);
+                              const activeSub = subscriptions.find(s => s.status === 'active');
+                              const isCovered = (selectedServices.length > 0 ? selectedServices : [selectedService]).some(s => getServiceSubscriptionStatus(s).isCovered);
+
+                              if (isCovered) {
+                                return (
+                                  <div className="mt-1 space-y-1">
+                                    <div className="flex items-baseline gap-2">
+                                      <span className="text-2xl font-black text-emerald-400">
+                                        R$ {effPrice.toFixed(2)}
+                                      </span>
+                                      {origPrice > effPrice && (
+                                        <span className="text-xs text-slate-500 line-through">
+                                          R$ {origPrice.toFixed(2)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                                      ✨ Assinante ({activeSub?.planName || 'Comanda Zerada'})
+                                    </span>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <p className="text-2xl font-black text-amber-400 mt-1">
+                                  R$ {effPrice.toFixed(2)}
+                                </p>
+                              );
+                            })()}
                           </div>
                           <div className="text-right">
                             <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Duração Estimada</p>
@@ -3624,37 +3851,111 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                 <span className={`${statusColor} font-black text-xs px-3 py-1.5 rounded-xl shadow-sm self-start sm:self-center`}>{statusLabel}</span>
                               </div>
 
-                              {/* Consumption progress meters */}
+                              {/* Dynamic consumption progress meters */}
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
-                                  <div className="flex justify-between items-center text-xs font-bold">
-                                    <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Cortes de Cabelo</span>
-                                    <span className="text-indigo-600 font-black">
-                                      {sub.haircutsUsed} / {cutsUnlimited ? 'Ilimitados' : maxCuts}
-                                    </span>
-                                  </div>
-                                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                    <div className="bg-indigo-600 h-full transition-all duration-500" style={{ width: `${cutsPercent}%` }} />
-                                  </div>
-                                  <p className="text-[9px] text-slate-400 font-semibold">
-                                    {cutsUnlimited ? 'Aproveite seus cortes ilimitados no ciclo.' : `${Math.max(0, maxCuts - sub.haircutsUsed)} cortes restantes até a renovação.`}
-                                  </p>
-                                </div>
+                                {(() => {
+                                  // 1. If the plan has specific services listed in planObj.services (e.g. Acabamento, Barba, etc.)
+                                  if (planObj?.services && planObj.services.length > 0) {
+                                    return planObj.services.map((srv: any, srvIdx: number) => {
+                                      const isUnlimited = srv.isUnlimited || srv.limit >= 99 || srv.limit === 0;
+                                      const used = (sub.serviceUsages && (sub.serviceUsages[srv.serviceId] || sub.serviceUsages[srv.name])) || 0;
+                                      const total = isUnlimited ? 'Ilimitados' : srv.limit;
+                                      const percent = isUnlimited ? 100 : Math.min(100, (used / (srv.limit || 1)) * 100);
+                                      const remaining = isUnlimited ? null : Math.max(0, srv.limit - used);
 
-                                <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
-                                  <div className="flex justify-between items-center text-xs font-bold">
-                                    <span className="text-slate-500 text-[10px] font-black uppercase tracking-wider">Serviços de Barba</span>
-                                    <span className="text-amber-600 font-black">
-                                      {sub.beardsUsed} / {beardsUnlimited ? 'Ilimitadas' : maxBeards}
-                                    </span>
-                                  </div>
-                                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                    <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${beardsPercent}%` }} />
-                                  </div>
-                                  <p className="text-[9px] text-slate-400 font-semibold">
-                                    {beardsUnlimited ? 'Aproveite suas barbas ilimitadas no ciclo.' : `${Math.max(0, maxBeards - sub.beardsUsed)} barbas restantes até a renovação.`}
-                                  </p>
-                                </div>
+                                      return (
+                                        <div key={`sub-srv-${srv.serviceId || srvIdx}-${srvIdx}`} className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
+                                          <div className="flex justify-between items-center text-xs font-bold">
+                                            <span className="text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                                              <Scissors size={13} className="text-indigo-600" />
+                                              {srv.name}
+                                            </span>
+                                            <span className="text-indigo-600 font-black">
+                                              {used} / {total}
+                                            </span>
+                                          </div>
+                                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                            <div className="bg-indigo-600 h-full transition-all duration-500" style={{ width: `${percent}%` }} />
+                                          </div>
+                                          <p className="text-[9px] text-slate-400 font-semibold">
+                                            {isUnlimited 
+                                              ? `Aproveite seu ${srv.name.toLowerCase()} ilimitado no ciclo.` 
+                                              : `${remaining} ${srv.name.toLowerCase()} restantes até a renovação.`}
+                                          </p>
+                                        </div>
+                                      );
+                                    });
+                                  }
+
+                                  // 2. Legacy fallback: check if haircutsPerMonth or beardsPerMonth exist
+                                  const items = [];
+                                  const maxCuts = planObj?.haircutsPerMonth ?? 0;
+                                  const maxBeards = planObj?.beardsPerMonth ?? 0;
+
+                                  if (maxCuts > 0) {
+                                    const cutsUnlimited = maxCuts >= 99;
+                                    const cutsPercent = cutsUnlimited ? 100 : Math.min(100, (sub.haircutsUsed / (maxCuts || 1)) * 100);
+                                    items.push(
+                                      <div key="legacy-haircuts" className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
+                                        <div className="flex justify-between items-center text-xs font-bold">
+                                          <span className="text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                                            <Scissors size={13} className="text-indigo-600" />
+                                            Cortes de Cabelo
+                                          </span>
+                                          <span className="text-indigo-600 font-black">
+                                            {sub.haircutsUsed} / {cutsUnlimited ? 'Ilimitados' : maxCuts}
+                                          </span>
+                                        </div>
+                                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                          <div className="bg-indigo-600 h-full transition-all duration-500" style={{ width: `${cutsPercent}%` }} />
+                                        </div>
+                                        <p className="text-[9px] text-slate-400 font-semibold">
+                                          {cutsUnlimited ? 'Aproveite seus cortes ilimitados no ciclo.' : `${Math.max(0, maxCuts - sub.haircutsUsed)} cortes restantes até a renovação.`}
+                                        </p>
+                                      </div>
+                                    );
+                                  }
+
+                                  if (maxBeards > 0) {
+                                    const beardsUnlimited = maxBeards >= 99;
+                                    const beardsPercent = beardsUnlimited ? 100 : Math.min(100, (sub.beardsUsed / (maxBeards || 1)) * 100);
+                                    items.push(
+                                      <div key="legacy-beards" className="p-4 bg-white border border-slate-100 rounded-xl space-y-2 shadow-2xs">
+                                        <div className="flex justify-between items-center text-xs font-bold">
+                                          <span className="text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                                            <Zap size={13} className="text-amber-600" />
+                                            Serviços de Barba
+                                          </span>
+                                          <span className="text-amber-600 font-black">
+                                            {sub.beardsUsed} / {beardsUnlimited ? 'Ilimitadas' : maxBeards}
+                                          </span>
+                                        </div>
+                                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                          <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${beardsPercent}%` }} />
+                                        </div>
+                                        <p className="text-[9px] text-slate-400 font-semibold">
+                                          {beardsUnlimited ? 'Aproveite suas barbas ilimitadas no ciclo.' : `${Math.max(0, maxBeards - sub.beardsUsed)} barbas restantes até a renovação.`}
+                                        </p>
+                                      </div>
+                                    );
+                                  }
+
+                                  if (items.length === 0) {
+                                    return (
+                                      <div className="p-4 bg-white border border-slate-100 rounded-xl space-y-1 shadow-2xs col-span-full">
+                                        <span className="text-slate-700 text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                                          <ShieldCheck size={14} className="text-emerald-600" />
+                                          Benefícios Ativos do Plano
+                                        </span>
+                                        <p className="text-xs text-slate-500 font-semibold">
+                                          {planObj?.description || 'Plano de assinatura ativo com benefícios exclusivos liberados para agendamento.'}
+                                        </p>
+                                      </div>
+                                    );
+                                  }
+
+                                  return items;
+                                })()}
                               </div>
 
                               {/* Action Buttons */}

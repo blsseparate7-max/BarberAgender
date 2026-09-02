@@ -105,12 +105,12 @@ export function Insights({ setActiveTab }: InsightsProps) {
       targetTab: 'cadastros-clientes',
       urgent: false
     },
-    // 3. Clientes com Débitos (Fiados)
+    // 3. Fiados Pendentes
     {
       id: 'clientes_debitos',
       category: 'urgentes',
-      title: 'Clientes com Débitos (Fiados)',
-      description: 'Saldos em aberto lançados na conta do cliente.',
+      title: 'Fiados Pendentes',
+      description: 'Valores em aberto na conta dos clientes (débitos pendentes).',
       count: metrics.clientesDebitosCount,
       countLabel: `${metrics.clientesDebitosCount} fiados pendentes`,
       valueFormatted: `R$ ${metrics.clientesDebitosTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,

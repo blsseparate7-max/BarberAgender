@@ -32,7 +32,12 @@ import {
   CreditCard,
   DollarSign,
   CalendarCheck,
-  Smartphone
+  Smartphone,
+  Eye,
+  Award,
+  Trophy,
+  Sparkles,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Appointment, AppointmentStatus, UserProfile, TabId, AgendaBlock } from '../types';
@@ -148,6 +153,53 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
       occupancyPercent: isNaN(occupancyPercent) ? 0 : occupancyPercent
     };
   }, [appointments, selectedBarberIds]);
+
+  // Ranking do dia por barbeiro
+  const [isDailyRankingModalOpen, setIsDailyRankingModalOpen] = useState(false);
+
+  const dailyBarberRanking = React.useMemo(() => {
+    return barbers.map(barber => {
+      const bId = barber.uid || barber.id;
+      const bApps = appointments.filter(app => app.profissional_id === bId);
+      const total = bApps.length;
+      const completed = bApps.filter(a => a.status === 'concluído').length;
+      const pending = bApps.filter(a => a.status === 'agendado' || a.status === 'confirmado').length;
+      const inProgress = bApps.filter(a => a.status === 'em_atendimento').length;
+      const canceled = bApps.filter(a => a.status === 'cancelado').length;
+      const activeTotal = total - canceled;
+
+      // Agrupamento de serviços do dia
+      const serviceCounts: Record<string, number> = {};
+      bApps.filter(a => a.status !== 'cancelado').forEach(a => {
+        const sName = a.servico_name || 'Serviço';
+        serviceCounts[sName] = (serviceCounts[sName] || 0) + 1;
+      });
+
+      const topServices = Object.entries(serviceCounts).map(([name, count]) => ({
+        name,
+        count
+      })).sort((a, b) => b.count - a.count);
+
+      return {
+        barber,
+        id: bId,
+        nome: barber.nome || barber.displayName || 'Barbeiro',
+        foto: barber.foto || barber.photoURL || '',
+        total,
+        completed,
+        pending,
+        inProgress,
+        canceled,
+        activeTotal,
+        topServices
+      };
+    }).sort((a, b) => {
+      if (b.completed !== a.completed) {
+        return b.completed - a.completed;
+      }
+      return b.activeTotal - a.activeTotal;
+    });
+  }, [barbers, appointments]);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -550,12 +602,12 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
               </div>
 
               <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar scroll-smooth">
-                {barbers.map((barber) => {
+                {barbers.map((barber, bIdx) => {
                   const bId = barber.uid || barber.id;
                   const isSelected = selectedBarberIds.includes(bId);
                   return (
                     <button
-                      key={`desktop-barber-square-${bId}`}
+                      key={`desktop-barber-square-${bId || bIdx}-${bIdx}`}
                       onClick={() => {
                         if (isSelected) {
                           setSelectedBarberIds(selectedBarberIds.filter(id => id !== bId));
@@ -595,9 +647,20 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
           {/* 📊 RESUMO DO DIA RESPONSIVO (Topo no Mobile) */}
           {activeTab === 'main' && (
             <div className="lg:hidden bg-slate-900 text-white p-6 rounded-[2rem] shadow-lg flex flex-col gap-4">
-              <div className="flex items-center gap-2">
-                <CalendarCheck size={16} className="text-accent" />
-                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Resumo Rápido do Dia</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CalendarCheck size={16} className="text-accent" />
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-300">Resumo Rápido do Dia</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsDailyRankingModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-accent/20 hover:bg-accent/30 text-accent px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition border border-accent/30 active:scale-95"
+                  title="Ver Ranking dos Barbeiros do Dia"
+                >
+                  <Eye size={14} />
+                  <span>Ranking</span>
+                </button>
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center">
@@ -687,10 +750,21 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
           <aside className="w-full lg:w-80 flex flex-col gap-8">
             {/* Mini Summary (Exibido apenas no Desktop, pois no Mobile já aparece no topo) */}
             <div className="hidden lg:block bg-white border border-slate-200 p-8 rounded-[2rem] shadow-sm space-y-6">
-              <h3 className="font-black text-primary flex items-center gap-2">
-                <CalendarCheck size={18} className="text-accent" />
-                Resumo do Dia
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-primary flex items-center gap-2">
+                  <CalendarCheck size={18} className="text-accent" />
+                  Resumo do Dia
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsDailyRankingModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100 text-primary border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition active:scale-95 cursor-pointer"
+                  title="Ver ranking de atendimentos por profissional no dia"
+                >
+                  <Eye size={14} className="text-accent" />
+                  <span>Ranking</span>
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 shadow-inner">
                   <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1.5">Total</p>
@@ -767,6 +841,155 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
           currentUser={currentUser}
         />
       )}
+
+      {/* Modal Ranking do Dia */}
+      <AnimatePresence>
+        {isDailyRankingModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-xs">
+                    <Trophy size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800">Ranking do Dia</h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Desempenho da equipe em {format(selectedDate, "dd 'de' MMMM", { locale: ptBR })}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsDailyRankingModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto space-y-4 custom-scrollbar">
+                {/* Cards Top Métricas do Dia */}
+                <div className="grid grid-cols-3 gap-3 bg-slate-50 border border-slate-150 rounded-2xl p-4 text-center">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">Total Geral</span>
+                    <span className="text-xl font-black text-slate-800">{dailySummary.total} agend.</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-emerald-600 tracking-wider block">Concluídos</span>
+                    <span className="text-xl font-black text-emerald-700">{dailySummary.completed} cortes/serv.</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-accent tracking-wider block">Taxa Ocupação</span>
+                    <span className="text-xl font-black text-accent">{dailySummary.occupancyPercent}%</span>
+                  </div>
+                </div>
+
+                {/* Lista de Barbeiros Ordenada por Atendimentos */}
+                <div className="space-y-3 pt-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 block px-1">
+                    Atendimentos por Profissional ({dailyBarberRanking.length})
+                  </span>
+
+                  {dailyBarberRanking.map((item, rIdx) => {
+                    const isTop1 = rIdx === 0 && item.completed > 0;
+                    const isTop2 = rIdx === 1 && item.completed > 0;
+                    const isTop3 = rIdx === 2 && item.completed > 0;
+
+                    return (
+                      <div
+                        key={`daily-rank-${item.id || item.uid || item.nome || rIdx}-${rIdx}`}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                          isTop1 
+                            ? 'bg-amber-50/40 border-amber-200/80 shadow-xs'
+                            : 'bg-white border-slate-200/80 hover:border-slate-300'
+                        }`}
+                      >
+                        {/* Esquerda: Posição, Foto, Nome */}
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center font-black text-xs shrink-0 ${
+                            isTop1 ? 'bg-amber-500 text-white shadow-xs' :
+                            isTop2 ? 'bg-slate-300 text-slate-700' :
+                            isTop3 ? 'bg-amber-700/60 text-white' :
+                            'bg-slate-100 text-slate-500'
+                          }`}>
+                            {rIdx + 1}º
+                          </div>
+
+                          <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center shrink-0">
+                            {item.foto ? (
+                              <img src={item.foto} alt={item.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            ) : (
+                              <span className="text-xs font-black text-slate-600">{item.nome.charAt(0)}</span>
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="text-sm font-black text-slate-800 truncate">{item.nome}</h4>
+                              {isTop1 && (
+                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[9px] font-black uppercase tracking-wider">
+                                  <Sparkles size={10} /> Líder do Dia
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Tags de Serviços Realizados por este barbeiro */}
+                            {item.topServices.length > 0 ? (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {item.topServices.map((srv, sIdx) => (
+                                  <span 
+                                    key={`rank-srv-${item.id || item.uid || rIdx}-${srv.name || sIdx}-${sIdx}`}
+                                    className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md"
+                                  >
+                                    {srv.count} {srv.name}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">Sem atendimentos hoje</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Direita: Status dos Agendamentos */}
+                        <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                          <div className="text-right">
+                            <span className="text-base font-black text-slate-900 block leading-tight">
+                              {item.completed} <span className="text-xs font-bold text-slate-500">concluído(s)</span>
+                            </span>
+                            <div className="text-[10px] font-bold text-slate-400 flex items-center gap-2 justify-end">
+                              {item.inProgress > 0 && <span className="text-blue-600">{item.inProgress} atendendo</span>}
+                              {item.pending > 0 && <span>{item.pending} pendentes</span>}
+                              {item.canceled > 0 && <span className="text-rose-400">{item.canceled} cancelados</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+                <button
+                  onClick={() => setIsDailyRankingModalOpen(false)}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition active:scale-95 cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       
     </div>
   );

@@ -269,25 +269,38 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
     try {
       const headers = await getAuthHeaders();
 
-      // 1. Fetch Summary
-      const summaryRes = await fetch(`/api/saas/gateway/digital-account/summary?tenantId=${encodeURIComponent(tenantId || '')}`, { headers });
-      if (summaryRes.ok) {
-        const summaryData = await summaryRes.json();
-        setSummary(summaryData);
+      // Parallelize fetches with Promise.allSettled so a failure in one doesn't block or crash the others
+      const [summarySettled, statementSettled, transfersSettled] = await Promise.allSettled([
+        fetch(`/api/saas/gateway/digital-account/summary?tenantId=${encodeURIComponent(tenantId || '')}`, { headers }),
+        fetch(`/api/saas/gateway/digital-account/statement?tenantId=${encodeURIComponent(tenantId || '')}&limit=50`, { headers }),
+        fetch(`/api/saas/gateway/digital-account/transfers?tenantId=${encodeURIComponent(tenantId || '')}&limit=30`, { headers })
+      ]);
+
+      if (summarySettled.status === 'fulfilled' && summarySettled.value.ok) {
+        try {
+          const summaryData = await summarySettled.value.json();
+          setSummary(summaryData);
+        } catch (e) {
+          console.warn("Aviso ao parsear resumo:", e);
+        }
       }
 
-      // 2. Fetch Statement
-      const statementRes = await fetch(`/api/saas/gateway/digital-account/statement?tenantId=${encodeURIComponent(tenantId || '')}&limit=50`, { headers });
-      if (statementRes.ok) {
-        const statementData = await statementRes.json();
-        setTransactions(statementData.transactions || []);
+      if (statementSettled.status === 'fulfilled' && statementSettled.value.ok) {
+        try {
+          const statementData = await statementSettled.value.json();
+          setTransactions(statementData.transactions || []);
+        } catch (e) {
+          console.warn("Aviso ao parsear extrato:", e);
+        }
       }
 
-      // 3. Fetch Transfers (Fase 3)
-      const transfersRes = await fetch(`/api/saas/gateway/digital-account/transfers?tenantId=${encodeURIComponent(tenantId || '')}&limit=30`, { headers });
-      if (transfersRes.ok) {
-        const transfersData = await transfersRes.json();
-        setTransfers(transfersData.transfers || []);
+      if (transfersSettled.status === 'fulfilled' && transfersSettled.value.ok) {
+        try {
+          const transfersData = await transfersSettled.value.json();
+          setTransfers(transfersData.transfers || []);
+        } catch (e) {
+          console.warn("Aviso ao parsear transferências:", e);
+        }
       }
 
       // 4. Fetch Payout Account
@@ -298,7 +311,9 @@ export function ContaDigitalAsaas({ tenantId }: { tenantId?: string }) {
       }
     } catch (err) {
       console.error("Erro ao carregar dados da conta digital:", err);
-      toast.error("Não foi possível sincronizar com o Asaas.");
+      if (isManualRefresh) {
+        toast.error("Não foi possível sincronizar com o Asaas no momento.");
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);

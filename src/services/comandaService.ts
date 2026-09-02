@@ -173,6 +173,49 @@ export const comandaService = {
       } catch (subErr) {
         console.warn("Could not check active subscription for new comanda items:", subErr);
       }
+
+      // Auto-apply active package if client has remaining sessions
+      try {
+        const pkgQuery = query(
+          collection(db, 'pacotes_vendas'),
+          where('clientId', '==', clienteId),
+          where('remainingCuts', '>', 0)
+        );
+        const pkgSnap = await getDocs(pkgQuery);
+        if (!pkgSnap.empty) {
+          const availablePkgs = pkgSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+          items.forEach(item => {
+            if (item.type === 'servico' && !item.deductType) {
+              const itemLower = item.name.toLowerCase().trim();
+              const matchingPkg = availablePkgs.find(
+                p => p.remainingCuts > 0 && (
+                  p.serviceId === item.referencia_id || 
+                  (p.serviceName && p.serviceName.toLowerCase().trim() === itemLower) ||
+                  p.packageName.toLowerCase().includes(itemLower) ||
+                  (p.packageName.toLowerCase().includes('corte') && (itemLower.includes('corte') || itemLower.includes('cabelo'))) ||
+                  (p.packageName.toLowerCase().includes('barba') && itemLower.includes('barba')) ||
+                  (p.packageName.toLowerCase().includes('navalhado') && itemLower.includes('navalhado'))
+                )
+              );
+
+              if (matchingPkg) {
+                const pPrice = matchingPkg.pricePerService !== undefined && matchingPkg.pricePerService !== null 
+                  ? matchingPkg.pricePerService 
+                  : (matchingPkg.totalCuts > 0 ? matchingPkg.pricePaid / matchingPkg.totalCuts : item.unitPrice);
+
+                item.deductType = 'pacote';
+                item.packageSaleId = matchingPkg.id;
+                item.packageUnitPrice = pPrice;
+                item.isCortesia = true;
+                item.totalPrice = 0;
+                item.generateCommission = true;
+              }
+            }
+          });
+        }
+      } catch (pkgErr) {
+        console.warn("Could not check active packages for new comanda items:", pkgErr);
+      }
     }
 
     const subtotalServices = items

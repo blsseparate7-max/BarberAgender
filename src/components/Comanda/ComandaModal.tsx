@@ -535,8 +535,16 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         // If it's a service and hasn't been associated or paid yet
         if (item.type === 'servico' && !item.deductType && !autoAssociatedItemIdsRef.current.has(item.id)) {
           // Find if there is an active package for this service
+          const itemLower = item.name.toLowerCase().trim();
           const hasPkg = allAvailablePackages.find(
-            p => p.remainingCuts > 0 && (p.serviceId === item.referencia_id || p.packageName.toLowerCase().includes(item.name.toLowerCase()))
+            p => p.remainingCuts > 0 && (
+              p.serviceId === item.referencia_id || 
+              (p.serviceName && p.serviceName.toLowerCase().trim() === itemLower) ||
+              p.packageName.toLowerCase().includes(itemLower) ||
+              (p.packageName.toLowerCase().includes('corte') && (itemLower.includes('corte') || itemLower.includes('cabelo'))) ||
+              (p.packageName.toLowerCase().includes('barba') && itemLower.includes('barba')) ||
+              (p.packageName.toLowerCase().includes('navalhado') && itemLower.includes('navalhado'))
+            )
           );
           if (hasPkg) {
             const pPrice = hasPkg.pricePerService !== undefined && hasPkg.pricePerService !== null 
@@ -830,8 +838,10 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       const subDiscount = getSubscriptionDiscount(item, type);
       const unitPrice = subDiscount > 0 ? originalPrice * (1 - subDiscount / 100) : originalPrice;
 
-      let deductTypeVal: 'assinatura' | undefined = undefined;
+      let deductTypeVal: 'assinatura' | 'pacote' | undefined = undefined;
       let subscriptionIdVal: string | undefined = undefined;
+      let packageSaleIdVal: string | undefined = undefined;
+      let packageUnitPriceVal: number | undefined = undefined;
       let isCortesiaVal = isCortesia;
       let totalPriceVal = isCortesia ? 0 : unitPrice;
       let generateCommVal = (type === 'servico' || type === 'product') && !isCortesia;
@@ -867,6 +877,35 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         }
       }
 
+      // Check for active package if not covered by subscription
+      if (type === 'servico' && !deductTypeVal && !isCortesia && allAvailablePackages && allAvailablePackages.length > 0) {
+        const itemDisplayName = (item as Service).nome || item.name || '';
+        const matchingPackage = allAvailablePackages.find(
+          p => p.remainingCuts > 0 && (
+            p.serviceId === item.id || 
+            (p.serviceName && p.serviceName.toLowerCase().trim() === itemDisplayName.toLowerCase().trim()) ||
+            p.packageName.toLowerCase().includes(itemDisplayName.toLowerCase()) ||
+            (p.packageName.toLowerCase().includes('corte') && (itemDisplayName.toLowerCase().includes('corte') || itemDisplayName.toLowerCase().includes('cabelo'))) ||
+            (p.packageName.toLowerCase().includes('barba') && itemDisplayName.toLowerCase().includes('barba')) ||
+            (p.packageName.toLowerCase().includes('navalhado') && itemDisplayName.toLowerCase().includes('navalhado'))
+          )
+        );
+
+        if (matchingPackage) {
+          const pPrice = matchingPackage.pricePerService !== undefined && matchingPackage.pricePerService !== null 
+            ? matchingPackage.pricePerService 
+            : (matchingPackage.totalCuts > 0 ? matchingPackage.pricePaid / matchingPackage.totalCuts : unitPrice);
+
+          deductTypeVal = 'pacote';
+          packageSaleIdVal = matchingPackage.id;
+          packageUnitPriceVal = pPrice;
+          isCortesiaVal = true;
+          totalPriceVal = 0;
+          generateCommVal = true;
+          toast.success(`Serviço coberto pelo pacote "${matchingPackage.packageName}" (R$ ${pPrice.toFixed(2)} por sessão para comissão)!`);
+        }
+      }
+
       if (subDiscount > 0 && !isCortesiaVal && !deductTypeVal) {
         const itemDisplayName = (item as Service).nome || item.name || '';
         toast.info(`Desconto de ${subDiscount}% de assinante aplicado ao item: ${itemDisplayName}!`);
@@ -885,6 +924,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         isCortesia: isCortesiaVal,
         deductType: deductTypeVal,
         subscriptionId: subscriptionIdVal,
+        packageSaleId: packageSaleIdVal,
+        packageUnitPrice: packageUnitPriceVal,
         generateCommission: generateCommVal
       };
 

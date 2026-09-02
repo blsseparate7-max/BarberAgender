@@ -237,6 +237,97 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
   const [goalProfissionalId, setGoalProfissionalId] = useState('');
   const [barbersList, setBarbersList] = useState<UserProfile[]>([]);
 
+  // Filtro de Mês e Ano para Metas da Equipe & Ranking de Performance
+  const now = new Date();
+  const [filterMonth, setFilterMonth] = useState<number>(now.getMonth() + 1); // 1-12 ou 0 para Ano Inteiro
+  const [filterYear, setFilterYear] = useState<number>(now.getFullYear());
+
+  // Apenas profissionais ATIVOS para o dropdown de cadastrar nova meta
+  const activeBarbersOnly = React.useMemo(() => {
+    return barbersList.filter(b => b.status !== 'inativo' && b.ativo !== false);
+  }, [barbersList]);
+
+  // Recalcula o ranking e a performance dos barbeiros com base no mês e ano selecionados
+  const filteredBarbersPerformance = React.useMemo(() => {
+    const allAppointments: Appointment[] = data?.allAppointments || [];
+    
+    // Sufixo de busca por data:
+    // Se filterMonth === 0 => "2026-" (Ano todo)
+    // Se filterMonth > 0 => "2026-09-" (Mês específico)
+    const monthStr = filterMonth > 0 ? String(filterMonth).padStart(2, '0') : '';
+    const datePrefix = filterMonth > 0 ? `${filterYear}-${monthStr}` : `${filterYear}`;
+
+    const periodAppointments = allAppointments.filter(app => {
+      if (app.status !== 'concluído') return false;
+      if (!app.date) return false;
+      return app.date.startsWith(datePrefix);
+    });
+
+    const performanceMap: Record<string, {
+      uid: string;
+      name: string;
+      revenue: number;
+      count: number;
+      isInactive: boolean;
+    }> = {};
+
+    // Mapeia todos os barbeiros cadastrados no tenant
+    barbersList.forEach(b => {
+      const bUid = b.uid || b.id;
+      const bName = b.nome || b.name || b.displayName || 'Profissional';
+      const isInactive = b.status === 'inativo' || b.ativo === false;
+      if (bUid) {
+        performanceMap[bUid] = {
+          uid: bUid,
+          name: bName,
+          revenue: 0,
+          count: 0,
+          isInactive
+        };
+      }
+    });
+
+    // Acumula atendimentos concluídos no período selecionado
+    periodAppointments.forEach(app => {
+      const bUid = app.profissional_id;
+      const bName = app.profissional_name || 'Profissional';
+      if (bUid) {
+        if (!performanceMap[bUid]) {
+          performanceMap[bUid] = {
+            uid: bUid,
+            name: bName,
+            revenue: 0,
+            count: 0,
+            isInactive: true
+          };
+        }
+        performanceMap[bUid].revenue += app.price || 0;
+        performanceMap[bUid].count += 1;
+      } else if (bName) {
+        const existing = Object.values(performanceMap).find(p => p.name.toLowerCase() === bName.toLowerCase());
+        if (existing) {
+          existing.revenue += app.price || 0;
+          existing.count += 1;
+        } else {
+          performanceMap[bName] = {
+            uid: bName,
+            name: bName,
+            revenue: app.price || 0,
+            count: 1,
+            isInactive: true
+          };
+        }
+      }
+    });
+
+    const list = Object.values(performanceMap);
+
+    // Mantém barbeiros ativos OU barbeiros inativos que tiveram faturamento/atendimentos no mês consultado
+    return list
+      .filter(item => !item.isInactive || item.count > 0 || item.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [data?.allAppointments, filterMonth, filterYear, barbersList]);
+
   useEffect(() => {
     if (tenantId) {
       teamGoalService.getGoals(tenantId).then(setTeamGoals).catch(console.error);
@@ -529,6 +620,63 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
           {/* INDICATORS TAB - RANKING DOS BARBEIROS */}
           {activeTab === 'indicators' && (
             <div className="space-y-8">
+              {/* FILTRO DE MÊS E ANO */}
+              <div className="bg-slate-900 text-white p-6 rounded-[2.5rem] shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                    <Calendar size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-white">Filtrar Período de Metas & Ranking</h3>
+                    <p className="text-[11px] text-slate-400 font-medium">
+                      Selecione o mês e o ano para consultar metas e histórico de desempenho da equipe.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Select Mês */}
+                  <div className="flex items-center gap-2 bg-white/10 border border-white/15 px-3 py-2 rounded-xl">
+                    <label className="text-[10px] font-black uppercase text-slate-300">Mês:</label>
+                    <select
+                      value={filterMonth}
+                      onChange={e => setFilterMonth(parseInt(e.target.value, 10))}
+                      className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                    >
+                      <option value={0} className="bg-slate-900 text-white">Todos os Meses (Ano Inteiro)</option>
+                      <option value={1} className="bg-slate-900 text-white">Janeiro (01)</option>
+                      <option value={2} className="bg-slate-900 text-white">Fevereiro (02)</option>
+                      <option value={3} className="bg-slate-900 text-white">Março (03)</option>
+                      <option value={4} className="bg-slate-900 text-white">Abril (04)</option>
+                      <option value={5} className="bg-slate-900 text-white">Maio (05)</option>
+                      <option value={6} className="bg-slate-900 text-white">Junho (06)</option>
+                      <option value={7} className="bg-slate-900 text-white">Julho (07)</option>
+                      <option value={8} className="bg-slate-900 text-white">Agosto (08)</option>
+                      <option value={9} className="bg-slate-900 text-white">Setembro (09)</option>
+                      <option value={10} className="bg-slate-900 text-white">Outubro (10)</option>
+                      <option value={11} className="bg-slate-900 text-white">Novembro (11)</option>
+                      <option value={12} className="bg-slate-900 text-white">Dezembro (12)</option>
+                    </select>
+                  </div>
+
+                  {/* Select Ano */}
+                  <div className="flex items-center gap-2 bg-white/10 border border-white/15 px-3 py-2 rounded-xl">
+                    <label className="text-[10px] font-black uppercase text-slate-300">Ano:</label>
+                    <select
+                      value={filterYear}
+                      onChange={e => setFilterYear(parseInt(e.target.value, 10))}
+                      className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                    >
+                      {[2024, 2025, 2026, 2027, 2028].map(yr => (
+                        <option key={`yr-opt-${yr}`} value={yr} className="bg-slate-900 text-white">
+                          {yr}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               {/* TEAM GOALS & BONUSES MANAGEMENT SECTION */}
               <div className="bg-surface border border-border rounded-[2.5rem] p-8 shadow-sm space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -541,7 +689,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                   </div>
                   <button
                     onClick={() => setIsCreatingGoal(!isCreatingGoal)}
-                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-sm self-start"
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-sm self-start cursor-pointer"
                   >
                     <Plus size={16} />
                     {isCreatingGoal ? 'Cancelar' : 'Nova Meta de Equipe'}
@@ -614,15 +762,17 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase">Profissional Alvo</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Profissional Alvo (Apenas Ativos)</label>
                         <select
                           value={goalProfissionalId}
                           onChange={e => setGoalProfissionalId(e.target.value)}
                           className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none"
                         >
                           <option value="">Equipe Inteira (Todos os Barbeiros)</option>
-                          {barbersList.map((b, bIdx) => (
-                            <option key={`barber-opt-${b.uid || bIdx}-${bIdx}`} value={b.uid}>{b.name || b.nome}</option>
+                          {activeBarbersOnly.map((b, bIdx) => (
+                            <option key={`barber-opt-${b.uid || bIdx}-${bIdx}`} value={b.uid}>
+                              {b.name || b.nome || b.displayName}
+                            </option>
                           ))}
                         </select>
                       </div>
@@ -631,7 +781,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                     <div className="flex justify-end gap-3 pt-2">
                       <button
                         type="submit"
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-6 py-2 rounded-xl transition shadow-sm"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-6 py-2 rounded-xl transition shadow-sm cursor-pointer"
                       >
                         Salvar Nova Meta
                       </button>
@@ -646,18 +796,40 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                     <p className="text-xs text-muted italic py-4 text-center">Nenhuma meta cadastrada até o momento. Clique em "Nova Meta de Equipe" acima.</p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {teamGoals.map((goal) => {
-                        const targetBarbers = goal.profissional_id 
-                          ? topBarbers.filter((b: any) => b.uid === goal.profissional_id || b.id === goal.profissional_id)
-                          : topBarbers;
+                      {teamGoals.map((goal, goalIdx) => {
+                        const isIndividual = Boolean(goal.profissional_id);
+                        
+                        // Se for meta individual de um barbeiro específico, filtra apenas ele; se for meta de equipe, pega todos da performance
+                        const targetBarbers = isIndividual 
+                          ? filteredBarbersPerformance.filter((b: any) => b.uid === goal.profissional_id)
+                          : filteredBarbersPerformance;
+
+                        // Total acumulado por todos os membros para esta meta
+                        const teamTotalVal = targetBarbers.reduce((acc, b) => acc + (goal.tipo === 'faturamento' ? (b.revenue || 0) : (b.count || 0)), 0);
+                        const teamPercent = Math.min(100, Math.round((teamTotalVal / (goal.valorMeta || 1)) * 100));
+                        const isTeamAchieved = teamTotalVal >= goal.valorMeta;
 
                         return (
-                          <div key={goal.id} className="bg-slate-50/70 border border-slate-200/80 rounded-3xl p-6 space-y-4 relative shadow-sm">
-                            <div className="flex items-start justify-between">
+                          <div key={goal.id || `goal-card-${goalIdx}`} className="bg-slate-50/70 border border-slate-200/80 rounded-3xl p-6 space-y-4 relative shadow-sm">
+                            <div className="flex items-start justify-between gap-2">
                               <div>
-                                <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase rounded-lg">
-                                  {goal.periodo} • {goal.tipo}
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 font-black text-[10px] uppercase rounded-lg">
+                                    {goal.periodo} • {goal.tipo}
+                                  </span>
+                                  {isIndividual ? (
+                                    <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-black text-[10px] uppercase rounded-lg">
+                                      🎯 Meta Individual
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-black text-[10px] uppercase rounded-lg">
+                                      👥 Meta de Equipe
+                                    </span>
+                                  )}
+                                  <span className="px-2 py-0.5 bg-slate-200 text-slate-700 font-black text-[10px] uppercase rounded-lg">
+                                    {filterMonth > 0 ? `${String(filterMonth).padStart(2, '0')}/${filterYear}` : `Ano ${filterYear}`}
+                                  </span>
+                                </div>
                                 <h4 className="font-bold text-base text-primary mt-2">{goal.titulo}</h4>
                                 <p className="text-xs text-muted mt-0.5">
                                   Meta: {goal.tipo === 'faturamento' ? `R$ ${goal.valorMeta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : `${goal.valorMeta} atendimentos`} | Bônus: <strong className="text-emerald-600">R$ {goal.valorBonus.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
@@ -665,29 +837,57 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                               </div>
                               <button
                                 onClick={() => goal.id && handleDeleteGoal(goal.id)}
-                                className="text-slate-400 hover:text-rose-600 p-1.5 transition"
+                                className="text-slate-400 hover:text-rose-600 p-1.5 transition cursor-pointer"
                                 title="Excluir meta"
                               >
                                 <Trash2 size={16} />
                               </button>
                             </div>
 
+                            {/* Progresso Geral da Equipe (Se não for meta individual) */}
+                            {!isIndividual && (
+                              <div className="bg-indigo-50/80 border border-indigo-100 p-3.5 rounded-2xl space-y-2">
+                                <div className="flex items-center justify-between text-xs font-black text-indigo-950">
+                                  <span>TOTAL DA EQUIPE</span>
+                                  <span className={isTeamAchieved ? 'text-emerald-600' : 'text-indigo-700'}>
+                                    {goal.tipo === 'faturamento' ? `R$ ${teamTotalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : `${teamTotalVal}x`} / {goal.valorMeta} ({teamPercent}%)
+                                  </span>
+                                </div>
+                                <div className="w-full h-2.5 bg-indigo-200/60 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-500 ${isTeamAchieved ? 'bg-emerald-500' : 'bg-indigo-600'}`}
+                                    style={{ width: `${teamPercent}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Progresso Individual dos Profissionais */}
                             <div className="space-y-3 pt-2 border-t border-slate-200/60">
-                              <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Progresso dos Profissionais</p>
+                              <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                {isIndividual ? 'Progresso Individual Estipulado' : 'Contribuição Individual de Cada Membro'}
+                              </p>
                               {targetBarbers.length === 0 ? (
-                                <p className="text-xs text-muted italic">Nenhum profissional elegível encontrado.</p>
+                                <p className="text-xs text-muted italic">Nenhum profissional participante no período.</p>
                               ) : (
-                                targetBarbers.map((b: any) => {
+                                targetBarbers.map((b: any, bIdx: number) => {
                                   const currentVal = goal.tipo === 'faturamento' ? (b.revenue || 0) : (b.count || 0);
                                   const percent = Math.min(100, Math.round((currentVal / (goal.valorMeta || 1)) * 100));
                                   const isAchieved = currentVal >= goal.valorMeta;
 
                                   return (
-                                    <div key={`goal-prog-${goal.id}-${b.name}`} className="bg-white p-3.5 rounded-2xl border border-slate-100 space-y-2">
+                                    <div key={`goal-prog-${goal.id || goalIdx}-${b.uid || b.name || bIdx}-${bIdx}`} className="bg-white p-3.5 rounded-2xl border border-slate-100 space-y-2 shadow-xs">
                                       <div className="flex items-center justify-between text-xs font-bold">
-                                        <span className="text-primary">{b.name}</span>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-primary font-black">{b.name}</span>
+                                          {b.isInactive && (
+                                            <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-bold text-[9px]">
+                                              Inativo
+                                            </span>
+                                          )}
+                                        </div>
                                         <span className={isAchieved ? 'text-emerald-600 font-black' : 'text-slate-600'}>
-                                          {goal.tipo === 'faturamento' ? `R$ ${currentVal.toFixed(2)}` : `${currentVal}x`} / {goal.valorMeta} ({percent}%)
+                                          {goal.tipo === 'faturamento' ? `R$ ${currentVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : `${currentVal}x`} / {goal.valorMeta} ({percent}%)
                                         </span>
                                       </div>
                                       <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -703,7 +903,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                                         {isAchieved && goal.valorBonus > 0 && (
                                           <button
                                             onClick={() => handleInsertBonus(goal, b)}
-                                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-xl transition shadow-sm flex items-center gap-1.5"
+                                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-xl transition shadow-sm flex items-center gap-1.5 cursor-pointer"
                                           >
                                             <DollarSign size={12} />
                                             Inserir Bônus na Comissão
@@ -730,35 +930,40 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                       <Award size={24} className="text-amber-500" />
                       Ranking de Performance de Barbeiros
                     </h2>
-                    <p className="text-muted text-xs mt-1">Ranking principal definido pelo faturamento total em atendimentos concluídos.</p>
+                    <p className="text-muted text-xs mt-1">Ranking recalculado para {filterMonth > 0 ? `o mês de ${filterMonth}/${filterYear}` : `o ano de ${filterYear}`}.</p>
                   </div>
                   <div className="px-4 py-1.5 bg-slate-50 border border-slate-100 text-[10px] uppercase font-black tracking-widest text-muted rounded-xl self-start">
-                    Metragem: Faturamento
+                    Métrica: Faturamento Bruto
                   </div>
                 </div>
 
                 {/* PODIUM DISPLAY FOR TOP 3 BARBERS */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-end justify-center py-6 border-b border-slate-100">
                   {/* 2nd Place */}
-                  {topBarbers[1] ? (
+                  {filteredBarbersPerformance[1] ? (
                     <div className="bg-slate-50/50 border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col items-center justify-between text-center min-h-[220px] order-2 md:order-1 transition-all hover:scale-[1.03]">
                       <div className="flex flex-col items-center space-y-3">
                         <div className="relative">
                           <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center font-bold text-slate-600 text-xl border-4 border-slate-300 shadow-sm">
-                            {topBarbers[1].name.charAt(0)}
+                            {filteredBarbersPerformance[1].name.charAt(0)}
                           </div>
                           <div className="absolute -top-2 -right-2 w-7 h-7 bg-slate-300 rounded-full flex items-center justify-center border-2 border-surface shadow text-xs font-black text-slate-800">
                             2º
                           </div>
                         </div>
                         <div>
-                          <h4 className="font-black text-primary text-base">{topBarbers[1].name}</h4>
-                          <p className="text-[10px] text-muted font-black uppercase tracking-wider">{topBarbers[1].count} Atendimentos</p>
+                          <div className="flex items-center justify-center gap-1">
+                            <h4 className="font-black text-primary text-base">{filteredBarbersPerformance[1].name}</h4>
+                            {filteredBarbersPerformance[1].isInactive && (
+                              <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[9px] font-bold rounded">Inativo</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-muted font-black uppercase tracking-wider">{filteredBarbersPerformance[1].count} Atendimentos</p>
                         </div>
                       </div>
                       <div className="mt-4 pt-3 border-t border-slate-100 w-full">
                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Faturamento</p>
-                        <p className="text-lg font-black text-slate-700">R$ {topBarbers[1].revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-lg font-black text-slate-700">R$ {filteredBarbersPerformance[1].revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                       </div>
                     </div>
                   ) : (
@@ -766,7 +971,7 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                   )}
 
                   {/* 1st Place */}
-                  {topBarbers[0] ? (
+                  {filteredBarbersPerformance[0] ? (
                     <div className="bg-gradient-to-b from-amber-50/60 to-amber-50/10 border-2 border-amber-200 rounded-[2.5rem] p-8 shadow-md flex flex-col items-center justify-between text-center min-h-[260px] relative order-1 md:order-2 transition-all hover:scale-[1.03]">
                       <div className="absolute -top-5 w-10 h-10 bg-amber-500 rounded-full flex items-center justify-center shadow-lg border-2 border-surface text-white">
                         <Star size={18} className="fill-white" />
@@ -774,46 +979,56 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                       <div className="flex flex-col items-center space-y-3 mt-2">
                         <div className="relative">
                           <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center font-bold text-amber-600 text-2xl border-4 border-amber-400 shadow-sm">
-                            {topBarbers[0].name.charAt(0)}
+                            {filteredBarbersPerformance[0].name.charAt(0)}
                           </div>
                           <div className="absolute -top-2 -right-2 w-8 h-8 bg-amber-500 rounded-full flex items-center justify-center border-2 border-surface shadow-md text-xs font-black text-white">
                             1º
                           </div>
                         </div>
                         <div>
-                          <h4 className="font-black text-lg text-amber-950">{topBarbers[0].name}</h4>
-                          <p className="text-[10px] text-amber-700/80 font-black uppercase tracking-wider">{topBarbers[0].count} Atendimentos</p>
+                          <div className="flex items-center justify-center gap-1">
+                            <h4 className="font-black text-lg text-amber-950">{filteredBarbersPerformance[0].name}</h4>
+                            {filteredBarbersPerformance[0].isInactive && (
+                              <span className="px-1.5 py-0.5 bg-amber-200/80 text-amber-900 text-[9px] font-bold rounded">Inativo</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-amber-700/80 font-black uppercase tracking-wider">{filteredBarbersPerformance[0].count} Atendimentos</p>
                         </div>
                       </div>
                       <div className="mt-5 pt-4 border-t border-amber-200/50 w-full">
                         <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Faturamento Líder</p>
-                        <p className="text-2xl font-black text-amber-600">R$ {topBarbers[0].revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-2xl font-black text-amber-600">R$ {filteredBarbersPerformance[0].revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-center py-10 italic text-muted text-sm my-auto order-1">Nenhum dado de profissional cadastrado.</div>
+                    <div className="text-center py-10 italic text-muted text-sm my-auto order-1">Nenhum dado de profissional para este período.</div>
                   )}
 
                   {/* 3rd Place */}
-                  {topBarbers[2] ? (
+                  {filteredBarbersPerformance[2] ? (
                     <div className="bg-slate-50/50 border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col items-center justify-between text-center min-h-[200px] order-3 transition-all hover:scale-[1.03]">
                       <div className="flex flex-col items-center space-y-3">
                         <div className="relative">
                           <div className="w-14 h-14 bg-orange-100/50 rounded-full flex items-center justify-center font-bold text-amber-800 text-lg border-4 border-orange-200 shadow-sm">
-                            {topBarbers[2].name.charAt(0)}
+                            {filteredBarbersPerformance[2].name.charAt(0)}
                           </div>
                           <div className="absolute -top-2 -right-2 w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center border-2 border-surface shadow text-[10px] font-black text-white">
                             3º
                           </div>
                         </div>
                         <div>
-                          <h4 className="font-black text-primary text-base">{topBarbers[2].name}</h4>
-                          <p className="text-[10px] text-muted font-black uppercase tracking-wider">{topBarbers[2].count} Atendimentos</p>
+                          <div className="flex items-center justify-center gap-1">
+                            <h4 className="font-black text-primary text-base">{filteredBarbersPerformance[2].name}</h4>
+                            {filteredBarbersPerformance[2].isInactive && (
+                              <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[9px] font-bold rounded">Inativo</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-muted font-black uppercase tracking-wider">{filteredBarbersPerformance[2].count} Atendimentos</p>
                         </div>
                       </div>
                       <div className="mt-4 pt-3 border-t border-slate-100 w-full">
                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Faturamento</p>
-                        <p className="text-lg font-black text-slate-600">R$ {topBarbers[2].revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        <p className="text-lg font-black text-slate-600">R$ {filteredBarbersPerformance[2].revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                       </div>
                     </div>
                   ) : (
@@ -837,8 +1052,8 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {topBarbers.map((b: any, index: number) => {
-                          const totalStoreRevenue = topBarbers.reduce((acc: number, cur: any) => acc + (cur.revenue || 0), 0) || 1;
+                        {filteredBarbersPerformance.map((b: any, index: number) => {
+                          const totalStoreRevenue = filteredBarbersPerformance.reduce((acc: number, cur: any) => acc + (cur.revenue || 0), 0) || 1;
                           const share = ((b.revenue || 0) / totalStoreRevenue) * 100;
                           return (
                             <tr key={`ranking-detailed-${b.name}-${index}`} className="hover:bg-slate-50/50 transition-colors">
@@ -848,7 +1063,16 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                                 {index === 2 && '🥉 '}
                                 {index > 2 && `${index + 1}º `}
                               </td>
-                              <td className="py-4 px-4 font-bold text-primary">{b.name}</td>
+                              <td className="py-4 px-4 font-bold text-primary">
+                                <span className="flex items-center gap-1.5">
+                                  {b.name}
+                                  {b.isInactive && (
+                                    <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold">
+                                      Inativo
+                                    </span>
+                                  )}
+                                </span>
+                              </td>
                               <td className="py-4 px-4 text-center font-bold text-slate-600">{b.count}x</td>
                               <td className="py-4 px-4 text-right font-black text-emerald-600">R$ {(b.revenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                               <td className="py-4 px-4 text-right font-bold text-slate-600">R$ {(b.count > 0 ? b.revenue / b.count : 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
@@ -1630,12 +1854,12 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
 
         {data?.subscriptions && data.subscriptions.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {data.subscriptions.map((sub: any) => {
+            {data.subscriptions.map((sub: any, subIdx: number) => {
               const isExpired = new Date(sub.endDate) < new Date();
               const isActive = sub.status === 'active' && !isExpired;
 
               return (
-                <div key={sub.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between">
+                <div key={sub.id || `sub-${subIdx}`} className="bg-slate-50 border border-slate-100 rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-4">
                       <span className="font-bold text-base text-primary">{sub.planName}</span>

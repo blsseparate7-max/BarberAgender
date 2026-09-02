@@ -176,18 +176,6 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
           Histórico
           {activeTab === 'historico' && <motion.div layoutId="activeTabCom" className="absolute bottom-0 left-0 right-0 h-1 bg-accent rounded-t-full" />}
         </button>
-        {!isBarbeiro && (
-          <button 
-            onClick={() => setActiveTab('fiadas')}
-            className={`px-6 py-4 text-sm font-bold transition-all relative whitespace-nowrap flex items-center gap-2.5 ${
-              activeTab === 'fiadas' ? 'text-accent' : 'text-muted hover:text-primary'
-            }`}
-          >
-            <AlertCircle size={16} />
-            Não Pagas / Fiados
-            {activeTab === 'fiadas' && <motion.div layoutId="activeTabCom" className="absolute bottom-0 left-0 right-0 h-1 bg-accent rounded-t-full" />}
-          </button>
-        )}
       </div>
 
       <div className="flex flex-col md:flex-row gap-6">

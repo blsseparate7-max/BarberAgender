@@ -94,6 +94,53 @@ export const debtService = {
     });
   },
 
+  async cancelDebt(divida_id: string, reason: string = 'Ajuste manual') {
+    const docRef = doc(db, COLLECTION_DEBTS, divida_id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+    const debt = snap.data() as ClientDebt;
+    
+    await updateDoc(docRef, {
+      status: 'pago',
+      remainingAmount: 0,
+      description: debt.description ? `${debt.description} (Cancelado/Ajustado: ${reason})` : `Cancelado/Ajustado: ${reason}`,
+      updatedAt: serverTimestamp()
+    });
+
+    if (debt.cliente_id) {
+      try {
+        const clientRef = doc(db, 'usuarios', debt.cliente_id);
+        const clientSnap = await getDoc(clientRef);
+        if (clientSnap.exists()) {
+          const clientData = clientSnap.data();
+          const currentOpen = clientData.total_em_aberto || 0;
+          await updateDoc(clientRef, {
+            total_em_aberto: Math.max(0, currentOpen - (debt.remainingAmount || debt.amount || 0)),
+            balance: 0,
+            updatedAt: serverTimestamp()
+          });
+        }
+      } catch (err) {
+        console.warn("Erro ao sincronizar saldo do cliente após cancelar débito:", err);
+      }
+    }
+  },
+
+  async clearClientDebts(cliente_id: string, reason: string = 'Ajuste administrativo') {
+    const debts = await this.getClientDebts(cliente_id);
+    for (const debt of debts) {
+      if (!['pago', 'paga', 'quitado', 'cancelado'].includes(debt.status)) {
+        await this.cancelDebt(debt.id, reason);
+      }
+    }
+    const clientRef = doc(db, 'usuarios', cliente_id);
+    await updateDoc(clientRef, {
+      total_em_aberto: 0,
+      balance: 0,
+      updatedAt: serverTimestamp()
+    });
+  },
+
   async getDebtPaymentsByClient(cliente_id: string) {
     const q = query(
       collection(db, COLLECTION_PAYMENTS),

@@ -1252,12 +1252,22 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       let totalOthers = 0;
       let totalPoints = 0;
 
+      const servicesSummaryMap: Record<string, number> = {};
+
       const barberUsages = filteredUsages.filter(u => u.profissional_id === barber.uid);
       barberUsages.forEach(u => {
         if (u.type === 'haircut') totalCuts++;
         else if (u.type === 'beard') totalBeards++;
         else totalOthers++;
+
+        const sName = (u.service_name || u.servico_name || (u.type === 'haircut' ? 'Corte' : u.type === 'beard' ? 'Barba' : 'Outro Serviço')).trim();
+        servicesSummaryMap[sName] = (servicesSummaryMap[sName] || 0) + 1;
       });
+
+      const attendedServices = Object.entries(servicesSummaryMap).map(([name, count]) => ({
+        name,
+        count
+      })).sort((a, b) => b.count - a.count);
 
       const subBreakdownList: Array<{
         subId: string;
@@ -1386,6 +1396,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         totalOthers,
         totalServices: barberUsages.length,
         totalPoints,
+        attendedServices,
         totalReleasedCommission,
         totalInProgressCommission,
         totalPot: totalReleasedCommission + totalInProgressCommission,
@@ -2350,16 +2361,42 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       </div>
                     </div>
 
-                    {/* RESUMO DOS ATENDIMENTOS */}
-                    <div className="flex items-center justify-around bg-slate-50/60 rounded-xl p-2.5 text-[11px] font-bold text-slate-600">
-                      <span>✂️ {barberPot.totalCuts} cortes</span>
-                      <span>•</span>
-                      <span>💈 {barberPot.totalBeards} barbas</span>
-                      {barberPot.totalOthers > 0 && (
-                        <>
-                          <span>•</span>
-                          <span>✨ {barberPot.totalOthers} outros</span>
-                        </>
+                    {/* RESUMO DOS ATENDIMENTOS REAIS */}
+                    <div className="bg-slate-50/80 border border-slate-150 rounded-2xl p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Serviços Atendidos</span>
+                        <span className="text-[10px] font-bold text-slate-600">
+                          {barberPot.totalServices} total
+                        </span>
+                      </div>
+
+                      {barberPot.attendedServices && barberPot.attendedServices.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {barberPot.attendedServices.map((srv: any, sIdx: number) => {
+                            const nameLower = srv.name.toLowerCase();
+                            let icon = '✂️';
+                            if (nameLower.includes('barba')) icon = '💈';
+                            else if (nameLower.includes('sobrancelha') || nameLower.includes('acabamento') || nameLower.includes('pezinho')) icon = '✨';
+                            else if (nameLower.includes('platinado') || nameLower.includes('luzes') || nameLower.includes('quimica') || nameLower.includes('alisamento')) icon = '🧪';
+                            else if (nameLower.includes('hidrat')) icon = '💧';
+
+                            return (
+                              <span 
+                                key={`pot-srv-${barberPot.uid}-${srv.name}-${sIdx}`}
+                                className="inline-flex items-center gap-1 bg-white border border-slate-200/80 px-2.5 py-1 rounded-lg text-[10px] font-extrabold text-slate-700 shadow-2xs"
+                              >
+                                <span>{icon}</span>
+                                <span>{srv.count} {srv.name}</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="py-1 text-center">
+                          <span className="text-[10px] font-medium text-slate-400 italic">
+                            Nenhum serviço atendido no ciclo
+                          </span>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -2579,7 +2616,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       .sort((a: any, b: any) => {
                         return b.period.localeCompare(a.period);
                       })
-                      .map((run: any) => {
+                      .map((run: any, runIdx: number) => {
                         let barberCommValue = 0;
                         let foundBarber = false;
 
@@ -2596,7 +2633,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         }
 
                         return (
-                          <tr key={run.period} className="hover:bg-slate-50/50 transition duration-150">
+                          <tr key={`released-run-${run.period || run.id || runIdx}-${runIdx}`} className="hover:bg-slate-50/50 transition duration-150">
                             <td className="p-4 whitespace-nowrap">
                               <span className="font-black text-slate-800 uppercase bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] tracking-wider">
                                 {run.periodLabel || run.period}
@@ -4643,7 +4680,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
                         {selectedBarberDetailModal.subBreakdownList.map((item: any, idx: number) => (
-                          <tr key={idx} className="hover:bg-slate-50/60 transition">
+                          <tr key={`barber-sub-bd-${item.clientUid || item.planId || idx}-${idx}`} className="hover:bg-slate-50/60 transition">
                             <td className="p-3.5 font-bold text-slate-900">
                               {item.clientName || 'Cliente Assinante'}
                             </td>

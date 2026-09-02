@@ -387,7 +387,7 @@ export function AppointmentModal({
                   className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium appearance-none disabled:opacity-50"
                 >
                   <option value="" className="text-muted">Selecione o profissional</option>
-                  {eligibleBarbers.map(b => <option key={b.uid} value={b.uid} className="text-primary font-medium">{b.nome}</option>)}
+                  {eligibleBarbers.map((b, bIdx) => <option key={`barber-opt-${b.uid || bIdx}-${bIdx}`} value={b.uid} className="text-primary font-medium">{b.nome}</option>)}
                 </select>
                 <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" size={18} />
               </div>
@@ -407,12 +407,12 @@ export function AppointmentModal({
                   <option value="" className="text-muted">Selecione o serviço</option>
                   {Object.entries(categorizedServices).map(([categoryName, catServices]) => (
                     <optgroup key={`cat-group-${categoryName}`} label={`📁 ${categoryName.toUpperCase()}`}>
-                      {(catServices as Service[]).map(s => {
+                      {(catServices as Service[]).map((s, sIdx) => {
                         const sName = (s as any).nome || s.name || 'Serviço';
                         const sDur = (s as any).duracao_minutos || s.duration || 30;
                         const sPrice = (s as any).preco ?? s.price ?? 0;
                         return (
-                          <option key={s.id} value={s.id} className="text-primary font-medium">
+                          <option key={`svc-opt-${s.id || sIdx}-${sIdx}`} value={s.id} className="text-primary font-medium">
                             {sName} ({sDur} min - R$ {sPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
                           </option>
                         );

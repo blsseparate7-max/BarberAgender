@@ -1008,11 +1008,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       title: 'Profissionais & Estoque',
       items: [
         {
-          id: 'commissions',
-          label: 'Comissões & Repasses',
-          icon: <Briefcase size={16} />
-        },
-        {
           id: 'inventory-finance',
           label: 'Estoque Financeiro',
           icon: <BarChart3 size={16} />
@@ -1113,75 +1108,10 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         </div>
       </header>
 
-      {/* Mobile Submenu Selector */}
-      <div className="lg:hidden bg-white border border-slate-200 rounded-2xl p-3 shadow-sm">
-        <label className="text-[10px] font-black uppercase tracking-wider text-muted block mb-1.5">Módulo Financeiro</label>
-        <select
-          value={activeTab}
-          onChange={(e) => setActiveTab(e.target.value as any)}
-          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-        >
-          {navGroups.map((group, gIdx) => (
-            <optgroup key={`nav-group-opt-${group.title}-${gIdx}`} label={group.title}>
-              {group.items.map((item, iIdx) => (
-                <option key={`nav-item-opt-${item.id}-${iIdx}`} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </div>
-
-      {/* Main Layout: Left Vertical Navigation (Desktop) + Right Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Vertical Submenu Navigation Panel */}
-        <aside className="hidden lg:block lg:col-span-3 sticky top-6 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-sm space-y-5">
-            {navGroups.map((group, gIdx) => (
-              <div key={`nav-group-desk-${group.title}-${gIdx}`} className="space-y-1">
-                <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  {group.title}
-                </div>
-                <div className="space-y-0.5">
-                  {group.items.map((item, iIdx) => {
-                    const isActive = activeTab === item.id;
-                    return (
-                      <button
-                        key={`nav-item-desk-${item.id}-${iIdx}`}
-                        onClick={() => setActiveTab(item.id as any)}
-                        className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
-                          isActive
-                            ? 'bg-primary text-white shadow-md shadow-primary/10'
-                            : 'text-slate-600 hover:bg-slate-50 hover:text-primary'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 truncate">
-                          <span className={isActive ? 'text-white' : 'text-slate-400'}>
-                            {item.icon}
-                          </span>
-                          <span className="truncate">{item.label}</span>
-                        </div>
-                        {item.badge && (
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${
-                            isActive ? 'bg-white/20 text-white' : (item.badgeColor || 'bg-slate-100 text-slate-600')
-                          }`}>
-                            {item.badge}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        {/* Tab Content (9 Cols on desktop) */}
-        <main className="lg:col-span-9 min-w-0">
-          <div className="min-h-[500px]">
-            {loading ? (
+      {/* Main Content (Full Width) */}
+      <main className="w-full min-w-0">
+        <div className="min-h-[500px]">
+          {loading ? (
               <div className="flex flex-col items-center justify-center py-32 gap-4 bg-white border border-slate-200 rounded-3xl">
                 <Loader2 className="animate-spin text-accent" size={48} />
                 <p className="text-muted font-bold animate-pulse">Processando inteligência financeira...</p>
@@ -3169,7 +3099,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           )}
         </div>
       </main>
-    </div>
 
       {/* Modals */}
       <AnimatePresence>
@@ -3429,6 +3358,7 @@ function ClientAccountDetailsModal({
   const [paymentAmount, setPaymentAmount] = useState('');
   const [selectedDebt, setSelectedDebt] = useState<ClientDebt | null>(null);
   const [selectedMethod, setSelectedMethod] = useState<string>('');
+  const [isClearingDebts, setIsClearingDebts] = useState(false);
 
   const { user } = useAuth();
 
@@ -3543,6 +3473,40 @@ function ClientAccountDetailsModal({
     }
   };
 
+  const handleCancelSingleDebt = async (debt: ClientDebt) => {
+    if (!window.confirm(`Deseja realmente cancelar/zerar o fiado de R$ ${debt.remainingAmount.toFixed(2)} do cliente ${client?.nome}?`)) {
+      return;
+    }
+    setIsClearingDebts(true);
+    try {
+      await debtService.cancelDebt(debt.id, 'Ajuste / Perdão administrativo');
+      toast.success("Fiado cancelado/zerado com sucesso!");
+      await loadInfo();
+      onPaymentSuccess();
+    } catch (err: any) {
+      toast.error("Erro ao cancelar fiado: " + (err.message || ''));
+    } finally {
+      setIsClearingDebts(false);
+    }
+  };
+
+  const handleClearAllDebtsForClient = async () => {
+    if (!window.confirm(`Atenção: Deseja zerar TODOS os fiados pendentes e limpar a conta de ${client?.nome}? O saldo ficará R$ 0,00.`)) {
+      return;
+    }
+    setIsClearingDebts(true);
+    try {
+      await debtService.clearClientDebts(cliente_id, 'Ajuste e quitação administrativa');
+      toast.success("Todos os fiados do cliente foram zerados e a conta foi limpa!");
+      await loadInfo();
+      onPaymentSuccess();
+    } catch (err: any) {
+      toast.error("Erro ao zerar fiados: " + (err.message || ''));
+    } finally {
+      setIsClearingDebts(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
@@ -3607,34 +3571,49 @@ function ClientAccountDetailsModal({
 
           <div className="space-y-6">
             {/* Modal Tabs */}
-            <div className="flex gap-6 border-b border-slate-100">
-              <button 
-                onClick={() => setActiveTab('debts')}
-                className={`pb-4 text-xs font-black uppercase tracking-widest relative transition-all ${
-                  activeTab === 'debts' ? 'text-primary' : 'text-muted'
-                }`}
-              >
-                Comandas e Dívidas
-                {activeTab === 'debts' && <motion.div layoutId="clientModalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
-              </button>
-              <button 
-                onClick={() => setActiveTab('payments')}
-                className={`pb-4 text-xs font-black uppercase tracking-widest relative transition-all ${
-                  activeTab === 'payments' ? 'text-primary' : 'text-muted'
-                }`}
-              >
-                Histórico de Pagamentos
-                {activeTab === 'payments' && <motion.div layoutId="clientModalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
-              </button>
-              <button 
-                onClick={() => setActiveTab('notes')}
-                className={`pb-4 text-xs font-black uppercase tracking-widest relative transition-all ${
-                  activeTab === 'notes' ? 'text-primary' : 'text-muted'
-                }`}
-              >
-                Caderno de Anotações (Fluxo)
-                {activeTab === 'notes' && <motion.div layoutId="clientModalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
-              </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-2">
+              <div className="flex gap-6">
+                <button 
+                  onClick={() => setActiveTab('debts')}
+                  className={`pb-2 text-xs font-black uppercase tracking-widest relative transition-all ${
+                    activeTab === 'debts' ? 'text-primary' : 'text-muted'
+                  }`}
+                >
+                  Comandas e Dívidas
+                  {activeTab === 'debts' && <motion.div layoutId="clientModalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
+                </button>
+                <button 
+                  onClick={() => setActiveTab('payments')}
+                  className={`pb-2 text-xs font-black uppercase tracking-widest relative transition-all ${
+                    activeTab === 'payments' ? 'text-primary' : 'text-muted'
+                  }`}
+                >
+                  Histórico de Pagamentos
+                  {activeTab === 'payments' && <motion.div layoutId="clientModalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
+                </button>
+                <button 
+                  onClick={() => setActiveTab('notes')}
+                  className={`pb-2 text-xs font-black uppercase tracking-widest relative transition-all ${
+                    activeTab === 'notes' ? 'text-primary' : 'text-muted'
+                  }`}
+                >
+                  Caderno de Anotações (Fluxo)
+                  {activeTab === 'notes' && <motion.div layoutId="clientModalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
+                </button>
+              </div>
+
+              {totalOutstanding > 0 && (
+                <button
+                  type="button"
+                  disabled={isClearingDebts}
+                  onClick={handleClearAllDebtsForClient}
+                  className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Limpar todos os fiados pendentes e zerar o saldo do cliente"
+                >
+                  <Trash2 size={14} />
+                  <span>Zerar Todos os Fiados (Limpar Conta)</span>
+                </button>
+              )}
             </div>
 
             {activeTab === 'debts' && (
@@ -3652,8 +3631,9 @@ function ClientAccountDetailsModal({
                       </div>
                       <p className="text-sm font-bold text-primary">Comanda #{debt.comanda_id?.substring(0, 8) || 'N/A'}</p>
                       <p className="text-xs text-muted">Original: R$ {debt.amount.toFixed(2)}</p>
+                      {debt.description && <p className="text-[11px] text-slate-500 italic">{debt.description}</p>}
                     </div>
-                    <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-4">
                       <div className="text-right">
                         <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Saldo Devedor</p>
                         <p className={`text-lg font-black ${debt.status === 'pago' ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -3661,15 +3641,25 @@ function ClientAccountDetailsModal({
                         </p>
                       </div>
                       {debt.status !== 'pago' && (
-                        <button 
-                          onClick={() => {
-                            setSelectedDebt(debt);
-                            setPaymentAmount(debt.remainingAmount.toString());
-                          }}
-                          className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/10 active:scale-95 cursor-pointer"
-                        >
-                          Pagar
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => {
+                              setSelectedDebt(debt);
+                              setPaymentAmount(debt.remainingAmount.toString());
+                            }}
+                            className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/10 active:scale-95 cursor-pointer"
+                          >
+                            Pagar
+                          </button>
+                          <button
+                            disabled={isClearingDebts}
+                            onClick={() => handleCancelSingleDebt(debt)}
+                            className="p-2.5 bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 border border-slate-200 hover:border-red-200 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                            title="Cancelar/Zerar este fiado"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

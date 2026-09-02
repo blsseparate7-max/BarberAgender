@@ -215,8 +215,10 @@ export const dashboardService = {
       monthlyAppointments,
       cashStatus,
       chartData: last7Days,
+      allAppointments: appointments,
+      allTransactions: transactions,
       recentAppointments: appointments
-        .sort((a, b) => b.startTime.localeCompare(a.startTime))
+        .sort((a, b) => (b.startTime || '').localeCompare(a.startTime || ''))
         .slice(0, 5)
     };
   },

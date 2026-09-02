@@ -154,7 +154,6 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         { id: 'comandas-checkout', label: 'Frente de Caixa (PDV)', roles: ['admin', 'gerente'] },
         { id: 'financeiro-caixa', label: 'Caixa de Hoje', roles: ['admin', 'gerente'] },
         { id: 'comandas-historico', label: 'Histórico de Vendas', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'comandas-fiadas', label: 'Controle de Fiados / Pendentes', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -208,7 +207,6 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
         { id: 'financeiro-contas-pagar', label: 'Contas a Pagar', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-receber', label: 'Contas a Receber', roles: ['admin', 'gerente'] },
         { id: 'financeiro-fiados', label: 'Conta do Cliente (Fiados)', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-comissoes', label: 'Comissões da Equipe', roles: ['admin', 'gerente'] },
         { id: 'cadastros-metodos-pagamento', label: 'Meios de Pagamento', roles: ['admin', 'gerente'] },
         { id: 'financeiro-inconsistencias', label: 'Auditoria & Inconsistências', roles: ['admin', 'gerente'] },
       ]

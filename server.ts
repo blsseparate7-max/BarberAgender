@@ -2760,66 +2760,62 @@ function encodeFirestoreFields(data: any): any {
       let isConnected = false;
 
       if (asaasApiKey && asaasApiKey.length > 10) {
-        // 1. Saldo em conta (Livre)
-        try {
-          const balRes = await fetch(`${baseUrl}/finance/balance`, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          if (balRes.ok) {
-            const balData = await balRes.json();
+        const fetchOpts = {
+          headers: { 'access_token': asaasApiKey },
+          signal: AbortSignal.timeout(6000)
+        };
+
+        const [balSettled, pendSettled, recSettled, accSettled] = await Promise.allSettled([
+          fetch(`${baseUrl}/finance/balance`, fetchOpts),
+          fetch(`${baseUrl}/payments?status=PENDING&limit=100`, fetchOpts),
+          fetch(`${baseUrl}/payments?status=RECEIVED,CONFIRMED&limit=100`, fetchOpts),
+          fetch(`${baseUrl}/myAccount/status`, fetchOpts)
+        ]);
+
+        if (balSettled.status === 'fulfilled' && balSettled.value.ok) {
+          try {
+            const balData = await balSettled.value.json();
             balance = Number(balData.balance) || 0;
             isConnected = true;
+          } catch (balErr) {
+            console.warn("Aviso ao parsear saldo Asaas:", balErr);
           }
-        } catch (balErr) {
-          console.warn("Aviso ao buscar saldo Asaas:", balErr);
         }
 
-        // 2. Saldo pendente (Cobranças a receber / PENDING)
-        try {
-          const pendRes = await fetch(`${baseUrl}/payments?status=PENDING&limit=100`, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          if (pendRes.ok) {
-            const pendData = await pendRes.json();
+        if (pendSettled.status === 'fulfilled' && pendSettled.value.ok) {
+          try {
+            const pendData = await pendSettled.value.json();
             if (Array.isArray(pendData?.data)) {
               pendingBalance = pendData.data.reduce((acc: number, p: any) => {
                 const net = p.netValue !== undefined && p.netValue !== null ? Number(p.netValue) : Number(p.value);
                 return acc + (isNaN(net) ? 0 : net);
               }, 0);
             }
+          } catch (pErr) {
+            console.warn("Aviso ao parsear cobranças pendentes Asaas:", pErr);
           }
-        } catch (pErr) {
-          console.warn("Aviso ao buscar cobranças pendentes Asaas:", pErr);
         }
 
-        // 3. Total Recebido (Cobranças com status RECEIVED ou CONFIRMED)
-        try {
-          const recRes = await fetch(`${baseUrl}/payments?status=RECEIVED,CONFIRMED&limit=100`, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          if (recRes.ok) {
-            const recData = await recRes.json();
+        if (recSettled.status === 'fulfilled' && recSettled.value.ok) {
+          try {
+            const recData = await recSettled.value.json();
             if (Array.isArray(recData?.data)) {
               totalReceived = recData.data.reduce((acc: number, p: any) => {
                 const net = p.netValue !== undefined && p.netValue !== null ? Number(p.netValue) : Number(p.value);
                 return acc + (isNaN(net) ? 0 : net);
               }, 0);
             }
+          } catch (rErr) {
+            console.warn("Aviso ao parsear total recebido Asaas:", rErr);
           }
-        } catch (rErr) {
-          console.warn("Aviso ao buscar total recebido Asaas:", rErr);
         }
 
-        // 4. Status cadastral da conta Asaas
-        try {
-          const accRes = await fetch(`${baseUrl}/myAccount/status`, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          if (accRes.ok) {
-            const accData = await accRes.json();
+        if (accSettled.status === 'fulfilled' && accSettled.value.ok) {
+          try {
+            const accData = await accSettled.value.json();
             accountStatus = accData.commercialInfo?.status || accData.accountStatus || accData.general?.status || 'APPROVED';
-          }
-        } catch (aErr) {}
+          } catch (aErr) {}
+        }
       }
 
       return res.json({
@@ -2872,7 +2868,8 @@ function encodeFirestoreFields(data: any): any {
           if (finishDate) url += `&finishDate=${encodeURIComponent(finishDate)}`;
 
           const txRes = await fetch(url, {
-            headers: { 'access_token': asaasApiKey }
+            headers: { 'access_token': asaasApiKey },
+            signal: AbortSignal.timeout(6000)
           });
 
           if (txRes.ok) {
@@ -2915,7 +2912,8 @@ function encodeFirestoreFields(data: any): any {
             if (finishDate) payUrl += `&dueDate[le]=${finishDate}`;
 
             const payRes = await fetch(payUrl, {
-              headers: { 'access_token': asaasApiKey }
+              headers: { 'access_token': asaasApiKey },
+              signal: AbortSignal.timeout(6000)
             });
 
             if (payRes.ok) {
@@ -3305,7 +3303,8 @@ function encodeFirestoreFields(data: any): any {
       }
 
       const tfRes = await fetch(`${baseUrl}/transfers?limit=${limit}`, {
-        headers: { 'access_token': asaasApiKey }
+        headers: { 'access_token': asaasApiKey },
+        signal: AbortSignal.timeout(6000)
       });
 
       if (!tfRes.ok) {

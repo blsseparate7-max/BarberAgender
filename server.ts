@@ -4089,7 +4089,8 @@ function encodeFirestoreFields(data: any): any {
     const PORT = 3000;
     if (process.env.NODE_ENV !== "production" && !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
       try {
-        const { createServer: createViteServer } = await import("vite");
+        const vitePkg = "vite";
+        const { createServer: createViteServer } = await import(vitePkg);
         const vite = await createViteServer({
           server: { middlewareMode: true },
           appType: "spa",

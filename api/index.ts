@@ -1,6 +1,7 @@
-export default async function handler(req: any, res: any) {
+import { app } from '../server';
+
+export default function handler(req: any, res: any) {
   try {
-    const { app } = await import('../server');
     return app(req, res);
   } catch (err: any) {
     console.error("🔥 CRITICAL VERCEL FUNCTION STARTUP ERROR:", err);
@@ -11,5 +12,6 @@ export default async function handler(req: any, res: any) {
     });
   }
 }
+
 
 

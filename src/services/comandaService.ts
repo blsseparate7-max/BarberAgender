@@ -1396,6 +1396,29 @@ export const comandaService = {
 
       if (status === 'fechada' || status === 'nao_paga' || postData?.status === 'fechada' || postData?.status === 'nao_paga') {
         await this.closeLinkedAppointments(id, linkedAppIdPost);
+
+        if (postData && postData.cliente_id && postData.cliente_id !== 'avulso') {
+          try {
+            const payments = postData.payments || [];
+            const actualPaidAmount = payments.reduce((acc: number, p: any) => {
+              const method = String(p.method || '').toLowerCase();
+              if (method === 'fiado' || method === 'resgate') return acc;
+              return acc + (p.amount || 0);
+            }, 0);
+
+            if (actualPaidAmount > 0) {
+              await loyaltyService.addPoints(
+                postData.cliente_id,
+                0,
+                actualPaidAmount,
+                `Acúmulo - Comanda #${postData.number}`,
+                'appointment'
+              );
+            }
+          } catch (loyaltyErr) {
+            console.warn("Could not calculate/credit loyalty inside closeComanda:", loyaltyErr);
+          }
+        }
       } else if (status === 'cancelada' || postData?.status === 'cancelada') {
         await this.cancelLinkedAppointments(id, linkedAppIdPost);
       } else if (status === 'ausente' || postData?.status === 'ausente') {

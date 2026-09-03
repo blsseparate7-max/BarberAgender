@@ -98,7 +98,7 @@ export const notificationService = {
     return onSnapshot(q, (snapshot) => {
       const filteredDocs = snapshot.docs.filter(docSnap => {
         const rId = docSnap.data().recipientId;
-        return rId === recipientId || rId === 'admin';
+        return rId === recipientId;
       });
 
       const notifications = filteredDocs.map(docSnap => {
@@ -153,7 +153,7 @@ export const notificationService = {
       const filtered = snapshot.docs.filter(docSnap => {
         const data = docSnap.data();
         const rId = data.recipientId;
-        return (rId === recipientId || rId === 'admin') && data.read === false;
+        return rId === recipientId && data.read === false;
       });
       if (filtered.length === 0) return;
 

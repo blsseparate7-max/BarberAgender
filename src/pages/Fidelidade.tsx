@@ -19,7 +19,8 @@ import {
   Zap,
   ShieldCheck,
   Search,
-  Tag
+  Tag,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -28,6 +29,7 @@ import { loyaltyService } from '../services/loyaltyService';
 import { userService } from '../services/userService';
 import { LoyaltyConfig, LoyaltyPoints, LoyaltyHistory, UserProfile, LoyaltyVoucher } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
+import { toast } from 'sonner';
 
 export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
@@ -44,6 +46,25 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
   const [modalLoyaltyMode, setModalLoyaltyMode] = useState<'saldo' | 'pontos'>('saldo');
   const [showRedeemModal, setShowRedeemModal] = useState(false);
   const [selectedClient, setSelectedClient] = useState<UserProfile | null>(null);
+
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleRetroactiveSync = async () => {
+    setIsSyncing(true);
+    try {
+      const tenantId = profile?.tenantId || 'gbcortes7';
+      const result = await loyaltyService.syncRetroactiveLoyalty(tenantId);
+      toast.success(
+        `Fidelidade Sincronizada! ${result.countSynced} comandas de setembro processadas com sucesso. Pontos: +${result.totalPointsAwarded} | Cashback: +R$ ${result.totalCashbackAwarded.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+      );
+      loadData();
+    } catch (err: any) {
+      console.error("Erro no sync retroativo:", err);
+      toast.error(err.message || "Erro ao sincronizar pontos.");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
     if (activeSubTab) {
@@ -164,13 +185,23 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
           <p className="text-muted text-sm">Pontos, cashback e benefícios para clientes VIP.</p>
         </div>
         {(isAdmin || isGerente) && (
-          <button 
-            onClick={() => setShowConfigModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-surface border border-border text-primary rounded-xl font-bold text-sm hover:bg-slate-50 transition-all shadow-sm active:scale-95"
-          >
-            <Settings size={18} />
-            <span>Configurar Regras</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleRetroactiveSync}
+              disabled={isSyncing}
+              className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm disabled:opacity-50 transition-all shadow-sm active:scale-95"
+            >
+              <RefreshCw size={18} className={isSyncing ? "animate-spin" : ""} />
+              <span>{isSyncing ? "Sincronizando..." : "Sincronizar Retroativo (Setembro)"}</span>
+            </button>
+            <button 
+              onClick={() => setShowConfigModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-surface border border-border text-primary rounded-xl font-bold text-sm hover:bg-slate-50 transition-all shadow-sm active:scale-95"
+            >
+              <Settings size={18} />
+              <span>Configurar Regras</span>
+            </button>
+          </div>
         )}
       </header>
 

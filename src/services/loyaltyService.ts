@@ -473,5 +473,89 @@ export const loyaltyService = {
 
       return { points: newPoints, cashback: newCashback };
     });
+  },
+
+  async syncRetroactiveLoyalty(tenantId: string) {
+    // 1. Fetch all closed or not paid comandas for this tenantId
+    const comandasQuery = query(
+      collection(db, 'comandas'),
+      where('tenantId', '==', tenantId),
+      where('status', 'in', ['fechada', 'nao_paga'])
+    );
+    
+    const comandasSnap = await getDocs(comandasQuery);
+    const comandas = comandasSnap.docs.map(d => d.data() as any);
+
+    // 2. Fetch all existing loyalty history records for this tenant to check for duplicates
+    const historyQuery = query(
+      collection(db, HISTORY_COLLECTION),
+      where('tenantId', '==', tenantId),
+      where('type', '==', 'earn')
+    );
+    const historySnap = await getDocs(historyQuery);
+    const historyDescriptions = new Set(
+      historySnap.docs.map(d => (d.data().description || '').trim())
+    );
+
+    let countSynced = 0;
+    let totalPointsAwarded = 0;
+    let totalCashbackAwarded = 0;
+
+    // Filter by date since Sept 1st, 2026
+    const sepFirstDate = new Date('2026-09-01T00:00:00');
+
+    for (const comanda of comandas) {
+      if (!comanda.cliente_id || comanda.cliente_id === 'avulso') continue;
+
+      // Extract creation date
+      let comandaDate = new Date();
+      if (comanda.createdAt) {
+        comandaDate = comanda.createdAt.toDate ? comanda.createdAt.toDate() : new Date(comanda.createdAt.seconds * 1000 || 0);
+      } else if (comanda.openedAt) {
+        comandaDate = comanda.openedAt.toDate ? comanda.openedAt.toDate() : new Date(comanda.openedAt.seconds * 1000 || 0);
+      } else if (comanda.date) {
+        comandaDate = new Date(comanda.date);
+      }
+
+      if (comandaDate < sepFirstDate) {
+        continue;
+      }
+
+      // Check if already synced using description format
+      const desc1 = `Acúmulo - Comanda #${comanda.number}`;
+      const desc2 = `Cashback - Comanda #${comanda.number}`;
+      const desc3 = `Acúmulo - Comanda #${comanda.number}`;
+      
+      if (historyDescriptions.has(desc1) || historyDescriptions.has(desc2) || historyDescriptions.has(desc3)) {
+        continue;
+      }
+
+      // Calculate actual paid amount (exclude fiado and resgate)
+      const payments = comanda.payments || [];
+      const actualPaidAmount = payments.reduce((acc: number, p: any) => {
+        const method = String(p.method || '').toLowerCase();
+        if (method === 'fiado' || method === 'resgate') return acc;
+        return acc + (p.amount || 0);
+      }, 0);
+
+      if (actualPaidAmount > 0) {
+        const result = await this.addPoints(
+          comanda.cliente_id,
+          0,
+          actualPaidAmount,
+          `Acúmulo - Comanda #${comanda.number}`,
+          'appointment'
+        );
+        countSynced++;
+        totalPointsAwarded += result.points || 0;
+        totalCashbackAwarded += result.cashback || 0;
+      }
+    }
+
+    return {
+      countSynced,
+      totalPointsAwarded,
+      totalCashbackAwarded
+    };
   }
 };

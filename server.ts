@@ -284,9 +284,57 @@ app.use((req, res, next) => {
   next();
 });
 
-  // API Route to reset another user's password (e.g. barber) using Firebase Admin
+  // Função auxiliar de segurança para autenticar requisições administrativas
+  async function verifyAdminCaller(req: express.Request): Promise<{ authorized: boolean; uid?: string; email?: string; error?: string }> {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return { authorized: false, error: "Acesso não autorizado: token de autenticação ausente." };
+      }
+      const token = authHeader.split("Bearer ")[1].trim();
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return { authorized: false, error: "Firebase Admin indisponível no servidor." };
+      }
+      const decodedToken = await getAuth(fbAdmin).verifyIdToken(token);
+      const callerEmail = (decodedToken.email || "").toLowerCase().trim();
+      const callerUid = decodedToken.uid;
+
+      // Superadministradores do SaaS ou administradores da barbearia
+      const MASTER_EMAILS = [
+        "barber@admin.ai",
+        "blsseparate7@gmail.com",
+        "barbeariagbcortes7@gmail.com",
+        "gabriel.alexandre@gbcortes7.com"
+      ];
+      if (MASTER_EMAILS.includes(callerEmail)) {
+        return { authorized: true, uid: callerUid, email: callerEmail };
+      }
+
+      // Validar cargo no Firestore se for outro administrador ou gerente
+      const db = getFirestore(fbAdmin);
+      const userDoc = await db.collection("usuarios").doc(callerUid).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        if (userData?.ativo && (userData.tipo === "admin" || userData.tipo === "gerente" || userData.tipo === "saas_admin")) {
+          return { authorized: true, uid: callerUid, email: callerEmail };
+        }
+      }
+
+      return { authorized: false, error: "Acesso negado: privilégios insuficientes." };
+    } catch (err: any) {
+      return { authorized: false, error: "Sessão inválida ou token expirado." };
+    }
+  }
+
+  // API Route to reset another user's password (e.g. barber) using Firebase Admin - BLINDADA
   app.post(["/api/admin/reset-password", "/admin/reset-password"], async (req, res) => {
     try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+
       const { uid, password } = req.body;
       if (!uid || !password) {
         return res.status(400).json({ error: "UID e senha são obrigatórios." });
@@ -328,9 +376,14 @@ app.use((req, res, next) => {
     }
   });
 
-  // API Route to create another user's auth (email and password) using Firebase Admin
+  // API Route to create another user's auth (email and password) using Firebase Admin - BLINDADA
   app.post(["/api/admin/create-user-auth", "/admin/create-user-auth"], async (req, res) => {
     try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+
       const { email, password, displayName } = req.body;
       if (!email || !password) {
         return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
@@ -386,9 +439,14 @@ app.use((req, res, next) => {
     }
   });
 
-  // API Route to update another user's auth (email and/or password) using Firebase Admin
+  // API Route to update another user's auth (email and/or password) using Firebase Admin - BLINDADA
   app.post(["/api/admin/update-user-auth", "/admin/update-user-auth"], async (req, res) => {
     try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+
       const { uid, email, password } = req.body;
       if (!uid) {
         return res.status(400).json({ error: "UID é obrigatório." });
@@ -453,9 +511,14 @@ app.use((req, res, next) => {
     }
   });
 
-  // API Route to generate a password reset link using Firebase Admin
+  // API Route to generate a password reset link using Firebase Admin - BLINDADA
   app.post(["/api/admin/generate-reset-link", "/admin/generate-reset-link"], async (req, res) => {
     try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+
       const { email } = req.body;
       if (!email) {
         return res.status(400).json({ error: "E-mail é obrigatório." });

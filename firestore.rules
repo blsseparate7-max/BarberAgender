@@ -23,11 +23,12 @@ service cloud.firestore {
       return isAuthenticated() && 
         (
           request.auth.token.email == "barber@admin.ai" ||
-          request.auth.token.email == "admin@admin.com" ||
           request.auth.token.email == "blsseparate7@gmail.com" ||
-          request.auth.token.email == "temp-diagnose-client@example.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'saas_admin')
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'saas_admin' &&
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == 'saas' &&
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true &&
+           (request.auth.token.email == "barber@admin.ai" || request.auth.token.email == "blsseparate7@gmail.com"))
         );
     }
 
@@ -36,21 +37,20 @@ service cloud.firestore {
         (
           isSaaSAdmin() ||
           request.auth.token.email == "blsseparate7@gmail.com" ||
-          request.auth.token.email == "admin@admin.com" ||
           request.auth.token.email == "barbeariagbcortes7@gmail.com" ||
           request.auth.token.email == "gabriel.alexandre@gbcortes7.com" ||
-          request.auth.token.email == "temp-diagnose-client@example.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin')
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin' &&
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true)
         );
     }
 
     function isGerente() {
       return isAuthenticated() && 
         (
-          request.auth.token.email == "gerente@gerente.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'gerente')
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'gerente' &&
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true)
         );
     }
 
@@ -61,9 +61,9 @@ service cloud.firestore {
     function isBarbeiro() {
       return isAuthenticated() && 
         (
-          request.auth.token.email == "barbeiro@gmail.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro')
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro' &&
+           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true)
         );
     }
 
@@ -91,10 +91,6 @@ service cloud.firestore {
       );
     }
 
-    function isTestEmail(email) {
-      return email == "admin@admin.com" || email == "gerente@gerente.com" || email == "cliente@cliente.com" || email == "barbeiro@gmail.com";
-    }
-
     // Rules for Test collection (connection test)
     match /test/{docId} {
       allow read: if isAuthenticated();
@@ -103,7 +99,7 @@ service cloud.firestore {
     // Rules for Tenants (Multi-tenant units)
     match /tenants/{tenantId} {
       allow read, get, list: if true;
-      allow create: if true; // Allows initial setup and SaaS registration
+      allow create: if isAuthenticated() && tenantId != 'saas' && (isSaaSAdmin() || !exists(/databases/$(database)/documents/tenants/$(tenantId)));
       allow update: if isStaff() || isSaaSAdmin();
       allow delete: if isSaaSAdmin();
 
@@ -126,20 +122,37 @@ service cloud.firestore {
       allow delete: if isSaaSAdmin();
     }
 
-    // Rules for Usuarios collection
+    // Rules for Usuarios collection - BLINDADA CONTRA ESCALAÇÃO DE PRIVILÉGIOS
     match /usuarios/{userId} {
-      // Qualquer um pode ler dados básicos de um perfil específico (necessário para agendamento, comandas e inicialização estável).
+      // Leitura de dados de perfil necessária para funcionamento e agendamento
       allow get: if true;
-      // Permite listagem de profissionais para agendamento online aberto de visitantes e listagem autenticada
-      allow list: if true;
+      allow list: if isAuthenticated() || (resource.data.tipo == 'barbeiro' && resource.data.ativo == true);
       
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow create: if isAuthenticated() && (isTestEmail(request.auth.token.email) || isStaff());
+      // Criação de perfil
+      allow create: if isSaaSAdmin() ||
+        (isAdmin() && request.resource.data.tipo != 'saas_admin' && request.resource.data.tenantId != 'saas') ||
+        (isAuthenticated() && request.auth.uid == userId && 
+         request.resource.data.tipo != 'saas_admin' && 
+         request.resource.data.tipo != 'admin' && 
+         request.resource.data.tenantId != 'saas');
 
-      allow update: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAuthenticated() && (isTestEmail(request.auth.token.email) || isStaff() || isBarbeiro());
+      // Atualização de perfil:
+      // 1. SaaS Admin pode atualizar qualquer perfil
+      // 2. Admin pode atualizar usuários da sua barbearia (sem conceder saas_admin)
+      // 3. Usuário comum atualizando a si próprio: ESTRITAMENTE PROIBIDO alterar 'tipo', 'tenantId', 'ativo' ou 'bloqueado'
+      // 4. Barbeiro pode atualizar dados de clientes vinculados a atendimentos (sem alterar cargos)
+      allow update: if isSaaSAdmin() ||
+        (isAdmin() && request.resource.data.tipo != 'saas_admin' && request.resource.data.tenantId != 'saas') ||
+        (
+          isAuthenticated() && request.auth.uid == userId && 
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tipo', 'tenantId', 'ativo', 'bloqueado'])
+        ) ||
+        (
+          isBarbeiro() && resource.data.tipo == 'cliente' &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tipo', 'tenantId', 'ativo', 'bloqueado'])
+        );
       
-      allow delete: if isAdmin();
+      allow delete: if isSaaSAdmin() || (isAdmin() && resource.data.tipo != 'saas_admin' && resource.data.tipo != 'admin');
 
       // Subcoleção de anotações internas dos clientes
       match /anotacoes/{anotacaoId} {
@@ -495,7 +508,11 @@ service cloud.firestore {
 
     // --- Accounts Payable / Receivables (Financeiro) ---
     match /accounts_payable/{id} {
-      allow read, write: if isAuthenticated() && isStaff();
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        (resource != null && resource.data.profissional_id == request.auth.uid)
+      );
+      allow write: if isAuthenticated() && isStaff();
     }
 
     match /accounts_receivable/{id} {

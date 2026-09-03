@@ -119,7 +119,12 @@ export const commissionService = {
     // Merge vales/adiantamentos registered in accounts_payable
     try {
       let payablesQuery;
-      if (activeTenant) {
+      if (filters.profissional_id) {
+        payablesQuery = query(
+          collection(db, 'accounts_payable'),
+          where('profissional_id', '==', filters.profissional_id)
+        );
+      } else if (activeTenant) {
         payablesQuery = query(
           collection(db, 'accounts_payable'),
           where('tenantId', '==', activeTenant)
@@ -129,7 +134,7 @@ export const commissionService = {
       }
 
       let payablesSnap = await getDocs(payablesQuery);
-      if (payablesSnap.empty && activeTenant) {
+      if (payablesSnap.empty && activeTenant && !filters.profissional_id) {
         payablesSnap = await getDocs(query(collection(db, 'accounts_payable')));
       }
 

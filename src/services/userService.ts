@@ -14,7 +14,7 @@ import {
   limit,
   onSnapshot
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { UserProfile, UserRole } from '../types';
 import { getActiveTenantId } from './tenantService';
 import { initializeApp, deleteApp } from 'firebase/app';
@@ -249,10 +249,12 @@ export const userService = {
       
       // 1. Try to create the user account on the server using Admin SDK
       try {
+        const token = await auth.currentUser?.getIdToken();
         const response = await fetch('/api/admin/create-user-auth', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
           },
           body: JSON.stringify({
             email: data.email.toLowerCase().trim(),

@@ -292,7 +292,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const isSaaSAdminUser = (profile?.email === 'barber@admin.ai' || user?.email === 'barber@admin.ai' || profile?.email === 'blsseparate7@gmail.com' || user?.email === 'blsseparate7@gmail.com' || (profile?.tipo === 'saas_admin' && profile?.email !== 'barbeariagbcortes7@gmail.com')) && user?.email !== 'barbeariagbcortes7@gmail.com';
+  const ALLOWED_SAAS_ADMIN_EMAILS = ['barber@admin.ai', 'blsseparate7@gmail.com'];
+  const userEmailNormalized = user?.email?.toLowerCase().trim() || '';
+  const profileEmailNormalized = profile?.email?.toLowerCase().trim() || '';
+  
+  const isSaaSAdminUser = (
+    ALLOWED_SAAS_ADMIN_EMAILS.includes(userEmailNormalized) ||
+    ALLOWED_SAAS_ADMIN_EMAILS.includes(profileEmailNormalized)
+  ) && userEmailNormalized !== 'barbeariagbcortes7@gmail.com';
   const activeRole = (isSaaSAdminUser && overrideRole) || 
     (isSaaSAdminUser
       ? 'saas_admin' 

@@ -301,10 +301,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       const qComandas = query(collection(db, 'comandas'));
       const unsubComandas = onSnapshot(qComandas, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
-      const qAdvs = query(collection(db, 'professional_advances'));
+      const qAdvs = query(collection(db, 'professional_advances'), where('profissional_id', '==', profile.uid));
       const unsubAdvs = onSnapshot(qAdvs, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
-      const qPay = query(collection(db, 'accounts_payable'));
+      const qPay = query(collection(db, 'accounts_payable'), where('profissional_id', '==', profile.uid));
       const unsubPay = onSnapshot(qPay, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
       const qCash = query(collection(db, 'cash_movements'));
@@ -483,9 +483,15 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   // Calculate statistics for Commission tab
   const stats = React.useMemo(() => {
     // 1. Pending commission only (Apenas comissão a receber) - absolute total
-    const toReceive = commissions
+    const toReceiveCommissions = commissions
       .filter(c => c.status === 'pendente')
       .reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
+
+    const pendingAdvances = advances
+      .filter(a => a.status === 'pendente')
+      .reduce((sum, a) => sum + (a.amount || 0), 0);
+
+    const toReceive = Math.max(0, toReceiveCommissions - pendingAdvances);
 
     // 2. Customers served today (Tanto de cliente atendido hoje)
     const servedTodayCount = appointments
@@ -505,7 +511,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       servedTodayCount,
       receivedThisMonth
     };
-  }, [commissions, appointments]);
+  }, [commissions, appointments, advances]);
 
   // Filtered commissions and advances based on the selected date range and status/type filters
   const filteredCommissions = React.useMemo(() => {

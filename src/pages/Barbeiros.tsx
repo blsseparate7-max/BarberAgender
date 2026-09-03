@@ -256,10 +256,12 @@ export function Barbeiros() {
 
         if (emailChanged || passwordChanged) {
           try {
+            const token = await auth.currentUser?.getIdToken();
             const response = await fetch('/api/admin/update-user-auth', {
               method: 'POST',
               headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
               },
               body: JSON.stringify({
                 uid: editingBarber.uid,
@@ -981,10 +983,12 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
     } catch (err: any) {
       console.warn("Client password reset email failed, attempting server-side fallback...", err);
       try {
+        const token = await auth.currentUser?.getIdToken();
         const response = await fetch('/api/admin/generate-reset-link', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
           },
           body: JSON.stringify({ email: email.trim() })
         });

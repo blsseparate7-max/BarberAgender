@@ -345,7 +345,8 @@ export function PortalSaaSAdmin() {
     setEditTenantTrialStartDate(tenant.trialStartDate ? tenant.trialStartDate.substring(0, 10) : '');
     setEditTenantTrialEndDate(tenant.trialEndDate ? tenant.trialEndDate.substring(0, 10) : '');
     setEditTenantSubscriptionsEnabled(tenant.subscriptions_enabled ?? false);
-    setEditTenantAsaasApiKey(tenant.asaas?.apiKey || '');
+    // Para segurança absoluta, nunca carregamos chave em texto plano no formulário
+    setEditTenantAsaasApiKey('');
     setEditTenantAsaasEnv(tenant.asaas?.environment === 'sandbox' ? 'sandbox' : 'production');
     setShowAsaasApiKey(false);
   };
@@ -407,13 +408,25 @@ export function PortalSaaSAdmin() {
         ownerEmail: editTenantOwnerEmail,
         ownerPhone: editTenantOwnerPhone,
         dueDateDay: Number(editTenantDueDateDay),
-        notes: editTenantNotes,
-        asaas: {
-          ...(editingTenant.asaas || {}),
-          apiKey: editTenantAsaasApiKey.trim(),
-          environment: editTenantAsaasEnv
-        }
-      }, { allowAsaasUpdate: true });
+        notes: editTenantNotes
+      });
+
+      // Se uma nova chave do Asaas foi digitada, salva de forma 100% blindada no backend
+      if (editTenantAsaasApiKey.trim()) {
+        await tenantService.saveAsaasKeySecure(
+          editingTenant.id,
+          editTenantAsaasApiKey.trim(),
+          editTenantAsaasEnv
+        );
+      } else if (editingTenant.asaas?.environment !== editTenantAsaasEnv) {
+        // Se apenas mudou o ambiente, atualiza com segurança
+        await tenantService.saveAsaasKeySecure(
+          editingTenant.id,
+          '', // não altera chave existente se não fornecida
+          editTenantAsaasEnv
+        );
+      }
+
       toast.dismiss(toastId);
       toast.success(`Barbearia ${editTenantName} atualizada com sucesso!`);
       setEditingTenant(null);
@@ -2504,16 +2517,16 @@ export function PortalSaaSAdmin() {
                             <Key size={11} className="text-emerald-600" />
                             Chave de API do Asaas (ApiKey)
                           </label>
-                          {editTenantAsaasApiKey && (
+                          {(editingTenant?.asaas?.hasKey || editingTenant?.asaas?.apiKey) && (
                             <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">
-                              🔒 Protegida
+                              🔒 Blindada no Servidor ({editingTenant.asaas.lastFour || editingTenant.asaas.apiKey?.slice(-4) || '••••'})
                             </span>
                           )}
                         </div>
                         <div className="relative">
                           <input 
                             type={showAsaasApiKey ? "text" : "password"}
-                            placeholder="Ex: $aact_YTU5Y... ou similar"
+                            placeholder={(editingTenant?.asaas?.hasKey || editingTenant?.asaas?.apiKey) ? "Deixe em branco para manter a chave atual ou digite uma nova" : "Ex: $aact_YTU5Y... ou similar"}
                             value={editTenantAsaasApiKey}
                             onChange={(e) => setEditTenantAsaasApiKey(e.target.value)}
                             className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-4 pr-11 text-xs font-bold text-slate-800 font-mono tracking-wider focus:outline-none focus:border-indigo-500 transition-colors"
@@ -2541,7 +2554,10 @@ export function PortalSaaSAdmin() {
                         </select>
                       </div>
                     </div>
-                    <p className="text-[10px] text-slate-500 font-medium ml-1">Insira a chave de API e selecione o ambiente para isolar os recebimentos e webhooks deste estabelecimento.</p>
+                    <p className="text-[10px] text-emerald-700 font-semibold ml-1 flex items-center gap-1">
+                      <span>🛡️</span>
+                      <span>Arquitetura Blindada: A chave física é armazenada exclusivamente em cofre seguro no servidor e nunca exposta publicamente.</span>
+                    </p>
 
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Notas Internas</label>
@@ -3614,13 +3630,13 @@ export function PortalSaaSAdmin() {
                       <div className="bg-white p-4 rounded-xl border border-slate-200">
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-between">
                           <span>Chave API (Asaas)</span>
-                          {raioXTenant.asaas?.apiKey && <span className="text-emerald-600 font-bold text-[9px]">🔒 Protegida</span>}
+                          {(raioXTenant.asaas?.hasKey || raioXTenant.asaas?.apiKey) && <span className="text-emerald-600 font-bold text-[9px]">🔒 Blindada no Servidor</span>}
                         </p>
                         <p className="font-mono text-slate-800 mt-1 break-all flex items-center gap-1.5">
-                          {raioXTenant.asaas?.apiKey ? (
+                          {(raioXTenant.asaas?.hasKey || raioXTenant.asaas?.apiKey) ? (
                             <>
                               <span className="text-slate-400">••••••••••••••••</span>
-                              <span className="text-slate-600 text-[11px] font-sans font-bold">({raioXTenant.asaas.apiKey.slice(-4)})</span>
+                              <span className="text-slate-600 text-[11px] font-sans font-bold">({raioXTenant.asaas?.lastFour || raioXTenant.asaas?.apiKey?.slice(-4) || 'Ativa'})</span>
                             </>
                           ) : (
                             <span className="text-slate-400 font-sans italic">Usando chave padrão do servidor / Não configurada</span>

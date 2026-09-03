@@ -75,42 +75,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setUser(null);
               setProfile(null);
             } else {
-              // Auto-correct discrepancies in Firestore database records
-              const userEmail = (data.email || '').toLowerCase().trim();
-              let needsUpdate = false;
-              let updateFields: Partial<UserProfile> = {};
-
-              if (userEmail === 'barber@admin.ai') {
-                if (data.tenantId !== 'saas' || data.tipo !== 'saas_admin') {
-                  needsUpdate = true;
-                  updateFields = { tenantId: 'saas', tipo: 'saas_admin' };
-                }
-              } else if (userEmail === 'barbeariagbcortes7@gmail.com') {
-                if (data.tenantId !== 'gbcortes7' || data.tipo !== 'admin') {
-                  needsUpdate = true;
-                  updateFields = { tenantId: 'gbcortes7', tipo: 'admin' };
-                }
+              if (data.tenantId && typeof window !== 'undefined') {
+                localStorage.setItem('barberelite_tenant_id', data.tenantId.trim().toLowerCase());
               }
-
-              if (needsUpdate) {
-                console.log(`Auto-correcting DB user profile for ${userEmail}:`, updateFields);
-                try {
-                  const { updateDoc } = await import('firebase/firestore');
-                  await updateDoc(doc(db, 'usuarios', firebaseUser.uid), updateFields);
-                } catch (updateErr) {
-                  console.error(`Failed to auto-correct profile for ${userEmail} in DB:`, updateErr);
-                }
-              }
-
-              // Set the profile state with any corrected values immediately to prevent UI lag/mismatch
-              const updatedProfile = {
-                ...data,
-                ...updateFields
-              };
-              if (updatedProfile.tenantId && typeof window !== 'undefined') {
-                localStorage.setItem('barberelite_tenant_id', updatedProfile.tenantId.trim().toLowerCase());
-              }
-              setProfile(updatedProfile);
+              setProfile(data);
             }
           } else {
             console.log("No profile document found in Firestore for UID:", firebaseUser.uid);
@@ -254,22 +222,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             if (!healedProfile) {
-              const isMasterAdmin = firebaseUser.email === 'barber@admin.ai' || firebaseUser.email === 'blsseparate7@gmail.com' || firebaseUser.email === 'temp-diagnose-client@example.com';
-              if (!isMasterAdmin) {
-                const creationTimeStr = firebaseUser.metadata.creationTime;
-                const creationTime = creationTimeStr ? new Date(creationTimeStr).getTime() : 0;
-                const now = Date.now();
-                
-                if (now - creationTime > 15000) {
-                  console.warn("Account does not exist in Firestore 'usuarios'. Forcing sign-out.");
-                  await auth.signOut();
-                  setUser(null);
-                  setProfile(null);
-                } else {
-                  console.log("Newly created account detected, waiting for Firestore profile to be created...");
-                }
-              } else {
+              const creationTimeStr = firebaseUser.metadata.creationTime;
+              const creationTime = creationTimeStr ? new Date(creationTimeStr).getTime() : 0;
+              const now = Date.now();
+              
+              if (now - creationTime > 15000) {
+                console.warn("Account does not exist in Firestore 'usuarios'. Forcing sign-out.");
+                await auth.signOut();
+                setUser(null);
                 setProfile(null);
+              } else {
+                console.log("Newly created account detected, waiting for Firestore profile to be created...");
               }
             }
           }
@@ -279,10 +242,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setLoading(false);
         });
 
+        // Verificação segura e autoritativa no backend para SaaS Admin sem expor e-mails no frontend
+        firebaseUser.getIdToken().then(async (token) => {
+          try {
+            const res = await fetch('/api/auth/me', {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.isSaaSAdmin) {
+                setServerIsSaaSAdmin(true);
+              }
+            }
+          } catch (_) {}
+        });
+
         return () => unsubscribeProfile();
       } else {
         setProfile(null);
         setLoading(false);
+        setServerIsSaaSAdmin(false);
       }
     });
 
@@ -292,43 +271,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const ALLOWED_SAAS_ADMIN_EMAILS = ['barber@admin.ai', 'blsseparate7@gmail.com'];
-  const userEmailNormalized = user?.email?.toLowerCase().trim() || '';
-  const profileEmailNormalized = profile?.email?.toLowerCase().trim() || '';
-  
-  const isSaaSAdminUser = (
-    ALLOWED_SAAS_ADMIN_EMAILS.includes(userEmailNormalized) ||
-    ALLOWED_SAAS_ADMIN_EMAILS.includes(profileEmailNormalized)
-  ) && userEmailNormalized !== 'barbeariagbcortes7@gmail.com';
+  const [serverIsSaaSAdmin, setServerIsSaaSAdmin] = useState(false);
+
+  const isSaaSAdminUser = (profile?.tipo === 'saas_admin' && (profile?.tenantId === 'saas' || !profile?.tenantId)) || serverIsSaaSAdmin;
   const activeRole = (isSaaSAdminUser && overrideRole) || 
-    (isSaaSAdminUser
-      ? 'saas_admin' 
-      : ((profile?.email === 'barbeariagbcortes7@gmail.com' ? 'admin' : profile?.tipo) || 'cliente'));
+    (isSaaSAdminUser ? 'saas_admin' : (profile?.tipo || 'cliente'));
 
   const adjustedProfile = React.useMemo(() => {
     if (profile) {
-      const finalProfile = { ...profile, tipo: activeRole };
-      if (finalProfile.email?.toLowerCase().trim() === 'barber@admin.ai') {
-        finalProfile.tenantId = 'saas';
-        finalProfile.tipo = 'saas_admin';
-      } else if (finalProfile.email?.toLowerCase().trim() === 'barbeariagbcortes7@gmail.com') {
-        finalProfile.tenantId = 'gbcortes7';
-        finalProfile.tipo = 'admin';
-      }
-      return finalProfile;
+      return { ...profile, tipo: activeRole };
     }
-    if (isSaaSAdminUser) {
+    if (isSaaSAdminUser && user) {
       return {
-        uid: user?.uid || 'saas-admin-uid',
-        email: user?.email || 'barber@admin.ai',
-        nome: 'Super Administrador SaaS',
+        uid: user.uid,
+        email: user.email || '',
+        nome: user.displayName || 'Super Administrador SaaS',
         tipo: 'saas_admin',
         tenantId: 'saas',
         ativo: true
       } as UserProfile;
     }
     return null;
-  }, [profile, user?.uid, user?.email, activeRole, isSaaSAdminUser]);
+  }, [profile, user, activeRole, isSaaSAdminUser]);
 
   const signOut = async () => {
     localStorage.removeItem('barberelite_override_role');

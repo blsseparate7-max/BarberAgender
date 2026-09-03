@@ -91,7 +91,7 @@ const SPECIALTY_PRESETS = [
 ];
 
 export function Barbeiros() {
-  const { isAdmin, isGerente } = useAuth();
+  const { isAdmin, isGerente, user } = useAuth();
   const { tenant, tenantId } = useTenant();
   const [barbeiros, setBarbeiros] = useState<UserProfile[]>([]);
   const [commissions, setCommissions] = useState<any[]>([]);
@@ -111,9 +111,10 @@ export function Barbeiros() {
     }
     setIsMerging(true);
     try {
+      const currentEmail = user?.email?.toLowerCase().trim();
       const gabrielBarbers = barbeiros.filter(b => 
         (b.nome && b.nome.toLowerCase().includes('gabriel')) ||
-        (b.email && b.email.toLowerCase() === 'barbeariagbcortes7@gmail.com')
+        (currentEmail && b.email && b.email.toLowerCase() === currentEmail)
       );
 
       if (gabrielBarbers.length <= 1) {
@@ -122,7 +123,7 @@ export function Barbeiros() {
         return;
       }
 
-      let primary = gabrielBarbers.find(b => b.email?.toLowerCase() === 'barbeariagbcortes7@gmail.com');
+      let primary = gabrielBarbers.find(b => currentEmail && b.email?.toLowerCase() === currentEmail);
       if (!primary) primary = gabrielBarbers[0];
 
       const duplicates = gabrielBarbers.filter(b => b.uid !== primary.uid);

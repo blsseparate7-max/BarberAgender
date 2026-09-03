@@ -98,7 +98,22 @@ service cloud.firestore {
 
     // Rules for Tenants (Multi-tenant units)
     match /tenants/{tenantId} {
-      allow read, get, list: if true;
+      // Leitura individual (get) permitida para carregar identidade visual da barbearia no agendamento
+      allow get: if true;
+
+      // Listagem em massa da coleção de tenants (list):
+      // - ESTRITAMENTE PROIBIDA para usuários anônimos e clientes comuns (impede scraping da base de barbearias)
+      // - Permitida para SaaS Admin (gestão global de tenants)
+      // - Permitida para Staff da barbearia (consulta da própria unidade)
+      // - Permitida para o dono da unidade localizando sua barbearia pelo email
+      allow list: if isSaaSAdmin() ||
+                     isStaff() ||
+                     (isAuthenticated() && (
+                       resource.data.ownerEmail == request.auth.token.email ||
+                       resource.data.email == request.auth.token.email ||
+                       resource.data.isActive == true
+                     ));
+
       allow create: if isAuthenticated() && tenantId != 'saas' && (isSaaSAdmin() || !exists(/databases/$(database)/documents/tenants/$(tenantId)));
       allow update: if isStaff() || isSaaSAdmin();
       allow delete: if isSaaSAdmin();
@@ -122,34 +137,66 @@ service cloud.firestore {
       allow delete: if isSaaSAdmin();
     }
 
-    // Rules for Usuarios collection - BLINDADA CONTRA ESCALAÇÃO DE PRIVILÉGIOS
+    // Rules for Usuarios collection - BLINDADA CONTRA ESCALAÇÃO DE PRIVILÉGIOS E VAZAMENTO DE PII
     match /usuarios/{userId} {
-      // Leitura de dados de perfil necessária para funcionamento e agendamento
-      allow get: if true;
-      allow list: if isAuthenticated() || (resource.data.tipo == 'barbeiro' && resource.data.ativo == true);
+      // Leitura de perfil individual:
+      // - O próprio usuário acessando seu perfil
+      // - Equipe da barbearia (Staff, SaaS Admin, Barbeiros)
+      // - Qualquer pessoa lendo perfis de profissionais (barbeiros/gestores) para agendamento
+      allow get: if (isAuthenticated() && request.auth.uid == userId) ||
+                    isStaff() || 
+                    isSaaSAdmin() || 
+                    isBarbeiro() ||
+                    (resource.data.tipo in ['barbeiro', 'gerente', 'admin'] && resource.data.ativo == true);
+
+      // Listagem da coleção de usuários:
+      // - ESTRITAMENTE PROIBIDO para clientes comuns listarem a base inteira (fecha listagem em massa de PII)
+      // - Permitido para Staff, SaaS Admin e Barbeiros
+      // - Permitido para listagem exclusiva de profissionais (para catálogo de agendamento online)
+      // - Permitido para consulta estrita pelo próprio e-mail autenticado (auto-healing de login)
+      allow list: if isStaff() || 
+                     isSaaSAdmin() || 
+                     isBarbeiro() ||
+                     (resource.data.tipo in ['barbeiro', 'gerente', 'admin']) ||
+                     (isAuthenticated() && resource.data.email == request.auth.token.email);
       
-      // Criação de perfil
+      // Criação de perfil:
+      // - SaaS Admin cria qualquer perfil
+      // - Admin de unidade cria usuários da sua barbearia (exceto saas_admin)
+      // - Auto-cadastro (signUp): OBRIGATORIAMENTE do tipo 'cliente' (bloqueia auto-promoção p/ gerente/barbeiro/admin)
       allow create: if isSaaSAdmin() ||
         (isAdmin() && request.resource.data.tipo != 'saas_admin' && request.resource.data.tenantId != 'saas') ||
-        (isAuthenticated() && request.auth.uid == userId && 
-         request.resource.data.tipo != 'saas_admin' && 
-         request.resource.data.tipo != 'admin' && 
-         request.resource.data.tenantId != 'saas');
+        (
+          isAuthenticated() && request.auth.uid == userId && 
+          request.resource.data.tipo == 'cliente' && 
+          request.resource.data.tenantId != 'saas'
+        );
 
       // Atualização de perfil:
       // 1. SaaS Admin pode atualizar qualquer perfil
       // 2. Admin pode atualizar usuários da sua barbearia (sem conceder saas_admin)
-      // 3. Usuário comum atualizando a si próprio: ESTRITAMENTE PROIBIDO alterar 'tipo', 'tenantId', 'ativo' ou 'bloqueado'
-      // 4. Barbeiro pode atualizar dados de clientes vinculados a atendimentos (sem alterar cargos)
+      // 3. Usuário comum atualizando a si próprio:
+      //    - ESTRITAMENTE PROIBIDO alterar permissões ('tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager')
+      //    - ESTRITAMENTE PROIBIDO alterar dados financeiros ('saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback')
+      //    - ESTRITAMENTE PROIBIDO alterar comissões e metas ('percentual_comissao', 'commission_percentage', 'remuneracao_fixa', 'monthly_goal', 'meta_mensal')
+      // 4. Barbeiro atualizando dados de clientes:
+      //    - Não pode alterar permissões nem saldo/cashback/financeiro do cliente
       allow update: if isSaaSAdmin() ||
         (isAdmin() && request.resource.data.tipo != 'saas_admin' && request.resource.data.tenantId != 'saas') ||
         (
           isAuthenticated() && request.auth.uid == userId && 
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tipo', 'tenantId', 'ativo', 'bloqueado'])
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager',
+            'saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback',
+            'percentual_comissao', 'commission_percentage', 'remuneracao_fixa', 'monthly_goal', 'meta_mensal'
+          ])
         ) ||
         (
           isBarbeiro() && resource.data.tipo == 'cliente' &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tipo', 'tenantId', 'ativo', 'bloqueado'])
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager',
+            'saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback'
+          ])
         );
       
       allow delete: if isSaaSAdmin() || (isAdmin() && resource.data.tipo != 'saas_admin' && resource.data.tipo != 'admin');

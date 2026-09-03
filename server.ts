@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp, getApps, App, cert, applicationDefault } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -327,6 +327,56 @@ app.use((req, res, next) => {
     }
   }
 
+  // Endpoint blindado para resolução segura de papel de SaaS Admin / permissões (Backend-Authoritative)
+  app.get(["/api/auth/me", "/auth/me"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.json({ authorized: false, isSaaSAdmin: false, role: "cliente" });
+      }
+
+      const fbAdmin = getFirebaseAdmin();
+      const SAAS_MASTER_EMAILS = [
+        "barber@admin.ai",
+        "blsseparate7@gmail.com"
+      ];
+      const isSaaSAdmin = SAAS_MASTER_EMAILS.includes(authCheck.email || "");
+
+      if (isSaaSAdmin && fbAdmin && authCheck.uid) {
+        try {
+          const db = getFirestore(fbAdmin);
+          const userRef = db.collection("usuarios").doc(authCheck.uid);
+          const docSnap = await userRef.get();
+          if (!docSnap.exists) {
+            await userRef.set({
+              uid: authCheck.uid,
+              email: authCheck.email,
+              nome: "Super Administrador SaaS",
+              tipo: "saas_admin",
+              tenantId: "saas",
+              ativo: true,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            });
+            console.log(`[auth/me] Criado perfil de saas_admin no Firestore para ${authCheck.email}`);
+          }
+        } catch (dbErr) {
+          console.warn("[auth/me] Aviso ao sincronizar doc de saas_admin:", dbErr);
+        }
+      }
+
+      return res.json({
+        authorized: true,
+        isSaaSAdmin,
+        email: authCheck.email,
+        uid: authCheck.uid,
+        role: isSaaSAdmin ? "saas_admin" : "admin"
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro interno de autenticação" });
+    }
+  });
+
   // API Route to reset another user's password (e.g. barber) using Firebase Admin - BLINDADA
   app.post(["/api/admin/reset-password", "/admin/reset-password"], async (req, res) => {
     try {
@@ -586,6 +636,201 @@ Instruções:
     }
   });
 
+  // API Route para Salvar Chave do Asaas de Forma 100% Blindada em private_settings
+  app.post(["/api/admin/save-asaas-key", "/admin/save-asaas-key"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+
+      const { tenantId, apiKey, environment } = req.body;
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenantId é obrigatório." });
+      }
+
+      const cleanKey = (apiKey || "").trim().replace(/^['"]|['"]$/g, '');
+      const cleanEnv = environment === "sandbox" ? "sandbox" : "production";
+      const lastFour = cleanKey.length >= 4 ? cleanKey.slice(-4) : "";
+      const hasKey = cleanKey.length > 10;
+
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(500).json({ error: "Firebase Admin indisponível no servidor." });
+      }
+
+      const db = getFirestore(fbAdmin);
+
+      // 1. Salvar ou atualizar chave física na subcoleção BLINDADA private_settings
+      const privRef = db.collection("tenants").doc(tenantId).collection("private_settings").doc("asaas");
+      const privSnap = await privRef.get();
+      const existingPrivData = privSnap.exists ? privSnap.data() : null;
+
+      let finalHasKey = false;
+      let finalLastFour = "";
+
+      if (hasKey) {
+        // Uma nova chave foi explicitamente enviada
+        await privRef.set({
+          apiKey: cleanKey,
+          environment: cleanEnv,
+          updatedAt: new Date().toISOString(),
+          updatedBy: authCheck.email || authCheck.uid || "admin"
+        }, { merge: true });
+        finalHasKey = true;
+        finalLastFour = lastFour;
+      } else if (existingPrivData?.apiKey) {
+        // Nenhuma nova chave enviada, mas já existia uma chave no private_settings: manter e atualizar env
+        await privRef.set({
+          environment: cleanEnv,
+          updatedAt: new Date().toISOString(),
+          updatedBy: authCheck.email || authCheck.uid || "admin"
+        }, { merge: true });
+        finalHasKey = true;
+        finalLastFour = existingPrivData.apiKey.slice(-4);
+      }
+
+      // 2. Atualizar o documento público do tenant SEM NENHUMA CHAVE FÍSICA
+      const tenantRef = db.collection("tenants").doc(tenantId);
+      const tenantSnap = await tenantRef.get();
+      const existingTenantData = tenantSnap.exists ? tenantSnap.data() : {};
+      const existingAsaas = existingTenantData?.asaas || {};
+
+      // Purgar qualquer resquício de apiKey em texto puro
+      delete existingAsaas.apiKey;
+
+      const sanitizedAsaas = {
+        ...existingAsaas,
+        hasKey: finalHasKey,
+        lastFour: finalHasKey ? finalLastFour : "",
+        environment: cleanEnv,
+        isConfigured: finalHasKey,
+        updatedAt: new Date().toISOString()
+      };
+
+      await tenantRef.set({
+        asaas: sanitizedAsaas,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      // Remover campo legado asaasApiKey se existir
+      try {
+        await tenantRef.update({
+          asaasApiKey: FieldValue.delete()
+        });
+      } catch (_) {}
+
+      await recordSecurityAudit('ASAAS_KEY_SECURE_SAVED', tenantId, { 
+        hasKey: finalHasKey, 
+        lastFour: finalLastFour, 
+        environment: cleanEnv, 
+        by: authCheck.email 
+      }, req);
+
+      console.log(`🔒 [Asaas Blindado] Chave do tenant ${tenantId} salva com sucesso em private_settings! Documento público sanitizado.`);
+
+      res.json({
+        success: true,
+        message: "Chave do Asaas blindada com sucesso!",
+        asaas: sanitizedAsaas
+      });
+    } catch (err: any) {
+      console.error("Erro ao blindar chave do Asaas:", err);
+      res.status(500).json({ error: err.message || "Erro ao salvar credenciais do Asaas." });
+    }
+  });
+
+  // API Route para Migrar e Sanitizar Todas as Chaves Públicas de Tenants Existentes (Blindagem Geral)
+  app.post(["/api/admin/migrate-asaas-keys", "/admin/migrate-asaas-keys"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(500).json({ error: "Firebase Admin indisponível no servidor." });
+      }
+
+      const db = getFirestore(fbAdmin);
+      const tenantsSnap = await db.collection("tenants").get();
+      const results: any[] = [];
+
+      for (const tDoc of tenantsSnap.docs) {
+        const tId = tDoc.id;
+        const data = tDoc.data();
+        const plainKey = (data?.asaas?.apiKey || data?.asaasApiKey || "").trim();
+        const env = data?.asaas?.environment || "production";
+
+        const privRef = db.collection("tenants").doc(tId).collection("private_settings").doc("asaas");
+        const privSnap = await privRef.get();
+        const privData = privSnap.exists ? privSnap.data() : null;
+
+        let migrated = false;
+        let finalKey = privData?.apiKey || "";
+
+        if (plainKey && plainKey.length > 5) {
+          // Migrar para private_settings
+          await privRef.set({
+            apiKey: plainKey,
+            environment: env,
+            migratedAt: new Date().toISOString(),
+            migratedBy: "security_shield_migration"
+          }, { merge: true });
+          finalKey = plainKey;
+          migrated = true;
+        }
+
+        const hasKey = !!finalKey && finalKey.length > 5;
+        const lastFour = hasKey ? finalKey.slice(-4) : "";
+
+        // Sanitizar documento do tenant
+        const updatedAsaas = {
+          ...(data.asaas || {}),
+          hasKey,
+          lastFour: hasKey ? lastFour : "",
+          isConfigured: hasKey,
+          environment: env,
+          updatedAt: new Date().toISOString()
+        };
+        delete updatedAsaas.apiKey;
+
+        const updatePayload: any = {
+          asaas: updatedAsaas,
+          updatedAt: new Date().toISOString()
+        };
+
+        if (data.asaasApiKey) {
+          updatePayload.asaasApiKey = FieldValue.delete();
+        }
+
+        await tDoc.ref.set(updatePayload, { merge: true });
+
+        results.push({
+          tenantId: tId,
+          migrated,
+          hasKey,
+          lastFour
+        });
+      }
+
+      await recordSecurityAudit('ASAAS_KEYS_BULK_MIGRATED', 'all', { 
+        totalProcessed: results.length,
+        by: authCheck.email 
+      }, req);
+
+      res.json({
+        success: true,
+        message: `Varredura e blindagem concluída em ${results.length} estabelecimentos.`,
+        results
+      });
+    } catch (err: any) {
+      console.error("Erro na migração de blindagem de chaves:", err);
+      res.status(500).json({ error: err.message || "Erro na migração das chaves." });
+    }
+  });
+
   // ==========================================
 function getAsaasBaseUrl(env?: string): string {
   const cleanEnv = (env || process.env.ASAAS_ENVIRONMENT || 'sandbox').toLowerCase().trim();
@@ -687,8 +932,8 @@ function encodeFirestoreFields(data: any): any {
       }
     }
 
-    const customKey = (tData?.asaas?.apiKey || tData?.asaasApiKey || privData?.apiKey || '').trim().replace(/^['"]|['"]$/g, '');
-    const explicitEnv = (tData?.asaas?.environment || privData?.environment || tData?.asaasEnvironment || privData?.env || '').toLowerCase().trim();
+    const customKey = (privData?.apiKey || tData?.asaas?.apiKey || tData?.asaasApiKey || '').trim().replace(/^['"]|['"]$/g, '');
+    const explicitEnv = (privData?.environment || privData?.env || tData?.asaas?.environment || tData?.asaasEnvironment || '').toLowerCase().trim();
 
     const cleanKey = customKey || masterApiKey;
     const hasCustomKey = !!customKey;

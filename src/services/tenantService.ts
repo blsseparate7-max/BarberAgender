@@ -10,7 +10,7 @@ import {
   where, 
   serverTimestamp 
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 
 export interface SaaSPlan {
   id: string;
@@ -73,12 +73,16 @@ export interface TenantProfile {
   // Asaas Subaccount (Conta Digital Integrada com CPF/CNPJ)
   asaas?: {
     subaccountId?: string; // ID da subconta Asaas (ex: cus_...)
-    apiKey?: string; // Chave de API exclusiva da subconta
+    apiKey?: string; // Legado (não utilizado para segurança)
+    hasKey?: boolean; // Flag indicando que a chave está salva e protegida no private_settings
+    lastFour?: string; // Últimos 4 dígitos para identificação segura
+    isConfigured?: boolean;
     walletId?: string; // WalletId da subconta
     accountStatus?: string; // APPROVED, PENDING, etc.
     cpfCnpj?: string;
     environment?: 'production' | 'sandbox';
     createdAt?: string;
+    updatedAt?: string;
   };
 
   // Configurações de Agenda e Horários Livres
@@ -219,6 +223,39 @@ export const tenantService = {
       });
     } catch (error) {
       console.error(`Error updating tenant ${tenantId}:`, error);
+      throw error;
+    }
+  },
+
+  /**
+   * Salva ou atualiza a chave de API do Asaas de forma 100% BLINDADA.
+   * A chave física é armazenada exclusivamente no backend em `private_settings/asaas`
+   * e NUNCA é exposta no documento público do tenant no Firestore.
+   */
+  async saveAsaasKeySecure(tenantId: string, apiKey: string, environment: 'production' | 'sandbox' = 'production'): Promise<{ success: boolean; asaas: any }> {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch('/api/admin/save-asaas-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          tenantId,
+          apiKey: apiKey.trim(),
+          environment
+        })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || 'Falha ao salvar chave do Asaas com segurança no servidor.');
+      }
+
+      return resData;
+    } catch (error) {
+      console.error(`Erro ao salvar chave Asaas de forma blindada para ${tenantId}:`, error);
       throw error;
     }
   },

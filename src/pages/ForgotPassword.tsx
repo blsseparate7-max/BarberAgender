@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../firebase';
-import { Scissors, Mail, Loader2, AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { Scissors, Mail, Loader2, AlertCircle, ArrowLeft, CheckCircle2, Clock } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface ForgotPasswordPageProps {
@@ -14,17 +14,65 @@ export function ForgotPasswordPage({ onLoginClick }: ForgotPasswordPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+
+  // Carregar e gerenciar cooldown de anti-spam
+  useEffect(() => {
+    const lastSent = localStorage.getItem('last_password_reset_sent');
+    if (lastSent) {
+      const elapsed = Math.floor((Date.now() - parseInt(lastSent, 10)) / 1000);
+      const remaining = 60 - elapsed;
+      if (remaining > 0) {
+        setCooldownSeconds(remaining);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds]);
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cooldownSeconds > 0) {
+      setError(`Aguarde ${cooldownSeconds} segundos antes de solicitar um novo link de redefinição.`);
+      return;
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail) {
+      setError('Informe um e-mail válido.');
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      localStorage.setItem('last_password_reset_sent', Date.now().toString());
+      setCooldownSeconds(60);
       setSuccess(true);
     } catch (err: any) {
       console.error(err);
-      setError('E-mail não encontrado ou erro ao enviar. Tente novamente.');
+      if (err.code === 'auth/too-many-requests') {
+        setError('Muitas tentativas em pouco tempo. Aguarde alguns minutos antes de tentar novamente.');
+        setCooldownSeconds(120);
+      } else if (err.code === 'auth/user-not-found') {
+        // Mensagem genérica para não permitir enumeração de e-mails
+        setSuccess(true);
+      } else {
+        setError('Não foi possível enviar o link no momento. Verifique o e-mail ou tente novamente mais tarde.');
+      }
     } finally {
       setLoading(false);
     }
@@ -88,10 +136,19 @@ export function ForgotPasswordPage({ onLoginClick }: ForgotPasswordPageProps) {
 
               <button 
                 type="submit" 
-                disabled={loading}
+                disabled={loading || cooldownSeconds > 0}
                 className="w-full bg-emerald-500 text-zinc-950 py-3 rounded-xl font-bold text-sm hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading ? <Loader2 className="animate-spin" size={18} /> : 'Enviar Link de Recuperação'}
+                {loading ? (
+                  <Loader2 className="animate-spin" size={18} />
+                ) : cooldownSeconds > 0 ? (
+                  <>
+                    <Clock size={18} />
+                    Aguarde {cooldownSeconds}s para reenviar
+                  </>
+                ) : (
+                  'Enviar Link de Recuperação'
+                )}
               </button>
 
               <div className="text-center pt-4">

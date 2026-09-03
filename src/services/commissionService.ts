@@ -156,11 +156,24 @@ export const commissionService = {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
           const pAmount = p.amount || 0;
 
-          // Check if already in results
+          // Check if already in results (by ID or matching advance description / amount)
           const isDuplicate = results.some(r => 
             r.id === docSnap.id || 
-            (Math.abs(r.amount - pAmount) < 0.01 && r.date === pDate)
+            p.advanceId === r.id ||
+            p.transactionId === r.id ||
+            (Math.abs(r.amount - pAmount) < 0.01 && (r.description.toLowerCase().includes(desc) || desc.includes(r.description.toLowerCase())))
           );
+
+          if (isDuplicate && p.status === 'paid') {
+            // Synchronize status in memory for matching advance doc
+            const match = results.find(r => 
+              r.id === docSnap.id || 
+              p.advanceId === r.id ||
+              p.transactionId === r.id ||
+              (Math.abs(r.amount - pAmount) < 0.01 && (r.description.toLowerCase().includes(desc) || desc.includes(r.description.toLowerCase())))
+            );
+            if (match) match.status = 'pago';
+          }
 
           if (!isDuplicate) {
             results.push({

@@ -26,6 +26,8 @@ import {
   Database,
   Check,
   Eye,
+  EyeOff,
+  KeyRound,
   RefreshCw,
   Users,
   Search,
@@ -43,6 +45,8 @@ import {
   HelpCircle as QuestionIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { ImageCropModal } from '../components/ImageCropModal';
@@ -63,9 +67,12 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [activeSection, setActiveSection] = useState(activeSubTab === 'configuracoes-perfil' ? 'user-profile' : 'profile');
   const [accentColor, setAccentColor] = useState(tenant?.accentColor || '#6366F1');
   const [logoUrl, setLogoUrl] = useState(tenant?.logoUrl || '');
+  const [coverImage, setCoverImage] = useState(tenant?.coverImage || '');
 
-  // Modal e Upload de Logo JPEG
+  // Modal e Upload de Fotos (Logo e Capa/Fachada) JPEG
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
+  const [cropTarget, setCropTarget] = useState<'logo' | 'cover'>('logo');
   const [tempImageSrc, setTempImageSrc] = useState<string>('');
   const [isCropModalOpen, setIsCropModalOpen] = useState<boolean>(false);
 
@@ -85,6 +92,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     reader.onload = (event) => {
       if (event.target?.result) {
         setTempImageSrc(event.target.result as string);
+        setCropTarget('logo');
         setIsCropModalOpen(true);
       }
     };
@@ -92,9 +100,41 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleCoverFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+    if (!isJpeg) {
+      toast.error('Formato não suportado. Por favor, selecione apenas arquivos de imagem no formato JPEG/JPG.');
+      if (coverFileInputRef.current) coverFileInputRef.current.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setTempImageSrc(event.target.result as string);
+        setCropTarget('cover');
+        setIsCropModalOpen(true);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (coverFileInputRef.current) coverFileInputRef.current.value = '';
+  };
+
   const handleOpenCropExisting = () => {
     if (logoUrl) {
       setTempImageSrc(logoUrl);
+      setCropTarget('logo');
+      setIsCropModalOpen(true);
+    }
+  };
+
+  const handleOpenCoverCropExisting = () => {
+    if (coverImage) {
+      setTempImageSrc(coverImage);
+      setCropTarget('cover');
       setIsCropModalOpen(true);
     }
   };
@@ -115,6 +155,16 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [isSavingUserProfile, setIsSavingUserProfile] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+
+  // Password change states
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [isSendingResetEmail, setIsSendingResetEmail] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -416,12 +466,82 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     }
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 6) {
+      toast.error('A nova senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('A confirmação da nova senha não confere com a nova senha.');
+      return;
+    }
+    if (!currentPassword) {
+      toast.error('Por favor, informe sua senha atual para autorizar a alteração.');
+      return;
+    }
+
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) {
+      toast.error('Usuário não autenticado no Firebase Auth.');
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      // Reautenticação do usuário para segurança
+      const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+      await reauthenticateWithCredential(currentUser, credential);
+
+      // Atualização da senha no Firebase Auth
+      await updatePassword(currentUser, newPassword);
+
+      toast.success('Sua senha foi alterada com sucesso!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (error: any) {
+      console.error('Erro ao alterar senha:', error);
+      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        toast.error('A senha atual informada está incorreta.');
+      } else if (error.code === 'auth/weak-password') {
+        toast.error('A nova senha é muito fraca. Escolha uma senha mais forte (mínimo 6 caracteres).');
+      } else if (error.code === 'auth/requires-recent-login') {
+        toast.error('Por segurança, faça login novamente no sistema e tente alterar sua senha.');
+      } else {
+        toast.error(error.message || 'Erro ao alterar senha. Verifique os dados e tente novamente.');
+      }
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const handleSendResetEmail = async () => {
+    const userEmail = auth.currentUser?.email || profile?.email;
+    if (!userEmail) {
+      toast.error('E-mail do usuário não localizado.');
+      return;
+    }
+
+    setIsSendingResetEmail(true);
+    try {
+      await sendPasswordResetEmail(auth, userEmail);
+      toast.success(`E-mail de redefinição de senha enviado para ${userEmail}. Verifique sua caixa de entrada!`);
+    } catch (error: any) {
+      console.error('Erro ao enviar e-mail de redefinição:', error);
+      toast.error('Não foi possível enviar o e-mail de redefinição. Tente novamente.');
+    } finally {
+      setIsSendingResetEmail(false);
+    }
+  };
+
   const loadSettings = async () => {
     setLoadingProfile(true);
     try {
       if (tenant) {
         setAccentColor(tenant.accentColor || '#6366F1');
         setLogoUrl(tenant.logoUrl || '');
+        setCoverImage(tenant.coverImage || '');
       }
       try {
         const config = await loyaltyService.getConfig();
@@ -461,7 +581,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       facebook: formData.get('facebook') as string,
       whatsapp: formData.get('whatsapp') as string,
       aboutText: formData.get('aboutText') as string,
-      coverImage: formData.get('coverImage') as string,
+      coverImage,
       address: {
         street: formData.get('street') as string,
         city: formData.get('city') as string,
@@ -838,6 +958,109 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       </div>
                     );
                   })()}
+
+                  {/* Seção de Segurança e Alteração de Senha */}
+                  <div className="p-6 md:p-8 bg-slate-50 border border-slate-200/80 rounded-3xl space-y-6 mt-8">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 bg-primary text-amber-400 rounded-2xl flex items-center justify-center shadow-md shadow-primary/10 shrink-0">
+                          <KeyRound size={22} />
+                        </div>
+                        <div>
+                          <h4 className="text-base font-black text-primary tracking-tight flex items-center gap-2">
+                            Segurança e Alteração de Senha
+                          </h4>
+                          <p className="text-xs text-muted font-medium">
+                            Altere a senha de acesso da sua conta com reautenticação segura.
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleSendResetEmail}
+                        disabled={isSendingResetEmail}
+                        className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-2xl text-xs font-bold shadow-sm flex items-center gap-2 transition active:scale-95 shrink-0 self-start sm:self-auto disabled:opacity-50"
+                      >
+                        {isSendingResetEmail ? <Loader2 className="animate-spin" size={14} /> : <Mail size={14} className="text-amber-500" />}
+                        <span>Enviar Link por E-mail</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Senha Atual</label>
+                        <div className="relative">
+                          <input 
+                            type={showCurrentPassword ? "text" : "password"}
+                            value={currentPassword}
+                            onChange={(e) => setCurrentPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 pr-12 pl-4 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                          >
+                            {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Nova Senha (min. 6 carac.)</label>
+                        <div className="relative">
+                          <input 
+                            type={showNewPassword ? "text" : "password"}
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 pr-12 pl-4 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowNewPassword(!showNewPassword)}
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                          >
+                            {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Confirmar Nova Senha</label>
+                        <div className="relative">
+                          <input 
+                            type={showConfirmPassword ? "text" : "password"}
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 pr-12 pl-4 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                          >
+                            {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        type="button"
+                        onClick={handleChangePassword}
+                        disabled={isChangingPassword || !currentPassword || !newPassword}
+                        className="px-6 py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-2xl flex items-center gap-2 transition active:scale-95 shadow-md shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isChangingPassword ? <Loader2 className="animate-spin" size={16} /> : <Lock size={16} />}
+                        <span>Atualizar Minha Senha</span>
+                      </button>
+                    </div>
+                  </div>
                 </section>
 
                 <div className="flex justify-end gap-4 pt-10 border-t border-slate-100">
@@ -1097,15 +1320,73 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                         />
                       </div>
 
-                      <div className="space-y-2 md:col-span-2">
-                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">URL da Imagem de Capa / Fachada (Portfólio)</label>
-                        <input 
-                          name="coverImage"
-                          type="text"
-                          defaultValue={tenant?.coverImage || ""}
-                          placeholder="https://exemplo.com/sua-fachada-ou-portfolio.jpg"
-                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                        />
+                      <div className="space-y-3 md:col-span-2 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                        <div className="flex flex-col md:flex-row items-center gap-6">
+                          <div className="relative group shrink-0">
+                            <div className="w-48 h-28 bg-white rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-300 overflow-hidden shadow-sm relative">
+                              {coverImage ? (
+                                <img src={coverImage} alt="Capa da Fachada" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <div className="flex flex-col items-center gap-1 text-slate-400">
+                                  <Camera size={24} />
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sem Capa</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="space-y-3 flex-1 w-full text-center md:text-left">
+                            <div>
+                              <h4 className="text-base font-black text-primary tracking-tight">Foto da Capa / Fachada (Portfólio)</h4>
+                              <p className="text-xs text-muted font-medium mt-1 leading-relaxed">
+                                Selecione uma foto da fachada ou ambiente da sua barbearia no formato <strong>JPEG (.jpg)</strong>. Você poderá recortar e ajustar no formato banner/fachada (1200x600px), exibindo-a com elegância no topo do Portal do Cliente.
+                              </p>
+                            </div>
+
+                            <input 
+                              type="file"
+                              ref={coverFileInputRef}
+                              accept="image/jpeg,image/jpg,.jpg,.jpeg"
+                              onChange={handleCoverFileSelect}
+                              className="hidden"
+                            />
+
+                            <div className="flex flex-wrap items-center gap-3 pt-1 justify-center md:justify-start">
+                              <button
+                                type="button"
+                                onClick={() => coverFileInputRef.current?.click()}
+                                className="px-5 py-2.5 bg-primary hover:bg-slate-800 text-white rounded-2xl text-xs font-black shadow-md shadow-primary/10 flex items-center gap-2 transition active:scale-95"
+                              >
+                                <Upload size={16} className="text-amber-400" />
+                                {coverImage ? 'Trocar Foto da Capa' : 'Enviar Foto da Capa (JPEG)'}
+                              </button>
+
+                              {coverImage && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={handleOpenCoverCropExisting}
+                                    className="px-4 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-2xl text-xs font-bold shadow-sm flex items-center gap-2 transition active:scale-95"
+                                  >
+                                    <Crop size={16} className="text-amber-500" />
+                                    Ajustar/Recortar Capa
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCoverImage('');
+                                      toast.success('Foto da capa/fachada removida.');
+                                    }}
+                                    className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-2xl text-xs font-bold transition active:scale-95"
+                                  >
+                                    Remover Capa
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="space-y-2">
@@ -2415,9 +2696,16 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
         isOpen={isCropModalOpen}
         imageSrc={tempImageSrc}
         onClose={() => setIsCropModalOpen(false)}
+        aspectRatio={cropTarget === 'cover' ? 'banner' : 'square'}
+        title={cropTarget === 'cover' ? 'Ajustar Foto da Fachada / Capa' : 'Ajustar Logo da Barbearia'}
         onCropComplete={(croppedDataUrl) => {
-          setLogoUrl(croppedDataUrl);
-          toast.success('Foto da logo processada e recortada em formato JPEG otimizado!');
+          if (cropTarget === 'cover') {
+            setCoverImage(croppedDataUrl);
+            toast.success('Foto da capa/fachada processada e recortada em formato JPEG!');
+          } else {
+            setLogoUrl(croppedDataUrl);
+            toast.success('Foto da logo processada e recortada em formato JPEG otimizado!');
+          }
         }}
         outputSize={300}
       />

@@ -7,7 +7,11 @@ interface ImageCropModalProps {
   imageSrc: string;
   onClose: () => void;
   onCropComplete: (croppedDataUrl: string) => void;
-  outputSize?: number; // Tamanho ideal da imagem final em pixels (default: 300px)
+  outputSize?: number; // Tamanho ideal da imagem final em pixels (default: 300px para quadrado)
+  outputWidth?: number;
+  outputHeight?: number;
+  aspectRatio?: 'square' | 'banner';
+  title?: string;
 }
 
 export const ImageCropModal: React.FC<ImageCropModalProps> = ({
@@ -15,8 +19,19 @@ export const ImageCropModal: React.FC<ImageCropModalProps> = ({
   imageSrc,
   onClose,
   onCropComplete,
-  outputSize = 300
+  outputSize = 300,
+  outputWidth,
+  outputHeight,
+  aspectRatio = 'square',
+  title
 }) => {
+  const isBanner = aspectRatio === 'banner';
+  const targetWidth = outputWidth || (isBanner ? 1200 : outputSize);
+  const targetHeight = outputHeight || (isBanner ? 600 : outputSize);
+  const containerW = isBanner ? 340 : 280;
+  const containerH = isBanner ? 170 : 280;
+
+  const modalTitle = title || (isBanner ? 'Ajustar Foto da Fachada / Capa' : 'Ajustar Logo da Barbearia');
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0); // 0, 90, 180, 270
   const [offset, setOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -72,41 +87,34 @@ export const ImageCropModal: React.FC<ImageCropModalProps> = ({
   const handleConfirmCrop = () => {
     if (!imgElement) return;
 
-    // Criar canvas na resolução exata essencial para o sistema (ex: 300x300)
     const canvas = document.createElement('canvas');
-    canvas.width = outputSize;
-    canvas.height = outputSize;
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Preencher fundo com branco caso seja transparente
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, outputSize, outputSize);
+    ctx.fillRect(0, 0, targetWidth, targetHeight);
 
-    // Salvar contexto antes das transformações
     ctx.save();
-
-    // Mover para o centro do canvas para rotação e escalonamento
-    ctx.translate(outputSize / 2, outputSize / 2);
+    ctx.translate(targetWidth / 2, targetHeight / 2);
     ctx.rotate((rotation * Math.PI) / 180);
     ctx.scale(zoom, zoom);
 
-    // Calcular proporção de renderização
-    const containerWidth = 280; // tamanho do container visual de crop
-    const scaleFactor = outputSize / containerWidth;
-
+    const scaleFactor = targetWidth / containerW;
     const drawX = offset.x * scaleFactor;
     const drawY = offset.y * scaleFactor;
 
-    // Ajustar para caber a imagem mantendo aspect ratio
-    const aspect = imgElement.width / imgElement.height;
-    let renderW = outputSize;
-    let renderH = outputSize;
+    const imgAspect = imgElement.width / imgElement.height;
+    const targetAspect = targetWidth / targetHeight;
 
-    if (aspect > 1) {
-      renderW = outputSize * aspect;
+    let renderW = targetWidth;
+    let renderH = targetHeight;
+
+    if (imgAspect > targetAspect) {
+      renderW = targetHeight * imgAspect;
     } else {
-      renderH = outputSize / aspect;
+      renderH = targetWidth / imgAspect;
     }
 
     ctx.drawImage(
@@ -119,7 +127,6 @@ export const ImageCropModal: React.FC<ImageCropModalProps> = ({
 
     ctx.restore();
 
-    // Exportar obrigatoriamente como JPEG de alta qualidade e peso leve (~0.88)
     const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.88);
     onCropComplete(jpegDataUrl);
     onClose();
@@ -141,8 +148,8 @@ export const ImageCropModal: React.FC<ImageCropModalProps> = ({
                 <Crop size={20} />
               </div>
               <div>
-                <h3 className="font-extrabold text-slate-900 text-lg leading-tight">Ajustar Logo da Barbearia</h3>
-                <p className="text-xs text-slate-500 font-medium">Formato JPEG otimizado ({outputSize}x{outputSize}px)</p>
+                <h3 className="font-extrabold text-slate-900 text-lg leading-tight">{modalTitle}</h3>
+                <p className="text-xs text-slate-500 font-medium">Formato JPEG otimizado ({targetWidth}x{targetHeight}px)</p>
               </div>
             </div>
             <button
@@ -164,7 +171,8 @@ export const ImageCropModal: React.FC<ImageCropModalProps> = ({
               onTouchStart={handleMouseDown}
               onTouchMove={handleMouseMove}
               onTouchEnd={handleMouseUp}
-              className="w-[280px] h-[280px] bg-slate-900 rounded-3xl overflow-hidden relative cursor-move select-none border-4 border-amber-500/30 shadow-inner flex items-center justify-center group"
+              style={{ width: `${containerW}px`, height: `${containerH}px` }}
+              className="bg-slate-900 rounded-3xl overflow-hidden relative cursor-move select-none border-4 border-amber-500/30 shadow-inner flex items-center justify-center group"
             >
               {/* Overlay com grid de enquadramento */}
               <div className="absolute inset-0 pointer-events-none z-10 grid grid-cols-3 grid-rows-3 border border-white/20">
@@ -252,7 +260,7 @@ export const ImageCropModal: React.FC<ImageCropModalProps> = ({
           <div className="flex items-center gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200/60 p-3 rounded-xl mb-6">
             <Sparkles size={16} className="shrink-0 text-amber-500" />
             <span>
-              A foto será processada e convertida em <strong>JPEG leve (300x300px)</strong> para carregamento ultra-rápido no painel e na landing page.
+              A foto será processada e convertida em <strong>JPEG leve ({targetWidth}x{targetHeight}px)</strong> para carregamento ultra-rápido no painel e na landing page.
             </span>
           </div>
 
@@ -271,7 +279,7 @@ export const ImageCropModal: React.FC<ImageCropModalProps> = ({
               className="px-6 py-2.5 rounded-xl font-black text-xs text-slate-950 bg-amber-500 hover:bg-amber-400 transition shadow-lg shadow-amber-500/20 flex items-center gap-2 active:scale-95"
             >
               <Check size={16} />
-              Confirmar e Salvar Logo
+              {isBanner ? 'Confirmar e Salvar Capa' : 'Confirmar e Salvar Logo'}
             </button>
           </div>
         </motion.div>

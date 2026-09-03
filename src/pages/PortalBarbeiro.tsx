@@ -47,6 +47,7 @@ import { inventoryService } from '../services/inventoryService';
 import { agendaBlockService } from '../services/agendaBlockService';
 import { teamGoalService, TeamGoal } from '../services/teamGoalService';
 import { subscriptionService } from '../services/subscriptionService';
+import { calculateProfessionalLedger } from '../services/ledgerService';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
@@ -480,38 +481,46 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
            (p.categoryName && p.categoryName.toLowerCase().includes(term));
   });
 
-  // Calculate statistics for Commission tab
+  // Calculate statistics for Commission tab using unified ledger engine
+  const ledger = React.useMemo(() => {
+    const currentBarberProfile: UserProfile = {
+      uid: profile.uid,
+      nome: profile.nome || 'Barbeiro',
+      email: profile.email,
+      tipo: 'barbeiro',
+      ativo: true,
+      saldo_atual: 0,
+      total_gasto: 0,
+      total_pago: 0,
+      percentual_comissao: profile.percentual_comissao,
+      commission_percentage: profile.commission_percentage
+    } as UserProfile;
+    const currentMonthStr = format(selectedDate, 'yyyy-MM');
+    return calculateProfessionalLedger(currentBarberProfile, commissions, advances, currentMonthStr);
+  }, [profile, commissions, advances, selectedDate]);
+
   const stats = React.useMemo(() => {
-    // 1. Pending commission only (Apenas comissão a receber) - absolute total
-    const toReceiveCommissions = commissions
-      .filter(c => c.status === 'pendente')
-      .reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
+    // 1. Pending commission (Comissão pendente bruta menos vales pendentes)
+    const toReceiveCommissions = ledger.comissaoPendenteBruta;
+    const pendingAdvances = ledger.valesPendentes;
+    const toReceive = ledger.saldoPendenteLiquido;
 
-    const pendingAdvances = advances
-      .filter(a => a.status === 'pendente')
-      .reduce((sum, a) => sum + (a.amount || 0), 0);
-
-    const toReceive = Math.max(0, toReceiveCommissions - pendingAdvances);
-
-    // 2. Customers served today (Tanto de cliente atendido hoje)
+    // 2. Customers served today
     const servedTodayCount = appointments
       .filter(app => app.status === 'concluído')
       .length;
 
-    // 3. This month's total completed commission
-    const currentYearMonth = format(new Date(), 'yyyy-MM');
-    const monthlyCommissions = commissions
-      .filter(c => c.date.startsWith(currentYearMonth));
-      
-    const receivedThisMonth = monthlyCommissions
-      .reduce((sum, c) => sum + (c.commission_value || c.amount || 0), 0);
+    // 3. This month's total generated commission
+    const receivedThisMonth = ledger.comissaoGeradaMes;
 
     return {
+      toReceiveCommissions,
+      pendingAdvances,
       toReceive,
       servedTodayCount,
       receivedThisMonth
     };
-  }, [commissions, appointments, advances]);
+  }, [ledger, appointments]);
 
   // Filtered commissions and advances based on the selected date range and status/type filters
   const filteredCommissions = React.useMemo(() => {
@@ -961,9 +970,12 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 <p className="text-3xl font-black tracking-tight text-white">
                   R$ {stats.toReceive.toFixed(2)}
                 </p>
-                <p className="text-[10px] text-slate-400 font-semibold leading-relaxed mt-1">
-                  Este é o valor líquido total de todas as suas comissões pendentes acumuladas.
-                </p>
+                <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-300 font-medium mt-1.5 pt-2 border-t border-slate-800">
+                  <span>Comissões Pendentes: <strong className="text-emerald-400 font-bold">R$ {stats.toReceiveCommissions.toFixed(2)}</strong></span>
+                  {stats.pendingAdvances > 0 && (
+                    <span>Vales Pendentes: <strong className="text-rose-400 font-bold">- R$ {stats.pendingAdvances.toFixed(2)}</strong></span>
+                  )}
+                </div>
               </div>
             </div>
 

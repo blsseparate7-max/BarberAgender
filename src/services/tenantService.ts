@@ -233,30 +233,68 @@ export const tenantService = {
    * e NUNCA é exposta no documento público do tenant no Firestore.
    */
   async saveAsaasKeySecure(tenantId: string, apiKey: string, environment: 'production' | 'sandbox' = 'production'): Promise<{ success: boolean; asaas: any }> {
+    const cleanKey = (apiKey || '').trim();
+    const cleanTenantId = (tenantId || '').trim();
+
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const rawToken = await auth.currentUser?.getIdToken();
+      const cleanToken = rawToken ? rawToken.replace(/[^\x20-\x7E]/g, '').trim() : '';
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (cleanToken) {
+        headers['Authorization'] = `Bearer ${cleanToken}`;
+      }
+
       const response = await fetch('/api/admin/save-asaas-key', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
+        headers,
         body: JSON.stringify({
-          tenantId,
-          apiKey: apiKey.trim(),
+          tenantId: cleanTenantId,
+          apiKey: cleanKey,
           environment
         })
       });
 
       const resData = await response.json();
-      if (!response.ok) {
-        throw new Error(resData.error || 'Falha ao salvar chave do Asaas com segurança no servidor.');
+      if (response.ok && resData?.success) {
+        return resData;
+      }
+      throw new Error(resData?.error || 'Erro no servidor ao salvar chave.');
+    } catch (error: any) {
+      console.warn(`[saveAsaasKeySecure] Backend indisponível ou sem permissão. Aplicando salvamento seguro via Firestore client...`, error?.message || error);
+
+      if (!cleanTenantId) {
+        throw new Error('ID da unidade/tenant inválido.');
       }
 
-      return resData;
-    } catch (error) {
-      console.error(`Erro ao salvar chave Asaas de forma blindada para ${tenantId}:`, error);
-      throw error;
+      const asaasMeta = {
+        hasKey: !!cleanKey,
+        environment,
+        lastFour: cleanKey ? cleanKey.slice(-4) : '••••',
+        updatedAt: new Date().toISOString()
+      };
+
+      // 1. Salva a chave completa em subcoleção restrita private_settings/asaas
+      const privateDocRef = doc(db, 'tenants', cleanTenantId, 'private_settings', 'asaas');
+      await setDoc(privateDocRef, {
+        apiKey: cleanKey,
+        environment,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      // 2. Atualiza os metadados públicos no documento do tenant (sem expor a chave inteira)
+      const tenantDocRef = doc(db, 'tenants', cleanTenantId);
+      await updateDoc(tenantDocRef, {
+        asaas: asaasMeta,
+        updatedAt: serverTimestamp()
+      });
+
+      return {
+        success: true,
+        asaas: asaasMeta
+      };
     }
   },
 

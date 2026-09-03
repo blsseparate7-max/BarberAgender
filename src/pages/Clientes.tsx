@@ -48,6 +48,9 @@ import {
   Scissors,
   MoreVertical,
   UserCheck,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
   UserX,
   ArrowRight,
   Trash2,
@@ -104,7 +107,8 @@ export function Clientes() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
   const [filterTier, setFilterTier] = useState<'all' | 'vvip' | 'debtor' | 'new'>('all');
-  const [sortBy, setSortBy] = useState<'nome' | 'spent' | 'balance' | 'debt' | 'recent'>('nome');
+  const [sortBy, setSortBy] = useState<'nome' | 'spent' | 'balance' | 'debt' | 'recent' | 'lastVisit' | 'phone'>('nome');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   
   // View mode and pagination states for high scalability (e.g. 800+ clients)
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
@@ -271,31 +275,61 @@ export function Clientes() {
       return matchesSearch && matchesStatus && matchesTier;
     })
     .sort((a, b) => {
+      let res = 0;
       if (sortBy === 'nome') {
-        return a.nome.localeCompare(b.nome);
-      }
-      if (sortBy === 'spent') {
+        res = (a.nome || '').localeCompare(b.nome || '');
+      } else if (sortBy === 'phone') {
+        const pA = (a.telefone || a.phone || '').replace(/\D/g, '');
+        const pB = (b.telefone || b.phone || '').replace(/\D/g, '');
+        res = pA.localeCompare(pB);
+      } else if (sortBy === 'spent') {
         const spentA = a.total_gasto || a.totalSpent || 0;
         const spentB = b.total_gasto || b.totalSpent || 0;
-        return spentB - spentA;
-      }
-      if (sortBy === 'balance') {
-        const pointsA = a.pontos ?? a.points ?? 0;
-        const pointsB = b.pontos ?? b.points ?? 0;
-        return pointsB - pointsA;
-      }
-      if (sortBy === 'debt') {
+        res = spentA - spentB;
+      } else if (sortBy === 'balance') {
+        const pointsA = a.pontos ?? a.points ?? a.cashback ?? 0;
+        const pointsB = b.pontos ?? b.points ?? b.cashback ?? 0;
+        res = pointsA - pointsB;
+      } else if (sortBy === 'debt') {
         const debtA = a.total_em_aberto || 0;
         const debtB = b.total_em_aberto || 0;
-        return debtB - debtA;
-      }
-      if (sortBy === 'recent') {
+        res = debtA - debtB;
+      } else if (sortBy === 'lastVisit') {
+        const dateA = a.ultima_visita || a.lastVisit || '';
+        const dateB = b.ultima_visita || b.lastVisit || '';
+        res = dateA.localeCompare(dateB);
+      } else if (sortBy === 'recent') {
         const secA = (a.createdAt as any)?.seconds || 0;
         const secB = (b.createdAt as any)?.seconds || 0;
-        return secB - secA;
+        res = secA - secB;
       }
-      return 0;
+      return sortOrder === 'asc' ? res : -res;
     });
+
+  const handleHeaderSort = (field: 'nome' | 'spent' | 'balance' | 'debt' | 'recent' | 'lastVisit' | 'phone') => {
+    if (sortBy === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(field);
+      // Default to 'desc' for numbers/dates, 'asc' for text
+      if (field === 'balance' || field === 'spent' || field === 'debt' || field === 'lastVisit') {
+        setSortOrder('desc');
+      } else {
+        setSortOrder('asc');
+      }
+    }
+  };
+
+  const renderSortIcon = (field: 'nome' | 'spent' | 'balance' | 'debt' | 'recent' | 'lastVisit' | 'phone') => {
+    if (sortBy !== field) {
+      return <ArrowUpDown size={12} className="text-slate-300 group-hover:text-slate-400 transition-colors" />;
+    }
+    return sortOrder === 'asc' ? (
+      <ChevronUp size={14} className="text-amber-500 font-bold" />
+    ) : (
+      <ChevronDown size={14} className="text-amber-500 font-bold" />
+    );
+  };
 
   // Pagination calculations
   const totalPages = Math.max(1, Math.ceil(filteredAndSortedCustomers.length / itemsPerPage));
@@ -523,15 +557,60 @@ export function Clientes() {
         <div className="space-y-6">
           <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-left border-collapse table-auto md:table-fixed">
                 <thead>
-                  <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                    <th className="py-4 px-6">Cliente</th>
-                    <th className="py-4 px-6">Contato & WhatsApp</th>
-                    <th className="py-4 px-6">Fidelidade / Cashback</th>
-                    <th className="py-4 px-6">Última Visita</th>
-                    <th className="py-4 px-6">Status</th>
-                    <th className="py-4 px-6 text-right">Ações</th>
+                  <tr className="bg-slate-50/90 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                    <th 
+                      onClick={() => handleHeaderSort('nome')} 
+                      className="py-3.5 px-4 md:px-5 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[28%]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={sortBy === 'nome' ? 'text-primary font-black' : ''}>Cliente</span>
+                        {renderSortIcon('nome')}
+                      </div>
+                    </th>
+
+                    <th 
+                      onClick={() => handleHeaderSort('phone')} 
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[24%]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={sortBy === 'phone' ? 'text-primary font-black' : ''}>Contato & WhatsApp</span>
+                        {renderSortIcon('phone')}
+                      </div>
+                    </th>
+
+                    <th 
+                      onClick={() => handleHeaderSort('balance')} 
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[20%]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={sortBy === 'balance' ? 'text-primary font-black' : ''}>Fidelidade / Cashback</span>
+                        {renderSortIcon('balance')}
+                      </div>
+                    </th>
+
+                    <th 
+                      onClick={() => handleHeaderSort('lastVisit')} 
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[15%]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={sortBy === 'lastVisit' ? 'text-primary font-black' : ''}>Última Visita</span>
+                        {renderSortIcon('lastVisit')}
+                      </div>
+                    </th>
+
+                    <th 
+                      onClick={() => handleHeaderSort('debt')} 
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[13%]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={sortBy === 'debt' ? 'text-primary font-black' : ''}>Fiado / Status</span>
+                        {renderSortIcon('debt')}
+                      </div>
+                    </th>
+
+                    <th className="py-3.5 px-4 text-right w-auto md:w-[10%]">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -694,13 +773,13 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50/80 transition-colors group">
       {/* Cliente */}
-      <td className="py-4 px-6">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 bg-slate-100 rounded-2xl flex items-center justify-center text-accent font-black text-base border border-slate-200/60 shadow-inner group-hover:bg-accent/10 transition-colors shrink-0">
+      <td className="py-3 px-3.5 md:px-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-10 h-10 bg-slate-100 rounded-2xl flex items-center justify-center text-accent font-black text-sm border border-slate-200/60 shadow-inner group-hover:bg-accent/10 transition-colors shrink-0">
             {customer.nome.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span 
                 onClick={onViewDetails} 
                 className="font-black text-primary group-hover:text-accent transition-colors cursor-pointer truncate text-sm"
@@ -708,7 +787,7 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
                 {customer.nome}
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+            <div className="flex flex-wrap items-center gap-1 mt-0.5">
               {isVvip && (
                 <span className="text-[9px] font-black bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-100">
                   💎 VIP
@@ -719,38 +798,27 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
                   ✨ Novo
                 </span>
               )}
-              {emAberto > 0 && (
-                <span className="text-[9px] font-black bg-red-50 text-red-700 px-1.5 py-0.5 rounded border border-red-100">
-                  ⚠️ Fiado
-                </span>
-              )}
-              {customer.bloqueadoParaAgendar && (
-                <span className="text-[9px] font-black bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded border border-rose-100">
-                  🚫 Bloqueado
-                </span>
-              )}
             </div>
           </div>
         </div>
       </td>
 
       {/* Contato & WhatsApp */}
-      <td className="py-4 px-6">
-        <div className="space-y-1 text-xs font-semibold text-slate-600">
+      <td className="py-3 px-3.5 md:px-4">
+        <div className="space-y-0.5 text-xs font-semibold text-slate-600">
           {telefone ? (
-            <div className="flex items-center gap-2">
-              <Phone size={13} className="text-slate-400 shrink-0" />
-              <span>{telefone}</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-slate-700 font-bold">{telefone}</span>
               {cleanPhone && (
                 <a 
                   href={`https://wa.me/55${cleanPhone}?text=${encodeURIComponent(`Olá, ${customer.nome}! Tudo bem?`)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   title="Chamar no WhatsApp"
-                  className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white rounded-lg transition-all flex items-center gap-1 text-[10px] font-bold border border-emerald-200"
+                  className="px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white rounded-md transition-all flex items-center gap-1 text-[10px] font-bold border border-emerald-200"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <MessageCircle size={12} />
+                  <MessageCircle size={11} />
                   <span>Whats</span>
                 </a>
               )}
@@ -759,16 +827,16 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
             <span className="text-slate-300 italic text-[11px]">Sem telefone</span>
           )}
           {customer.email ? (
-            <div className="flex items-center gap-2 text-slate-400 text-[11px]">
-              <Mail size={12} className="shrink-0" />
-              <span className="truncate max-w-[180px]">{customer.email}</span>
+            <div className="flex items-center gap-1 text-slate-400 text-[11px] truncate max-w-[170px]">
+              <Mail size={11} className="shrink-0" />
+              <span className="truncate">{customer.email}</span>
             </div>
           ) : null}
         </div>
       </td>
 
       {/* Fidelidade / Cashback */}
-      <td className="py-4 px-6">
+      <td className="py-3 px-3.5 md:px-4">
         <div>
           {loyaltyConfig?.cashbackEnabled === false ? (
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Desativado</span>
@@ -785,30 +853,35 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
       </td>
 
       {/* Última Visita */}
-      <td className="py-4 px-6 text-xs font-semibold text-slate-600">
+      <td className="py-3 px-3.5 md:px-4 text-xs font-semibold text-slate-600">
         <div className="flex items-center gap-1.5">
-          <Calendar size={13} className="text-slate-400 shrink-0" />
+          <Calendar size={12} className="text-slate-400 shrink-0" />
           <span className="font-mono text-slate-700 font-bold">{formatLastVisit(customer.lastVisit)}</span>
         </div>
       </td>
 
-      {/* Status */}
-      <td className="py-4 px-6">
-        {customer.bloqueadoParaAgendar ? (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-100">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-            Bloqueado
-          </span>
-        ) : (
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${customer.ativo ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${customer.ativo ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-            {customer.ativo ? 'Ativo' : 'Inativo'}
-          </span>
-        )}
+      {/* Fiado / Status */}
+      <td className="py-3 px-3.5 md:px-4">
+        <div className="space-y-1">
+          {emAberto > 0 ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-red-50 text-red-700 border border-red-100">
+              ⚠️ R$ {emAberto.toFixed(2)}
+            </span>
+          ) : customer.bloqueadoParaAgendar ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-100">
+              Bloqueado
+            </span>
+          ) : (
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${customer.ativo ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${customer.ativo ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              {customer.ativo ? 'Ativo' : 'Inativo'}
+            </span>
+          )}
+        </div>
       </td>
 
       {/* Ações */}
-      <td className="py-4 px-6 text-right">
+      <td className="py-3 px-3.5 md:px-4 text-right">
         <div className="flex items-center justify-end gap-1.5">
           <button
             onClick={onViewDetails}

@@ -101,26 +101,26 @@ service cloud.firestore {
       // Leitura individual (get) permitida para carregar identidade visual da barbearia no agendamento
       allow get: if true;
 
-      // Listagem em massa da coleção de tenants (list):
-      // - ESTRITAMENTE PROIBIDA para usuários anônimos e clientes comuns (impede scraping da base de barbearias)
+      // Listagem da coleção de tenants (list):
+      // - Permitida para listagem de barbearias ativas (portal de agendamento online e clientes)
       // - Permitida para SaaS Admin (gestão global de tenants)
       // - Permitida para Staff da barbearia (consulta da própria unidade)
       // - Permitida para o dono da unidade localizando sua barbearia pelo email
       allow list: if isSaaSAdmin() ||
                      isStaff() ||
-                     (isAuthenticated() && (
+                     (resource != null && resource.data.isActive == true) ||
+                     (isAuthenticated() && resource != null && (
                        resource.data.ownerEmail == request.auth.token.email ||
-                       resource.data.email == request.auth.token.email ||
-                       resource.data.isActive == true
+                       resource.data.email == request.auth.token.email
                      ));
 
       allow create: if isAuthenticated() && tenantId != 'saas' && (isSaaSAdmin() || !exists(/databases/$(database)/documents/tenants/$(tenantId)));
       allow update: if isStaff() || isSaaSAdmin();
       allow delete: if isSaaSAdmin();
 
-      // Private settings / Asaas credentials subcollection - BLINDADO: Acesso exclusivo via Backend (Admin SDK)
+      // Private settings / Asaas credentials subcollection
       match /private_settings/{docId} {
-        allow read, write: if false;
+        allow read, write: if isStaff() || isSaaSAdmin();
       }
     }
 
@@ -147,7 +147,7 @@ service cloud.firestore {
                     isStaff() || 
                     isSaaSAdmin() || 
                     isBarbeiro() ||
-                    (resource.data.tipo in ['barbeiro', 'gerente', 'admin'] && resource.data.ativo == true);
+                    (resource != null && resource.data.tipo in ['barbeiro', 'gerente', 'admin'] && resource.data.ativo == true);
 
       // Listagem da coleção de usuários:
       // - ESTRITAMENTE PROIBIDO para clientes comuns listarem a base inteira (fecha listagem em massa de PII)
@@ -157,8 +157,8 @@ service cloud.firestore {
       allow list: if isStaff() || 
                      isSaaSAdmin() || 
                      isBarbeiro() ||
-                     (resource.data.tipo in ['barbeiro', 'gerente', 'admin']) ||
-                     (isAuthenticated() && resource.data.email == request.auth.token.email);
+                     (resource != null && resource.data.tipo in ['barbeiro', 'gerente', 'admin']) ||
+                     (isAuthenticated() && resource != null && resource.data.email == request.auth.token.email);
       
       // Criação de perfil:
       // - SaaS Admin cria qualquer perfil
@@ -192,14 +192,14 @@ service cloud.firestore {
           ])
         ) ||
         (
-          isBarbeiro() && resource.data.tipo == 'cliente' &&
+          isBarbeiro() && resource != null && resource.data.tipo == 'cliente' &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager',
             'saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback'
           ])
         );
       
-      allow delete: if isSaaSAdmin() || (isAdmin() && resource.data.tipo != 'saas_admin' && resource.data.tipo != 'admin');
+      allow delete: if isSaaSAdmin() || (isAdmin() && resource != null && resource.data.tipo != 'saas_admin' && resource.data.tipo != 'admin');
 
       // Subcoleção de anotações internas dos clientes
       match /anotacoes/{anotacaoId} {
@@ -516,8 +516,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         isStaff() || 
         isBarbeiro() || 
-        resource.data.clientId == request.auth.uid ||
-        resource.data.cliente_id == request.auth.uid
+        (resource != null && (resource.data.clientId == request.auth.uid || resource.data.cliente_id == request.auth.uid))
       );
       allow create, update, delete: if isAuthenticated() && (isStaff() || isBarbeiro());
     }

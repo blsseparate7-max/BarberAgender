@@ -237,8 +237,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
           setLoading(false);
-        }, (error) => {
-          console.error("Error fetching profile (UID: " + firebaseUser.uid + "):", error);
+        }, async (error) => {
+          console.warn("Snapshot error fetching profile (UID: " + firebaseUser.uid + "):", error);
+          if (firebaseUser) {
+            try {
+              const userEmail = firebaseUser.email?.toLowerCase().trim() || '';
+              const { getActiveTenantId } = await import('../services/tenantService');
+              const defaultTenantId = getActiveTenantId() || 'gbcortes7';
+              const fallbackProfile: UserProfile = {
+                uid: firebaseUser.uid,
+                nome: firebaseUser.displayName || (userEmail ? userEmail.split('@')[0] : 'Cliente'),
+                email: userEmail,
+                tipo: 'cliente',
+                ativo: true,
+                tenantId: defaultTenantId,
+                telefone: firebaseUser.phoneNumber || '',
+                phone: firebaseUser.phoneNumber || '',
+                saldo_atual: 0,
+                total_gasto: 0,
+                total_pago: 0,
+                total_em_aberto: 0,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              };
+              await setDoc(doc(db, 'usuarios', firebaseUser.uid), fallbackProfile, { merge: true });
+              setProfile(fallbackProfile);
+            } catch (fallbackErr) {
+              console.error("Fallback creation error:", fallbackErr);
+            }
+          }
           setLoading(false);
         });
 

@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, User, Check, ChevronDown, ChevronUp, X, Phone, Plus } from 'lucide-react';
+import { Search, User, Check, ChevronDown, ChevronUp, X, Phone, Plus, UserPlus, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 import { UserProfile } from '../../types';
+import { userService } from '../../services/userService';
 
 interface ClientSelectComboboxProps {
   clients: UserProfile[];
@@ -31,8 +33,77 @@ export function ClientSelectCombobox({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(5);
+  
+  // Quick Create Client States
+  const [isQuickCreateOpen, setIsQuickCreateOpen] = useState(false);
+  const [quickName, setQuickName] = useState('');
+  const [quickPhone, setQuickPhone] = useState('');
+  const [quickObs, setQuickObs] = useState('');
+  const [isSubmittingQuick, setIsSubmittingQuick] = useState(false);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOpenQuickCreate = () => {
+    // Pre-fill name if query looks like name, or phone if numbers
+    if (searchQuery.trim()) {
+      if (/^\d+$/.test(searchQuery.replace(/\D/g, '')) && searchQuery.replace(/\D/g, '').length >= 8) {
+        setQuickPhone(searchQuery);
+        setQuickName('');
+      } else {
+        setQuickName(searchQuery);
+        setQuickPhone('');
+      }
+    } else {
+      setQuickName('');
+      setQuickPhone('');
+    }
+    setQuickObs('');
+    setIsQuickCreateOpen(true);
+  };
+
+  const handleCreateQuickClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickName.trim()) {
+      toast.error('Informe o nome do cliente!');
+      return;
+    }
+
+    // Check duplicate phone if provided
+    const cleanPhone = quickPhone.replace(/\D/g, '');
+    if (cleanPhone) {
+      const existing = clients.find(c => (c.telefone || c.phone || '').replace(/\D/g, '') === cleanPhone);
+      if (existing) {
+        toast.success(`Cliente "${existing.nome}" encontrado! Selecionado automaticamente.`);
+        onSelectClient(existing.uid || existing.id, existing.nome);
+        setIsQuickCreateOpen(false);
+        setIsOpen(false);
+        return;
+      }
+    }
+
+    setIsSubmittingQuick(true);
+    try {
+      const newClient = await userService.createUser({
+        nome: quickName.trim(),
+        telefone: quickPhone.trim(),
+        phone: quickPhone.trim(),
+        observacoes: quickObs.trim(),
+        tipo: 'cliente',
+        ativo: true
+      });
+
+      toast.success(`Cliente ${quickName.trim()} cadastrado e selecionado!`);
+      onSelectClient(newClient.uid, newClient.nome);
+      setIsQuickCreateOpen(false);
+      setIsOpen(false);
+    } catch (error: any) {
+      console.error('Erro ao cadastrar cliente rápido:', error);
+      toast.error(error.message || 'Erro ao cadastrar cliente.');
+    } finally {
+      setIsSubmittingQuick(false);
+    }
+  };
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -181,7 +252,7 @@ export function ClientSelectCombobox({
             className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-[100000] overflow-hidden flex flex-col max-h-80"
           >
             {/* Search Input Box */}
-            <div className="p-3 border-b border-slate-100 bg-slate-50/50 shrink-0">
+            <div className="p-3 border-b border-slate-100 bg-slate-50/50 shrink-0 space-y-2">
               <div className="relative">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
@@ -205,6 +276,16 @@ export function ClientSelectCombobox({
                   </button>
                 )}
               </div>
+
+              {/* Fast Quick Create Button */}
+              <button
+                type="button"
+                onClick={handleOpenQuickCreate}
+                className="w-full py-2 px-3 bg-gradient-to-r from-amber-500/10 via-amber-50 to-amber-100/60 hover:from-amber-500/20 hover:to-amber-200/80 text-amber-700 font-black text-xs rounded-xl transition-all flex items-center justify-center gap-2 border border-amber-200/80 shadow-sm active:scale-98"
+              >
+                <UserPlus size={15} className="text-amber-600" />
+                <span>➕ Cadastrar Novo Cliente Rápido</span>
+              </button>
             </div>
 
             {/* Client List */}
@@ -272,10 +353,20 @@ export function ClientSelectCombobox({
 
               {/* Empty Search Results */}
               {filteredClients.length === 0 && (
-                <div className="py-8 text-center text-slate-400 space-y-1">
-                  <User size={24} className="mx-auto text-slate-300" />
-                  <p className="text-xs font-bold text-slate-600">Nenhum cliente encontrado</p>
-                  <p className="text-[11px] text-slate-400">Verifique a ortografia ou cadastre um novo cliente.</p>
+                <div className="py-6 text-center text-slate-400 space-y-2.5 px-4">
+                  <User size={28} className="mx-auto text-slate-300" />
+                  <div>
+                    <p className="text-xs font-bold text-slate-700">Nenhum cliente encontrado</p>
+                    <p className="text-[11px] text-slate-400">Deseja cadastrá-lo rapidamente agora?</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOpenQuickCreate}
+                    className="py-2 px-3.5 bg-accent text-white font-black text-xs rounded-xl shadow-md hover:bg-accent/90 transition-all flex items-center justify-center gap-1.5 mx-auto active:scale-95"
+                  >
+                    <UserPlus size={14} />
+                    <span>Cadastrar "{searchQuery.trim() || 'Novo Client'}"</span>
+                  </button>
                 </div>
               )}
 
@@ -306,6 +397,109 @@ export function ClientSelectCombobox({
               </button>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Quick Create Client Modal Overlay */}
+      <AnimatePresence>
+        {isQuickCreateOpen && (
+          <div className="fixed inset-0 z-[100005] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 max-w-sm w-full space-y-4"
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-accent/10 text-accent flex items-center justify-center font-black">
+                    <UserPlus size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-primary text-base leading-tight">Cadastro Rápido</h3>
+                    <p className="text-[11px] text-muted font-medium">Adicione o cliente sem sair do agendamento</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsQuickCreateOpen(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateQuickClient} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Nome Completo <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={quickName}
+                    onChange={(e) => setQuickName(e.target.value)}
+                    placeholder="Ex: João da Silva"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-primary focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/15 outline-none transition-all"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    WhatsApp / Telefone <span className="text-slate-400 font-normal">(Opcional)</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={quickPhone}
+                    onChange={(e) => setQuickPhone(e.target.value)}
+                    placeholder="(11) 99999-9999"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-primary focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/15 outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Observação <span className="text-slate-400 font-normal">(Opcional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={quickObs}
+                    onChange={(e) => setQuickObs(e.target.value)}
+                    placeholder="Ex: Prefere corte tesoura..."
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-primary focus:bg-white focus:border-accent focus:ring-2 focus:ring-accent/15 outline-none transition-all"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsQuickCreateOpen(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingQuick}
+                    className="px-4 py-2 bg-accent hover:bg-accent/90 text-white rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                  >
+                    {isSubmittingQuick ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Salvando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check size={14} />
+                        <span>Salvar & Selecionar</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

@@ -148,8 +148,9 @@ export const commissionService = {
 
         let matchesPro = true;
         if (filters.profissional_id) {
-          matchesPro = p.profissional_id === filters.profissional_id ||
-            (targetProName && (supplier.includes(targetProName) || proName.includes(targetProName) || desc.includes(targetProName) || (targetProFirstName.length > 2 && desc.includes(targetProFirstName))));
+          matchesPro = p.profissional_id === filters.profissional_id;
+        } else {
+          matchesPro = !!p.profissional_id;
         }
 
         if ((isVale || p.profissional_id) && matchesPro) {
@@ -223,8 +224,9 @@ export const commissionService = {
 
         let matchesPro = true;
         if (filters.profissional_id) {
-          matchesPro = c.profissional_id === filters.profissional_id || c.barber_id === filters.profissional_id ||
-            (targetProName && (desc.includes(targetProName) || cProName.includes(targetProName) || (targetProFirstName.length > 2 && desc.includes(targetProFirstName))));
+          matchesPro = c.profissional_id === filters.profissional_id || c.barber_id === filters.profissional_id;
+        } else {
+          matchesPro = !!c.profissional_id || !!c.barber_id;
         }
 
         if (isVale && matchesPro) {

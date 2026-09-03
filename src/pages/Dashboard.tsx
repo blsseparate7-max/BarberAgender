@@ -40,7 +40,8 @@ import {
   Share2,
   Gift,
   Plus,
-  Trash2
+  Trash2,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays, isSameDay, parseISO } from 'date-fns';
@@ -182,7 +183,10 @@ export function Dashboard({ stats: initialStats, setActiveTab, activeSubTab }: {
 
 // --- ADMIN / MANAGER DASHBOARD ---
 function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, activeTab = 'overview' }: any) {
-  const { tenantId } = useTenant();
+  const { tenantId, tenant, updateTenantProfile } = useTenant();
+  const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [newGoal, setNewGoal] = useState('');
+  const [isSavingGoal, setIsSavingGoal] = useState(false);
   const [comandasAbertas, setComandasAbertas] = useState<any[]>([]);
   const [clientesDevedores, setClientesDevedores] = useState<any[]>([]);
   const [baixoEstoque, setBaixoEstoque] = useState<any[]>([]);
@@ -224,6 +228,21 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
   }, [activeTab, tenantId]);
 
   const topBarbers = data?.topBarbers || [];
+  const monthlyGoal = tenant?.monthlyGoal || 25000;
+
+  const handleSaveGoal = async () => {
+    const val = parseFloat(newGoal.replace(/[^\d.]/g, '')) || 0;
+    if (val <= 0) return;
+    setIsSavingGoal(true);
+    try {
+      await updateTenantProfile({ monthlyGoal: val });
+      setIsEditingGoal(false);
+    } catch (err) {
+      console.error("Error saving monthly goal:", err);
+    } finally {
+      setIsSavingGoal(false);
+    }
+  };
   const topServices = data?.topServices || [];
   const todayAppointments = (data?.recentAppointments || []).filter((a: any) => a.date === format(new Date(), 'yyyy-MM-dd'));
 
@@ -566,11 +585,57 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                 <div className="space-y-6">
                   {/* Goals & Alerts Quick Widget */}
                   <div className="bg-surface border border-border rounded-[2.5rem] p-8 shadow-sm">
-                    <h3 className="font-bold text-xl text-primary mb-6 flex items-center gap-3">
-                      <Target size={22} className="text-secondary" />
-                      Projeção Mensal
+                    <h3 className="font-bold text-xl text-primary mb-6 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <Target size={22} className="text-secondary" />
+                        Projeção Mensal
+                      </div>
+                      {!isEditingGoal && (
+                        <button
+                          onClick={() => {
+                            setNewGoal(String(monthlyGoal));
+                            setIsEditingGoal(true);
+                          }}
+                          className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-primary transition-all active:scale-95"
+                          title="Editar Meta de Faturamento"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
                     </h3>
-                    <p className="text-muted text-xs mb-6 font-medium">Progresso em relação à meta mensal estipulada de R$ 25.000.</p>
+                    <p className="text-muted text-xs mb-6 font-medium">Progresso em relação à meta mensal estipulada de R$ {monthlyGoal.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}.</p>
+
+                    {isEditingGoal && (
+                      <div className="flex flex-col gap-2 p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-6 shadow-inner animate-in fade-in duration-200">
+                        <span className="text-[10px] font-black text-slate-400 uppercase">Definir Nova Meta Mensal</span>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            value={newGoal}
+                            onChange={(e) => setNewGoal(e.target.value)}
+                            placeholder="Digite o valor"
+                            className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-primary focus:outline-none focus:ring-2 focus:ring-accent/15"
+                            disabled={isSavingGoal}
+                            autoFocus
+                          />
+                          <button
+                            onClick={handleSaveGoal}
+                            disabled={isSavingGoal}
+                            className="px-4 py-2 bg-primary hover:bg-slate-800 text-white rounded-xl text-xs font-black transition-all shadow-sm flex items-center gap-1.5"
+                          >
+                            {isSavingGoal ? <Loader2 className="animate-spin" size={14} /> : 'Salvar'}
+                          </button>
+                          <button
+                            onClick={() => setIsEditingGoal(false)}
+                            disabled={isSavingGoal}
+                            className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-500 rounded-xl text-xs font-black transition-all"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-5">
                       <div className="flex items-end justify-between">
                         <div>
@@ -579,17 +644,17 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
                         </div>
                         <div className="text-right">
                           <p className="text-xs font-black text-slate-400 uppercase mb-1">Meta</p>
-                          <p className="text-lg font-black text-primary/70 tracking-tighter">R$ 25.000</p>
+                          <p className="text-lg font-black text-primary/70 tracking-tighter">R$ {monthlyGoal.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</p>
                         </div>
                       </div>
                       <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
                         <div 
                           className="h-full bg-accent rounded-full transition-all duration-1000"
-                          style={{ width: `${Math.min((safeNumber(data?.monthlyRevenue) / 25000) * 100, 100)}%` }}
+                          style={{ width: `${Math.min((safeNumber(data?.monthlyRevenue) / monthlyGoal) * 100, 100)}%` }}
                         />
                       </div>
                       <p className="text-[10px] text-muted font-bold text-center uppercase tracking-wider">
-                        {((safeNumber(data?.monthlyRevenue) / 25000) * 100).toFixed(0)}% Alcançado
+                        {((safeNumber(data?.monthlyRevenue) / monthlyGoal) * 100).toFixed(0)}% Alcançado
                       </p>
                     </div>
                   </div>

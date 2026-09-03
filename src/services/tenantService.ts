@@ -50,6 +50,7 @@ export interface TenantProfile {
   whatsapp?: string;
   aboutText?: string;
   coverImage?: string;
+  monthlyGoal?: number;
 
   // Configurações de SaaS, Planos e Período de Teste (Trial)
   planId?: string;

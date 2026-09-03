@@ -562,7 +562,7 @@ export function Clientes() {
                   <tr className="bg-slate-50/90 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
                     <th 
                       onClick={() => handleHeaderSort('nome')} 
-                      className="py-3.5 px-4 md:px-5 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[28%]"
+                      className="py-3.5 px-4 md:px-5 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[32%]"
                     >
                       <div className="flex items-center gap-1.5">
                         <span className={sortBy === 'nome' ? 'text-primary font-black' : ''}>Cliente</span>
@@ -572,7 +572,7 @@ export function Clientes() {
 
                     <th 
                       onClick={() => handleHeaderSort('phone')} 
-                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[24%]"
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[26%]"
                     >
                       <div className="flex items-center gap-1.5">
                         <span className={sortBy === 'phone' ? 'text-primary font-black' : ''}>Contato & WhatsApp</span>
@@ -591,18 +591,8 @@ export function Clientes() {
                     </th>
 
                     <th 
-                      onClick={() => handleHeaderSort('lastVisit')} 
-                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[15%]"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span className={sortBy === 'lastVisit' ? 'text-primary font-black' : ''}>Última Visita</span>
-                        {renderSortIcon('lastVisit')}
-                      </div>
-                    </th>
-
-                    <th 
                       onClick={() => handleHeaderSort('debt')} 
-                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[13%]"
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[12%]"
                     >
                       <div className="flex items-center gap-1.5">
                         <span className={sortBy === 'debt' ? 'text-primary font-black' : ''}>Fiado / Status</span>
@@ -787,7 +777,13 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
                 {customer.nome}
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-1 mt-0.5">
+            {customer.lastVisit && (
+              <div className="flex items-center gap-1 text-[10px] text-slate-400 font-bold mt-0.5">
+                <Calendar size={10} className="shrink-0" />
+                <span>Última visita: {formatLastVisit(customer.lastVisit)}</span>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-1 mt-1">
               {isVvip && (
                 <span className="text-[9px] font-black bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-100">
                   💎 VIP
@@ -849,14 +845,6 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
               ⭐ {customer.pontos ?? customer.points ?? 0} pts
             </span>
           )}
-        </div>
-      </td>
-
-      {/* Última Visita */}
-      <td className="py-3 px-3.5 md:px-4 text-xs font-semibold text-slate-600">
-        <div className="flex items-center gap-1.5">
-          <Calendar size={12} className="text-slate-400 shrink-0" />
-          <span className="font-mono text-slate-700 font-bold">{formatLastVisit(customer.lastVisit)}</span>
         </div>
       </td>
 

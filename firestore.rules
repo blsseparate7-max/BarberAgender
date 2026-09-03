@@ -194,8 +194,7 @@ service cloud.firestore {
         (
           isBarbeiro() && resource != null && resource.data.tipo == 'cliente' &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager',
-            'saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback'
+            'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager'
           ])
         );
       

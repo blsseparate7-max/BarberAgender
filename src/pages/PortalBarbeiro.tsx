@@ -144,6 +144,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [loadingAppointments, setLoadingAppointments] = useState(true);
 
   // New Modals State for Barber manual control
+  const [isFabOpen, setIsFabOpen] = useState(false);
   const [isAppointmentModalOpen, setIsAppointmentModalOpen] = useState(false);
   const [isComandaModalOpen, setIsComandaModalOpen] = useState(false);
   const [isManualComandaOpen, setIsManualComandaOpen] = useState(false);
@@ -813,33 +814,6 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               </div>
             </div>
 
-            {/* Quick Actions Panel */}
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                onClick={() => handleNewAppointment('09:00', profile.uid)}
-                className="flex flex-col items-center justify-center p-3.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100/60 text-indigo-700 rounded-2xl transition shadow-sm active:scale-95 text-center gap-1.5"
-              >
-                <Plus size={16} strokeWidth={3} className="text-indigo-600" />
-                <span className="text-[10px] font-black uppercase tracking-wider">Novo Agendamento</span>
-              </button>
-
-              <button
-                onClick={() => setIsManualComandaOpen(true)}
-                className="flex flex-col items-center justify-center p-3.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/60 text-emerald-700 rounded-2xl transition shadow-sm active:scale-95 text-center gap-1.5"
-              >
-                <ArrowRightLeft size={16} strokeWidth={2.5} className="text-emerald-600" />
-                <span className="text-[10px] font-black uppercase tracking-wider">Abrir Comanda</span>
-              </button>
-
-              <button
-                onClick={() => setIsBlockModalOpen(true)}
-                className="flex flex-col items-center justify-center p-3.5 bg-rose-50 hover:bg-rose-100 border border-rose-100/60 text-rose-700 rounded-2xl transition shadow-sm active:scale-95 text-center gap-1.5"
-              >
-                <Lock size={16} strokeWidth={2.5} className="text-rose-600" />
-                <span className="text-[10px] font-black uppercase tracking-wider">Bloquear Horário</span>
-              </button>
-            </div>
-
             {/* Agenda Hourly Grid */}
             <div className="bg-white border border-slate-200/80 p-1.5 rounded-3xl shadow-sm overflow-hidden">
               <AgendaGeneral
@@ -958,11 +932,11 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider flex items-center gap-1.5">
-                  <DollarSign size={13} className="text-indigo-400" />
-                  Sua Comissão Acumulada
+                  <DollarSign size={13} className="text-emerald-400" />
+                  Saldo Líquido a Receber
                 </span>
-                <span className="text-[9px] bg-indigo-500/20 text-indigo-300 font-bold px-2 py-0.5 rounded-full border border-indigo-500/20">
-                  Total Pendente Geral
+                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                  A Receber Geral
                 </span>
               </div>
 
@@ -1051,7 +1025,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
             </div>
 
             {/* Resumo Financeiro do Período */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
@@ -1102,19 +1076,6 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   </p>
                 </div>
                 <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Adiantamentos pegos</p>
-              </div>
-
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm col-span-2 sm:col-span-1 flex flex-col justify-between">
-                <div>
-                  <p className="text-[9px] font-black text-indigo-600 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
-                    Saldo Líquido
-                  </p>
-                  <p className={`text-sm font-black ${periodStats.saldoLiquidoPeriodo >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
-                    R$ {periodStats.saldoLiquidoPeriodo.toFixed(2)}
-                  </p>
-                </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Comissão menos vales</p>
               </div>
             </div>
 
@@ -1915,6 +1876,84 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         onClose={() => setIsCropModalOpen(false)}
         onCropComplete={handleSaveCroppedPhoto}
       />
+
+      {/* Floating Action Button (FAB) (+) */}
+      <div className="fixed bottom-6 right-6 z-[9990]">
+        <AnimatePresence>
+          {isFabOpen && (
+            <>
+              {/* Backdrop */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsFabOpen(false)}
+                className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[-1]"
+              />
+              
+              {/* Menu Options */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.85, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.85, y: 15 }}
+                className="mb-3 flex flex-col items-end gap-2.5"
+              >
+                <button
+                  onClick={() => {
+                    setIsFabOpen(false);
+                    handleNewAppointment('09:00', profile.uid);
+                  }}
+                  className="flex items-center gap-2.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-2xl shadow-xl border border-indigo-500/30 font-black text-xs active:scale-95 transition-all group"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Novo Agendamento</span>
+                  <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center">
+                    <Calendar size={15} className="text-white" />
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsFabOpen(false);
+                    setIsManualComandaOpen(true);
+                  }}
+                  className="flex items-center gap-2.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-2xl shadow-xl border border-emerald-500/30 font-black text-xs active:scale-95 transition-all group"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Abrir Comanda</span>
+                  <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center">
+                    <ArrowRightLeft size={15} className="text-white" />
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsFabOpen(false);
+                    setIsBlockModalOpen(true);
+                  }}
+                  className="flex items-center gap-2.5 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2.5 rounded-2xl shadow-xl border border-rose-500/30 font-black text-xs active:scale-95 transition-all group"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Bloquear Horário</span>
+                  <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center">
+                    <Lock size={15} className="text-white" />
+                  </div>
+                </button>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
+        <button
+          type="button"
+          onClick={() => setIsFabOpen(prev => !prev)}
+          className={`w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 active:scale-90 border border-white/20 ${
+            isFabOpen
+              ? 'bg-slate-800 text-white rotate-45'
+              : 'bg-indigo-600 hover:bg-indigo-700 text-white hover:scale-105'
+          }`}
+          title="Ações Rápidas"
+        >
+          <Plus size={28} strokeWidth={3} />
+        </button>
+      </div>
 
     </div>
   );

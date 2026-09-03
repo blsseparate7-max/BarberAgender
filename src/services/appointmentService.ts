@@ -680,7 +680,6 @@ export const appointmentService = {
               lastServiceAt: serverTimestamp(),
               preferred_profissional_id: appointment.profissional_id,
               preferred_profissional_name: appointment.profissional_name,
-              ativo: true,
               updatedAt: serverTimestamp()
             }).catch(err => console.error("Erro ao atualizar estatísticas do cliente:", err));
           }

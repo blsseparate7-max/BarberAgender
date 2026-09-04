@@ -8,7 +8,7 @@ import { userService } from '../../services/userService';
 interface ClientSelectComboboxProps {
   clients: UserProfile[];
   selectedClientId: string;
-  onSelectClient: (clientId: string, clientName: string) => void;
+  onSelectClient: (clientId: string, clientName: string, clientObj?: UserProfile) => void;
   placeholder?: string;
   allowAvulso?: boolean;
   avulsoLabel?: string;
@@ -33,6 +33,7 @@ export function ClientSelectCombobox({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(5);
+  const [locallyCreatedClients, setLocallyCreatedClients] = useState<UserProfile[]>([]);
   
   // Quick Create Client States
   const [isQuickCreateOpen, setIsQuickCreateOpen] = useState(false);
@@ -43,6 +44,20 @@ export function ClientSelectCombobox({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Combine parent clients and any client created in this session
+  const allClients = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    (clients || []).forEach(c => {
+      const id = c.uid || (c as any).id;
+      if (id) map.set(id, c);
+    });
+    locallyCreatedClients.forEach(c => {
+      const id = c.uid || (c as any).id;
+      if (id && !map.has(id)) map.set(id, c);
+    });
+    return Array.from(map.values());
+  }, [clients, locallyCreatedClients]);
 
   const handleOpenQuickCreate = () => {
     // Pre-fill name if query looks like name, or phone if numbers
@@ -74,10 +89,10 @@ export function ClientSelectCombobox({
     // Check duplicate phone if provided
     const cleanPhone = quickPhone.replace(/\D/g, '');
     if (cleanPhone) {
-      const existing = clients.find(c => (c.telefone || c.phone || '').replace(/\D/g, '') === cleanPhone);
+      const existing = allClients.find(c => (c.telefone || c.phone || '').replace(/\D/g, '') === cleanPhone);
       if (existing) {
         toast.success(`Cliente "${existing.nome}" encontrado! Selecionado automaticamente.`);
-        onSelectClient(existing.uid || existing.id, existing.nome);
+        onSelectClient(existing.uid || (existing as any).id, existing.nome, existing);
         setIsQuickCreateOpen(false);
         setIsOpen(false);
         return;
@@ -95,8 +110,9 @@ export function ClientSelectCombobox({
         ativo: true
       });
 
+      setLocallyCreatedClients(prev => [newClient, ...prev]);
       toast.success(`Cliente ${quickName.trim()} cadastrado e selecionado!`);
-      onSelectClient(newClient.uid, newClient.nome);
+      onSelectClient(newClient.uid, newClient.nome, newClient);
       setIsQuickCreateOpen(false);
       setIsOpen(false);
     } catch (error: any) {
@@ -136,14 +152,14 @@ export function ClientSelectCombobox({
     if (selectedClientId === avulsoValue || selectedClientId === 'avulso' || selectedClientId === 'sem_cadastro') {
       return { uid: selectedClientId, nome: avulsoLabel, isAvulso: true };
     }
-    return clients.find(c => c.uid === selectedClientId || c.id === selectedClientId) || null;
-  }, [selectedClientId, clients, avulsoValue, avulsoLabel]);
+    return allClients.find(c => c.uid === selectedClientId || (c as any).id === selectedClientId) || null;
+  }, [selectedClientId, allClients, avulsoValue, avulsoLabel]);
 
   // Filter clients based on search query
   const filteredClients = useMemo(() => {
-    if (!searchQuery.trim()) return clients;
+    if (!searchQuery.trim()) return allClients;
     const term = searchQuery.toLowerCase().trim();
-    return clients.filter(c => {
+    return allClients.filter(c => {
       const nome = (c.nome || '').toLowerCase();
       const telefone = (c.telefone || '').replace(/\D/g, '');
       const cleanTerm = term.replace(/\D/g, '');
@@ -151,7 +167,7 @@ export function ClientSelectCombobox({
       const matchPhone = cleanTerm ? telefone.includes(cleanTerm) : (c.telefone || '').toLowerCase().includes(term);
       return matchName || matchPhone;
     });
-  }, [clients, searchQuery]);
+  }, [allClients, searchQuery]);
 
   // Sliced clients based on visible count
   const displayedClients = useMemo(() => {
@@ -167,7 +183,8 @@ export function ClientSelectCombobox({
   };
 
   const handleSelect = (id: string, name: string) => {
-    onSelectClient(id, name);
+    const found = allClients.find(c => c.uid === id || (c as any).id === id);
+    onSelectClient(id, name, found);
     setIsOpen(false);
   };
 

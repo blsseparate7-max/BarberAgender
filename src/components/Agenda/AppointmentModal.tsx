@@ -99,6 +99,33 @@ export function AppointmentModal({
     }
   }, [isOpen]);
 
+  // Real-time sync for clients when modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let unsubClients: (() => void) | undefined;
+    if (currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') {
+      unsubClients = userService.subscribeToAllClients(true, (data) => {
+        setClients(prev => {
+          const map = new Map<string, UserProfile>();
+          data.forEach(c => {
+            const id = c.uid || (c as any).id;
+            if (id) map.set(id, c);
+          });
+          prev.forEach(c => {
+            const id = c.uid || (c as any).id;
+            if (id && !map.has(id)) map.set(id, c);
+          });
+          return Array.from(map.values());
+        });
+      });
+    }
+
+    return () => {
+      if (unsubClients) unsubClients();
+    };
+  }, [isOpen, currentUser.tipo]);
+
   useEffect(() => {
     if (appointment) {
       setFormData({
@@ -188,16 +215,49 @@ export function AppointmentModal({
       const service = services.find(s => s.id === formData.servico_id);
       
       const targetProfId = formData.profissional_id || initialProfissionalId || (currentUser.tipo === 'barbeiro' ? (currentUser.uid || currentUser.id) : '');
-      let barber = barbers.find(b => b.uid === targetProfId || b.id === targetProfId);
+      let barber = barbers.find(b => b.uid === targetProfId || (b as any).id === targetProfId);
       if (!barber && (currentUser.tipo === 'barbeiro' || targetProfId === currentUser.uid || targetProfId === currentUser.id)) {
         barber = currentUser;
       }
+      if (!barber && targetProfId) {
+        try {
+          const directBarber = await userService.getUserProfile(targetProfId);
+          if (directBarber) barber = directBarber;
+        } catch (_) {}
+      }
 
-      const client = currentUser.tipo === 'cliente' 
+      let client: UserProfile | { uid: string; nome: string } | undefined = currentUser.tipo === 'cliente' 
         ? currentUser 
         : (formData.cliente_id === 'sem_cadastro' 
             ? { uid: 'sem_cadastro', nome: formData.cliente_name || 'Sem Cadastro' } 
-            : clients.find(c => c.uid === formData.cliente_id));
+            : clients.find(c => c.uid === formData.cliente_id || (c as any).id === formData.cliente_id));
+
+      // Fallback 1: Direct fetch from Firestore if client not in local state
+      if (!client && formData.cliente_id && formData.cliente_id !== 'sem_cadastro') {
+        try {
+          const directProfile = await userService.getUserProfile(formData.cliente_id);
+          if (directProfile) {
+            client = directProfile;
+            setClients(prev => {
+              const id = directProfile.uid || (directProfile as any).id;
+              if (id && !prev.some(c => (c.uid || (c as any).id) === id)) {
+                return [directProfile, ...prev];
+              }
+              return prev;
+            });
+          }
+        } catch (fetchErr) {
+          console.warn("Aviso ao buscar cliente diretamente por ID:", fetchErr);
+        }
+      }
+
+      // Fallback 2: Resilient client object using selected formData if ID is present
+      if (!client && formData.cliente_id) {
+        client = {
+          uid: formData.cliente_id,
+          nome: formData.cliente_name || 'Cliente'
+        };
+      }
 
       if (!service) {
         throw new Error('Por favor, selecione um serviço.');
@@ -205,11 +265,11 @@ export function AppointmentModal({
       if (!barber) {
         throw new Error('Por favor, selecione um profissional.');
       }
-      if (!client) {
+      if (!client || (!client.uid && !(client as any).id)) {
         console.error('Validation failed: Client not found.', { 
             cliente_id: formData.cliente_id, 
             clients_length: clients.length,
-            clients_uids: clients.map(c => c.uid)
+            clients_uids: clients.map(c => c.uid || (c as any).id)
         });
         throw new Error('Cliente não encontrado. Por favor, selecione novamente.');
       }
@@ -227,9 +287,9 @@ export function AppointmentModal({
       const endTime = format(addMinutes(start, finalDuration), 'HH:mm');
 
       const appointmentData = {
-        cliente_id: client.uid,
-        cliente_name: client.nome,
-        profissional_id: barber.uid || barber.id || targetProfId,
+        cliente_id: client.uid || (client as any).id || formData.cliente_id,
+        cliente_name: client.nome || formData.cliente_name || 'Cliente',
+        profissional_id: barber.uid || (barber as any).id || targetProfId,
         profissional_name: barber.nome || formData.profissional_name || 'Profissional',
         servico_id: service.id,
         servico_name: service.name,
@@ -341,12 +401,21 @@ export function AppointmentModal({
                   <ClientSelectCombobox
                     clients={clients}
                     selectedClientId={formData.cliente_id}
-                    onSelectClient={(cid, cname) => {
-                      setFormData({
-                        ...formData,
+                    onSelectClient={(cid, cname, clientObj) => {
+                      if (clientObj) {
+                        setClients(prev => {
+                          const cidStr = clientObj.uid || (clientObj as any).id;
+                          if (cidStr && !prev.some(c => (c.uid || (c as any).id) === cidStr)) {
+                            return [clientObj, ...prev];
+                          }
+                          return prev;
+                        });
+                      }
+                      setFormData(prev => ({
+                        ...prev,
                         cliente_id: cid,
-                        cliente_name: cid === 'sem_cadastro' ? 'Sem Cadastro' : cname
-                      });
+                        cliente_name: cid === 'sem_cadastro' ? 'Sem Cadastro' : (cname || prev.cliente_name)
+                      }));
                     }}
                     placeholder="Selecione ou busque o cliente..."
                     allowAvulso={true}

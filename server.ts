@@ -887,8 +887,12 @@ Instruções:
   });
 
   // ==========================================
-function getAsaasBaseUrl(env?: string): string {
-  const cleanEnv = (env || process.env.ASAAS_ENVIRONMENT || 'sandbox').toLowerCase().trim();
+function getAsaasBaseUrl(env?: string, apiKey?: string): string {
+  const keyToCheck = (apiKey || process.env.ASAAS_API_KEY || '').trim().toLowerCase();
+  if (keyToCheck.startsWith('$aact_') || keyToCheck.startsWith('aact_') || keyToCheck.includes('prod')) {
+    return 'https://api.asaas.com/v3';
+  }
+  const cleanEnv = (env || process.env.ASAAS_ENVIRONMENT || 'production').toLowerCase().trim();
   if (cleanEnv === 'production' || cleanEnv === 'prod') {
     return 'https://api.asaas.com/v3';
   }
@@ -2248,15 +2252,52 @@ function encodeFirestoreFields(data: any): any {
         return res.status(400).json({ error: "Parâmetros subscriptionId e creditCard são obrigatórios." });
       }
 
-      const asaasApiKey = process.env.ASAAS_API_KEY;
-      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+      // 1. Resolve target subscription to find real Asaas subscriptionId and tenantId
+      let asaasSubId = subscriptionId;
+      let targetTenantId = '';
+      let subDocRef: any = null;
+
+      const dbAdmin = getAdminDb();
+      let subData: any = null;
+      if (dbAdmin) {
+        try {
+          const docSnap = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
+          if (docSnap.exists) {
+            subData = docSnap.data();
+            subDocRef = docSnap.ref;
+          }
+        } catch (_) {}
+      }
+
+      if (!subData) {
+        try {
+          const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
+          const rRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${subscriptionId}`);
+          if (rRes.ok) {
+            const rJson = await rRes.json();
+            if (rJson?.fields) {
+              subData = parseFirestoreFields(rJson.fields);
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (subData) {
+        if (subData.asaasSubscriptionId) {
+          asaasSubId = subData.asaasSubscriptionId;
+        }
+        targetTenantId = subData.tenantId || '';
+      }
+
+      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(targetTenantId);
+
       if (!asaasApiKey) {
         return res.status(400).json({ error: "Integração com Asaas não configurada." });
       }
 
-      const baseUrl = getAsaasBaseUrl(asaasEnv);
+      console.log(`[Update Credit Card] Subscription: ${subscriptionId} -> Asaas Sub ID: ${asaasSubId} | Tenant: ${targetTenantId}`);
 
-      const updateRes = await fetch(`${baseUrl}/subscriptions/${subscriptionId}/creditCard`, {
+      const updateRes = await fetch(`${baseUrl}/subscriptions/${asaasSubId}/creditCard`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -2270,16 +2311,38 @@ function encodeFirestoreFields(data: any): any {
 
       const updateData = await safeJsonFetch(updateRes);
       if (updateData?.errors) {
-        return res.status(400).json({ error: updateData.errors[0]?.description || "Falha ao atualizar cartão no Asaas." });
+        const errorDesc = updateData.errors[0]?.description || "Falha ao atualizar cartão no Asaas.";
+        console.warn(`[Update Credit Card] Erro Asaas: ${errorDesc}`);
+        return res.status(400).json({ error: errorDesc });
       }
 
-      const dbAdmin = getAdminDb();
-      if (dbAdmin) {
-        const subRef = dbAdmin.collection('subscriptions').doc(subscriptionId);
-        await subRef.update({
-          paymentMethod: 'cartao_credito_recorrente',
-          updatedAt: new Date()
-        });
+      if (subDocRef) {
+        try {
+          await subDocRef.update({
+            paymentMethod: 'cartao_credito_recorrente',
+            billingType: 'CREDIT_CARD',
+            status: 'active',
+            asaasPaymentStatus: 'received',
+            updatedAt: new Date()
+          });
+        } catch (_) {}
+      } else if (subData) {
+        try {
+          const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
+          await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${subscriptionId}?updateMask.fieldPaths=paymentMethod&updateMask.fieldPaths=billingType&updateMask.fieldPaths=status&updateMask.fieldPaths=asaasPaymentStatus&updateMask.fieldPaths=updatedAt`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fields: encodeFirestoreFields({
+                paymentMethod: 'cartao_credito_recorrente',
+                billingType: 'CREDIT_CARD',
+                status: 'active',
+                asaasPaymentStatus: 'received',
+                updatedAt: new Date().toISOString()
+              })
+            })
+          });
+        } catch (_) {}
       }
 
       return res.json({ success: true, message: "Cartão de crédito atualizado com sucesso no Asaas!" });

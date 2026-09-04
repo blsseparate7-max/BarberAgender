@@ -1656,7 +1656,18 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               <ClientSelectCombobox
                 clients={clients}
                 selectedClientId={formData.cliente_id}
-                onSelectClient={(cid) => setFormData({ ...formData, cliente_id: cid })}
+                onSelectClient={(cid, _cname, clientObj) => {
+                  if (clientObj) {
+                    setClients(prev => {
+                      const id = clientObj.uid || (clientObj as any).id;
+                      if (id && !prev.some(c => (c.uid || (c as any).id) === id)) {
+                        return [clientObj, ...prev];
+                      }
+                      return prev;
+                    });
+                  }
+                  setFormData(prev => ({ ...prev, cliente_id: cid }));
+                }}
                 placeholder="Selecione ou busque um cliente..."
                 allowAvulso={true}
                 avulsoLabel="👤 Cliente Avulso (Sem Cadastro)"

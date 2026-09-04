@@ -12,10 +12,17 @@ const __dirname = path.dirname(__filename);
 // Initialize Firebase Admin lazily
 let adminApp: App | null = null;
 export function hasAdminCredentials(): boolean {
-  return !!(process.env.FIREBASE_SERVICE_ACCOUNT || (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL));
+  return !!(
+    process.env.FIREBASE_SERVICE_ACCOUNT ||
+    (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) ||
+    process.env.GOOGLE_APPLICATION_CREDENTIALS
+  );
 }
 
 function getFirebaseAdmin() {
+  if (!hasAdminCredentials()) {
+    return null;
+  }
   if (!adminApp) {
     try {
       const apps = getApps();
@@ -58,9 +65,8 @@ function getFirebaseAdmin() {
           });
           console.log("✅ Firebase Admin initialized with FIREBASE_PRIVATE_KEY & CLIENT_EMAIL.");
         }
-
-        // 3. Fallback to application default credentials or project ID
-        if (!adminApp) {
+        // 3. Fallback to GOOGLE_APPLICATION_CREDENTIALS if set
+        else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
           try {
             adminApp = initializeApp({
               credential: applicationDefault(),
@@ -68,14 +74,7 @@ function getFirebaseAdmin() {
             });
             console.log("✅ Firebase Admin initialized with applicationDefault.");
           } catch (adcErr: any) {
-            try {
-              adminApp = initializeApp({
-                projectId: process.env.FIREBASE_PROJECT_ID || "gbagender"
-              });
-              console.log("✅ Firebase Admin initialized with project ID.");
-            } catch (pErr: any) {
-              console.warn("Could not initialize default Firebase Admin SDK:", pErr.message || pErr);
-            }
+            console.warn("Could not initialize default Firebase Admin SDK:", adcErr.message || adcErr);
           }
         }
       } else {
@@ -89,6 +88,9 @@ function getFirebaseAdmin() {
 }
 
 function getAdminDb() {
+  if (!hasAdminCredentials()) {
+    return null;
+  }
   const app = getFirebaseAdmin();
   if (!app) return null;
   try {
@@ -964,8 +966,12 @@ function encodeFirestoreFields(data: any): any {
 
         const privDoc = await dbAdmin.collection('tenants').doc(tenantId).collection('private_settings').doc('asaas').get();
         if (privDoc.exists) privData = privDoc.data();
-      } catch (err) {
-        console.warn(`[getTenantAsaasCredentials] Aviso ao buscar via Admin DB para ${tenantId}:`, err);
+      } catch (err: any) {
+        if (err?.code === 7 || err?.message?.includes('PERMISSION_DENIED') || err?.message?.includes('Missing or insufficient permissions')) {
+          // Expected when Admin credentials lack access; smoothly falling back to REST API
+        } else {
+          console.warn(`[getTenantAsaasCredentials] Aviso ao buscar via Admin DB para ${tenantId}:`, err?.message || err);
+        }
       }
     }
 

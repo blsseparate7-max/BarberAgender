@@ -15,6 +15,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function getUserEmail() {
+      return (isAuthenticated() && request.auth.token != null && ('email' in request.auth.token)) ? request.auth.token.email : "";
+    }
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
@@ -22,13 +26,13 @@ service cloud.firestore {
     function isSaaSAdmin() {
       return isAuthenticated() && 
         (
-          request.auth.token.email == "barber@admin.ai" ||
-          request.auth.token.email == "blsseparate7@gmail.com" ||
+          getUserEmail() == "barber@admin.ai" ||
+          getUserEmail() == "blsseparate7@gmail.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'saas_admin' &&
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == 'saas' &&
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true &&
-           (request.auth.token.email == "barber@admin.ai" || request.auth.token.email == "blsseparate7@gmail.com"))
+           (getUserEmail() == "barber@admin.ai" || getUserEmail() == "blsseparate7@gmail.com"))
         );
     }
 
@@ -36,9 +40,9 @@ service cloud.firestore {
       return isAuthenticated() && 
         (
           isSaaSAdmin() ||
-          request.auth.token.email == "blsseparate7@gmail.com" ||
-          request.auth.token.email == "barbeariagbcortes7@gmail.com" ||
-          request.auth.token.email == "gabriel.alexandre@gbcortes7.com" ||
+          getUserEmail() == "blsseparate7@gmail.com" ||
+          getUserEmail() == "barbeariagbcortes7@gmail.com" ||
+          getUserEmail() == "gabriel.alexandre@gbcortes7.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin' &&
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true)
@@ -110,8 +114,8 @@ service cloud.firestore {
                      isStaff() ||
                      (resource != null && resource.data.isActive == true) ||
                      (isAuthenticated() && resource != null && (
-                       resource.data.ownerEmail == request.auth.token.email ||
-                       resource.data.email == request.auth.token.email
+                       resource.data.ownerEmail == getUserEmail() ||
+                       resource.data.email == getUserEmail()
                      ));
 
       allow create: if isAuthenticated() && tenantId != 'saas' && (isSaaSAdmin() || !exists(/databases/$(database)/documents/tenants/$(tenantId)));
@@ -140,11 +144,11 @@ service cloud.firestore {
     // Rules for Usuarios collection - BLINDADA CONTRA ESCALAÇÃO DE PRIVILÉGIOS E VAZAMENTO DE PII
     match /usuarios/{userId} {
       // Leitura de perfil individual:
-      // - O próprio usuário acessando seu perfil
+      // - O próprio usuário acessando seu perfil via get ou snapshot direto
       // - Equipe da barbearia (Staff, SaaS Admin, Barbeiros)
       // - Qualquer pessoa lendo perfis de profissionais (barbeiros/gestores) para agendamento
-      allow get: if (isAuthenticated() && request.auth.uid == userId) ||
-                    isStaff() || 
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow get: if isStaff() || 
                     isSaaSAdmin() || 
                     isBarbeiro() ||
                     (resource != null && resource.data.tipo in ['barbeiro', 'gerente', 'admin'] && resource.data.ativo == true);
@@ -158,38 +162,55 @@ service cloud.firestore {
                      isSaaSAdmin() || 
                      isBarbeiro() ||
                      (resource != null && resource.data.tipo in ['barbeiro', 'gerente', 'admin']) ||
-                     (isAuthenticated() && resource != null && resource.data.email == request.auth.token.email);
+                     (isAuthenticated() && resource != null && resource.data.email == getUserEmail());
       
       // Criação de perfil:
       // - SaaS Admin cria qualquer perfil
       // - Admin de unidade cria usuários da sua barbearia (exceto saas_admin)
       // - Auto-cadastro (signUp): OBRIGATORIAMENTE do tipo 'cliente' (bloqueia auto-promoção p/ gerente/barbeiro/admin)
+      // - Dono da barbearia (auto-healing matching tenant ownerEmail) pode inicializar seu perfil de admin
       allow create: if isSaaSAdmin() ||
         (isAdmin() && request.resource.data.tipo != 'saas_admin' && request.resource.data.tenantId != 'saas') ||
         (
           isAuthenticated() && request.auth.uid == userId && 
-          request.resource.data.tipo == 'cliente' && 
-          request.resource.data.tenantId != 'saas'
+          (
+            (request.resource.data.tipo == 'cliente' && request.resource.data.tenantId != 'saas') ||
+            (
+              request.resource.data.tipo == 'admin' && 
+              exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)) &&
+              (
+                get(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.ownerEmail == getUserEmail() ||
+                get(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.email == getUserEmail()
+              )
+            )
+          )
         );
 
       // Atualização de perfil:
       // 1. SaaS Admin pode atualizar qualquer perfil
       // 2. Admin pode atualizar usuários da sua barbearia (sem conceder saas_admin)
-      // 3. Usuário comum atualizando a si próprio:
-      //    - ESTRITAMENTE PROIBIDO alterar permissões ('tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager')
-      //    - ESTRITAMENTE PROIBIDO alterar dados financeiros ('saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback')
-      //    - ESTRITAMENTE PROIBIDO alterar comissões e metas ('percentual_comissao', 'commission_percentage', 'remuneracao_fixa', 'monthly_goal', 'meta_mensal')
-      // 4. Barbeiro atualizando dados de clientes:
-      //    - Não pode alterar permissões nem saldo/cashback/financeiro do cliente
+      // 3. Dono de barbearia sincronizando seu perfil
+      // 4. Usuário comum atualizando a si próprio (campos não protegidos)
+      // 5. Barbeiro atualizando dados de clientes:
       allow update: if isSaaSAdmin() ||
         (isAdmin() && request.resource.data.tipo != 'saas_admin' && request.resource.data.tenantId != 'saas') ||
         (
           isAuthenticated() && request.auth.uid == userId && 
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager',
-            'saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback',
-            'percentual_comissao', 'commission_percentage', 'remuneracao_fixa', 'monthly_goal', 'meta_mensal'
-          ])
+          (
+            (
+              request.resource.data.tipo == 'admin' && 
+              exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)) &&
+              (
+                get(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.ownerEmail == getUserEmail() ||
+                get(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.email == getUserEmail()
+              )
+            ) ||
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager',
+              'saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback',
+              'percentual_comissao', 'commission_percentage', 'remuneracao_fixa', 'monthly_goal', 'meta_mensal'
+            ])
+          )
         ) ||
         (
           isBarbeiro() && resource != null && resource.data.tipo == 'cliente' &&

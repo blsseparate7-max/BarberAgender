@@ -53,8 +53,8 @@ export function QuickClientSelector({ currentClientId, onSelect, onClose }: Quic
   const hasMore = filteredClients.length > visibleCount;
   const remainingCount = filteredClients.length - visibleCount;
 
-  const handleCreateClient = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateClient = async (e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent) => {
+    if (e && 'preventDefault' in e) e.preventDefault();
     if (!newName.trim()) return;
     
     setLoading(true);
@@ -193,7 +193,15 @@ export function QuickClientSelector({ currentClientId, onSelect, onClose }: Quic
           </div>
         </div>
       ) : (
-        <form onSubmit={handleCreateClient} className="p-4 space-y-4 animate-in slide-in-from-right duration-200">
+        <div
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleCreateClient(e);
+            }
+          }}
+          className="p-4 space-y-4 animate-in slide-in-from-right duration-200"
+        >
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-primary uppercase tracking-wider">Novo Cliente</h4>
             <button type="button" onClick={() => setShowNewForm(false)} className="text-muted hover:text-primary">
@@ -227,14 +235,15 @@ export function QuickClientSelector({ currentClientId, onSelect, onClose }: Quic
           </div>
 
           <button 
-            type="submit"
+            type="button"
+            onClick={handleCreateClient}
             disabled={loading}
             className="w-full py-2.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
             Cadastrar e Selecionar
           </button>
-        </form>
+        </div>
       )}
     </motion.div>
   );

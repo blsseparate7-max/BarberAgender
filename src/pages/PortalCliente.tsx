@@ -584,6 +584,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     );
     const unsubscribe = onSnapshot(q, (snap) => {
       setMyReviews(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.warn("Snapshot notice on avaliacoes listener:", error?.message || error);
     });
     return () => unsubscribe();
   }, [profile?.uid]);

@@ -85,6 +85,8 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           avatarUrl: data.avatarUrl || data.fotoUrl || data.photoURL || ''
         } as UserProfile);
       }
+    }, (error) => {
+      console.warn("Snapshot notice on PortalBarbeiro usuarios listener:", error?.message || error);
     });
     return () => unsub();
   }, [profile?.uid]);

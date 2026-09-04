@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, onSnapshot, collection, query, where, getDocs, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, getDocs, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { TabId, UserProfile, UserRole } from '../types';
 
@@ -237,33 +237,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
           setLoading(false);
-        }, async (error) => {
+        }, (error) => {
           console.warn("Snapshot error fetching profile (UID: " + firebaseUser.uid + "):", error);
           if (firebaseUser) {
             try {
               const userEmail = firebaseUser.email?.toLowerCase().trim() || '';
-              const { getActiveTenantId } = await import('../services/tenantService');
-              const defaultTenantId = getActiveTenantId() || 'gbcortes7';
-              const fallbackProfile: UserProfile = {
-                uid: firebaseUser.uid,
-                nome: firebaseUser.displayName || (userEmail ? userEmail.split('@')[0] : 'Cliente'),
-                email: userEmail,
-                tipo: 'cliente',
-                ativo: true,
-                tenantId: defaultTenantId,
-                telefone: firebaseUser.phoneNumber || '',
-                phone: firebaseUser.phoneNumber || '',
-                saldo_atual: 0,
-                total_gasto: 0,
-                total_pago: 0,
-                total_em_aberto: 0,
-                createdAt: new Date(),
-                updatedAt: new Date()
-              };
-              await setDoc(doc(db, 'usuarios', firebaseUser.uid), fallbackProfile, { merge: true });
-              setProfile(fallbackProfile);
-            } catch (fallbackErr) {
-              console.error("Fallback creation error:", fallbackErr);
+              import('../services/tenantService').then(async ({ getActiveTenantId }) => {
+                const defaultTenantId = getActiveTenantId() || 'gbcortes7';
+                const fallbackProfile: UserProfile = {
+                  uid: firebaseUser.uid,
+                  nome: firebaseUser.displayName || (userEmail ? userEmail.split('@')[0] : 'Cliente'),
+                  email: userEmail,
+                  tipo: 'cliente',
+                  ativo: true,
+                  tenantId: defaultTenantId,
+                  telefone: firebaseUser.phoneNumber || '',
+                  phone: firebaseUser.phoneNumber || '',
+                  saldo_atual: 0,
+                  total_gasto: 0,
+                  total_pago: 0,
+                  total_em_aberto: 0,
+                  createdAt: new Date(),
+                  updatedAt: new Date()
+                };
+                // Set local profile so interface remains functional
+                setProfile(prev => prev || fallbackProfile);
+                
+                // If allowed, attempt to ensure document exists in Firestore
+                try {
+                  const docSnap = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
+                  if (!docSnap.exists()) {
+                    await setDoc(doc(db, 'usuarios', firebaseUser.uid), fallbackProfile);
+                  }
+                } catch (writeErr: any) {
+                  console.warn("Could not auto-create fallback document in Firestore:", writeErr?.message || writeErr);
+                }
+              }).catch((e) => {
+                console.warn("Failed to load tenantService for fallback profile:", e);
+              });
+            } catch (fallbackErr: any) {
+              console.warn("Fallback profile setup warning:", fallbackErr?.message || fallbackErr);
             }
           }
           setLoading(false);

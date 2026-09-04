@@ -102,10 +102,15 @@ export function ProfessionalCommissions({
     setLoading(true);
 
     const activeTenantId = getActiveTenantId();
+    const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
+    if (activeTenantId === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [activeTenantId, '']));
+    } else {
+      constraints.push(where('tenantId', '==', activeTenantId));
+    }
     const barbersQuery = query(
       collection(db, 'usuarios'), 
-      where('tenantId', '==', activeTenantId),
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
+      ...constraints
     );
     const unsubBarbers = onSnapshot(barbersQuery, (snapshot) => {
       const bList = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }));

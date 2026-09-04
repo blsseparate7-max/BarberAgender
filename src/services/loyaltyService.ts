@@ -11,7 +11,8 @@ import {
   runTransaction,
   serverTimestamp,
   limit,
-  addDoc
+  addDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { LoyaltyConfig, LoyaltyPoints, LoyaltyHistory, LoyaltyVoucher, Service, Product } from '../types';
@@ -476,38 +477,56 @@ export const loyaltyService = {
   },
 
   async syncRetroactiveLoyalty(tenantId: string) {
-    // 1. Fetch all closed or not paid comandas for this tenantId
+    const config = await this.getConfig();
+    if (config.cashbackEnabled === false) {
+      return { countSynced: 0, totalPointsAwarded: 0, totalCashbackAwarded: 0 };
+    }
+
+    // 1. Fetch closed or not paid comandas for this tenantId (bounded query)
     const comandasQuery = query(
       collection(db, 'comandas'),
       where('tenantId', '==', tenantId),
-      where('status', 'in', ['fechada', 'nao_paga'])
+      where('status', 'in', ['fechada', 'nao_paga']),
+      limit(150)
     );
     
     const comandasSnap = await getDocs(comandasQuery);
-    const comandas = comandasSnap.docs.map(d => d.data() as any);
+    const comandas = comandasSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
 
-    // 2. Fetch all existing loyalty history records for this tenant to check for duplicates
+    // 2. Fetch existing loyalty history records for this tenant to avoid duplicates
     const historyQuery = query(
       collection(db, HISTORY_COLLECTION),
       where('tenantId', '==', tenantId),
-      where('type', '==', 'earn')
+      where('type', '==', 'earn'),
+      limit(300)
     );
     const historySnap = await getDocs(historyQuery);
     const historyDescriptions = new Set(
       historySnap.docs.map(d => (d.data().description || '').trim())
     );
 
-    let countSynced = 0;
-    let totalPointsAwarded = 0;
-    let totalCashbackAwarded = 0;
-
     // Filter by date since Sept 1st, 2026
     const sepFirstDate = new Date('2026-09-01T00:00:00');
+
+    interface PendingItem {
+      cliente_id: string;
+      points: number;
+      cashback: number;
+      description: string;
+    }
+
+    const itemsToSync: PendingItem[] = [];
+    const clientAggregates: Record<string, { points: number; cashback: number }> = {};
+
+    const mode = config.loyaltyMode || 'saldo';
+    const pointsPerReal = Number(config.pointsPerReal) || 1;
+    const pointsPerApp = Number(config.pointsPerAppointment) || 0;
+    const pct = Number(config.cashbackPercentage) > 0 ? Number(config.cashbackPercentage) : 5;
+    const fixedVal = Number(config.cashbackFixedValue) || 0;
 
     for (const comanda of comandas) {
       if (!comanda.cliente_id || comanda.cliente_id === 'avulso') continue;
 
-      // Extract creation date
       let comandaDate = new Date();
       if (comanda.createdAt) {
         comandaDate = comanda.createdAt.toDate ? comanda.createdAt.toDate() : new Date(comanda.createdAt.seconds * 1000 || 0);
@@ -521,12 +540,8 @@ export const loyaltyService = {
         continue;
       }
 
-      // Check if already synced using description format
-      const desc1 = `Acúmulo - Comanda #${comanda.number}`;
-      const desc2 = `Cashback - Comanda #${comanda.number}`;
-      const desc3 = `Acúmulo - Comanda #${comanda.number}`;
-      
-      if (historyDescriptions.has(desc1) || historyDescriptions.has(desc2) || historyDescriptions.has(desc3)) {
+      const desc = `Acúmulo - Comanda #${comanda.number}`;
+      if (historyDescriptions.has(desc) || historyDescriptions.has(`Cashback - Comanda #${comanda.number}`)) {
         continue;
       }
 
@@ -538,22 +553,107 @@ export const loyaltyService = {
         return acc + (p.amount || 0);
       }, 0);
 
-      if (actualPaidAmount > 0) {
-        const result = await this.addPoints(
-          comanda.cliente_id,
-          0,
-          actualPaidAmount,
-          `Acúmulo - Comanda #${comanda.number}`,
-          'appointment'
-        );
-        countSynced++;
-        totalPointsAwarded += result.points || 0;
-        totalCashbackAwarded += result.cashback || 0;
+      if (actualPaidAmount <= 0) continue;
+
+      let pointsToAdd = 0;
+      let cashbackToAdd = 0;
+
+      if (mode === 'pontos') {
+        pointsToAdd = Math.floor(actualPaidAmount * pointsPerReal) + pointsPerApp;
+      } else {
+        if (config.cashbackType === 'fixo') {
+          cashbackToAdd = fixedVal;
+        } else {
+          cashbackToAdd = (actualPaidAmount * pct) / 100;
+        }
+        if (pointsPerApp > 0) {
+          pointsToAdd = pointsPerApp;
+        }
+      }
+
+      if (pointsToAdd > 0 || cashbackToAdd > 0) {
+        itemsToSync.push({
+          cliente_id: comanda.cliente_id,
+          points: pointsToAdd,
+          cashback: cashbackToAdd,
+          description: desc
+        });
+
+        if (!clientAggregates[comanda.cliente_id]) {
+          clientAggregates[comanda.cliente_id] = { points: 0, cashback: 0 };
+        }
+        clientAggregates[comanda.cliente_id].points += pointsToAdd;
+        clientAggregates[comanda.cliente_id].cashback += cashbackToAdd;
+
+        historyDescriptions.add(desc);
       }
     }
 
+    if (itemsToSync.length === 0) {
+      return { countSynced: 0, totalPointsAwarded: 0, totalCashbackAwarded: 0 };
+    }
+
+    // Execute atomic batch writes (grouped in chunks of up to 350 operations)
+    let currentBatch = writeBatch(db);
+    let batchOpCount = 0;
+
+    const commitBatchIfNeeded = async (force = false) => {
+      if (batchOpCount > 0 && (force || batchOpCount >= 350)) {
+        await currentBatch.commit();
+        currentBatch = writeBatch(db);
+        batchOpCount = 0;
+      }
+    };
+
+    // 1. Write history records
+    for (const item of itemsToSync) {
+      const historyRef = doc(collection(db, HISTORY_COLLECTION));
+      currentBatch.set(historyRef, {
+        cliente_id: item.cliente_id,
+        tenantId,
+        type: 'earn',
+        source: 'appointment',
+        points: item.points,
+        cashback: item.cashback,
+        description: item.description,
+        date: format(new Date(), 'yyyy-MM-dd'),
+        createdAt: serverTimestamp()
+      });
+      batchOpCount++;
+      await commitBatchIfNeeded();
+    }
+
+    // 2. Update aggregated balances per unique client (only 1 write per client using increment)
+    for (const [clientId, agg] of Object.entries(clientAggregates)) {
+      const pointsRef = doc(db, POINTS_COLLECTION, `${tenantId}_${clientId}`);
+      currentBatch.set(pointsRef, {
+        cliente_id: clientId,
+        tenantId,
+        points: increment(agg.points),
+        cashback: increment(agg.cashback),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      batchOpCount++;
+
+      const userRef = doc(db, 'usuarios', clientId);
+      currentBatch.set(userRef, {
+        pontos: increment(agg.points),
+        points: increment(agg.points),
+        cashback: increment(agg.cashback),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      batchOpCount++;
+
+      await commitBatchIfNeeded();
+    }
+
+    await commitBatchIfNeeded(true);
+
+    const totalPointsAwarded = Object.values(clientAggregates).reduce((a, b) => a + b.points, 0);
+    const totalCashbackAwarded = Object.values(clientAggregates).reduce((a, b) => a + b.cashback, 0);
+
     return {
-      countSynced,
+      countSynced: itemsToSync.length,
       totalPointsAwarded,
       totalCashbackAwarded
     };

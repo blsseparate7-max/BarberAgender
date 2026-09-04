@@ -97,7 +97,7 @@ export function isCustomerLinked(customer?: UserProfile | null): boolean {
   if (!email || email.includes('manual_') || email.includes('placeholder') || email.includes('sem-email') || email.includes('sem_email')) {
     return false;
   }
-  return false;
+  return true;
 }
 
 export function Clientes() {
@@ -106,7 +106,7 @@ export function Clientes() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
-  const [filterTier, setFilterTier] = useState<'all' | 'vvip' | 'debtor' | 'new'>('all');
+  const [filterTier, setFilterTier] = useState<'all' | 'vvip' | 'debtor' | 'new' | 'loyalty'>('all');
   const [sortBy, setSortBy] = useState<'nome' | 'spent' | 'balance' | 'debt' | 'recent' | 'lastVisit' | 'phone'>('nome');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   
@@ -139,10 +139,16 @@ export function Clientes() {
   }, [tenantId]);
 
   useEffect(() => {
+    if (!tenantId) return;
+    const constraints = [where('tipo', '==', 'cliente')];
+    if (tenantId === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tenantId, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tenantId));
+    }
     const q = query(
       collection(db, 'usuarios'),
-      where('tipo', '==', 'cliente'),
-      where('tenantId', '==', tenantId)
+      ...constraints
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -253,6 +259,8 @@ export function Clientes() {
         matchesTier = (c.total_gasto || c.totalSpent || 0) > 300;
       } else if (filterTier === 'debtor') {
         matchesTier = (c.total_em_aberto || 0) > 0;
+      } else if (filterTier === 'loyalty') {
+        matchesTier = (c.pontos ?? c.points ?? 0) > 0 || (c.cashback ?? 0) > 0;
       } else if (filterTier === 'new') {
         let isNew = false;
         if (c.createdAt) {
@@ -493,20 +501,6 @@ export function Clientes() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {/* Status Filter */}
-          <div className="relative">
-            <select 
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as any)}
-              className="appearance-none bg-white border border-slate-200 rounded-2xl pl-5 pr-12 py-3.5 text-sm text-primary font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all outline-none cursor-pointer shadow-sm"
-            >
-              <option value="all">Status: Todos</option>
-              <option value="active">🟢 Ativos</option>
-              <option value="inactive">🔴 Inativos</option>
-            </select>
-            <Filter className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={16} />
-          </div>
-
           {/* Segment/Tier Filter */}
           <div className="relative">
             <select 
@@ -518,6 +512,7 @@ export function Clientes() {
               <option value="vvip">💎 VIPs (&gt; R$300)</option>
               <option value="debtor">⚠️ Com Pendências (Fiado)</option>
               <option value="new">✨ Novos (Últimos 30d)</option>
+              <option value="loyalty">🎁 Fidelidade & Cashback</option>
             </select>
             <Filter className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={16} />
           </div>
@@ -555,6 +550,63 @@ export function Clientes() {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* Sub-abas de Ativos / Inativos */}
+          <div className="flex border border-slate-200 bg-slate-50 p-1.5 rounded-[2rem] shadow-sm gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setFilterStatus('all');
+                setCurrentPage(1);
+              }}
+              className={`flex-1 sm:flex-initial px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                filterStatus === 'all'
+                  ? 'bg-white text-primary shadow-sm border border-slate-200/50'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50'
+              }`}
+            >
+              <span>Todos</span>
+              <span className="bg-slate-200/80 text-slate-700 font-mono text-[10px] px-2 py-0.5 rounded-md font-bold">
+                {customers.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFilterStatus('active');
+                setCurrentPage(1);
+              }}
+              className={`flex-1 sm:flex-initial px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                filterStatus === 'active'
+                  ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/50'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+              <span>Ativos</span>
+              <span className="bg-emerald-50 text-emerald-700 font-mono text-[10px] px-2 py-0.5 rounded-md font-bold">
+                {customers.filter(c => c.ativo !== false).length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFilterStatus('inactive');
+                setCurrentPage(1);
+              }}
+              className={`flex-1 sm:flex-initial px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                filterStatus === 'inactive'
+                  ? 'bg-white text-rose-600 shadow-sm border border-slate-200/50'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+              <span>Inativos</span>
+              <span className="bg-rose-50 text-rose-700 font-mono text-[10px] px-2 py-0.5 rounded-md font-bold">
+                {customers.filter(c => c.ativo === false).length}
+              </span>
+            </button>
+          </div>
+
           <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse table-auto md:table-fixed">
@@ -861,8 +913,8 @@ function CustomerTableRow({ customer, loyaltyConfig, onViewDetails, onEdit, onLi
             </span>
           ) : (
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${customer.ativo ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${customer.ativo ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-              {customer.ativo ? 'Ativo' : 'Inativo'}
+
+              Regular
             </span>
           )}
         </div>
@@ -968,10 +1020,6 @@ function CustomerCard({ customer, onViewDetails, onEdit, onLinkAccount }: Custom
               {customer.nome}
             </h3>
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${customer.ativo ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-              <span className={`text-[10px] font-black uppercase tracking-widest ${customer.ativo ? 'text-emerald-600' : 'text-muted'}`}>
-                {customer.ativo ? 'Ativo' : 'Inativo'}
-              </span>
               {isVvip && (
                 <span className="text-[9px] font-black bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md border border-purple-100 uppercase tracking-normal">
                   💎 VIP

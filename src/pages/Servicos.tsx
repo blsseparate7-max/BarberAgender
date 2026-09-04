@@ -31,10 +31,11 @@ import { Service, ServiceCategory, UserProfile } from '../types';
 import { serviceService } from '../services/serviceService';
 import { userService } from '../services/userService';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
-import { collection, onSnapshot, query, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // Category Aesthetic Mapping for bespoke badges and cards styling
@@ -58,6 +59,7 @@ const getCategoryStyle = (catName: string) => {
 
 export function Servicos() {
   const { isAdmin, isGerente } = useAuth();
+  const { tenantId } = useTenant();
   const canManage = isAdmin || isGerente;
 
   const [services, setServices] = useState<Service[]>([]);
@@ -76,12 +78,17 @@ export function Servicos() {
 
   // Live Real-Time Synchronized Subscriptions (onSnapshot)
   useEffect(() => {
+    if (!tenantId) return;
     setLoading(true);
     // Services direct listener to avoid REST polling lag or flickers
-    const qServices = query(collection(db, 'services'), orderBy('nome', 'asc'));
+    const qServices = query(
+      collection(db, 'services'),
+      where('tenantId', '==', tenantId)
+    );
     const unsubscribeServices = onSnapshot(qServices, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
-      setServices(docs);
+      const sortedDocs = docs.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      setServices(sortedDocs);
       setLoading(false);
     }, (error) => {
       console.error("Erro ao assinar carregamento em tempo real de serviços:", error);
@@ -90,10 +97,14 @@ export function Servicos() {
     });
 
     // Categories direct listener
-    const qCategories = query(collection(db, 'service_categories'), orderBy('order', 'asc'));
+    const qCategories = query(
+      collection(db, 'service_categories'),
+      where('tenantId', '==', tenantId)
+    );
     const unsubscribeCategories = onSnapshot(qCategories, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceCategory));
-      setCategories(docs);
+      const sortedDocs = docs.sort((a, b) => (a.order || 0) - (b.order || 0));
+      setCategories(sortedDocs);
 
       // Semeia categorias iniciais se o catálogo estiver 100% zerado
       if (docs.length === 0 && canManage) {
@@ -109,7 +120,7 @@ export function Servicos() {
       unsubscribeServices();
       unsubscribeCategories();
     };
-  }, [canManage]);
+  }, [canManage, tenantId]);
 
   const filteredServices = services.filter(s => {
     const nome = s.nome || s.name || '';
@@ -492,6 +503,7 @@ interface ServiceModalProps {
 }
 
 function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
+  const { tenantId } = useTenant();
   const [activeTab, setActiveTab] = useState<'dados' | 'comissao'>('dados');
   const [permiteCortesia, setPermiteCortesia] = useState(service?.permite_cortesia || false);
   const [showInPortal, setShowInPortal] = useState(service?.showInPortal ?? true);
@@ -536,12 +548,22 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
 
   // Real-time live synchronization of available professionals
   useEffect(() => {
-    // Only fetch active query for barbers to avoid matching client users
-    const qProf = query(collection(db, 'usuarios'), orderBy('nome', 'asc'));
+    if (!tenantId) return;
+    const constraints = [
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
+    ];
+    if (tenantId === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tenantId, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tenantId));
+    }
+    const qProf = query(collection(db, 'usuarios'), ...constraints);
     const unsubscribeProf = onSnapshot(qProf, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
       // Show only active barbers/managers/admins
-      const barbersOnly = docs.filter(u => (u.tipo === 'barbeiro' || u.tipo === 'gerente' || u.tipo === 'admin') && u.ativo !== false);
+      const barbersOnly = docs.filter(u => u.ativo !== false);
+      // Sort in memory by name alphabetically
+      barbersOnly.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       setProfessionals(barbersOnly);
 
       // Default to all active barbers if service is new or has no saved barbeiros_ids yet
@@ -556,7 +578,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
     });
 
     return () => unsubscribeProf();
-  }, [service]);
+  }, [service, tenantId]);
 
   // Establish fallback category if empty
   useEffect(() => {

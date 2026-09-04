@@ -1585,39 +1585,56 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
-  // Endpoint to check status on Asaas and activate subscription
-  app.post(["/api/saas/payment/check-status", "/saas/payment/check-status"], async (req, res) => {
+  // Endpoint to check status on Asaas and activate subscription ONLY if payment is genuinely received/confirmed
+  app.post(["/api/saas/payment/check-status", "/saas/payment/check-status", "/payment/check-status", "/check-status"], async (req, res) => {
     try {
-      const { subscriptionId, tenantId } = req.body;
-      if (!subscriptionId) {
-        return res.status(400).json({ error: "Parâmetro subscriptionId é obrigatório." });
+      const { subscriptionId, paymentId, id, chargeId, tenantId } = req.body || {};
+      const targetId = (subscriptionId || paymentId || id || chargeId || '').toString().trim();
+      if (!targetId) {
+        return res.status(400).json({ error: "Parâmetro subscriptionId ou paymentId é obrigatório." });
       }
 
       const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
       const targetTenantId = tenantId || 'gbcortes7';
+      const dbAdmin = getAdminDb();
 
-      // 1. Fetch Subscription from Firestore via REST
-      let subData: any = null;
-      let actualSubId = subscriptionId;
-
-      try {
-        const restSub = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${subscriptionId}`);
-        if (restSub.ok) {
-          const json = await restSub.json();
-          if (json?.fields) {
-            subData = parseFirestoreFields(json.fields);
-          }
-        }
-      } catch (err) {
-        console.warn("Erro ao buscar assinatura via REST:", err);
+      // 1. Fetch Subscription from Firestore (via dbAdmin or REST fallback)
+      let subMatch: any = null;
+      if (dbAdmin) {
+        subMatch = await findSubscriptionInFirestore(dbAdmin, {
+          docId: targetId,
+          externalReference: targetId,
+          paymentId: targetId,
+          subscriptionId: targetId
+        });
       }
+
+      if (!subMatch) {
+        try {
+          const restSub = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${encodeURIComponent(targetId)}?key=${FIREBASE_REST_API_KEY}`);
+          if (restSub.ok) {
+            const json = await restSub.json();
+            if (json?.fields) {
+              subMatch = {
+                id: targetId,
+                ref: null,
+                data: parseFirestoreFields(json.fields)
+              };
+            }
+          }
+        } catch (err) {
+          console.warn("Aviso ao buscar assinatura via REST:", err);
+        }
+      }
+
+      const subData = subMatch?.data || {};
 
       // 2. Fetch Asaas API key for tenant
       let rawAsaasKey = process.env.ASAAS_API_KEY || '';
       let asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
 
       try {
-        const restTenant = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${targetTenantId}`);
+        const restTenant = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${targetTenantId}?key=${FIREBASE_REST_API_KEY}`);
         if (restTenant.ok) {
           const tJson = await restTenant.json();
           if (tJson?.fields) {
@@ -1635,52 +1652,83 @@ function encodeFirestoreFields(data: any): any {
       const baseUrl = getAsaasBaseUrl(asaasEnv);
 
       let isPaidOnAsaas = false;
-      let asaasPaymentObj: any = null;
+      let statusStr = 'PENDING';
+      let fetchedPayment: any = null;
 
-      if (asaasApiKey && subData) {
-        const asaasSubId = subData.asaasSubscriptionId;
-        const asaasInvId = subData.asaasInvoiceId;
+      if (asaasApiKey && !targetId.startsWith('pay_sandbox_') && !targetId.startsWith('sub_sandbox_')) {
+        const asaasSubId = subData.asaasSubscriptionId || (targetId.startsWith('sub_') ? targetId : null);
+        const asaasInvId = subData.asaasInvoiceId || (targetId.startsWith('pay_') ? targetId : null);
 
-        // Check subscription payments
+        // A. Check subscription payments in Asaas
         if (asaasSubId && asaasSubId.startsWith('sub_')) {
           try {
             const subPayRes = await fetch(`${baseUrl}/subscriptions/${asaasSubId}/payments`, {
               headers: { 'access_token': asaasApiKey }
             });
             const subPayData = await safeJsonFetch(subPayRes);
-            if (subPayData?.data && Array.isArray(subPayData.data)) {
-              const paid = subPayData.data.find((p: any) => p.status === 'RECEIVED' || p.status === 'CONFIRMED');
+            if (subPayData?.data && Array.isArray(subPayData.data) && subPayData.data.length > 0) {
+              const paid = subPayData.data.find((p: any) => 
+                p.status === 'RECEIVED' || p.status === 'CONFIRMED' || p.status === 'RECEIVED_IN_CASH' || p.status === 'RECEIVED_IN_CASH_FEE'
+              );
               if (paid) {
                 isPaidOnAsaas = true;
-                asaasPaymentObj = paid;
+                fetchedPayment = paid;
+                statusStr = paid.status;
+              } else {
+                fetchedPayment = subPayData.data[0];
+                statusStr = fetchedPayment?.status || 'PENDING';
               }
             }
-          } catch (e) {}
+          } catch (e) {
+            console.warn("Erro ao consultar pagamentos da assinatura no Asaas:", e);
+          }
         }
 
-        // Check single payment invoice
+        // B. Check single invoice in Asaas if not paid yet
         if (!isPaidOnAsaas && asaasInvId && asaasInvId.startsWith('pay_')) {
           try {
             const invRes = await fetch(`${baseUrl}/payments/${asaasInvId}`, {
               headers: { 'access_token': asaasApiKey }
             });
             const invData = await safeJsonFetch(invRes);
-            if (invData?.status === 'RECEIVED' || invData?.status === 'CONFIRMED') {
-              isPaidOnAsaas = true;
-              asaasPaymentObj = invData;
+            if (invData && !invData.errors) {
+              fetchedPayment = invData;
+              statusStr = invData.status || 'PENDING';
+              if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(statusStr)) {
+                isPaidOnAsaas = true;
+              }
+            }
+          } catch (e) {
+            console.warn("Erro ao consultar fatura no Asaas:", e);
+          }
+        }
+
+        // C. If targetId is a pay_ invoice directly
+        if (!isPaidOnAsaas && !fetchedPayment && targetId.startsWith('pay_')) {
+          try {
+            const invRes = await fetch(`${baseUrl}/payments/${targetId}`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const invData = await safeJsonFetch(invRes);
+            if (invData && !invData.errors) {
+              fetchedPayment = invData;
+              statusStr = invData.status || 'PENDING';
+              if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(statusStr)) {
+                isPaidOnAsaas = true;
+              }
             }
           } catch (e) {}
         }
       }
 
-      // If paid on Asaas OR if forced/no API key, activate subscription in Firestore
-      if (isPaidOnAsaas || req.body?.forceActivate) {
+      // STRICT CHECK: ONLY activate in Firestore if genuinely paid on Asaas
+      if (isPaidOnAsaas && subMatch) {
         const todayStr = new Date().toISOString().split('T')[0];
         const nextMonth = new Date();
         nextMonth.setMonth(nextMonth.getMonth() + 1);
         const nextMonthStr = nextMonth.toISOString().split('T')[0];
 
-        const updateFields = {
+        const updateFields: any = {
           status: 'active',
           asaasPaymentStatus: 'received',
           startDate: todayStr,
@@ -1690,77 +1738,107 @@ function encodeFirestoreFields(data: any): any {
           lastRenewalDate: todayStr,
           updatedAt: new Date().toISOString()
         };
+        if (fetchedPayment?.subscription) updateFields.asaasSubscriptionId = fetchedPayment.subscription;
+        if (fetchedPayment?.id) updateFields.asaasInvoiceId = fetchedPayment.id;
+        if (fetchedPayment?.customer) updateFields.asaasCustomerId = fetchedPayment.customer;
 
-        const updateMask = Object.keys(updateFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-        const patchUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${actualSubId}?${updateMask}`;
-        
-        await fetch(patchUrl, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fields: encodeFirestoreFields(updateFields) })
-        });
+        if (subMatch.ref) {
+          try {
+            await subMatch.ref.update(updateFields);
+          } catch (upErr) {
+            await updateFirestoreRestDoc('subscriptions', subMatch.id, updateFields);
+          }
+        } else {
+          await updateFirestoreRestDoc('subscriptions', subMatch.id, updateFields);
+        }
 
         // Activate user profile
         if (subData?.cliente_id) {
-          const userPatchUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/usuarios/${subData.cliente_id}?updateMask.fieldPaths=ativo&updateMask.fieldPaths=updatedAt`;
-          await fetch(userPatchUrl, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fields: encodeFirestoreFields({
+          try {
+            if (dbAdmin) {
+              await dbAdmin.collection('usuarios').doc(subData.cliente_id).set({
+                tenantId: targetTenantId,
                 ativo: true,
                 updatedAt: new Date().toISOString()
-              })
-            })
-          });
+              }, { merge: true });
+            } else {
+              await updateFirestoreRestDoc('usuarios', subData.cliente_id, {
+                ativo: true,
+                updatedAt: new Date().toISOString()
+              });
+            }
+          } catch (uErr) {
+            console.warn("Aviso ao ativar perfil do usuário:", uErr);
+          }
         }
 
-        // Create financial transaction for daily cash register and dashboard
-        const transValue = asaasPaymentObj?.value || subData?.amount || 0;
+        // Create financial transaction for daily cash register and dashboard ONLY IF genuinely paid and not duplicate
+        const transValue = Number(fetchedPayment?.value || subData?.amount || 0);
         if (transValue > 0) {
           try {
-            const finUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/financial_transactions`;
-            await fetch(finUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fields: encodeFirestoreFields({
-                  tenantId: targetTenantId,
-                  type: 'income',
-                  amount: transValue,
-                  date: todayStr,
-                  category: 'Assinaturas',
-                  description: `Assinatura Confirmada: ${subData?.planName || 'Plano'} - ${subData?.cliente_name || 'Cliente'}`,
-                  paymentMethod: asaasPaymentObj?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
-                  status: 'pago',
-                  cliente_id: subData?.cliente_id || 'N/A',
-                  cliente_name: subData?.cliente_name || 'Cliente',
-                  responsavel_id: subData?.cliente_id || 'N/A',
-                  responsavel_name: subData?.cliente_name || 'Cliente',
-                  net_amount: transValue,
-                  settlement_date: todayStr,
-                  is_settled: true,
-                  createdAt: new Date().toISOString()
-                })
-              })
-            });
+            let alreadyExists = false;
+            if (dbAdmin) {
+              const existingTrans = await dbAdmin.collection('financial_transactions')
+                .where('cliente_id', '==', subData.cliente_id || 'N/A')
+                .where('date', '==', todayStr)
+                .where('category', '==', 'Assinaturas')
+                .limit(1)
+                .get();
+              alreadyExists = !existingTrans.empty;
+            }
+
+            if (!alreadyExists) {
+              const newTrans = {
+                tenantId: targetTenantId,
+                type: 'income',
+                amount: transValue,
+                subscription_amount: transValue,
+                service_amount: 0,
+                product_amount: 0,
+                package_amount: 0,
+                date: todayStr,
+                category: 'Assinaturas',
+                description: `Assinatura Confirmada: ${subData?.planName || 'Plano'} - ${subData?.cliente_name || 'Cliente'}`,
+                paymentMethod: fetchedPayment?.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
+                status: 'pago',
+                cliente_id: subData?.cliente_id || 'N/A',
+                cliente_name: subData?.cliente_name || 'Cliente',
+                responsavel_id: subData?.cliente_id || 'N/A',
+                responsavel_name: subData?.cliente_name || 'Cliente',
+                net_amount: transValue,
+                settlement_date: todayStr,
+                is_settled: true,
+                createdAt: new Date().toISOString()
+              };
+
+              if (dbAdmin) {
+                await dbAdmin.collection('financial_transactions').add(newTrans);
+              } else {
+                await createFirestoreRestDoc('financial_transactions', null, newTrans);
+              }
+            }
           } catch (finErr) {
-            console.warn("Erro ao registrar transação financeira:", finErr);
+            console.warn("Aviso ao registrar transação financeira:", finErr);
           }
         }
 
         return res.json({
           success: true,
-          status: 'active',
+          isPaid: true,
+          status: 'RECEIVED',
           message: 'Pagamento confirmado no Asaas! Assinatura ativada com sucesso.',
-          asaasPayment: asaasPaymentObj
+          asaasPayment: fetchedPayment,
+          payment: fetchedPayment
         });
       }
 
+      // If NOT paid, keep pending or current status - NEVER report active
       return res.json({
-        success: false,
-        status: subData?.status || 'pending',
-        message: 'Pagamento ainda não foi identificado como concluído no Asaas.'
+        success: true,
+        isPaid: false,
+        status: statusStr || subData?.status || 'PENDING',
+        message: 'Pagamento ainda não foi identificado como concluído no Asaas.',
+        payment: fetchedPayment
       });
 
     } catch (error: any) {
@@ -2154,194 +2232,7 @@ function encodeFirestoreFields(data: any): any {
     return null;
   }
 
-  // Active Payment Status Check endpoint (to sync automatically without relying solely on webhooks)
-  app.post(["/api/saas/payment/check-status", "/saas/payment/check-status", "/payment/check-status", "/check-status"], async (req, res) => {
-    try {
-      const { paymentId } = req.body;
-      if (!paymentId) {
-        return res.status(400).json({ error: "Parâmetro paymentId é obrigatório." });
-      }
 
-      const asaasApiKey = process.env.ASAAS_API_KEY;
-      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
-
-      if (!asaasApiKey) {
-        return res.status(400).json({ error: "Integração com Asaas não configurada." });
-      }
-
-      const baseUrl = getAsaasBaseUrl(asaasEnv);
-
-      const dbAdmin = getAdminDb();
-      let realAsaasPaymentId = paymentId;
-      let existingSub: any = null;
-
-      if (dbAdmin) {
-        existingSub = await findSubscriptionInFirestore(dbAdmin, {
-          docId: paymentId,
-          externalReference: paymentId,
-          paymentId,
-          subscriptionId: paymentId
-        });
-
-        if (existingSub) {
-          const sData = existingSub.data;
-          realAsaasPaymentId = sData.asaasInvoiceId || sData.asaasSubscriptionId || paymentId;
-        }
-      }
-
-      let targetPaymentId = realAsaasPaymentId;
-
-      if (targetPaymentId.startsWith('sub_')) {
-        const subPaymentsRes = await fetch(`${baseUrl}/subscriptions/${targetPaymentId}/payments`, {
-          headers: { 'access_token': asaasApiKey }
-        });
-        const subPaymentsData = await safeJsonFetch(subPaymentsRes);
-        if (subPaymentsData?.data?.length > 0) {
-          const receivedPayment = subPaymentsData.data.find((p: any) => p.status === 'RECEIVED' || p.status === 'CONFIRMED');
-          if (receivedPayment) {
-            targetPaymentId = receivedPayment.id;
-          } else {
-            const pendingPayment = subPaymentsData.data.find((p: any) => p.status === 'PENDING');
-            if (pendingPayment) targetPaymentId = pendingPayment.id;
-            else targetPaymentId = subPaymentsData.data[0].id;
-          }
-        }
-      }
-
-      const payRes = await fetch(`${baseUrl}/payments/${targetPaymentId}`, {
-        headers: { 'access_token': asaasApiKey }
-      });
-      const paymentData = await safeJsonFetch(payRes);
-
-      if (!paymentData || paymentData.errors) {
-        return res.status(404).json({ error: "Cobrança não encontrada no Asaas." });
-      }
-
-      const isPaid = paymentData.status === 'RECEIVED' || paymentData.status === 'CONFIRMED';
-
-      if (isPaid) {
-        let subMatch = existingSub;
-        if (!subMatch) {
-          subMatch = await findSubscriptionInFirestore(dbAdmin, {
-            paymentId: paymentData.id,
-            subscriptionId: paymentData.subscription,
-            customerId: paymentData.customer,
-            externalReference: paymentData.externalReference || paymentId,
-            docId: paymentId
-          });
-        }
-
-        if (subMatch) {
-          const subRef = subMatch.ref;
-          const subData = subMatch.data || {};
-
-          if (subData.asaasPaymentStatus !== 'received' || subData.status !== 'active') {
-            const tenantId = subData.tenantId;
-            const todayStr = new Date().toISOString().split('T')[0];
-
-            let currentEnd = subData.endDate ? new Date(subData.endDate + 'T12:00:00') : new Date();
-            let newStartStr = subData.endDate || todayStr;
-            if (!subData.endDate || currentEnd < new Date()) {
-              newStartStr = todayStr;
-            }
-            const newStart = new Date(newStartStr + 'T12:00:00');
-            const newEnd = new Date(newStart);
-            newEnd.setMonth(newEnd.getMonth() + 1);
-            const newEndStr = newEnd.toISOString().split('T')[0];
-
-            const updateFields = {
-              status: 'active',
-              asaasPaymentStatus: 'received',
-              asaasSubscriptionId: paymentData.subscription || subData.asaasSubscriptionId || null,
-              asaasCustomerId: paymentData.customer || subData.asaasCustomerId || null,
-              asaasInvoiceId: paymentData.id || subData.asaasInvoiceId || null,
-              startDate: newStartStr,
-              endDate: newEndStr,
-              haircutsUsed: 0,
-              beardsUsed: 0,
-              lastRenewalDate: todayStr,
-              updatedAt: new Date()
-            };
-
-            if (subRef) {
-              try {
-                await subRef.update(updateFields);
-              } catch (upErr) {
-                console.warn(`⚠️ [Check Status] Fallback REST update para ${subMatch.id}`);
-                await updateFirestoreRestDoc('subscriptions', subMatch.id, updateFields);
-              }
-            } else {
-              await updateFirestoreRestDoc('subscriptions', subMatch.id, updateFields);
-            }
-
-            // Add to financial_transactions
-            await dbAdmin.collection('financial_transactions').add({
-              tenantId,
-              type: 'income',
-              amount: Number(paymentData.value) || subData.amount || 0,
-              date: todayStr,
-              category: 'Assinaturas',
-              description: `Assinatura Rull Confirmada (Sync Ativo): ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-              paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao' : 'pix',
-              status: 'pago',
-              cliente_id: subData.cliente_id,
-              cliente_name: subData.cliente_name,
-              responsavel_id: subData.cliente_id,
-              responsavel_name: subData.cliente_name,
-              net_amount: Number(paymentData.value) || subData.amount || 0,
-              settlement_date: todayStr,
-              is_settled: true,
-              createdAt: new Date()
-            });
-
-            // Check cash sessions
-            const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
-              .where('tenantId', '==', tenantId)
-              .get();
-
-            const openCashDoc = cashSessionsQuery.docs.find(doc => {
-              const s = doc.data().status;
-              return s === 'open' || s === 'reopened';
-            });
-
-            if (openCashDoc) {
-              const cashId = openCashDoc.id;
-              await dbAdmin.collection('cash_movements').add({
-                tenantId,
-                caixa_id: cashId,
-                type: 'income',
-                category: 'Assinaturas',
-                description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-                amount: Number(paymentData.value) || subData.amount || 0,
-                payment_method: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                paymentMethod: paymentData.billingType?.toLowerCase() === 'credit_card' ? 'cartao_credito' : 'pix',
-                date: todayStr,
-                createdAt: new Date()
-              });
-
-              await openCashDoc.ref.update({
-                total_income: (openCashDoc.data().total_income || 0) + (Number(paymentData.value) || subData.amount || 0),
-                expected_balance: (openCashDoc.data().expected_balance || 0) + (Number(paymentData.value) || subData.amount || 0),
-                updatedAt: new Date()
-              });
-            }
-            console.log(`[Sync Ativo] Assinatura ${subMatch.id} ativada com sucesso via check-status!`);
-          }
-        }
-      }
-
-      return res.json({ 
-        success: true, 
-        status: paymentData.status,
-        isPaid,
-        payment: paymentData 
-      });
-
-    } catch (error: any) {
-      console.error("Erro ao verificar status do pagamento:", error);
-      res.status(500).json({ error: error.message || "Falha ao verificar status." });
-    }
-  });
 
   // Update Credit Card endpoint for Asaas Subscription
   app.post(["/api/saas/payment/update-credit-card", "/saas/payment/update-credit-card", "/payment/update-credit-card", "/update-credit-card"], async (req, res) => {
@@ -3874,116 +3765,7 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
-  // Check Asaas payment status on-demand / polling
-  app.post("/api/saas/payment/check-status", async (req, res) => {
-    try {
-      const { paymentId, subscriptionId, id } = req.body || {};
-      const targetId = paymentId || subscriptionId || id;
 
-      if (!targetId) {
-        return res.status(400).json({ error: "paymentId or subscriptionId is required" });
-      }
-
-      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
-      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
-      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
-
-      let isPaid = false;
-      let statusStr = 'PENDING';
-      let fetchedPayment: any = null;
-
-      if (asaasApiKey && !targetId.startsWith('pay_sandbox_') && !targetId.startsWith('sub_sandbox_')) {
-        const baseUrl = getAsaasBaseUrl(asaasEnv);
-        let checkUrl = `${baseUrl}/payments/${targetId}`;
-
-        if (targetId.startsWith('sub_')) {
-          checkUrl = `${baseUrl}/subscriptions/${targetId}/payments`;
-        }
-
-        try {
-          const apiRes = await fetch(checkUrl, {
-            headers: { 'access_token': asaasApiKey }
-          });
-          if (apiRes.ok) {
-            const apiData = await apiRes.json();
-            if (targetId.startsWith('sub_') && Array.isArray(apiData?.data) && apiData.data.length > 0) {
-              fetchedPayment = apiData.data[0];
-            } else {
-              fetchedPayment = apiData;
-            }
-
-            statusStr = (fetchedPayment?.status || 'PENDING').toUpperCase();
-            if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE', 'ACTIVE'].includes(statusStr)) {
-              isPaid = true;
-            }
-          }
-        } catch (fetchErr) {
-          console.warn("Aviso ao checar status na API Asaas:", fetchErr);
-        }
-      }
-
-      const dbAdmin = getAdminDb();
-      if (dbAdmin) {
-        let subMatch = await findSubscriptionInFirestore(dbAdmin, {
-          paymentId: fetchedPayment?.id || (targetId.startsWith('pay_') ? targetId : undefined),
-          subscriptionId: fetchedPayment?.subscription || (targetId.startsWith('sub_') ? targetId : undefined),
-          customerId: fetchedPayment?.customer,
-          externalReference: fetchedPayment?.externalReference || targetId,
-          docId: targetId
-        });
-
-        if (subMatch) {
-          const subData = subMatch.data || {};
-          if (isPaid && subData.status !== 'active') {
-            const todayStr = new Date().toISOString().split('T')[0];
-            let newStartStr = todayStr;
-            let newEndStr = '';
-            const baseDate = new Date();
-            const calcEndDate = new Date(baseDate.setMonth(baseDate.getMonth() + 1));
-            newEndStr = calcEndDate.toISOString().split('T')[0];
-
-            await subMatch.ref.update({
-              status: 'active',
-              asaasPaymentStatus: 'received',
-              asaasSubscriptionId: fetchedPayment?.subscription || subData.asaasSubscriptionId || null,
-              asaasCustomerId: fetchedPayment?.customer || subData.asaasCustomerId || null,
-              asaasInvoiceId: fetchedPayment?.id || subData.asaasInvoiceId || null,
-              startDate: newStartStr,
-              endDate: newEndStr,
-              haircutsUsed: 0,
-              beardsUsed: 0,
-              lastRenewalDate: todayStr,
-              updatedAt: new Date()
-            });
-
-            if (subData.cliente_id) {
-              try {
-                await dbAdmin.collection('usuarios').doc(subData.cliente_id).set({
-                  tenantId: subData.tenantId || 'gbcortes7',
-                  ativo: true,
-                  updatedAt: new Date().toISOString()
-                }, { merge: true });
-              } catch (uErr) {
-                console.warn("Could not activate user profile:", uErr);
-              }
-            }
-          } else if (subData.status === 'active') {
-            isPaid = true;
-          }
-        }
-      }
-
-      return res.json({
-        success: true,
-        isPaid,
-        status: statusStr,
-        payment: fetchedPayment
-      });
-    } catch (error: any) {
-      console.error("Erro no check-status:", error);
-      return res.status(500).json({ error: error.message || "Erro ao verificar status" });
-    }
-  });
 
   // Webhook Receiver for Asaas / Mercado Pago / Stripe
   const webhookPaths = [
@@ -4056,20 +3838,18 @@ function encodeFirestoreFields(data: any): any {
 
       const value = Number(payment?.value || subscription?.value || payment?.transaction_amount || 0);
 
-      // Event Classification
+      // Event Classification - ONLY genuine payment confirmations (never activate on contract creation)
       const isPaymentConfirmed = (
         eventType === 'PAYMENT_RECEIVED' ||
         eventType === 'PAYMENT_CONFIRMED' ||
+        eventType === 'PAYMENT_RECEIVED_IN_CASH' ||
         eventType === 'PAYMENT_RECEIVED_IN_CASH_FEE' ||
         eventType === 'PAYMENT_DUNNING_RECEIVED' ||
         eventType === 'PAYMENT_APPROVED' ||
-        eventType.includes('RECEIVED') ||
-        eventType.includes('CONFIRMED') ||
         payment?.status === 'RECEIVED' ||
         payment?.status === 'CONFIRMED' ||
         payment?.status === 'RECEIVED_IN_CASH' ||
-        payment?.status === 'RECEIVED_IN_CASH_FEE' ||
-        subscription?.status === 'ACTIVE'
+        payment?.status === 'RECEIVED_IN_CASH_FEE'
       );
 
       const isPaymentOverdue = (
@@ -4100,7 +3880,45 @@ function encodeFirestoreFields(data: any): any {
       );
 
       if (isInformationalEvent) {
-        console.log(`ℹ️ [ASAAS AUDIT] Evento informativo ignorado sem alterar estado financeiro: ${eventType}`);
+        console.log(`ℹ️ [ASAAS AUDIT] Evento informativo recebido (aguardando pagamento da fatura): ${eventType}`);
+        // Optionally associate Asaas IDs if subscription document exists, without changing pending status
+        try {
+          const dbAdmin = getAdminDb();
+          let targetSubMatch = null;
+          if (dbAdmin) {
+            targetSubMatch = await findSubscriptionInFirestore(dbAdmin, {
+              paymentId: payment?.id,
+              subscriptionId: subscription?.id || payment?.subscription,
+              customerId: subscription?.customer || payment?.customer,
+              externalReference: rawRefId,
+              docId: rawRefId ? rawRefId.replace(/^client_sub:/, '') : undefined
+            });
+          }
+          if (targetSubMatch) {
+            const currentSub = targetSubMatch.data || {};
+            const idUpdate: any = {};
+            if ((subscription?.id || payment?.subscription) && !currentSub.asaasSubscriptionId) {
+              idUpdate.asaasSubscriptionId = subscription?.id || payment?.subscription;
+            }
+            if (payment?.id && !currentSub.asaasInvoiceId) {
+              idUpdate.asaasInvoiceId = payment?.id;
+            }
+            if ((payment?.customer || subscription?.customer) && !currentSub.asaasCustomerId) {
+              idUpdate.asaasCustomerId = payment?.customer || subscription?.customer;
+            }
+            if (Object.keys(idUpdate).length > 0) {
+              idUpdate.updatedAt = new Date();
+              if (targetSubMatch.ref) {
+                await targetSubMatch.ref.update(idUpdate);
+              } else {
+                await updateFirestoreRestDoc('subscriptions', targetSubMatch.id, idUpdate);
+              }
+              console.log(`🔗 [ASAAS AUDIT] IDs Asaas vinculados à assinatura pendente ${targetSubMatch.id}:`, idUpdate);
+            }
+          }
+        } catch (linkErr) {
+          console.warn("Aviso ao vincular IDs em evento informativo:", linkErr);
+        }
         return res.status(200).json({ received: true, note: "Event acknowledged without status changes" });
       }
 

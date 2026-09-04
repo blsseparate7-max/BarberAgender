@@ -119,10 +119,16 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
   const fetchBarbers = async () => {
     try {
+      const activeTenantId = getActiveTenantId();
+      const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
+      if (activeTenantId === 'gbcortes7') {
+        constraints.push(where('tenantId', 'in', [activeTenantId, '']));
+      } else {
+        constraints.push(where('tenantId', '==', activeTenantId));
+      }
       const q = query(
         collection(db, 'usuarios'), 
-        where('tenantId', '==', getActiveTenantId()),
-        where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
+        ...constraints
       );
       const snap = await getDocs(q);
       const list = snap.docs.map(doc => ({ id: doc.id, nome: doc.data().nome || 'Barbeiro' }));

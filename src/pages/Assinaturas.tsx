@@ -504,7 +504,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
        s.externalReference === `client_sub:${createdChargeData.id}` || 
        s.asaasInvoiceId === createdChargeData.id || 
        s.asaasSubscriptionId === createdChargeData.id) && 
-      s.status === 'active'
+      s.status === 'active' && (s.asaasPaymentStatus === 'received' || s.activationType === 'manual')
     );
 
     if (activeSub) {
@@ -526,7 +526,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         if (res.ok) {
           const data = await res.json();
           const currentStatus = String(data.status || '').toUpperCase();
-          if (data.isPaid || data.success || currentStatus === 'ACTIVE' || currentStatus === 'RECEIVED' || currentStatus === 'CONFIRMED' || currentStatus === 'RECEIVED_IN_CASH') {
+          const isGenuinelyPaid = data.isPaid === true || ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(currentStatus);
+          if (isGenuinelyPaid) {
             setCreatedChargeData(prev => prev ? { ...prev, status: 'active' } : null);
             toast.success("Pagamento identificado no Asaas! Assinatura ativada com sucesso.");
             await loadData();

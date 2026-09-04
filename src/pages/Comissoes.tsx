@@ -74,22 +74,25 @@ export function Comissoes() {
 
   useEffect(() => {
     loadBarbers();
-    if (tenantId === 'gbcortes7') {
-      commissionService.cleanAndSettlePreviousMonths('2026-09-01', 'gbcortes7');
-    }
   }, [tenantId]);
 
   // Live Subscription for all commissions and advances of the tenant
   useEffect(() => {
     if (!tenantId) return;
     
-    const qCom = query(collection(db, 'commissions'), where('tenantId', '==', tenantId));
+    const commConstraints = tenantId === 'gbcortes7' 
+      ? [where('tenantId', 'in', [tenantId, ''])] 
+      : [where('tenantId', '==', tenantId)];
+    const qCom = query(collection(db, 'commissions'), ...commConstraints);
     const unsubCom = onSnapshot(qCom, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
       setAllCommissionsLive(docs);
     });
 
-    const qAdv = query(collection(db, 'professional_advances'), where('tenantId', '==', tenantId));
+    const advConstraints = tenantId === 'gbcortes7' 
+      ? [where('tenantId', 'in', [tenantId, ''])] 
+      : [where('tenantId', '==', tenantId)];
+    const qAdv = query(collection(db, 'professional_advances'), ...advConstraints);
     const unsubAdv = onSnapshot(qAdv, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
       setAllAdvancesLive(docs);
@@ -172,33 +175,61 @@ export function Comissoes() {
     }
   });
 
-  // Calculate global stats dynamically in-memory to incorporate vales (advances) for 100% mathematical precision
-  const calculatedStats = React.useMemo(() => {
-    const pendingComms = commissions
-      .filter(c => c.status === 'pendente')
-      .reduce((acc, c) => acc + (c.commission_value || 0), 0);
-    
-    const pendingAdvs = advances
-      .filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'))
-      .reduce((acc, a) => acc + (a.amount || 0), 0);
+  // Calculate roster summary with unified ledger - 100% synchronized with Barbeiros and Financeiro
+  const effectiveCommissions = allCommissionsLive.length > 0 ? allCommissionsLive : commissions;
+  const effectiveAdvances = allAdvancesLive.length > 0 ? allAdvancesLive : advances;
 
-    const pending = Math.max(0, pendingComms - pendingAdvs);
-    
-    const paid = commissions
+  const teamRoster = React.useMemo(() => {
+    return barbers.map(barber => {
+      const ledger = calculateProfessionalLedger(barber, effectiveCommissions, effectiveAdvances);
+      return {
+        uid: barber.uid,
+        nome: barber.nome,
+        email: barber.email,
+        grossPending: ledger.comissaoPendenteBruta,
+        pendingAdvances: ledger.valesPendentes,
+        pending: ledger.saldoPendenteLiquido,
+        paid: ledger.comissaoRepassadaMes,
+        totalBase: ledger.faturamentoBrutoMes,
+        comissaoGeradaMes: ledger.comissaoGeradaMes,
+        count: ledger.totalAtendimentosMes
+      };
+    });
+  }, [barbers, effectiveCommissions, effectiveAdvances]);
+
+  // Calculate global stats dynamically in-memory:
+  // pending is strictly the sum of all individual barbers' net pending balances (preventing cross-barber offset)
+  // paid and totalBase reflect all commissions in the selected dateRange, independent of table-level status filters
+  const calculatedStats = React.useMemo(() => {
+    // Total pending across all team members: each barber's net pending is independent
+    const totalPendingNet = teamRoster.reduce((acc, b) => acc + b.pending, 0);
+    const totalGrossPending = teamRoster.reduce((acc, b) => acc + b.grossPending, 0);
+    const totalAdvancesPending = teamRoster.reduce((acc, b) => acc + b.pendingAdvances, 0);
+
+    // Filter by period for top summary cards
+    const periodComms = effectiveCommissions.filter(c => {
+      if (!c.date) return false;
+      const d = c.date.substring(0, 10);
+      return d >= dateRange.start && d <= dateRange.end;
+    });
+
+    const paid = periodComms
       .filter(c => c.status === 'pago')
       .reduce((acc, c) => acc + (c.commission_value || 0), 0);
 
-    const totalBase = commissions
+    const totalBase = periodComms
       .filter(c => c.commission_type !== 'assinatura')
       .reduce((acc, c) => acc + (c.base_value || 0), 0);
 
     return {
-      pending,
+      pending: totalPendingNet,
+      grossPending: totalGrossPending,
+      advancesPending: totalAdvancesPending,
       paid,
       totalBase,
-      count: commissions.length
+      count: periodComms.length
     };
-  }, [commissions, advances]);
+  }, [teamRoster, effectiveCommissions, dateRange.start, dateRange.end]);
 
   // If barber logged in, redirect directly to their own detail
   if (profile?.tipo === 'barbeiro' && user) {
@@ -221,7 +252,7 @@ export function Comissoes() {
             setSelectedBarberName(null);
             loadData();
           }}
-          className="flex items-center gap-2 text-muted hover:text-primary font-bold text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl transition-all"
+          className="flex items-center gap-2 text-muted hover:text-primary font-bold text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl transition-all cursor-pointer"
         >
           <ArrowLeft size={14} />
           Voltar para Painel de Equipe
@@ -239,26 +270,6 @@ export function Comissoes() {
       </div>
     );
   }
-
-  // Calculate roster summary with unified ledger - 100% synchronized with Barbeiros and Financeiro
-  const effectiveCommissions = allCommissionsLive.length > 0 ? allCommissionsLive : commissions;
-  const effectiveAdvances = allAdvancesLive.length > 0 ? allAdvancesLive : advances;
-
-  const teamRoster = barbers.map(barber => {
-    const ledger = calculateProfessionalLedger(barber, effectiveCommissions, effectiveAdvances);
-    return {
-      uid: barber.uid,
-      nome: barber.nome,
-      email: barber.email,
-      grossPending: ledger.comissaoPendenteBruta,
-      pendingAdvances: ledger.valesPendentes,
-      pending: ledger.saldoPendenteLiquido,
-      paid: ledger.comissaoRepassadaMes,
-      totalBase: ledger.faturamentoBrutoMes,
-      comissaoGeradaMes: ledger.comissaoGeradaMes,
-      count: ledger.totalAtendimentosMes
-    };
-  });
 
   // Get dynamic colors for avatars based on initials
   const getAvatarBg = (name: string) => {
@@ -342,7 +353,12 @@ export function Comissoes() {
           value={calculatedStats.pending} 
           icon={<Clock className="text-amber-500" size={18} />} 
           color="amber"
-          subtitle="Aguardando liquidação"
+          subtitle="Saldo líquido real a pagar"
+          detail={
+            calculatedStats.advancesPending > 0
+              ? `Bruto: R$ ${calculatedStats.grossPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | Vales: -R$ ${calculatedStats.advancesPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+              : undefined
+          }
         />
         <StatCard 
           title="Comissão Repassada" 
@@ -672,7 +688,23 @@ export function Comissoes() {
 }
 
 // Redesigned premium stat card component with subtle glowing effects
-function StatCard({ title, value, icon, color, subtitle, isCurrency = true }: { title: string, value: number, icon: React.ReactNode, color: string, subtitle: string, isCurrency?: boolean }) {
+function StatCard({ 
+  title, 
+  value, 
+  icon, 
+  color, 
+  subtitle, 
+  detail,
+  isCurrency = true 
+}: { 
+  title: string; 
+  value: number; 
+  icon: React.ReactNode; 
+  color: string; 
+  subtitle: string; 
+  detail?: string;
+  isCurrency?: boolean; 
+}) {
   const colors: Record<string, string> = {
     emerald: 'bg-emerald-50/70 border-emerald-100 text-emerald-600 shadow-emerald-500/5',
     blue: 'bg-blue-50/70 border-blue-100 text-blue-600 shadow-blue-500/5',
@@ -681,7 +713,7 @@ function StatCard({ title, value, icon, color, subtitle, isCurrency = true }: { 
   };
 
   return (
-    <div className={`p-6 rounded-3xl border shadow-sm ${colors[color]} flex flex-col justify-between h-36 text-left`}>
+    <div className={`p-5 sm:p-6 rounded-3xl border shadow-sm ${colors[color]} flex flex-col justify-between min-h-[144px] text-left`}>
       <div className="flex items-center justify-between">
         <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{title}</span>
         <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center shadow-xs border border-slate-100">
@@ -692,7 +724,12 @@ function StatCard({ title, value, icon, color, subtitle, isCurrency = true }: { 
         <p className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-mono">
           {isCurrency ? `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : value}
         </p>
-        <p className="text-[10px] text-slate-450 font-bold tracking-wide mt-1">{subtitle}</p>
+        <p className="text-[10px] text-slate-500 font-bold tracking-wide mt-0.5">{subtitle}</p>
+        {detail && (
+          <p className="text-[9px] text-slate-400 font-semibold tracking-tight mt-0.5 font-mono truncate" title={detail}>
+            {detail}
+          </p>
+        )}
       </div>
     </div>
   );

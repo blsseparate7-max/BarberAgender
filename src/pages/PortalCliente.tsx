@@ -503,7 +503,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     setCheckingStatusSubId(sub.id);
     try {
       const res = await subscriptionService.checkAsaasPaymentStatus(sub.asaasInvoiceId || sub.id);
-      const isConfirmed = res.isPaid || res.status === 'RECEIVED' || res.status === 'CONFIRMED' || res.received;
+      const isConfirmed = res.isPaid === true || ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(String(res.status || '').toUpperCase());
       if (isConfirmed) {
         toast.success("Pagamento confirmado e assinatura ativada com sucesso!");
         if (profile?.uid) {
@@ -603,7 +603,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     const interval = setInterval(async () => {
       try {
         const res = await subscriptionService.checkAsaasPaymentStatus(clientCreatedChargeData.id);
-        const isConfirmed = res.isPaid || res.status === 'RECEIVED' || res.status === 'CONFIRMED' || res.received;
+        const isConfirmed = res.isPaid === true || ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(String(res.status || '').toUpperCase());
         if (isConfirmed) {
           toast.success("Pagamento confirmado e assinatura ativada com sucesso!");
           setShowClientChargeModal(false);

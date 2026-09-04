@@ -26,19 +26,19 @@ const COLLECTION = 'usuarios';
 export const userService = {
   async getUsersByRole(role: UserRole, onlyActive = true, tenantId?: string) {
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    let q = query(
+    const constraints = [where('tipo', '==', role)];
+    if (tid === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tid, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tid));
+    }
+    const q = query(
       collection(db, COLLECTION), 
-      where('tipo', '==', role)
+      ...constraints
     );
     
     const querySnapshot = await getDocs(q);
-    let users = querySnapshot.docs
-      .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-      .filter(u => {
-        if (!tid) return true;
-        const uTenant = (u.tenantId || '').trim().toLowerCase();
-        return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
-      });
+    let users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
     
     if (onlyActive) {
       users = users.filter(u => u.ativo !== false);
@@ -46,21 +46,21 @@ export const userService = {
     return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
-  subscribeToUsersByRole(role: UserRole, onlyActive = true, callback: (users: UserProfile[]) => void) {
-    const tid = (getActiveTenantId()).trim().toLowerCase();
-    let q = query(
+  subscribeToUsersByRole(role: UserRole, onlyActive = true, callback: (users: UserProfile[]) => void, tenantId?: string) {
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const constraints = [where('tipo', '==', role)];
+    if (tid === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tid, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tid));
+    }
+    const q = query(
       collection(db, COLLECTION), 
-      where('tipo', '==', role)
+      ...constraints
     );
 
     return onSnapshot(q, (snapshot) => {
-      let users = snapshot.docs
-        .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-        .filter(u => {
-          if (!tid) return true;
-          const uTenant = (u.tenantId || '').trim().toLowerCase();
-          return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
-        });
+      let users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
       if (onlyActive) {
         users = users.filter(u => u.ativo !== false);
       }
@@ -71,19 +71,19 @@ export const userService = {
 
   subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void, tenantId?: string) {
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
+    if (tid === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tid, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tid));
+    }
     const q = query(
       collection(db, COLLECTION), 
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
+      ...constraints
     );
 
     return onSnapshot(q, (snapshot) => {
-      let users = snapshot.docs
-        .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-        .filter(u => {
-          if (!tid) return true;
-          const uTenant = (u.tenantId || '').trim().toLowerCase();
-          return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
-        });
+      let users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
       if (onlyActive) {
         users = users.filter(u => u.ativo !== false);
       }
@@ -98,18 +98,18 @@ export const userService = {
 
   async getAllBarbers(onlyActive = true, tenantId?: string) {
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
+    if (tid === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tid, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tid));
+    }
     const q = query(
       collection(db, COLLECTION),
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
+      ...constraints
     );
     const querySnapshot = await getDocs(q);
-    let users = querySnapshot.docs
-      .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
-      .filter(u => {
-        if (!tid) return true;
-        const uTenant = (u.tenantId || '').trim().toLowerCase();
-        return uTenant === tid || (!u.tenantId && tid === 'gbcortes7');
-      });
+    let users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
     if (onlyActive) {
       users = users.filter(u => u.ativo !== false);
     }

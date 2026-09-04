@@ -324,13 +324,16 @@ export default async function handler(req: any, res: any) {
 
     const value = Number(payment?.value || subscription?.value || 0);
     const isActivation = (
-      eventType.includes('RECEIVED') ||
-      eventType.includes('CONFIRMED') ||
-      eventType.includes('APPROVED') ||
-      eventType.includes('ACTIVE') ||
+      eventType === 'PAYMENT_RECEIVED' ||
+      eventType === 'PAYMENT_CONFIRMED' ||
+      eventType === 'PAYMENT_RECEIVED_IN_CASH' ||
+      eventType === 'PAYMENT_RECEIVED_IN_CASH_FEE' ||
+      eventType === 'PAYMENT_DUNNING_RECEIVED' ||
+      eventType === 'PAYMENT_APPROVED' ||
       payment?.status === 'RECEIVED' ||
       payment?.status === 'CONFIRMED' ||
-      subscription?.status === 'ACTIVE'
+      payment?.status === 'RECEIVED_IN_CASH' ||
+      payment?.status === 'RECEIVED_IN_CASH_FEE'
     );
 
     if (isActivation) {

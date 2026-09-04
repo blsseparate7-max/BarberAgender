@@ -173,11 +173,17 @@ export function Barbeiros() {
 
   // Live Subscription for Professionals
   useEffect(() => {
+    if (!tenantId) return;
     setLoading(true);
+    const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
+    if (tenantId === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tenantId, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tenantId));
+    }
     const q = query(
       collection(db, 'usuarios'),
-      where('tipo', 'in', ['barbeiro', 'gerente', 'admin']),
-      where('tenantId', '==', tenantId)
+      ...constraints
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));

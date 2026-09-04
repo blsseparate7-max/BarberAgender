@@ -54,13 +54,31 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
     try {
       const tenantId = profile?.tenantId || 'gbcortes7';
       const result = await loyaltyService.syncRetroactiveLoyalty(tenantId);
-      toast.success(
-        `Fidelidade Sincronizada! ${result.countSynced} comandas de setembro processadas com sucesso. Pontos: +${result.totalPointsAwarded} | Cashback: +R$ ${result.totalCashbackAwarded.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
-      );
+      if (result.countSynced === 0) {
+        toast.info("Todas as comandas elegíveis de setembro já estão com pontos/cashback computados.");
+      } else {
+        toast.success(
+          `Fidelidade Sincronizada! ${result.countSynced} comanda(s) de setembro processada(s) com sucesso. Pontos: +${result.totalPointsAwarded} | Cashback: +R$ ${result.totalCashbackAwarded.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+        );
+      }
       loadData();
     } catch (err: any) {
-      console.error("Erro no sync retroativo:", err);
-      toast.error(err.message || "Erro ao sincronizar pontos.");
+      const errMsg = err?.message || String(err);
+      const isQuota = 
+        err?.code === 'resource-exhausted' ||
+        errMsg.toLowerCase().includes('quota') ||
+        errMsg.toLowerCase().includes('resource-exhausted');
+
+      if (isQuota) {
+        console.warn("Limite de operações do Firebase (Quota exceeded) atingido no sync retroativo:", errMsg);
+        toast.error(
+          "Limite diário de operações do Firebase atingido (Quota exceeded). A cota do plano gratuito é renovada automaticamente pelo Google em 24h, ou faça upgrade para o plano Blaze no Firebase Console para operações ilimitadas.",
+          { duration: 8000 }
+        );
+      } else {
+        console.error("Erro no sync retroativo:", err);
+        toast.error(errMsg || "Erro ao sincronizar pontos.");
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -118,8 +136,17 @@ export function Fidelidade({ activeSubTab }: { activeSubTab?: string }) {
           setHistory(h);
         }
       }
-    } catch (error) {
-      console.error("Erro ao carregar fidelidade:", error);
+    } catch (error: any) {
+      const errMsg = error?.message || String(error);
+      const isQuota = 
+        error?.code === 'resource-exhausted' ||
+        errMsg.toLowerCase().includes('quota') ||
+        errMsg.toLowerCase().includes('resource-exhausted');
+      if (isQuota) {
+        console.warn("Cota do Firebase atingida ao carregar dados de fidelidade:", errMsg);
+      } else {
+        console.error("Erro ao carregar fidelidade:", error);
+      }
     } finally {
       setLoading(false);
     }

@@ -35,17 +35,6 @@ export const commissionService = {
     let querySnapshot = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
     let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
 
-    if (results.length === 0 && filters.profissional_id && activeTenant) {
-      try {
-        const fallbackSnap = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), where('profissional_id', '==', filters.profissional_id)));
-        if (!fallbackSnap.empty) {
-          results = fallbackSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
-        }
-      } catch (e) {
-        console.warn("Fallback query for commissions failed:", e);
-      }
-    }
-
     // Filter in memory
     if (filters.status) {
       results = results.filter(c => c.status === filters.status);
@@ -81,17 +70,6 @@ export const commissionService = {
 
     let snap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
     let results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
-
-    if (results.length === 0 && filters.profissional_id) {
-      try {
-        const fallbackSnap = await getDocs(query(collection(db, ADVANCES_COLLECTION), where('profissional_id', '==', filters.profissional_id)));
-        if (!fallbackSnap.empty) {
-          results = fallbackSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
-        }
-      } catch (e) {
-        console.warn("Fallback query for advances failed:", e);
-      }
-    }
 
     // Try to get target professional name if filters.profissional_id is set
     let targetProName = (filters.profissional_name || '').toLowerCase().trim();

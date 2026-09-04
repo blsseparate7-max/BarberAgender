@@ -391,6 +391,10 @@ service cloud.firestore {
       allow read, create, update, delete: if isAuthenticated();
     }
 
+    match /subscription_usages/{usageId} {
+      allow read, create, update, delete: if isAuthenticated();
+    }
+
     match /subscription_commission_runs/{runId} {
       allow read, write: if isStaff();
     }
@@ -406,7 +410,7 @@ service cloud.firestore {
     
     match /marketing_history/{historyId} {
       allow read: if isStaff();
-      allow create: if isStaff();
+      allow create: if isStaff() || isBarbeiro();
       allow delete: if isAdmin();
     }
 

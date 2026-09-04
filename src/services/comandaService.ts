@@ -979,8 +979,6 @@ export const comandaService = {
     if (comanda.cliente_id && clientExists) {
       const clientRef = doc(db, 'usuarios', comanda.cliente_id);
       transaction.update(clientRef, {
-        tenantId: comanda.tenantId || getActiveTenantId(),
-        ativo: true,
         total_gasto: increment(comanda.totalAmount),
         totalSpent: increment(comanda.totalAmount), // Legacy
         total_em_aberto: increment(finalPendingAmountLeft > 0 ? finalPendingAmountLeft : 0),

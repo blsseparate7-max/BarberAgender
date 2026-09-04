@@ -899,70 +899,64 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     setLoadingInvoices(true);
     setInvoicesList([]);
     try {
-      const combinedInvoices: any[] = [];
-      const seenIds = new Set<string>();
-
-      // 1. Fetch Local Transactions from client-side Firestore
-      try {
-        const transRef = collection(db, 'financial_transactions');
-        const q = query(
-          transRef,
-          where('tenantId', '==', (profile as any)?.tenantId || 'gbcortes7')
-        );
-        const snap = await getDocs(q);
-        snap.forEach(docSnap => {
-          const data = docSnap.data();
-          const isCategorySub = data.category === 'Assinaturas' || data.category === 'Planos' || data.type === 'assinatura';
-          const matchesClient = (sub.cliente_id && data.cliente_id === sub.cliente_id) || 
-                                (sub.cliente_name && data.description?.toLowerCase().includes(sub.cliente_name.toLowerCase()));
-          
-          if (isCategorySub && matchesClient) {
-            seenIds.add(docSnap.id);
-            combinedInvoices.push({
-              id: docSnap.id,
-              date: data.date || (typeof data.createdAt === 'string' ? data.createdAt.substring(0, 10) : ''),
-              dueDate: data.settlement_date || data.date || '',
-              amount: data.amount || data.net_amount || 0,
-              status: data.status === 'pago' ? 'RECEIVED' : (data.status === 'pendente' ? 'PENDING' : 'OVERDUE'),
-              statusLabel: data.status === 'pago' ? 'Paga no Balcão' : 'Pendente',
-              billingType: data.paymentMethod ? String(data.paymentMethod).toUpperCase() : 'BALCAO',
-              billingTypeLabel: data.paymentMethod === 'dinheiro' ? 'Dinheiro (Balcão)' : (data.paymentMethod === 'pix' ? 'Pix Balcão' : (data.paymentMethod === 'debito' ? 'Cartão Débito (Maquininha)' : (data.paymentMethod === 'credito' ? 'Cartão Crédito (Maquininha)' : 'Balcão / Caixa'))),
-              description: data.description || 'Assinatura (Balcão)',
-              source: 'local'
-            });
-          }
-        });
-      } catch (localErr) {
-        console.warn("Aviso ao buscar transações locais:", localErr);
-      }
-
-      // 2. Fetch Asaas API Invoices via Server Endpoint
       const customerId = (sub as any).asaasCustomerId || '';
       const clienteId = sub.cliente_id || '';
+      let loadedInvoices: any[] = [];
+
+      // 1. Fetch Unified Invoices (Asaas API + Non-duplicate Local Transactions) from Backend
       try {
         const res = await fetch(`/api/saas/subscription/invoices?subscriptionId=${encodeURIComponent(sub.id)}&customerId=${encodeURIComponent(customerId)}&clienteId=${encodeURIComponent(clienteId)}`);
         if (res.ok) {
           const data = await res.json();
-          const apiInvoices = data.invoices || [];
-          apiInvoices.forEach((inv: any) => {
-            if (!seenIds.has(inv.id)) {
-              seenIds.add(inv.id);
-              combinedInvoices.push(inv);
-            }
-          });
+          loadedInvoices = data.invoices || [];
         }
       } catch (apiErr) {
-        console.warn("Aviso ao buscar faturas Asaas no backend:", apiErr);
+        console.warn("Aviso ao buscar faturas no backend, tentando busca local direta:", apiErr);
       }
 
-      // Sort all combined invoices by date descending
-      combinedInvoices.sort((a, b) => {
+      // 2. Fallback to Local Transactions only if backend returned empty and failed
+      if (loadedInvoices.length === 0) {
+        try {
+          const transRef = collection(db, 'financial_transactions');
+          const q = query(
+            transRef,
+            where('tenantId', '==', (profile as any)?.tenantId || 'gbcortes7')
+          );
+          const snap = await getDocs(q);
+          snap.forEach(docSnap => {
+            const data = docSnap.data();
+            const isCategorySub = data.category === 'Assinaturas' || data.category === 'Planos' || data.type === 'assinatura';
+            const matchesClient = (sub.cliente_id && data.cliente_id === sub.cliente_id) || 
+                                  (sub.cliente_name && data.description?.toLowerCase().includes(sub.cliente_name.toLowerCase()));
+            
+            if (isCategorySub && matchesClient) {
+              loadedInvoices.push({
+                id: docSnap.id,
+                date: data.date || (typeof data.createdAt === 'string' ? data.createdAt.substring(0, 10) : ''),
+                dueDate: data.settlement_date || data.date || '',
+                amount: data.amount || data.net_amount || 0,
+                status: data.status === 'pago' ? 'RECEIVED' : (data.status === 'pendente' ? 'PENDING' : 'OVERDUE'),
+                statusLabel: data.status === 'pago' ? 'Paga no Balcão' : 'Pendente',
+                billingType: data.paymentMethod ? String(data.paymentMethod).toUpperCase() : 'BALCAO',
+                billingTypeLabel: data.paymentMethod === 'dinheiro' ? 'Dinheiro (Balcão)' : (data.paymentMethod === 'pix' ? 'Pix Balcão' : (data.paymentMethod === 'debito' ? 'Cartão Débito (Maquininha)' : (data.paymentMethod === 'credito' ? 'Cartão Crédito (Maquininha)' : 'Balcão / Caixa'))),
+                description: data.description || 'Assinatura (Balcão)',
+                source: 'local'
+              });
+            }
+          });
+        } catch (localErr) {
+          console.warn("Aviso ao buscar transações locais:", localErr);
+        }
+      }
+
+      // Sort invoices by date descending
+      loadedInvoices.sort((a, b) => {
         const dateA = new Date(a.date || a.dueDate || 0).getTime();
         const dateB = new Date(b.date || b.dueDate || 0).getTime();
         return dateB - dateA;
       });
 
-      setInvoicesList(combinedInvoices);
+      setInvoicesList(loadedInvoices);
     } catch (err) {
       console.error("Erro ao buscar histórico de faturas:", err);
       toast.error("Erro ao carregar faturas.");

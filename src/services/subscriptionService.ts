@@ -551,6 +551,28 @@ export const subscriptionService = {
     const startDate = new Date();
     const endDate = addMonths(startDate, 1);
 
+    // Clean up or cancel old pending subscriptions for this client and tenant to prevent duplicate rows
+    try {
+      const oldPendingQ = query(
+        collection(db, SUBSCRIPTIONS_COLLECTION),
+        where('cliente_id', '==', data.cliente_id),
+        where('status', '==', 'pending')
+      );
+      const oldSnaps = await getDocs(oldPendingQ);
+      for (const oldDoc of oldSnaps.docs) {
+        const oldData = oldDoc.data();
+        if (!oldData.tenantId || oldData.tenantId === activeTenantId) {
+          await updateDoc(doc(db, SUBSCRIPTIONS_COLLECTION, oldDoc.id), {
+            status: 'canceled',
+            cancelReason: 'Substituída por nova tentativa de assinatura',
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+    } catch (cleanErr) {
+      console.warn("Aviso ao limpar tentativas pendentes anteriores:", cleanErr);
+    }
+
     const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
     const subId = subscriptionRef.id;
 

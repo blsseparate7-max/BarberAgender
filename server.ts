@@ -2800,9 +2800,64 @@ function encodeFirestoreFields(data: any): any {
       const clienteId = (req.query.clienteId as string) || '';
 
       const invoices: any[] = [];
+      const seenAsaasIds = new Set<string>();
       const dbAdmin = getAdminDb();
 
-      // 1. Fetch from Firestore financial_transactions
+      // 1. Fetch from Asaas API if customerId or subscriptionId exists
+      let targetTenantId = 'gbcortes7';
+      let asaasCustomer = customerId;
+
+      if (subscriptionId && dbAdmin) {
+        try {
+          const subDoc = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
+          if (subDoc.exists) {
+            const sData = subDoc.data();
+            if (!asaasCustomer) asaasCustomer = sData?.asaasCustomerId || '';
+            if (sData?.tenantId) targetTenantId = sData.tenantId;
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      const tenantCreds = await getTenantAsaasCredentials(targetTenantId);
+      const asaasApiKey = tenantCreds.apiKey;
+      const baseUrl = tenantCreds.baseUrl;
+
+      if (asaasApiKey && asaasCustomer && asaasCustomer.startsWith('cus_')) {
+        try {
+          const asaasRes = await fetch(`${baseUrl}/payments?customer=${asaasCustomer}&limit=30`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          const asaasData = await safeJsonFetch(asaasRes);
+          if (asaasData?.data && Array.isArray(asaasData.data)) {
+            for (const p of asaasData.data) {
+              const isPaid = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(p.status);
+              const isOverdue = p.status === 'OVERDUE';
+              const isPending = p.status === 'PENDING';
+
+              seenAsaasIds.add(p.id);
+              invoices.push({
+                id: p.id,
+                date: p.paymentDate || p.clientPaymentDate || p.dateCreated || p.dueDate,
+                dueDate: p.dueDate,
+                amount: p.value || 0,
+                netValue: p.netValue,
+                status: p.status,
+                statusLabel: isPaid ? 'Paga (Asaas)' : (isOverdue ? 'Atrasada / Não Cobrada' : (isPending ? 'Aguardando Pagamento' : p.status)),
+                billingType: p.billingType,
+                billingTypeLabel: p.billingType === 'CREDIT_CARD' ? 'Cartão de Crédito (Asaas)' : (p.billingType === 'PIX' ? 'Pix (Asaas)' : (p.billingType === 'BOLETO' ? 'Boleto' : p.billingType)),
+                description: p.description || 'Assinatura Asaas',
+                paymentUrl: p.invoiceUrl || p.bankSlipUrl || p.paymentLink || '',
+                invoiceUrl: p.invoiceUrl || p.bankSlipUrl || '',
+                source: 'asaas'
+              });
+            }
+          }
+        } catch (aErr) {
+          console.warn("Aviso ao buscar cobranças no Asaas em subscription/invoices:", aErr);
+        }
+      }
+
+      // 2. Fetch from Firestore financial_transactions (Only local / balcão transactions not in Asaas)
       if (dbAdmin) {
         try {
           let q = dbAdmin.collection('financial_transactions').where('category', '==', 'Assinaturas');
@@ -2812,6 +2867,15 @@ function encodeFirestoreFields(data: any): any {
           const snap = await q.orderBy('date', 'desc').limit(30).get();
           snap.forEach((doc: any) => {
             const data = doc.data();
+            const linkedAsaasId = data.asaasPaymentId || data.asaasInvoiceId || '';
+            // Skip if already represented by an Asaas payment
+            if (linkedAsaasId && seenAsaasIds.has(linkedAsaasId)) {
+              return;
+            }
+            if (data.paymentMethod === 'Pagamento Online' && seenAsaasIds.size > 0) {
+              return;
+            }
+
             invoices.push({
               id: doc.id,
               date: data.date || (typeof data.createdAt === 'string' ? data.createdAt.substring(0, 10) : ''),
@@ -2827,61 +2891,6 @@ function encodeFirestoreFields(data: any): any {
           });
         } catch (fErr) {
           console.warn("Aviso ao buscar transações no Firestore em subscription/invoices:", fErr);
-        }
-      }
-
-      // 2. Fetch from Asaas API if customerId or subscriptionId exists
-      const rawAsaasKey = process.env.ASAAS_API_KEY || '';
-      const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
-      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
-
-      if (asaasApiKey && (customerId || subscriptionId)) {
-        const baseUrl = getAsaasBaseUrl(asaasEnv);
-        let asaasCustomer = customerId;
-
-        // If no customerId provided, look up in subscription document
-        if (!asaasCustomer && subscriptionId && dbAdmin) {
-          try {
-            const subDoc = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
-            if (subDoc.exists) {
-              const sData = subDoc.data();
-              asaasCustomer = sData?.asaasCustomerId || '';
-            }
-          } catch (e) { /* ignore */ }
-        }
-
-        if (asaasCustomer && asaasCustomer.startsWith('cus_')) {
-          try {
-            const asaasRes = await fetch(`${baseUrl}/payments?customer=${asaasCustomer}&limit=20`, {
-              headers: { 'access_token': asaasApiKey }
-            });
-            const asaasData = await safeJsonFetch(asaasRes);
-            if (asaasData?.data && Array.isArray(asaasData.data)) {
-              for (const p of asaasData.data) {
-                const isPaid = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'RECEIVED_IN_CASH_FEE'].includes(p.status);
-                const isOverdue = p.status === 'OVERDUE';
-                const isPending = p.status === 'PENDING';
-
-                invoices.push({
-                  id: p.id,
-                  date: p.paymentDate || p.clientPaymentDate || p.dateCreated || p.dueDate,
-                  dueDate: p.dueDate,
-                  amount: p.value || 0,
-                  netValue: p.netValue,
-                  status: p.status,
-                  statusLabel: isPaid ? 'Paga (Asaas)' : (isOverdue ? 'Atrasada / Não Cobrada' : (isPending ? 'Aguardando Pagamento' : p.status)),
-                  billingType: p.billingType,
-                  billingTypeLabel: p.billingType === 'CREDIT_CARD' ? 'Cartão de Crédito (Asaas)' : (p.billingType === 'PIX' ? 'Pix (Asaas)' : (p.billingType === 'BOLETO' ? 'Boleto' : p.billingType)),
-                  description: p.description || 'Assinatura Asaas',
-                  paymentUrl: p.invoiceUrl || p.bankSlipUrl || p.paymentLink || '',
-                  invoiceUrl: p.invoiceUrl || p.bankSlipUrl || '',
-                  source: 'asaas'
-                });
-              }
-            }
-          } catch (aErr) {
-            console.warn("Aviso ao buscar cobranças no Asaas em subscription/invoices:", aErr);
-          }
         }
       }
 
@@ -4130,11 +4139,26 @@ function encodeFirestoreFields(data: any): any {
             await updateFirestoreRestDoc('subscriptions', subMatch.id, subUpdateData);
           }
 
-          // Record in financial_transactions
+          // Record in financial_transactions with deduplication by asaasPaymentId / asaasInvoiceId
           const finalVal = value || subData.amount || 0;
-          if (finalVal > 0) {
-            if (dbAdmin) {
-              try {
+          const currentPayId = payment?.id || subData.asaasInvoiceId || null;
+
+          if (finalVal > 0 && dbAdmin) {
+            try {
+              let alreadyExists = false;
+              if (currentPayId) {
+                const existingFt = await dbAdmin.collection('financial_transactions')
+                  .where('tenantId', '==', tenantId)
+                  .where('asaasPaymentId', '==', currentPayId)
+                  .limit(1)
+                  .get();
+                if (!existingFt.empty) {
+                  alreadyExists = true;
+                  console.log(`ℹ️ [ASAAS AUDIT] Lançamento financeiro já existe para o pagamento ${currentPayId}. Não duplicando.`);
+                }
+              }
+
+              if (!alreadyExists) {
                 await dbAdmin.collection('financial_transactions').add({
                   tenantId: tenantId || 'gbcortes7',
                   type: 'income',
@@ -4152,53 +4176,56 @@ function encodeFirestoreFields(data: any): any {
                   cliente_name: subData.cliente_name || 'Cliente',
                   responsavel_id: subData.cliente_id || 'N/A',
                   responsavel_name: subData.cliente_name || 'Cliente',
+                  asaasPaymentId: currentPayId,
+                  asaasSubscriptionId: subscription?.id || payment?.subscription || subData.asaasSubscriptionId || null,
                   net_amount: finalVal,
                   settlement_date: todayStr,
                   is_settled: true,
                   createdAt: new Date()
                 });
-              } catch (ftErr) {
-                console.warn("Could not record financial transaction:", ftErr);
-              }
 
-              // Check open cash session & record in cash_movements
-              try {
-                const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
-                  .where('tenantId', '==', tenantId)
-                  .get();
+                // Check open cash session & record in cash_movements
+                try {
+                  const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
+                    .where('tenantId', '==', tenantId)
+                    .get();
 
-                const openCashDoc = cashSessionsQuery.docs.find((doc: any) => {
-                  const s = doc.data().status;
-                  return s === 'open' || s === 'reopened';
-                });
-
-                if (openCashDoc) {
-                  const cashId = openCashDoc.id;
-                  await dbAdmin.collection('cash_movements').add({
-                    tenantId,
-                    caixa_id: cashId,
-                    type: 'income',
-                    category: 'Assinaturas',
-                    description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
-                    amount: finalVal,
-                    subscription_amount: finalVal,
-                    payment_method: 'pagamento_online',
-                    paymentMethod: 'Pagamento Online',
-                    date: todayStr,
-                    createdAt: new Date()
+                  const openCashDoc = cashSessionsQuery.docs.find((doc: any) => {
+                    const s = doc.data().status;
+                    return s === 'open' || s === 'reopened';
                   });
 
-                  await openCashDoc.ref.update({
-                    total_income: (openCashDoc.data().total_income || openCashDoc.data().totalIncome || 0) + finalVal,
-                    totalIncome: (openCashDoc.data().totalIncome || openCashDoc.data().total_income || 0) + finalVal,
-                    expected_balance: (openCashDoc.data().expected_balance || openCashDoc.data().expectedBalance || 0) + finalVal,
-                    expectedBalance: (openCashDoc.data().expectedBalance || openCashDoc.data().expected_balance || 0) + finalVal,
-                    updatedAt: new Date()
-                  });
+                  if (openCashDoc) {
+                    const cashId = openCashDoc.id;
+                    await dbAdmin.collection('cash_movements').add({
+                      tenantId,
+                      caixa_id: cashId,
+                      type: 'income',
+                      category: 'Assinaturas',
+                      description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                      amount: finalVal,
+                      subscription_amount: finalVal,
+                      payment_method: 'pagamento_online',
+                      paymentMethod: 'Pagamento Online',
+                      asaasPaymentId: currentPayId,
+                      date: todayStr,
+                      createdAt: new Date()
+                    });
+
+                    await openCashDoc.ref.update({
+                      total_income: (openCashDoc.data().total_income || openCashDoc.data().totalIncome || 0) + finalVal,
+                      totalIncome: (openCashDoc.data().totalIncome || openCashDoc.data().total_income || 0) + finalVal,
+                      expected_balance: (openCashDoc.data().expected_balance || openCashDoc.data().expectedBalance || 0) + finalVal,
+                      expectedBalance: (openCashDoc.data().expectedBalance || openCashDoc.data().expected_balance || 0) + finalVal,
+                      updatedAt: new Date()
+                    });
+                  }
+                } catch (cErr) {
+                  console.warn("Aviso ao registrar movimento no caixa:", cErr);
                 }
-              } catch (cErr) {
-                console.warn("Aviso ao registrar movimento no caixa:", cErr);
               }
+            } catch (ftErr) {
+              console.warn("Could not record financial transaction:", ftErr);
             }
           }
 

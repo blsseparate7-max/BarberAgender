@@ -270,12 +270,12 @@ export function ProfessionalCommissions({
       const commissionGenerated = proCommsPeriod.reduce((acc, c) => acc + (c.commission_value || 0), 0);
       const vales = proAdvancesPeriod.reduce((acc, a) => acc + (a.amount || 0), 0);
 
-      // Sincronização matemática exata (all time pending commissions minus all open advances)
-      const pendingCommsAll = proCommsAll.filter(c => c.status === 'pendente');
-      const pendingAdvsAll = proAdvancesAll.filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'));
+      // Sincronização matemática exata baseada estritamente no período selecionado
+      const pendingCommsPeriod = proCommsPeriod.filter(c => c.status === 'pendente');
+      const pendingAdvsPeriod = proAdvancesPeriod.filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'));
 
-      const totalPendingComms = pendingCommsAll.reduce((acc, c) => acc + (c.commission_value || 0), 0);
-      const totalPendingAdvs = pendingAdvsAll.reduce((acc, a) => acc + (a.amount || 0), 0);
+      const totalPendingComms = pendingCommsPeriod.reduce((acc, c) => acc + (c.commission_value || 0), 0);
+      const totalPendingAdvs = pendingAdvsPeriod.reduce((acc, a) => acc + (a.amount || 0), 0);
       const balance = totalPendingComms - totalPendingAdvs;
 
       return {

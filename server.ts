@@ -4763,6 +4763,79 @@ function encodeFirestoreFields(data: any): any {
     });
   });
 
+  app.get("/api/debug/luiz-commissions", async (req, res) => {
+    try {
+      const dbAdmin = getAdminDb();
+      if (!dbAdmin) {
+        return res.json({ error: "Firebase Admin not initialized" });
+      }
+      const commsSnap = await dbAdmin.collection('commissions')
+        .where('tenantId', '==', 'gbcortes7')
+        .get();
+      
+      const comandasSnap = await dbAdmin.collection('comandas')
+        .where('tenantId', '==', 'gbcortes7')
+        .get();
+
+      const results: any[] = [];
+      commsSnap.forEach(doc => {
+        const d = doc.id;
+        const data = doc.data();
+        const proName = (data.profissional_name || '').toLowerCase();
+        if (proName.includes('luiz') || proName.includes('miguel')) {
+          let createdAtIso = null;
+          if (data.createdAt && data.createdAt.toDate) {
+            createdAtIso = data.createdAt.toDate().toISOString();
+          } else if (data.createdAt && data.createdAt.seconds) {
+            createdAtIso = new Date(data.createdAt.seconds * 1000).toISOString();
+          }
+          results.push({
+            id: d,
+            cliente_name: data.cliente_name,
+            servico_name: data.servico_name,
+            commission_value: data.commission_value,
+            base_value: data.base_value,
+            status: data.status,
+            date: data.date,
+            createdAt: createdAtIso,
+            comanda_id: data.comanda_id
+          });
+        }
+      });
+
+      const comandasResults: any[] = [];
+      comandasSnap.forEach(doc => {
+        const d = doc.id;
+        const data = doc.data();
+        const proName = (data.profissional_name || '').toLowerCase();
+        if (proName.includes('luiz') || proName.includes('miguel')) {
+          let closedAtIso = null;
+          if (data.closedAt && data.closedAt.toDate) {
+            closedAtIso = data.closedAt.toDate().toISOString();
+          } else if (data.closedAt && data.closedAt.seconds) {
+            closedAtIso = new Date(data.closedAt.seconds * 1000).toISOString();
+          }
+          comandasResults.push({
+            id: d,
+            cliente_name: data.cliente_name,
+            status: data.status,
+            total: data.total || data.totalAmount,
+            closedAt: closedAtIso,
+            items: data.items
+          });
+        }
+      });
+
+      res.json({
+        success: true,
+        commissions: results,
+        comandas: comandasResults
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
+  });
+
   // Fallback para rotas de API não encontradas
   app.use((req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/saas') || req.path.startsWith('/admin') || req.path.startsWith('/payment')) {

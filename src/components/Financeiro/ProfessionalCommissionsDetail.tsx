@@ -426,6 +426,14 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     return () => unsubProfile();
   }, [professionalId]);
 
+  // Synchronize localDateRange when parent's dateRange changes
+  useEffect(() => {
+    setLocalDateRange({
+      start: dateRange.start,
+      end: dateRange.end
+    });
+  }, [dateRange]);
+
   // Handle auto calculations on lists changing
   useEffect(() => {
     const activePendingComms = commissions.filter(c => c.status === 'pendente');
@@ -734,6 +742,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   const allTimePendingCommissionsTotal = allTimePendingCommissions.reduce((acc, c) => acc + (c.commission_value || 0), 0);
   const allTimePendingAdvancesTotal = allTimePendingAdvances.reduce((acc, a) => acc + (a.amount || 0), 0);
   const realBalanceToPayAllTime = allTimePendingCommissionsTotal - allTimePendingAdvancesTotal;
+  const realBalanceToPayPeriod = totals.pending - periodPendingAdvancesTotal;
   const periodNetTotalToPay = Math.max(0, totals.pending - periodPendingAdvancesTotal);
 
   // Selected deduction total inside the Payout Modal
@@ -974,8 +983,22 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
             <SummaryCard title="Comissão Gerada (Filtro)" value={totals.serviceCommission - periodCommissionsByCategory.gorjetas - periodCommissionsByCategory.assinaturas} icon={<PercentIcon size={18} />} color="emerald" />
             <SummaryCard title="Bônus / Ajuda de Custo" value={totals.bonus} icon={<Gift size={18} />} color="emerald" />
             <SummaryCard title="Gorjetas (Filtro)" value={periodCommissionsByCategory.gorjetas} icon={<Sparkles size={18} />} color="blue" />
-            <SummaryCard title="Vales Ativos (Histórico)" value={allTimePendingAdvancesTotal} icon={<Receipt size={18} />} color="amber" negative />
-            <SummaryCard title="Total Geral a Receber" value={realBalanceToPayAllTime} icon={<Wallet size={18} />} color="primary" highlight />
+            <SummaryCard 
+              title="Vales do Período (Abertos)" 
+              value={periodPendingAdvancesTotal} 
+              icon={<Receipt size={18} />} 
+              color="amber" 
+              negative 
+              subtitle={allTimePendingAdvancesTotal > periodPendingAdvancesTotal ? `Histórico total: R$ ${allTimePendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
+            />
+            <SummaryCard 
+              title="Saldo Líquido a Receber (Filtro)" 
+              value={realBalanceToPayPeriod} 
+              icon={<Wallet size={18} />} 
+              color="primary" 
+              highlight 
+              subtitle={realBalanceToPayAllTime !== realBalanceToPayPeriod ? `Acumulado total: R$ ${realBalanceToPayAllTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
+            />
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
@@ -988,8 +1011,22 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
             />
             <SummaryCard title="Comissão de Serviços" value={totals.serviceCommission} icon={<PercentIcon size={18} />} color="emerald" />
             <SummaryCard title="Bônus / Ajuda Custo" value={totals.bonus} icon={<Gift size={18} />} color="blue" />
-            <SummaryCard title="Vales Ativos (Histórico)" value={allTimePendingAdvancesTotal} icon={<Receipt size={18} />} color="amber" negative />
-            <SummaryCard title="Total Geral a Pagar" value={realBalanceToPayAllTime} icon={<Wallet size={18} />} color="primary" highlight />
+            <SummaryCard 
+              title="Vales do Período (Abertos)" 
+              value={periodPendingAdvancesTotal} 
+              icon={<Receipt size={18} />} 
+              color="amber" 
+              negative 
+              subtitle={allTimePendingAdvancesTotal > periodPendingAdvancesTotal ? `Histórico total: R$ ${allTimePendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
+            />
+            <SummaryCard 
+              title="Saldo Líquido a Pagar (Filtro)" 
+              value={realBalanceToPayPeriod} 
+              icon={<Wallet size={18} />} 
+              color="primary" 
+              highlight 
+              subtitle={realBalanceToPayAllTime !== realBalanceToPayPeriod ? `Acumulado total: R$ ${realBalanceToPayAllTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
+            />
           </div>
         )}
 

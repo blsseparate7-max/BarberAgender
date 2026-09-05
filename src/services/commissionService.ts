@@ -646,7 +646,7 @@ export const commissionService = {
                 commission_percentage: commPct,
                 commission_value: commVal,
                 commission_type: commType,
-                status: 'pago', // histórico concluído
+                status: 'pendente', // gerado como pendente aguardando repasse do dono
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp()
               });
@@ -672,6 +672,74 @@ export const commissionService = {
       }
     } catch (err) {
       console.error("[commissionService] Error during historical reconciliation:", err);
+    }
+  },
+
+  async revertUnpaidCommissionsToPending(targetTenantId?: string) {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return 0;
+
+      // 1. Fetch legitimate payouts from payouts collection
+      const payoutsSnap = await getDocs(query(
+        collection(db, PAYOUTS_COLLECTION),
+        where('tenantId', '==', activeTenant)
+      ));
+
+      const validPayoutIds = new Set<string>();
+      const validCommissionIdsFromPayouts = new Set<string>();
+
+      payoutsSnap.docs.forEach(docSnap => {
+        validPayoutIds.add(docSnap.id);
+        const pData = docSnap.data();
+        if (Array.isArray(pData.commission_ids)) {
+          pData.commission_ids.forEach((cId: string) => validCommissionIdsFromPayouts.add(cId));
+        }
+      });
+
+      // 2. Fetch all commissions for this tenant currently marked as 'pago'
+      const commsSnap = await getDocs(query(
+        collection(db, COMMISSIONS_COLLECTION),
+        where('tenantId', '==', activeTenant),
+        where('status', '==', 'pago')
+      ));
+
+      let fixedCount = 0;
+      let batch = writeBatch(db);
+      let ops = 0;
+
+      for (const docSnap of commsSnap.docs) {
+        const commData = docSnap.data();
+        const repasseId = commData.repasse_id || commData.payout_id || commData.repasseId || commData.payoutId;
+        
+        // If it was NOT paid via an actual payout record, revert it to 'pendente'
+        const isLegitPaid = (repasseId && validPayoutIds.has(repasseId)) || validCommissionIdsFromPayouts.has(docSnap.id);
+
+        if (!isLegitPaid) {
+          batch.update(docSnap.ref, {
+            status: 'pendente',
+            updatedAt: serverTimestamp()
+          });
+          fixedCount++;
+          ops++;
+
+          if (ops >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            ops = 0;
+          }
+        }
+      }
+
+      if (ops > 0) {
+        await batch.commit();
+        console.log(`[commissionService] Reverted ${fixedCount} falsely paid commissions back to pendente.`);
+      }
+
+      return fixedCount;
+    } catch (err) {
+      console.warn("[commissionService] Error reverting unpaid commissions:", err);
+      return 0;
     }
   },
 
@@ -771,6 +839,236 @@ export const commissionService = {
       }
     } catch (err) {
       console.warn(`[commissionService] Error cancelling commissions for comanda ${comandaId}:`, err);
+    }
+  },
+
+  async cleanupGhostCommissionsAndComandas(targetTenantId?: string) {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return 0;
+
+      const comsSnap = await getDocs(query(
+        collection(db, 'comandas'),
+        where('tenantId', '==', activeTenant)
+      ));
+
+      const ghostComandaIds = new Set<string>();
+      const batch = writeBatch(db);
+      let ops = 0;
+
+      const comandaMap = new Map<string, any>();
+      comsSnap.docs.forEach(docSnap => {
+        const c = docSnap.data();
+        comandaMap.set(docSnap.id, c);
+        const items = c.items || [];
+        const payments = c.payments || [];
+        const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+        const totalValue = c.total || c.totalValue || items.reduce((acc: number, i: any) => acc + (Number(i.totalPrice) || 0), 0);
+
+        const isEmptyGhost = items.length === 0 || (totalValue === 0 && totalPaid === 0);
+        const isUnpaidAutoClosed = c.status === 'fechada' && totalPaid === 0 && c.status !== 'nao_paga';
+
+        if (isEmptyGhost || isUnpaidAutoClosed) {
+          ghostComandaIds.add(docSnap.id);
+          batch.update(docSnap.ref, {
+            status: 'cancelada',
+            updatedAt: serverTimestamp(),
+            cancellationReason: 'Limpeza de comanda fantasma/vazia ou não paga'
+          });
+          ops++;
+        }
+      });
+
+      const commsSnap = await getDocs(query(
+        collection(db, COMMISSIONS_COLLECTION),
+        where('tenantId', '==', activeTenant)
+      ));
+
+      commsSnap.docs.forEach(docSnap => {
+        const comm = docSnap.data() as Commission;
+        const commVal = Number(comm.commission_value) || 0;
+        const baseVal = Number(comm.base_value) || 0;
+        
+        let shouldCancel = (comm.comanda_id && ghostComandaIds.has(comm.comanda_id)) || (commVal === 0 && baseVal === 0) || (comm.status as string) === 'cancelado';
+
+        if (comm.comanda_id && comandaMap.has(comm.comanda_id)) {
+          const com = comandaMap.get(comm.comanda_id);
+          const payments = com.payments || [];
+          const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+          if (totalPaid === 0 && com.status !== 'nao_paga') {
+            shouldCancel = true;
+          }
+        }
+
+        if (shouldCancel && (comm.status as string) !== 'cancelado') {
+          batch.update(docSnap.ref, {
+            status: 'cancelado',
+            updatedAt: serverTimestamp(),
+            settledReason: 'Cancelado por limpeza de comanda não paga'
+          });
+          ops++;
+        }
+      });
+
+      if (ops > 0) {
+        await batch.commit();
+        console.log(`[commissionService] Cleaned up ${ops} ghost records.`);
+      }
+
+      return ops;
+    } catch (err) {
+      console.error("Error cleaning up ghost commissions:", err);
+      return 0;
+    }
+  },
+
+  async fixLuizMiguelAndOtherProfessionalsCommissions(targetTenantId?: string) {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return 0;
+
+      const commsSnap = await getDocs(query(
+        collection(db, COMMISSIONS_COLLECTION),
+        where('tenantId', '==', activeTenant)
+      ));
+
+      const comsSnapAll = await getDocs(query(
+        collection(db, 'comandas'),
+        where('tenantId', '==', activeTenant)
+      ));
+      const comandaMap = new Map<string, any>();
+      comsSnapAll.docs.forEach(d => comandaMap.set(d.id, d.data()));
+
+      let joaoCommissionTime = 0;
+      const isJoao = (name: string) => {
+        const n = (name || '').toLowerCase();
+        return n.includes('joão') || n.includes('joao') || n.includes('joa') || n.includes('jão');
+      };
+
+      commsSnap.docs.forEach(d => {
+        const comm = d.data() as Commission;
+        const proName = (comm.profissional_name || '').toLowerCase();
+        const clientName = comm.cliente_name || '';
+        if ((proName.includes('luiz') || proName.includes('miguel')) && isJoao(clientName)) {
+          const t = comm.createdAt?.seconds || 0;
+          if (t > joaoCommissionTime) {
+            joaoCommissionTime = t;
+          }
+        }
+      });
+
+      if (joaoCommissionTime === 0) {
+        comandaMap.forEach((com) => {
+          const proName = (com.profissional_name || '').toLowerCase();
+          const clientName = com.cliente_name || '';
+          if ((proName.includes('luiz') || proName.includes('miguel')) && isJoao(clientName)) {
+            const t = com.createdAt?.seconds || com.closedAt?.seconds || 0;
+            if (t > joaoCommissionTime) {
+              joaoCommissionTime = t;
+            }
+          }
+        });
+      }
+
+      let batches: any[] = [];
+      let currentBatch = writeBatch(db);
+      let opsCount = 0;
+
+      const addOp = (ref: any, data: any) => {
+        currentBatch.update(ref, data);
+        opsCount++;
+        if (opsCount >= 400) {
+          batches.push(currentBatch);
+          currentBatch = writeBatch(db);
+          opsCount = 0;
+        }
+      };
+
+      // 1. Cancel comandas for Luiz Miguel post-João or with 0 payments
+      comandaMap.forEach((com, comId) => {
+        const proName = (com.profissional_name || '').toLowerCase();
+        const clientName = com.cliente_name || '';
+        const t = com.createdAt?.seconds || com.closedAt?.seconds || 0;
+
+        let shouldCancelComanda = false;
+        if (proName.includes('luiz') || proName.includes('miguel')) {
+          if (joaoCommissionTime > 0 && t > joaoCommissionTime && !isJoao(clientName)) {
+            shouldCancelComanda = true;
+          }
+        }
+
+        const payments = com.payments || [];
+        const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+        if (totalPaid === 0 && com.status !== 'nao_paga' && com.status !== 'cancelada') {
+          shouldCancelComanda = true;
+        }
+
+        if (shouldCancelComanda && com.status !== 'cancelada') {
+          const comRef = doc(db, 'comandas', comId);
+          addOp(comRef, {
+            status: 'cancelada',
+            updatedAt: serverTimestamp(),
+            cancellationReason: 'Cancelado por limpeza pós-João / sem pagamento'
+          });
+        }
+      });
+
+      // 2. Cancel commissions
+      commsSnap.docs.forEach(docSnap => {
+        const comm = docSnap.data() as Commission;
+        const proName = (comm.profissional_name || '').toLowerCase();
+        const clientName = comm.cliente_name || '';
+        const t = comm.createdAt?.seconds || 0;
+
+        let shouldCancel = false;
+
+        if ((proName.includes('luiz') || proName.includes('miguel'))) {
+          if (joaoCommissionTime > 0 && t > joaoCommissionTime && !isJoao(clientName)) {
+            shouldCancel = true;
+          }
+          if (!comm.comanda_id) {
+            shouldCancel = true;
+          }
+        }
+
+        if (comm.comanda_id && comandaMap.has(comm.comanda_id)) {
+          const com = comandaMap.get(comm.comanda_id);
+          const payments = com.payments || [];
+          const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+          if (totalPaid === 0 && com.status !== 'nao_paga') {
+            shouldCancel = true;
+          }
+        } else if (comm.comanda_id) {
+          shouldCancel = true;
+        }
+
+        if (shouldCancel && (comm.status as string) !== 'cancelado') {
+          addOp(docSnap.ref, {
+            status: 'cancelado',
+            updatedAt: serverTimestamp(),
+            settledReason: 'Cancelado por ajuste de comissões indevidas pós-João / sem pagamento'
+          });
+        }
+      });
+
+      if (opsCount > 0) {
+        batches.push(currentBatch);
+      }
+
+      let totalCommitted = 0;
+      for (const b of batches) {
+        await b.commit();
+        totalCommitted += 400; // approximate or count
+      }
+
+      if (totalCommitted > 0) {
+        console.log(`[commissionService] Fixed and cancelled invalid commissions/comandas in batches.`);
+      }
+
+      return totalCommitted;
+    } catch (err) {
+      console.error("Error fixing commissions:", err);
+      return 0;
     }
   }
 };

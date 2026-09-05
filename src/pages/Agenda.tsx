@@ -292,6 +292,14 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
       console.error("Error syncing recurring appointments on mount:", err);
     });
 
+    // Auto-sync closed comandas from daily flow with agenda appointments
+    const tId = getActiveTenantId();
+    if (tId) {
+      comandaService.syncAgendaWithClosedComandas(tId).catch(err => {
+        console.warn("Error auto-syncing closed comandas with agenda on mount:", err);
+      });
+    }
+
     const unsubscribeBarbers = userService.subscribeToAllBarbers(true, (data) => {
       setBarbers(data);
     });

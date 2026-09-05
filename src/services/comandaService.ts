@@ -77,6 +77,87 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 export const comandaService = {
+  async closeAllOpenDailyFlowComandas(tenantId: string) {
+    if (!tenantId) return 0;
+    try {
+      const q = query(
+        collection(db, 'comandas'),
+        where('tenantId', '==', tenantId),
+        where('status', '==', 'aberta')
+      );
+      const snap = await getDocs(q);
+      let count = 0;
+      for (const d of snap.docs) {
+        const comandaData = d.data();
+        const dfId = comandaData.daily_flow_id || comandaData.dailyFlowId;
+        if (dfId) {
+          const batch = writeBatch(db);
+          batch.update(d.ref, {
+            status: 'fechada',
+            closedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          batch.update(doc(db, 'daily_flow', dfId), {
+            status: 'completed',
+            comanda_status: 'fechada',
+            updatedAt: serverTimestamp()
+          });
+          await batch.commit();
+
+          // Conclude any linked appointments
+          await this.closeLinkedAppointments(d.id, comandaData.agendamento_id || comandaData.agendamentoId || comandaData.appointment_id || comandaData.appointmentId);
+          count++;
+        }
+      }
+      return count;
+    } catch (err) {
+      console.warn("Error closing open daily flow comandas:", err);
+      return 0;
+    }
+  },
+
+  async syncAgendaWithClosedComandas(tenantId?: string) {
+    const targetTenantId = tenantId || getActiveTenantId();
+    if (!targetTenantId) return 0;
+    try {
+      // 1. Close any open comandas that were originated from daily flow
+      await this.closeAllOpenDailyFlowComandas(targetTenantId);
+
+      // 2. Fetch all closed comandas and make sure their matching appointments on agenda are marked concluído
+      const closedComandasSnap = await getDocs(query(
+        collection(db, 'comandas'),
+        where('tenantId', '==', targetTenantId),
+        where('status', '==', 'fechada')
+      ));
+
+      let totalSynced = 0;
+      for (const cDoc of closedComandasSnap.docs) {
+        const cData = cDoc.data();
+        await this.closeLinkedAppointments(cDoc.id, cData.agendamento_id || cData.agendamentoId);
+        totalSynced++;
+      }
+
+      // 3. Conclude any appointment matching completed daily flow items
+      const dfSnap = await getDocs(query(
+        collection(db, 'daily_flow'),
+        where('tenantId', '==', targetTenantId),
+        where('status', '==', 'completed')
+      ));
+
+      for (const dfDoc of dfSnap.docs) {
+        const dfData = dfDoc.data();
+        if (dfData.comanda_id) {
+          await this.closeLinkedAppointments(dfData.comanda_id);
+        }
+      }
+
+      return totalSynced;
+    } catch (err) {
+      console.warn("Error in syncAgendaWithClosedComandas:", err);
+      return 0;
+    }
+  },
+
   async getComandas(status?: ComandaStatus) {
     let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
     if (status) {
@@ -738,6 +819,21 @@ export const comandaService = {
         const apptId = uData.agendamento_id || uData.agendamentoId || uData.appointment_id || uData.appointmentId;
         await this.closeLinkedAppointments(id, apptId);
 
+        const dfId = uData.daily_flow_id || (uData as any)?.dailyFlowId;
+        if (dfId) {
+          try {
+            await updateDoc(doc(db, 'daily_flow', dfId), {
+              status: 'completed',
+              comanda_id: id,
+              comanda_number: uData.number || '',
+              comanda_status: 'fechada',
+              updatedAt: serverTimestamp()
+            });
+          } catch (dfErr) {
+            console.warn("Could not sync daily_flow in addPayment:", dfErr);
+          }
+        }
+
         if (uData.cliente_id) {
           try {
             // Calcular o valor pago real desconsiderando a forma de pagamento 'fiado'
@@ -771,28 +867,42 @@ export const comandaService = {
     try {
       const batch = writeBatch(db);
       let updatedCount = 0;
+      const touchedAppIds = new Set<string>();
 
       if (agendamentoId) {
-        batch.update(doc(db, 'appointments', agendamentoId), {
-          status: 'concluído',
-          updatedAt: serverTimestamp()
-        });
-        updatedCount++;
-      }
-
-      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
-      if (comandaSnap.exists()) {
-        const cData = comandaSnap.data();
-        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
-        if (linkedId && linkedId !== agendamentoId) {
-          batch.update(doc(db, 'appointments', linkedId), {
+        const appSnap = await getDoc(doc(db, 'appointments', agendamentoId));
+        if (appSnap.exists() && appSnap.data().status !== 'concluído') {
+          batch.update(appSnap.ref, {
             status: 'concluído',
+            comanda_id: comandaId,
             updatedAt: serverTimestamp()
           });
+          touchedAppIds.add(agendamentoId);
           updatedCount++;
         }
       }
 
+      let cData: any = null;
+      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+      if (comandaSnap.exists()) {
+        cData = comandaSnap.data();
+        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+        if (linkedId && !touchedAppIds.has(linkedId)) {
+          const linkedSnap = await getDoc(doc(db, 'appointments', linkedId));
+          if (linkedSnap.exists() && linkedSnap.data().status !== 'concluído') {
+            batch.update(linkedSnap.ref, {
+              status: 'concluído',
+              comanda_id: comandaId,
+              comanda_number: cData.number || '',
+              updatedAt: serverTimestamp()
+            });
+            touchedAppIds.add(linkedId);
+            updatedCount++;
+          }
+        }
+      }
+
+      // Match appointments by comanda_id
       const apptsQuery = query(
         collection(db, 'appointments'),
         where('comanda_id', '==', comandaId)
@@ -800,14 +910,72 @@ export const comandaService = {
       const apptsSnap = await getDocs(apptsQuery);
       if (!apptsSnap.empty) {
         apptsSnap.forEach((docSnap) => {
-          if (docSnap.data().status !== 'concluído') {
+          if (!touchedAppIds.has(docSnap.id) && docSnap.data().status !== 'concluído') {
             batch.update(docSnap.ref, {
               status: 'concluído',
+              comanda_id: comandaId,
+              comanda_number: cData?.number || '',
               updatedAt: serverTimestamp()
             });
+            touchedAppIds.add(docSnap.id);
             updatedCount++;
           }
         });
+      }
+
+      // If comanda had daily_flow_id or client/date info, find matching appointments on that date
+      if (cData) {
+        const tenantId = cData.tenantId || getActiveTenantId();
+        const todayDateStr = format(new Date(), 'yyyy-MM-dd');
+        const comandaDate = cData.date || (cData.createdAt ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : todayDateStr);
+        
+        // Match by client and date
+        if (cData.cliente_id && cData.cliente_id !== 'avulso') {
+          const clientApptsQuery = query(
+            collection(db, 'appointments'),
+            where('tenantId', '==', tenantId),
+            where('cliente_id', '==', cData.cliente_id),
+            where('date', '==', comandaDate)
+          );
+          const clientApptsSnap = await getDocs(clientApptsQuery);
+          clientApptsSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (!touchedAppIds.has(docSnap.id) && data.status !== 'concluído' && data.status !== 'cancelado') {
+              batch.update(docSnap.ref, {
+                status: 'concluído',
+                comanda_id: comandaId,
+                comanda_number: cData.number || '',
+                updatedAt: serverTimestamp()
+              });
+              touchedAppIds.add(docSnap.id);
+              updatedCount++;
+            }
+          });
+        }
+
+        // Match by client name if name is distinct (not empty or Consumidor Final)
+        if (cData.cliente_name && cData.cliente_name !== 'Consumidor Final' && cData.cliente_name.trim().length > 2) {
+          const nameApptsQuery = query(
+            collection(db, 'appointments'),
+            where('tenantId', '==', tenantId),
+            where('cliente_name', '==', cData.cliente_name.trim()),
+            where('date', '==', comandaDate)
+          );
+          const nameApptsSnap = await getDocs(nameApptsQuery);
+          nameApptsSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (!touchedAppIds.has(docSnap.id) && data.status !== 'concluído' && data.status !== 'cancelado') {
+              batch.update(docSnap.ref, {
+                status: 'concluído',
+                comanda_id: comandaId,
+                comanda_number: cData.number || '',
+                updatedAt: serverTimestamp()
+              });
+              touchedAppIds.add(docSnap.id);
+              updatedCount++;
+            }
+          });
+        }
       }
 
       if (updatedCount > 0) {

@@ -1059,6 +1059,9 @@ export function OperationsManager() {
             setIsComandaModalOpen(false);
             setSelectedComandaId(undefined);
             setComandaInitialData(null);
+            if (tenantId) {
+              comandaService.syncAgendaWithClosedComandas(tenantId);
+            }
           }}
         />
       )}

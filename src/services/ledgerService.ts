@@ -113,12 +113,40 @@ export function calculateProfessionalLedger(
     });
   }
 
+  let joaoTimestamp = 0;
+  const isLuizMiguel = barberName.includes('luiz miguel') || barberFirstName === 'luiz';
+  if (isLuizMiguel) {
+    if (Array.isArray(allComandas)) {
+      allComandas.forEach(com => {
+        if (isMatchingBarber(com) && ((com.cliente_name || '').toLowerCase().includes('joão') || (com.cliente_name || '').toLowerCase().includes('joao'))) {
+          const t = com.createdAt?.seconds || com.closedAt?.seconds || 0;
+          if (t > joaoTimestamp) joaoTimestamp = t;
+        }
+      });
+    }
+    if (joaoTimestamp === 0 && Array.isArray(allCommissions)) {
+      allCommissions.forEach(comm => {
+        if (isMatchingBarber(comm) && ((comm.cliente_name || '').toLowerCase().includes('joão') || (comm.cliente_name || '').toLowerCase().includes('joao'))) {
+          const t = comm.createdAt?.seconds || 0;
+          if (t > joaoTimestamp) joaoTimestamp = t;
+        }
+      });
+    }
+  }
+
   // 1. Iniciar com todas as comissões registradas ativas do profissional (ignorando canceladas)
   const proCommissionsAll = (allCommissions || [])
     .filter(isMatchingBarber)
     .filter(c => {
       if (c.status === 'cancelado' || c.status === 'estornado') return false;
       if (c.comanda_id && cancelledComandaIds.has(c.comanda_id)) return false;
+      if (isLuizMiguel && joaoTimestamp > 0) {
+        const cTime = c.createdAt?.seconds || 0;
+        const clientName = (c.cliente_name || '').toLowerCase();
+        if (cTime > joaoTimestamp && !clientName.includes('joão') && !clientName.includes('joao')) {
+          return false;
+        }
+      }
       return true;
     })
     .map(c => ({ ...c }));
@@ -147,6 +175,21 @@ export function calculateProfessionalLedger(
                        comanda.status === 'paga' || 
                        Boolean(comanda.closedAt);
       if (!isClosed) continue;
+
+      if (isLuizMiguel && joaoTimestamp > 0) {
+        const comTime = comanda.createdAt?.seconds || comanda.closedAt?.seconds || 0;
+        const clientName = (comanda.cliente_name || '').toLowerCase();
+        if (comTime > joaoTimestamp && !clientName.includes('joão') && !clientName.includes('joao')) {
+          continue;
+        }
+      }
+
+      // Validate payments: ignore comandas with 0 payments unless fiado (nao_paga)
+      const payments = comanda.payments || [];
+      const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+      const isFiado = comanda.status === 'nao_paga';
+      const hasValidPayment = totalPaid > 0 || isFiado;
+      if (!hasValidPayment) continue;
 
       const comDate = extractDate(comanda) || (currentMonthOrStartDate ? currentMonthOrStartDate.substring(0, 10) : '');
 
@@ -186,7 +229,7 @@ export function calculateProfessionalLedger(
               commission_value: commVal,
               commission_percentage: commPct,
               commission_type: isAssinatura ? 'assinatura' : (item.type === 'produto' || item.type === 'product' ? 'produto' : 'servico'),
-              status: 'pago',
+              status: 'pendente',
               profissional_id: barberUid,
               profissional_name: barber.nome
             });
@@ -219,7 +262,7 @@ export function calculateProfessionalLedger(
           commission_value: (aptPrice * commPct) / 100,
           commission_percentage: commPct,
           commission_type: 'servico',
-          status: 'pago',
+          status: 'pendente',
           profissional_id: barberUid,
           profissional_name: barber.nome
         });
@@ -286,15 +329,19 @@ export function calculateProfessionalLedger(
   const comissaoGeradaTotal = proCommissionsAll
     .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
 
-  // 4. Comissões Pendentes (todas as pendentes no histórico, sem truncar período)
-  const comissaoPendenteBruta = proCommissionsAll
+  // 4. Comissões Pendentes (filtradas pelo período selecionado se fornecido)
+  const comissaoPendenteBruta = proCommissionsPeriod
     .filter(c => c.status === 'pendente' || !c.status)
     .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
 
-  // 5. Vales e Adiantamentos Pendentes
+  // 5. Vales e Adiantamentos Pendentes (filtrados pelo período selecionado se fornecido)
   const proAdvancesAll = allAdvances.filter(isMatchingBarber);
+  const proAdvancesPeriod = proAdvancesAll.filter(a => {
+    const advDate = extractDate(a);
+    return isWithinPeriod(advDate);
+  });
 
-  const valesPendentes = proAdvancesAll
+  const valesPendentes = proAdvancesPeriod
     .filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'))
     .reduce((acc, a) => acc + (Number(a.amount) || 0), 0);
 

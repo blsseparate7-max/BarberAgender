@@ -35,6 +35,7 @@ import { format, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay } fro
 import { ptBR } from 'date-fns/locale';
 import { Commission, CommissionPayout, CommissionStatus, ProfessionalAdvance, UserProfile } from '../types';
 import { commissionService } from '../services/commissionService';
+import { comandaService } from '../services/comandaService';
 import { userService } from '../services/userService';
 import { calculateProfessionalLedger } from '../services/ledgerService';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,6 +44,7 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ProfessionalCommissionsDetail } from '../components/Financeiro/ProfessionalCommissionsDetail';
+import { toast } from 'sonner';
 
 export function Comissoes() {
   const { user, profile, isAdmin, isGerente } = useAuth();
@@ -128,13 +130,53 @@ export function Comissoes() {
 
   useEffect(() => {
     if (!tenantId) return;
-    const sessionKey = `reconciled_commissions_v2_${tenantId}`;
+
+    // 0. Clean up ghost/unpaid auto-closed comandas and orphan commissions
+    commissionService.cleanupGhostCommissionsAndComandas(tenantId).then(count => {
+      if (count > 0) {
+        console.log(`Cleaned up ${count} ghost/empty commission/comanda records.`);
+        loadData();
+      }
+    }).catch(err => {
+      console.warn("Error cleaning up ghost records:", err);
+    });
+
+    // 0.5. Fix Luiz Miguel and other professionals post-João cutoff and unpaid items
+    commissionService.fixLuizMiguelAndOtherProfessionalsCommissions(tenantId).then(count => {
+      if (count > 0) {
+        console.log(`Fixed and cancelled ${count} invalid post-cutoff commissions.`);
+        loadData();
+      }
+    }).catch(err => {
+      console.warn("Error fixing post-cutoff commissions:", err);
+    });
+
+    // 1. Revert any falsely marked "pago" commissions back to "pendente" if no real payout exists
+    commissionService.revertUnpaidCommissionsToPending(tenantId).then(count => {
+      if (count > 0) {
+        console.log(`Reverted ${count} falsely marked paid commissions back to pending.`);
+        loadData();
+      }
+    }).catch(err => {
+      console.warn("Error reverting unpaid commissions:", err);
+    });
+
+    const sessionKey = `reconciled_commissions_v3_${tenantId}`;
     if (!sessionStorage.getItem(sessionKey)) {
       sessionStorage.setItem(sessionKey, 'true');
       commissionService.reconcileHistoricalCommissions(tenantId).catch(err => {
         console.warn("Reconciliação silenciosa de comissões históricas:", err);
       });
     }
+
+    // Auto-close and sync all daily flow comandas and appointments
+    comandaService.syncAgendaWithClosedComandas(tenantId).then(count => {
+      if (count > 0) {
+        loadData();
+      }
+    }).catch(err => {
+      console.warn("Error in automatic comanda flow cleanup:", err);
+    });
   }, [tenantId]);
 
   useEffect(() => {

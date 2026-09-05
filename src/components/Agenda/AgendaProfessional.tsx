@@ -576,7 +576,11 @@ export function AgendaProfessional({
                                       <Receipt size={10} />
                                     </button>
                                   )}
-                                  {app.status === 'concluído' && <CheckCircle2 size={10} />}
+                                  {app.status === 'concluído' && (
+                                    <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[8px] font-black uppercase">
+                                      <CheckCircle2 size={10} /> {appPos.totalCols === 1 && 'Pago'}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </motion.div>

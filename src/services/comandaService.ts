@@ -229,6 +229,7 @@ export const comandaService = {
     const totalAmount = subtotalServices + subtotalProducts;
 
     const linkedAppId = data.agendamento_id || (data as any).agendamentoId || (data as any).appointment_id || (data as any).appointmentId || '';
+    const linkedDailyFlowId = (data as any).daily_flow_id || (data as any).dailyFlowId || '';
 
     const newComanda: Comanda = {
       id: docRef.id,
@@ -239,6 +240,7 @@ export const comandaService = {
       profissional_id: data.profissional_id || '',
       profissional_name: data.profissional_name || '',
       agendamento_id: linkedAppId,
+      daily_flow_id: linkedDailyFlowId,
       origin: data.origin || 'balcao',
       status: data.status || 'aberta',
       subtotalServices,
@@ -265,6 +267,18 @@ export const comandaService = {
 
     try {
       await setDoc(docRef, newComanda);
+
+      if (linkedDailyFlowId) {
+        try {
+          await updateDoc(doc(db, 'daily_flow', linkedDailyFlowId), {
+            comanda_id: docRef.id,
+            comanda_number: number,
+            updatedAt: serverTimestamp()
+          });
+        } catch (dfErr) {
+          console.warn("Could not link comanda_id on daily_flow:", dfErr);
+        }
+      }
 
       if (linkedAppId) {
         try {
@@ -996,7 +1010,9 @@ export const comandaService = {
 
       if (item.generateCommission && targetBarberId && item.deductType !== 'assinatura') {
         const barberData = barberDataMap[targetBarberId];
-        const defaultPercentage = barberData?.commission_percentage || 0; // Default to 0 if not set
+        const defaultPercentage = (item.type === 'produto' || item.type === 'product')
+          ? (barberData?.percentual_comissao_produtos ?? barberData?.product_commission_percentage ?? barberData?.percentual_comissao ?? barberData?.commission_percentage ?? 0)
+          : (barberData?.percentual_comissao ?? barberData?.commission_percentage ?? 0);
 
         const itemData = (item.type === 'produto' || item.type === 'product') 
           ? (productsMap[item.referencia_id] || {})
@@ -1031,7 +1047,7 @@ export const comandaService = {
           commission_value = (base_value * commission_percentage) / 100;
         }
 
-        if (commission_value > 0) {
+        if (commission_value > 0 || (targetBarberId && base_value > 0)) {
           const isAssinatura = item.type === 'assinatura' || item.name?.toLowerCase().includes('assinatura') || item.name?.toLowerCase().includes('plano') || item.name?.toLowerCase().includes('pacote');
           let commDate = new Date().toISOString().split('T')[0];
           if (isAssinatura && item.metadata?.subscriptionId && subscriptionsMap[item.metadata.subscriptionId]?.endDate) {
@@ -1052,7 +1068,7 @@ export const comandaService = {
             base_value,
             commission_percentage,
             commission_value,
-            status: 'pendente',
+            status: commission_value > 0 ? 'pendente' : 'pago',
             commission_type: isAssinatura ? 'assinatura' : ((item.type === 'produto' || item.type === 'product') ? 'venda' : 'servico'),
             tenantId: comanda.tenantId || '',
             date: commDate,
@@ -1395,6 +1411,21 @@ export const comandaService = {
       if (status === 'fechada' || status === 'nao_paga' || postData?.status === 'fechada' || postData?.status === 'nao_paga') {
         await this.closeLinkedAppointments(id, linkedAppIdPost);
 
+        const dfId = postData?.daily_flow_id || (postData as any)?.dailyFlowId;
+        if (dfId) {
+          try {
+            await updateDoc(doc(db, 'daily_flow', dfId), {
+              status: 'completed',
+              comanda_id: id,
+              comanda_number: postData.number || '',
+              comanda_status: 'fechada',
+              updatedAt: serverTimestamp()
+            });
+          } catch (dfErr) {
+            console.warn("Could not sync daily_flow in closeComanda:", dfErr);
+          }
+        }
+
         if (postData && postData.cliente_id && postData.cliente_id !== 'avulso') {
           try {
             const payments = postData.payments || [];
@@ -1419,8 +1450,10 @@ export const comandaService = {
         }
       } else if (status === 'cancelada' || postData?.status === 'cancelada') {
         await this.cancelLinkedAppointments(id, linkedAppIdPost);
+        await commissionService.cancelCommissionsByComanda(id);
       } else if (status === 'ausente' || postData?.status === 'ausente') {
         await this.markAbsentLinkedAppointments(id, linkedAppIdPost);
+        await commissionService.cancelCommissionsByComanda(id);
       }
     } catch (e) {
       console.error("Error updating linked appointments inside closeComanda:", e);

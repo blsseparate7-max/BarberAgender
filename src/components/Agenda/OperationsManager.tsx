@@ -29,6 +29,7 @@ import { getActiveTenantId } from '../../services/tenantService';
 import { UserProfile, Service, DailyFlowItem, Comanda } from '../../types';
 import { serviceService } from '../../services/serviceService';
 import { userService } from '../../services/userService';
+import { comandaService } from '../../services/comandaService';
 import { ComandaModal } from '../Comanda/ComandaModal';
 import { toast } from 'sonner';
 
@@ -36,6 +37,7 @@ export function OperationsManager() {
   const [flowItems, setFlowItems] = useState<DailyFlowItem[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [comandas, setComandas] = useState<Comanda[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -114,10 +116,19 @@ export function OperationsManager() {
       setRegisteredClients(data);
     });
 
+    // 5. Fetch comandas in real-time for status tracking
+    const unsubscribeComandas = comandaService.subscribeToComandas(
+      ['aberta', 'aguardando_pagamento', 'fechada'],
+      (list) => {
+        setComandas(list);
+      }
+    );
+
     return () => {
       unsubscribeFlow();
       unsubscribeBarbers();
       unsubscribeClients();
+      unsubscribeComandas();
     };
   }, [tenantId]);
 
@@ -290,8 +301,13 @@ export function OperationsManager() {
     const serviceObj = services.find(s => s.id === item.servico_id);
     const itemPrice = serviceObj?.preco || (serviceObj as any)?.price || 0;
 
-    if ((item as any).comanda_id) {
-      setSelectedComandaId((item as any).comanda_id);
+    const existingComanda = comandas.find(c => 
+      c.id === (item as any).comanda_id || 
+      (c as any).daily_flow_id === item.id
+    );
+
+    if (existingComanda || (item as any).comanda_id) {
+      setSelectedComandaId(existingComanda ? existingComanda.id : (item as any).comanda_id);
       setComandaInitialData(null);
     } else {
       setSelectedComandaId(undefined);
@@ -646,29 +662,77 @@ export function OperationsManager() {
             </div>
 
             <div className="space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin">
-              {completedList.map((item, cIdx) => (
-                <div key={`comp-item-${item.id || cIdx}-${cIdx}`} className="p-4 bg-slate-50/60 border border-slate-100 rounded-2xl space-y-2.5 opacity-75">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h5 className="font-bold text-xs text-slate-700 truncate line-through">{item.cliente_name}</h5>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mt-0.5">{item.servico_name}</p>
+              {completedList.map((item, cIdx) => {
+                const linkedComanda = comandas.find(c => 
+                  c.id === (item as any).comanda_id || 
+                  (c as any).daily_flow_id === item.id
+                );
+                const isPaid = linkedComanda?.status === 'fechada';
+                const isPending = linkedComanda?.status === 'aberta' || linkedComanda?.status === 'aguardando_pagamento';
+                const totalValue = linkedComanda ? (linkedComanda.totalAmount || linkedComanda.paidAmount || 0) : 0;
+                const formatMoney = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+
+                return (
+                  <div key={`comp-item-${item.id || cIdx}-${cIdx}`} className="p-4 bg-white border border-slate-200/90 rounded-2xl space-y-3 shadow-xs hover:border-slate-300 transition-all">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h5 className="font-bold text-xs text-slate-800 truncate">{item.cliente_name}</h5>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide mt-0.5">{item.servico_name}</p>
+                      </div>
+                      {isPaid ? (
+                        <div className="flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2.5 py-1 rounded-full shrink-0">
+                          <CheckCircle2 size={12} className="text-emerald-600" />
+                          <span>Pago</span>
+                        </div>
+                      ) : isPending ? (
+                        <div className="flex items-center gap-1 text-[9px] font-black text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full shrink-0 animate-pulse">
+                          <Clock size={12} className="text-amber-600" />
+                          <span>Aguardando Pagamento</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full shrink-0">
+                          <span>Comanda Pendente</span>
+                        </div>
+                      )}
                     </div>
-                    <CheckCircle2 size={14} className="text-emerald-500 shrink-0 mt-0.5" />
-                  </div>
 
-                  <div className="text-[9px] text-slate-400 font-bold flex items-center justify-between pt-2 border-t border-slate-100 border-dashed">
-                    <span>Profissional: {item.profissional_name}</span>
-                    <span>Concluído às: {item.fim_hora}</span>
-                  </div>
+                    <div className="text-[10px] text-slate-400 font-semibold flex items-center justify-between pt-2 border-t border-slate-100 border-dashed">
+                      <span>Profissional: <strong className="text-slate-600">{item.profissional_name}</strong></span>
+                      <span>{item.fim_hora ? `Concluído: ${item.fim_hora}` : ''}</span>
+                    </div>
 
-                  <button
-                    onClick={() => handleOpenItemComanda(item)}
-                    className="w-full mt-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-wider py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <Receipt size={12} className="text-primary" /> {(item as any).comanda_id ? 'Ver Comanda' : 'Abrir Comanda'}
-                  </button>
-                </div>
-              ))}
+                    {linkedComanda && (
+                      <div className="flex items-center justify-between bg-slate-50 px-3 py-1.5 rounded-xl text-[10px] font-mono">
+                        <span className="text-slate-500 font-bold">Comanda #{linkedComanda.number}</span>
+                        <span className="font-extrabold text-slate-900">{formatMoney(totalValue)}</span>
+                      </div>
+                    )}
+
+                    {isPaid ? (
+                      <button
+                        onClick={() => handleOpenItemComanda(item)}
+                        className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-2xs active:scale-98"
+                      >
+                        <Receipt size={13} className="text-slate-500" /> Ver Comanda
+                      </button>
+                    ) : isPending ? (
+                      <button
+                        onClick={() => handleOpenItemComanda(item)}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 active:scale-98"
+                      >
+                        <Receipt size={13} className="text-white" /> Receber Pagamento
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleOpenItemComanda(item)}
+                        className="w-full bg-primary hover:bg-primary/90 text-white text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md active:scale-98"
+                      >
+                        <Receipt size={13} className="text-white" /> Abrir Comanda
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
 
               {completedList.length === 0 && (
                 <div className="text-center py-10 text-slate-400 italic text-xs">

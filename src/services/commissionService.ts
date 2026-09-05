@@ -22,20 +22,38 @@ const PAYOUTS_COLLECTION = 'professional_payments';
 const ADVANCES_COLLECTION = 'professional_advances';
 
 export const commissionService = {
-  async getCommissions(filters: { profissional_id?: string; status?: CommissionStatus; startDate?: string; endDate?: string; tenantId?: string }) {
+  async getCommissions(filters: { profissional_id?: string; profissional_name?: string; status?: CommissionStatus; startDate?: string; endDate?: string; tenantId?: string }) {
     const activeTenant = filters.tenantId || getActiveTenantId();
     let queryConstraints: any[] = [];
-    if (activeTenant) {
+    if (activeTenant === 'gbcortes7') {
+      queryConstraints.push(where('tenantId', 'in', [activeTenant, '']));
+    } else if (activeTenant) {
       queryConstraints.push(where('tenantId', '==', activeTenant));
-    }
-    if (filters.profissional_id) {
-      queryConstraints.push(where('profissional_id', '==', filters.profissional_id));
     }
 
     let querySnapshot = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
     let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
 
-    // Filter in memory
+    // Tolerant professional filter in memory (matches UID, barbeiro_id, and name variations like Gabriel / Gabriel Alexandre)
+    if (filters.profissional_id || filters.profissional_name) {
+      const targetId = filters.profissional_id || '';
+      const targetName = (filters.profissional_name || '').toLowerCase().trim();
+      const targetFirstName = targetName.split(' ')[0] || '';
+
+      results = results.filter(c => {
+        if (targetId && (c.profissional_id === targetId || (c as any).barbeiro_id === targetId)) {
+          return true;
+        }
+        const cName = (c.profissional_name || '').toLowerCase().trim();
+        if (targetName && cName) {
+          if (cName === targetName || cName.includes(targetName) || targetName.includes(cName)) return true;
+          if (targetFirstName === 'gabriel' && cName.includes('gabriel')) return true;
+        }
+        return false;
+      });
+    }
+
+    // Filter status in memory
     if (filters.status) {
       results = results.filter(c => c.status === filters.status);
     }
@@ -425,15 +443,18 @@ export const commissionService = {
     
     const pending = commissions
       .filter(c => c.status === 'pendente')
-      .reduce((acc, c) => acc + c.commission_value, 0);
+      .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
       
     const paid = commissions
       .filter(c => c.status === 'pago')
-      .reduce((acc, c) => acc + c.commission_value, 0);
+      .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
       
     const totalBase = commissions
-      .filter(c => c.commission_type !== 'assinatura')
-      .reduce((acc, c) => acc + c.base_value, 0);
+      .filter(c => c.commission_type !== 'bonus')
+      .reduce((acc, c) => {
+        const base = Number(c.base_value) || Number(c.amount) || ((Number(c.commission_percentage) || 0) > 0 ? ((Number(c.commission_value) || 0) * 100) / Number(c.commission_percentage) : Number(c.commission_value)) || 0;
+        return acc + base;
+      }, 0);
 
     return {
       pending,
@@ -442,6 +463,216 @@ export const commissionService = {
       totalBase,
       count: commissions.length
     };
+  },
+
+  /**
+   * Reconciliação Histórica Inteligente de Comissões e Comandas (Desde o Dia 1)
+   * 1. Padroniza tenantId para registros legados ('gbcortes7')
+   * 2. Unifica Gabriel Alexandre (ID e variações de nome)
+   * 3. Corrige base_value faltante ou zerado baseado na comissão/porcentagem
+   * 4. Reconcilia comandas fechadas que não geraram comissão ou eram de pacote/assinatura para garantir faturamento integral
+   */
+  async reconcileHistoricalCommissions(targetTenantId: string = 'gbcortes7') {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return;
+
+      // 1. Buscar Gabriel principal em usuarios
+      const usersSnap = await getDocs(query(collection(db, 'usuarios'), where('tenantId', 'in', [activeTenant, ''])));
+      const allUsers = usersSnap.docs.map(d => ({ uid: d.id, ...d.data() } as any));
+      const gabrielUsers = allUsers.filter(u => 
+        (u.nome && u.nome.toLowerCase().includes('gabriel')) ||
+        (u.email && u.email.toLowerCase().includes('gabriel'))
+      );
+      const primaryGabriel = gabrielUsers.find(u => (u.nome && u.nome.toLowerCase().includes('alexandre'))) || gabrielUsers[0];
+      const primaryGabrielUid = primaryGabriel?.uid;
+
+      // 2. Buscar comissões
+      const commsSnap = await getDocs(query(
+        collection(db, COMMISSIONS_COLLECTION),
+        where('tenantId', 'in', [activeTenant, ''])
+      ));
+
+      let batch = writeBatch(db);
+      let opsCount = 0;
+
+      for (const docSnap of commsSnap.docs) {
+        const c = docSnap.data() as any;
+        let needsUpdate = false;
+        const updates: any = {};
+
+        // Normalizar tenantId
+        if (!c.tenantId && activeTenant) {
+          updates.tenantId = activeTenant;
+          needsUpdate = true;
+        }
+
+        // Unificar Gabriel se for variação de Gabriel
+        const cName = (c.profissional_name || '').toLowerCase().trim();
+        const isGabriel = cName.includes('gabriel') || gabrielUsers.some(g => g.uid === c.profissional_id || g.uid === c.barbeiro_id);
+        if (isGabriel && primaryGabrielUid) {
+          if (c.profissional_id !== primaryGabrielUid) {
+            updates.profissional_id = primaryGabrielUid;
+            needsUpdate = true;
+          }
+          if (primaryGabriel.nome && c.profissional_name !== primaryGabriel.nome) {
+            updates.profissional_name = primaryGabriel.nome;
+            needsUpdate = true;
+          }
+        }
+
+        // Corrigir base_value faltante ou zero
+        if ((c.base_value === undefined || c.base_value === null || Number(c.base_value) === 0) && c.commission_type !== 'bonus') {
+          const commVal = Number(c.commission_value) || 0;
+          const commPct = Number(c.commission_percentage) || 0;
+          let calculatedBase = 0;
+          if (commPct > 0 && commVal > 0) {
+            calculatedBase = (commVal * 100) / commPct;
+          } else if (c.amount && Number(c.amount) > 0) {
+            calculatedBase = Number(c.amount);
+          } else if (commVal > 0) {
+            calculatedBase = commVal;
+          }
+
+          if (calculatedBase > 0) {
+            updates.base_value = calculatedBase;
+            needsUpdate = true;
+          }
+        }
+
+        if (needsUpdate) {
+          updates.updatedAt = serverTimestamp();
+          batch.update(docSnap.ref, updates);
+          opsCount++;
+
+          if (opsCount >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            opsCount = 0;
+          }
+        }
+      }
+
+      // 3. Reconciliar itens de comandas fechadas
+      try {
+        const comandasSnap = await getDocs(query(
+          collection(db, 'comandas'),
+          where('tenantId', 'in', [activeTenant, ''])
+        ));
+
+        const existingCommsByComanda = new Set(
+          commsSnap.docs.map(d => {
+            const data = d.data();
+            return `${data.comanda_id || ''}_${(data.servico_name || '').toLowerCase().trim()}`;
+          })
+        );
+
+        for (const docSnap of comandasSnap.docs) {
+          const comanda = docSnap.data() as any;
+          const isClosed = comanda.status === 'fechada' || 
+                           comanda.status === 'concluída' || 
+                           comanda.status === 'concluido' || 
+                           comanda.status === 'nao_paga' || 
+                           comanda.status === 'paga' || 
+                           Boolean(comanda.closedAt);
+          if (!isClosed) continue;
+
+          const comandaDate = comanda.date || (comanda.closedAt ? new Date(comanda.closedAt.seconds * 1000).toISOString().split('T')[0] : '') || new Date().toISOString().split('T')[0];
+
+          if (Array.isArray(comanda.items)) {
+            for (const item of comanda.items) {
+              const itemKey = `${docSnap.id}_${(item.name || '').toLowerCase().trim()}`;
+              
+              // Identificar profissional prestador
+              let targetProId = item.profissional_id || comanda.profissional_id;
+              let targetProName = item.profissional_name || comanda.profissional_name || 'Profissional';
+
+              // Unificar Gabriel se for variação
+              if (primaryGabrielUid && (targetProName.toLowerCase().includes('gabriel') || gabrielUsers.some(g => g.uid === targetProId))) {
+                targetProId = primaryGabrielUid;
+                targetProName = primaryGabriel.nome || 'Gabriel Alexandre';
+              }
+
+              if (!targetProId) continue;
+
+              const unitPrice = Number(item.unitPrice) || 0;
+              const quantity = Number(item.quantity) || 1;
+              const totalPrice = Number(item.totalPrice) || (unitPrice * quantity);
+              const baseValue = totalPrice > 0 ? totalPrice : (unitPrice * quantity);
+
+              if (baseValue <= 0) continue;
+
+              if (existingCommsByComanda.has(itemKey)) {
+                // Verificar se a comissão existente tem base_value zerado e reparar
+                const matchingDoc = commsSnap.docs.find(d => {
+                  const data = d.data();
+                  return data.comanda_id === docSnap.id && (data.servico_name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim();
+                });
+                if (matchingDoc) {
+                  const mData = matchingDoc.data();
+                  if (mData.base_value === undefined || mData.base_value === null || Number(mData.base_value) === 0) {
+                    batch.update(matchingDoc.ref, { base_value: baseValue, updatedAt: serverTimestamp() });
+                    opsCount++;
+                    if (opsCount >= 400) {
+                      await batch.commit();
+                      batch = writeBatch(db);
+                      opsCount = 0;
+                    }
+                  }
+                }
+                continue;
+              }
+
+              const isAssinatura = item.deductType === 'assinatura' || item.type === 'assinatura' || item.isCortesia;
+              const commType = isAssinatura ? 'assinatura' : (item.type === 'produto' || item.type === 'product' ? 'produto' : 'servico');
+              
+              // Se for corte de assinatura/cortesia, a comissão monetária é 0, mas o base_value entra para faturamento da cadeira
+              const commPct = isAssinatura ? 0 : 50;
+              const commVal = isAssinatura ? 0 : (baseValue * commPct) / 100;
+
+              const newCommRef = doc(collection(db, COMMISSIONS_COLLECTION));
+              batch.set(newCommRef, {
+                id: newCommRef.id,
+                tenantId: activeTenant,
+                comanda_id: docSnap.id,
+                comanda_number: comanda.number || '',
+                cliente_id: comanda.cliente_id || '',
+                cliente_name: comanda.cliente_name || '',
+                date: comandaDate,
+                profissional_id: targetProId,
+                profissional_name: targetProName,
+                servico_name: item.name || 'Atendimento',
+                base_value: baseValue,
+                commission_percentage: commPct,
+                commission_value: commVal,
+                commission_type: commType,
+                status: 'pago', // histórico concluído
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+              });
+
+              existingCommsByComanda.add(itemKey);
+              opsCount++;
+
+              if (opsCount >= 400) {
+                await batch.commit();
+                batch = writeBatch(db);
+                opsCount = 0;
+              }
+            }
+          }
+        }
+      } catch (comandaErr) {
+        console.warn("[commissionService] Non-blocking notice during comanda reconciliation:", comandaErr);
+      }
+
+      if (opsCount > 0) {
+        await batch.commit();
+        console.log(`[commissionService] Reconciled ${opsCount} historical records successfully.`);
+      }
+    } catch (err) {
+      console.error("[commissionService] Error during historical reconciliation:", err);
+    }
   },
 
   async cleanAndSettlePreviousMonths(cutoffDate: string = '2026-09-01', targetTenantId: string = 'gbcortes7') {
@@ -519,6 +750,27 @@ export const commissionService = {
       }
     } catch (err) {
       console.error("[commissionService] Error settling previous months:", err);
+    }
+  },
+
+  async cancelCommissionsByComanda(comandaId: string) {
+    if (!comandaId) return;
+    try {
+      const q = query(collection(db, COMMISSIONS_COLLECTION), where('comanda_id', '==', comandaId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.forEach(d => {
+          batch.update(d.ref, {
+            status: 'cancelado',
+            updatedAt: serverTimestamp()
+          });
+        });
+        await batch.commit();
+        console.log(`[commissionService] Cancelled ${snap.size} commissions for comanda ${comandaId}`);
+      }
+    } catch (err) {
+      console.warn(`[commissionService] Error cancelling commissions for comanda ${comandaId}:`, err);
     }
   }
 };

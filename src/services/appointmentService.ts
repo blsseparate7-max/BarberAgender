@@ -613,6 +613,7 @@ export const appointmentService = {
               status: 'cancelada',
               updatedAt: serverTimestamp()
             });
+            await commissionService.cancelCommissionsByComanda(appointment.comanda_id);
           }
         }
       } catch (comErr) {

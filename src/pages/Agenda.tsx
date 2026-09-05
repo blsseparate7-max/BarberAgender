@@ -57,8 +57,9 @@ import { AgendaBlocks as BlocksManager } from '../components/Agenda/AgendaBlocks
 import { AppointmentList } from '../components/Agenda/AppointmentList';
 import { RecurringAppointments } from '../components/Agenda/RecurringAppointments';
 import { OperationsManager } from '../components/Agenda/OperationsManager';
-import { format, addDays, subDays, isSameDay, startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfMonth, parse, isAfter, isBefore, isEqual, isToday, isTomorrow, isYesterday } from 'date-fns';
+import { format, addDays, subDays, isSameDay, startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfMonth, parse, isAfter, isBefore, isEqual, isToday, isTomorrow, isYesterday, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { tenantService, getActiveTenantId, TenantProfile } from '../services/tenantService';
 
 interface AgendaProps {
   currentUser: UserProfile;
@@ -119,6 +120,59 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBarberIds, setSelectedBarberIds] = useState<string[]>([]);
   const [currentCash, setCurrentCash] = useState<any>(null);
+  const [tenantProfile, setTenantProfile] = useState<TenantProfile | null>(null);
+  const [hasAutoSwitchedWalkIn, setHasAutoSwitchedWalkIn] = useState<string | null>(null);
+
+  // Load tenant profile to read openingHours and walk-in configurations
+  useEffect(() => {
+    const loadTenant = async () => {
+      try {
+        const tId = getActiveTenantId();
+        const profile = await tenantService.getTenant(tId);
+        setTenantProfile(profile);
+      } catch (err) {
+        console.error("Error loading tenant profile in Agenda:", err);
+      }
+    };
+    loadTenant();
+  }, []);
+
+  // Compute walk-in info for the currently selected date
+  const walkInInfo = React.useMemo(() => {
+    if (!tenantProfile?.openingHours) return { isWalkIn: false, message: '' };
+    try {
+      const dayOfWeek = getDay(selectedDate);
+      const DAYS_PT = [
+        'Domingo',
+        'Segunda-feira',
+        'Terça-feira',
+        'Quarta-feira',
+        'Quinta-feira',
+        'Sexta-feira',
+        'Sábado'
+      ];
+      const dayNamePT = DAYS_PT[dayOfWeek];
+      const dayConfig = tenantProfile.openingHours.find((h: any) => h.day === dayNamePT);
+      if (dayConfig && dayConfig.open && dayConfig.isWalkInOnly) {
+        return {
+          isWalkIn: true,
+          message: dayConfig.walkInMessage || `Hoje o atendimento é exclusivamente por ordem de chegada das ${dayConfig.start} às ${dayConfig.end}! Fila e rodízio ativos.`
+        };
+      }
+    } catch (e) {
+      console.error("Error calculating walkInInfo:", e);
+    }
+    return { isWalkIn: false, message: '' };
+  }, [tenantProfile, selectedDate]);
+
+  // Automatically switch to Operations tab if the selected day is configured as Walk-In Only
+  useEffect(() => {
+    const dateKey = format(selectedDate, 'yyyy-MM-dd');
+    if (walkInInfo.isWalkIn && hasAutoSwitchedWalkIn !== dateKey && (parentActiveTab === 'agenda' || parentActiveTab === 'agenda-main')) {
+      setActiveTab('operations');
+      setHasAutoSwitchedWalkIn(dateKey);
+    }
+  }, [walkInInfo.isWalkIn, selectedDate, parentActiveTab, hasAutoSwitchedWalkIn]);
 
   // Automatically select all barbers initially when they are loaded
   useEffect(() => {
@@ -367,11 +421,16 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
   const tabs = [
     { id: 'main', label: 'Agenda', icon: <CalendarIcon size={16} /> },
+    { 
+      id: 'operations', 
+      label: 'Painel de Fluxo (Salão)', 
+      icon: <ArrowRightLeft size={16} />,
+      badge: walkInInfo.isWalkIn ? 'Ordem de Chegada' : undefined
+    },
     { id: 'appointments', label: 'Agendamentos', icon: <History size={16} /> },
     { id: 'recurring', label: 'Recorrência', icon: <Repeat size={16} /> },
     { id: 'availability', label: 'Disponibilidade', icon: <Clock size={16} /> },
     { id: 'blocks', label: 'Bloqueios', icon: <Lock size={16} /> },
-    { id: 'operations', label: 'Operação', icon: <ArrowRightLeft size={16} /> },
     { id: 'resources', label: 'Recursos', icon: <Armchair size={16} /> },
   ];
 
@@ -389,6 +448,55 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
           <AlertCircle size={20} />
           <p className="text-sm font-bold">{error}</p>
         </div>
+      )}
+
+      {/* Walk-In Mode Smart Alert Banner */}
+      {walkInInfo.isWalkIn && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-amber-500/10 border-2 border-amber-400/80 p-5 sm:p-6 rounded-[2rem] flex flex-col md:flex-row items-center justify-between gap-5 shadow-sm"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
+              <Sparkles size={22} />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="font-black text-amber-950 text-sm uppercase tracking-wide">
+                  Modo Ordem de Chegada (Walk-In) Ativo
+                </h4>
+                <span className="text-[10px] font-extrabold bg-amber-200 text-amber-900 px-2.5 py-0.5 rounded-full capitalize">
+                  {format(selectedDate, 'EEEE', { locale: ptBR })}
+                </span>
+              </div>
+              <p className="text-amber-900/80 text-xs font-semibold mt-1 leading-relaxed">
+                {walkInInfo.message}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-stretch sm:self-auto shrink-0">
+            {activeTab !== 'operations' ? (
+              <button
+                type="button"
+                onClick={() => setActiveTab('operations')}
+                className="flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 w-full sm:w-auto"
+              >
+                <ArrowRightLeft size={15} />
+                <span>Ir para Painel de Fluxo</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setActiveTab('main')}
+                className="flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-5 py-3 rounded-2xl font-bold text-xs transition-all shadow-xs active:scale-95 w-full sm:w-auto"
+              >
+                <CalendarIcon size={15} className="text-slate-400" />
+                <span>Ver Grade da Agenda</span>
+              </button>
+            )}
+          </div>
+        </motion.div>
       )}
 
       {/* Cash Register Alert */}
@@ -431,6 +539,13 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
           >
             {React.cloneElement(tab.icon as React.ReactElement, { size: 14 })}
             <span>{tab.label}</span>
+            {(tab as any).badge && (
+              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                activeTab === tab.id ? 'bg-amber-400 text-amber-950 shadow-xs' : 'bg-amber-100 text-amber-800'
+              }`}>
+                {(tab as any).badge}
+              </span>
+            )}
           </button>
         ))}
       </div>

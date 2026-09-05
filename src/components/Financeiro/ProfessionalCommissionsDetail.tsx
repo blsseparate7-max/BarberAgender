@@ -6,7 +6,7 @@ import {
   Scissors, Coffee, Box, Sparkles, Tag, Users, X, ChevronRight, Filter, Download, Share2,
   Gift, Award
 } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { toast } from 'sonner';
 import { auth, db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -106,11 +106,11 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
   // Compute filtered period lists and all-time ledger totals reactively
   const commissions = React.useMemo(() => {
-    return allCommissions.filter(c => c.date >= localDateRange.start && c.date <= localDateRange.end);
+    return allCommissions.filter(c => c.date >= localDateRange.start && c.date <= localDateRange.end && c.status !== 'cancelado' && c.status !== 'estornado');
   }, [allCommissions, localDateRange.start, localDateRange.end]);
 
   const advances = React.useMemo(() => {
-    return allAdvances.filter(a => a.date >= localDateRange.start && a.date <= localDateRange.end);
+    return allAdvances.filter(a => a.date >= localDateRange.start && a.date <= localDateRange.end && a.status !== 'cancelado');
   }, [allAdvances, localDateRange.start, localDateRange.end]);
 
   const allTimePendingCommissions = React.useMemo(() => {
@@ -201,9 +201,34 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     if (!tenantId) return;
     setLoading(true);
 
-    const commsQuery = query(collection(db, 'commissions'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
+    const commConstraints = tenantId === 'gbcortes7' 
+      ? [where('tenantId', 'in', [tenantId, ''])] 
+      : [where('tenantId', '==', tenantId)];
+    const commsQuery = query(collection(db, 'commissions'), ...commConstraints);
     const unsubComms = onSnapshot(commsQuery, (snapshot) => {
-      const commsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+      const proNameLower = (professionalName || '').toLowerCase().trim();
+      const isGabriel = proNameLower.startsWith('gabriel');
+      const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
+      const isLuizMiguel = proNameLower.startsWith('luiz miguel');
+      const isLuizHenrique = proNameLower.startsWith('luiz henrique');
+
+      const commsList = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
+        .filter(c => {
+          if (c.profissional_id === professionalId || (c as any).barbeiro_id === professionalId) return true;
+          const cNameLower = (c.profissional_name || '').toLowerCase().trim();
+          if (proNameLower && cNameLower) {
+            if (proNameLower === cNameLower) return true;
+            if (isGabriel && cNameLower.startsWith('gabriel')) return true;
+            if (isMateus && (cNameLower.startsWith('mateus') || cNameLower.startsWith('matheus'))) return true;
+            if (isLuizMiguel && cNameLower.startsWith('luiz miguel')) return true;
+            if (isLuizHenrique && cNameLower.startsWith('luiz henrique')) return true;
+            if (proNameLower.startsWith('moises') && cNameLower.startsWith('moises')) return true;
+            if (proNameLower.startsWith('bryan') && cNameLower.startsWith('bryan')) return true;
+          }
+          return false;
+        });
+
       setAllCommissions(commsList);
       setLoading(false);
     }, (error) => {
@@ -219,6 +244,23 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     const mergeAdvances = () => {
       const merged: any[] = [...rawAdvs];
       const proNameLower = (professionalName || '').toLowerCase().trim();
+      const isGabriel = proNameLower.startsWith('gabriel');
+      const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
+      const isLuizMiguel = proNameLower.startsWith('luiz miguel');
+      const isLuizHenrique = proNameLower.startsWith('luiz henrique');
+
+      const matchesProText = (txt: string) => {
+        if (!txt) return false;
+        const t = txt.toLowerCase();
+        if (proNameLower && t.includes(proNameLower)) return true;
+        if (isGabriel && t.includes('gabriel')) return true;
+        if (isMateus && (t.includes('mateus') || t.includes('matheus'))) return true;
+        if (isLuizMiguel && t.includes('luiz miguel')) return true;
+        if (isLuizHenrique && (t.includes('luiz henrique') || t.includes('rick'))) return true;
+        if (proNameLower.startsWith('moises') && t.includes('moises')) return true;
+        if (proNameLower.startsWith('bryan') && t.includes('bryan')) return true;
+        return false;
+      };
 
       // Merge matching payables
       rawPayables.forEach(p => {
@@ -230,7 +272,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
         let matchesPro = p.profissional_id === professionalId;
         if (!matchesPro && proNameLower) {
-          matchesPro = supplier.includes(proNameLower) || pProName.includes(proNameLower) || desc.includes(proNameLower);
+          matchesPro = matchesProText(supplier) || matchesProText(pProName) || matchesProText(desc);
         }
 
         if ((isVale || p.profissional_id) && matchesPro) {
@@ -264,7 +306,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
         let matchesPro = c.profissional_id === professionalId || c.barber_id === professionalId;
         if (!matchesPro && proNameLower) {
-          matchesPro = desc.includes(proNameLower);
+          matchesPro = matchesProText(desc);
         }
 
         if (isVale && matchesPro) {
@@ -293,9 +335,33 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       setAllAdvances(merged);
     };
 
-    const advsQuery = query(collection(db, 'professional_advances'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
+    const advConstraints = tenantId === 'gbcortes7' 
+      ? [where('tenantId', 'in', [tenantId, ''])] 
+      : [where('tenantId', '==', tenantId)];
+    const advsQuery = query(collection(db, 'professional_advances'), ...advConstraints);
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
-      rawAdvs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
+      const proNameLower = (professionalName || '').toLowerCase().trim();
+      const isGabriel = proNameLower.startsWith('gabriel');
+      const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
+      const isLuizMiguel = proNameLower.startsWith('luiz miguel');
+      const isLuizHenrique = proNameLower.startsWith('luiz henrique');
+
+      rawAdvs = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance))
+        .filter(a => {
+          if (a.profissional_id === professionalId || (a as any).barber_id === professionalId) return true;
+          const aNameLower = (a.profissional_name || '').toLowerCase().trim();
+          if (proNameLower && aNameLower) {
+            if (proNameLower === aNameLower) return true;
+            if (isGabriel && aNameLower.startsWith('gabriel')) return true;
+            if (isMateus && (aNameLower.startsWith('mateus') || aNameLower.startsWith('matheus'))) return true;
+            if (isLuizMiguel && aNameLower.startsWith('luiz miguel')) return true;
+            if (isLuizHenrique && aNameLower.startsWith('luiz henrique')) return true;
+            if (proNameLower.startsWith('moises') && aNameLower.startsWith('moises')) return true;
+            if (proNameLower.startsWith('bryan') && aNameLower.startsWith('bryan')) return true;
+          }
+          return false;
+        });
       mergeAdvances();
     }, (error) => {
       console.error("Erro ao escutar vales detalhados:", error);
@@ -645,16 +711,23 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   })();
 
   const totals = {
-    // Only sum base_value for non-bonus and non-subscription items (real services/products)
-    produced: commissions.filter(c => c.commission_type !== 'bonus' && c.commission_type !== 'assinatura').reduce((acc, c) => acc + (c.base_value || 0), 0),
-    commission: commissions.reduce((acc, c) => acc + (c.commission_value || 0), 0),
-    serviceCommission: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0),
+    // Robust calculation of produced base value with fallback
+    produced: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => {
+      const base = Number(c.base_value) || Number(c.amount) || ((Number(c.commission_percentage) || 0) > 0 ? ((Number(c.commission_value) || 0) * 100) / Number(c.commission_percentage) : Number(c.commission_value)) || 0;
+      return acc + base;
+    }, 0),
+    allTimeProduced: allCommissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => {
+      const base = Number(c.base_value) || Number(c.amount) || ((Number(c.commission_percentage) || 0) > 0 ? ((Number(c.commission_value) || 0) * 100) / Number(c.commission_percentage) : Number(c.commission_value)) || 0;
+      return acc + base;
+    }, 0),
+    commission: commissions.reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
+    serviceCommission: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
     bonus: periodCommissionsByCategory.bonus,
-    pending: commissions.filter(c => c.status === 'pendente').reduce((acc, c) => acc + (c.commission_value || 0), 0),
-    pendingService: commissions.filter(c => c.status === 'pendente' && c.commission_type !== 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0),
-    pendingBonus: commissions.filter(c => c.status === 'pendente' && c.commission_type === 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0),
-    advances: advances.reduce((acc, a) => acc + (a.amount || 0), 0),
-    paid: payouts.reduce((acc, p) => acc + (p.date >= localDateRange.start && p.date <= localDateRange.end ? p.amount : 0), 0)
+    pending: commissions.filter(c => c.status === 'pendente').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
+    pendingService: commissions.filter(c => c.status === 'pendente' && c.commission_type !== 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
+    pendingBonus: commissions.filter(c => c.status === 'pendente' && c.commission_type === 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
+    advances: advances.reduce((acc, a) => acc + (Number(a.amount) || 0), 0),
+    paid: payouts.reduce((acc, p) => acc + (p.date >= localDateRange.start && p.date <= localDateRange.end ? Number(p.amount) || 0 : 0), 0)
   };
 
   // 2. All-time actual pending totals to display correct global ledger to user
@@ -790,6 +863,29 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                 onChange={(e) => setLocalDateRange(prev => ({ ...prev, end: e.target.value }))}
                 className="bg-white text-primary text-xs font-extrabold focus:outline-none focus:ring-1 focus:ring-primary/20 border border-slate-200 rounded p-1 shadow-sm font-sans"
               />
+              <div className="flex items-center gap-1 pl-1 border-l border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setLocalDateRange({
+                    start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+                    end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
+                  })}
+                  className="px-2 py-1 bg-white hover:bg-slate-200/70 border border-slate-200 rounded text-[10px] font-black text-slate-700 transition-colors"
+                >
+                  Este Mês
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocalDateRange({
+                    start: '2024-01-01',
+                    end: format(new Date(), 'yyyy-MM-dd')
+                  })}
+                  className="px-2 py-1 bg-primary text-white hover:bg-primary/90 rounded text-[10px] font-black transition-colors"
+                  title="Ver todo o histórico desde o primeiro dia"
+                >
+                  Desde o Dia 1
+                </button>
+              </div>
             </div>
             <button 
               id="btn-print-commissions"
@@ -883,7 +979,13 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
-            <SummaryCard title="Produção Bruta (Filtro)" value={totals.produced} icon={<TrendingUp size={18} />} color="slate" />
+            <SummaryCard 
+              title="Produção Bruta (Filtro)" 
+              value={totals.produced} 
+              icon={<TrendingUp size={18} />} 
+              color="slate" 
+              subtitle={totals.allTimeProduced > totals.produced ? `Total histórico: R$ ${totals.allTimeProduced.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
+            />
             <SummaryCard title="Comissão de Serviços" value={totals.serviceCommission} icon={<PercentIcon size={18} />} color="emerald" />
             <SummaryCard title="Bônus / Ajuda Custo" value={totals.bonus} icon={<Gift size={18} />} color="blue" />
             <SummaryCard title="Vales Ativos (Histórico)" value={allTimePendingAdvancesTotal} icon={<Receipt size={18} />} color="amber" negative />
@@ -2630,7 +2732,7 @@ Assinatura: _______________________________
   );
 }
 
-function SummaryCard({ title, value, icon, color, highlight, negative }: any) {
+function SummaryCard({ title, value, icon, color, highlight, negative, subtitle }: any) {
   const colors: any = {
     slate: 'bg-slate-50 text-slate-400 border-slate-100',
     emerald: 'bg-emerald-50 text-emerald-400 border-emerald-100',
@@ -2650,6 +2752,11 @@ function SummaryCard({ title, value, icon, color, highlight, negative }: any) {
       <p className={`text-xl font-black ${highlight ? 'text-white' : (negative ? 'text-red-500' : 'text-primary')}`}>
         {negative && '-'}R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
       </p>
+      {subtitle && (
+        <p className={`text-[10px] font-bold mt-1.5 ${highlight ? 'text-white/70' : 'text-slate-400'}`}>
+          {subtitle}
+        </p>
+      )}
     </div>
   );
 }

@@ -55,6 +55,8 @@ export function Comissoes() {
   const [payouts, setPayouts] = useState<CommissionPayout[]>([]);
   const [advances, setAdvances] = useState<ProfessionalAdvance[]>([]);
   const [allAdvancesLive, setAllAdvancesLive] = useState<ProfessionalAdvance[]>([]);
+  const [allComandasLive, setAllComandasLive] = useState<any[]>([]);
+  const [allAppointmentsLive, setAllAppointmentsLive] = useState<any[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   
   // Drill-down state
@@ -76,7 +78,7 @@ export function Comissoes() {
     loadBarbers();
   }, [tenantId]);
 
-  // Live Subscription for all commissions and advances of the tenant
+  // Live Subscription for all commissions, advances, comandas and appointments of the tenant
   useEffect(() => {
     if (!tenantId) return;
     
@@ -98,10 +100,41 @@ export function Comissoes() {
       setAllAdvancesLive(docs);
     });
 
+    const cmdConstraints = tenantId === 'gbcortes7'
+      ? [where('tenantId', 'in', [tenantId, ''])]
+      : [where('tenantId', '==', tenantId)];
+    const qCmd = query(collection(db, 'comandas'), ...cmdConstraints);
+    const unsubCmd = onSnapshot(qCmd, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllComandasLive(docs);
+    });
+
+    const aptConstraints = tenantId === 'gbcortes7'
+      ? [where('tenantId', 'in', [tenantId, ''])]
+      : [where('tenantId', '==', tenantId)];
+    const qApt = query(collection(db, 'appointments'), ...aptConstraints);
+    const unsubApt = onSnapshot(qApt, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllAppointmentsLive(docs);
+    });
+
     return () => {
       unsubCom();
       unsubAdv();
+      unsubCmd();
+      unsubApt();
     };
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    const sessionKey = `reconciled_commissions_v2_${tenantId}`;
+    if (!sessionStorage.getItem(sessionKey)) {
+      sessionStorage.setItem(sessionKey, 'true');
+      commissionService.reconcileHistoricalCommissions(tenantId).catch(err => {
+        console.warn("Reconciliação silenciosa de comissões históricas:", err);
+      });
+    }
   }, [tenantId]);
 
   useEffect(() => {
@@ -181,7 +214,15 @@ export function Comissoes() {
 
   const teamRoster = React.useMemo(() => {
     return barbers.map(barber => {
-      const ledger = calculateProfessionalLedger(barber, effectiveCommissions, effectiveAdvances);
+      const ledger = calculateProfessionalLedger(
+        barber, 
+        effectiveCommissions, 
+        effectiveAdvances,
+        dateRange.start,
+        dateRange.end,
+        allComandasLive,
+        allAppointmentsLive
+      );
       return {
         uid: barber.uid,
         nome: barber.nome,
@@ -192,10 +233,13 @@ export function Comissoes() {
         paid: ledger.comissaoRepassadaMes,
         totalBase: ledger.faturamentoBrutoMes,
         comissaoGeradaMes: ledger.comissaoGeradaMes,
-        count: ledger.totalAtendimentosMes
+        count: ledger.totalAtendimentosMes,
+        faturamentoBrutoTotal: ledger.faturamentoBrutoTotal,
+        comissaoGeradaTotal: ledger.comissaoGeradaTotal,
+        totalAtendimentosTotal: ledger.totalAtendimentosTotal
       };
     });
-  }, [barbers, effectiveCommissions, effectiveAdvances]);
+  }, [barbers, effectiveCommissions, effectiveAdvances, dateRange.start, dateRange.end, allComandasLive, allAppointmentsLive]);
 
   // Calculate global stats dynamically in-memory:
   // pending is strictly the sum of all individual barbers' net pending balances (preventing cross-barber offset)
@@ -209,6 +253,7 @@ export function Comissoes() {
     // Filter by period for top summary cards
     const periodComms = effectiveCommissions.filter(c => {
       if (!c.date) return false;
+      if (c.status === 'cancelado' || c.status === 'estornado') return false;
       const d = c.date.substring(0, 10);
       return d >= dateRange.start && d <= dateRange.end;
     });
@@ -217,9 +262,11 @@ export function Comissoes() {
       .filter(c => c.status === 'pago')
       .reduce((acc, c) => acc + (c.commission_value || 0), 0);
 
-    const totalBase = periodComms
+    const totalBaseFromRoster = teamRoster.reduce((acc, b) => acc + b.totalBase, 0);
+    const totalBaseFromComms = periodComms
       .filter(c => c.commission_type !== 'assinatura')
       .reduce((acc, c) => acc + (c.base_value || 0), 0);
+    const totalBase = Math.max(totalBaseFromRoster, totalBaseFromComms);
 
     return {
       pending: totalPendingNet,
@@ -316,7 +363,7 @@ export function Comissoes() {
 
           <div className="flex flex-wrap items-center gap-3">
             {/* Quick Date Range Selectors */}
-            <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/60 rounded-2xl px-4 py-2.5">
+            <div className="flex flex-wrap items-center gap-2 bg-slate-800/80 border border-slate-700/60 rounded-2xl px-4 py-2.5">
               <Calendar size={15} className="text-slate-400" />
               <input 
                 type="date" 
@@ -331,6 +378,18 @@ export function Comissoes() {
                 onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
                 className="bg-transparent text-xs text-white focus:outline-none font-bold select-none cursor-pointer"
               />
+              <div className="flex items-center gap-1 pl-2 border-l border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setDateRange({
+                    start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+                    end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
+                  })}
+                  className="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-[11px] font-bold transition-colors"
+                >
+                  Este Mês
+                </button>
+              </div>
             </div>
 
             {(isAdmin || isGerente) && (
@@ -485,7 +544,7 @@ export function Comissoes() {
                       {/* Quick Ratios */}
                       <div className="space-y-2 mb-5 text-xs text-slate-600 font-semibold bg-slate-50/50 p-3 rounded-xl border border-slate-100/60">
                         <div className="flex justify-between items-center">
-                          <span className="text-slate-400 text-[11px]">Faturamento gerado:</span>
+                          <span className="text-slate-400 text-[11px]">Faturamento gerado (mês):</span>
                           <span className="font-bold text-slate-800 text-[11px]">R$ {barber.totalBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="flex justify-between items-center">

@@ -436,6 +436,7 @@ export interface Comanda {
   profissional_id: string;
   profissional_name: string;
   agendamento_id?: string;
+  daily_flow_id?: string;
   origin: ComandaOrigin;
   status: ComandaStatus;
   aberto_por_id?: string;

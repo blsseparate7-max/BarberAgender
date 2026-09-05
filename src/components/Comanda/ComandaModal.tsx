@@ -80,6 +80,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
   
   const [showItemSelector, setShowItemSelector] = useState<'service' | 'product' | 'pacote' | null>(null);
+  const [selectedBarberForService, setSelectedBarberForService] = useState<string>('');
+  
+  // Financial Modals (Tip, Discount, Voucher, Coupon)
+  const [financialModal, setFinancialModal] = useState<'tip' | 'discount' | 'voucher' | 'coupon' | null>(null);
+  const [tempTipValue, setTempTipValue] = useState<string>('');
+  const [tempDiscountValue, setTempDiscountValue] = useState<string>('');
   const [packageConfigs, setPackageConfigs] = useState<any[]>([]);
   const [itemSearchQuery, setItemSearchQuery] = useState('');
   const [selectedServiceCategory, setSelectedServiceCategory] = useState<string>('todas');
@@ -627,6 +633,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const handleOpenItemSelector = (type: 'service' | 'product' | 'pacote') => {
     loadData();
     setItemSearchQuery('');
+    setSelectedBarberForService(comanda?.profissional_id || '');
     setShowItemSelector(type);
   };
 
@@ -911,6 +918,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         toast.info(`Desconto de ${subDiscount}% de assinante aplicado ao item: ${itemDisplayName}!`);
       }
 
+      const targetBarberId = (type === 'servico' && selectedBarberForService) ? selectedBarberForService : comanda.profissional_id;
+      const targetBarber = barbers.find(b => b.uid === targetBarberId || b.id === targetBarberId);
+      const targetBarberName = targetBarber 
+        ? (targetBarber.nome || targetBarber.displayName || targetBarber.name || 'Barbeiro') 
+        : comanda.profissional_name;
+
       const newItem: ComandaItem = {
         id: `${item.id}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         type: type === 'servico' ? 'servico' : 'produto',
@@ -919,8 +932,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         quantity: 1,
         unitPrice,
         totalPrice: totalPriceVal,
-        profissional_id: comanda.profissional_id,
-        profissional_name: comanda.profissional_name,
+        profissional_id: targetBarberId,
+        profissional_name: targetBarberName,
         isCortesia: isCortesiaVal,
         deductType: deductTypeVal,
         subscriptionId: subscriptionIdVal,
@@ -992,8 +1005,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           await appointmentService.createAppointment({
             cliente_id: comanda.cliente_id || '',
             cliente_name: comanda.cliente_name || 'Cliente Avulso',
-            profissional_id: comanda.profissional_id,
-            profissional_name: comanda.profissional_name,
+            profissional_id: targetBarberId,
+            profissional_name: targetBarberName,
             servico_id: item.id,
             servico_name: (item as Service).nome || item.name || 'Serviço',
             date: dateStr,
@@ -1295,21 +1308,62 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         setClientLoyalty({ points: updatedLoyalty.points, cashback: updatedLoyalty.cashback });
       }
 
-      await comandaService.addPayment(
-        comanda.id, 
-        {
-          method,
-          metodo_pagamento_id,
-          amount,
-          date: new Date().toISOString().split('T')[0]
-        },
-        user.uid,
-        profile?.nome || user.email || 'Usuário'
-      );
+      // Check if user is overpaying comanda and has active client debts to abate
+      const totalPendingComanda = comanda.pendingAmount || 0;
+      const totalPendingDebts = clientDebts.reduce((sum, d) => sum + (d.remainingAmount || 0), 0);
+      
+      let comandaPaymentAmount = amount;
+      let debtPaymentAmount = 0;
+
+      if (amount > totalPendingComanda && totalPendingDebts > 0 && comanda.cliente_id && comanda.cliente_id !== 'avulso') {
+        comandaPaymentAmount = totalPendingComanda;
+        debtPaymentAmount = Math.min(amount - totalPendingComanda, totalPendingDebts);
+      }
+
+      // 1. Pay comanda portion if > 0
+      if (comandaPaymentAmount > 0) {
+        await comandaService.addPayment(
+          comanda.id, 
+          {
+            method,
+            metodo_pagamento_id,
+            amount: comandaPaymentAmount,
+            date: new Date().toISOString().split('T')[0]
+          },
+          user.uid,
+          profile?.nome || user.email || 'Usuário'
+        );
+      }
+
+      // 2. Abate excess from pending client debts sequentially
+      if (debtPaymentAmount > 0) {
+        let remainingExcess = debtPaymentAmount;
+        const sortedDebts = [...clientDebts].sort((a, b) => new Date(a.date || a.createdAt?.seconds * 1000 || 0).getTime() - new Date(b.date || b.createdAt?.seconds * 1000 || 0).getTime());
+        
+        for (const debt of sortedDebts) {
+          if (remainingExcess <= 0) break;
+          const payForThisDebt = Math.min(debt.remainingAmount, remainingExcess);
+          if (payForThisDebt > 0) {
+            await comandaService.payDebt(
+              debt.id,
+              payForThisDebt,
+              method,
+              metodo_pagamento_id || '',
+              user.uid,
+              profile?.nome || user.email || 'Usuário'
+            );
+            remainingExcess -= payForThisDebt;
+          }
+        }
+
+        toast.success(`Pagamento registrado! R$ ${comandaPaymentAmount.toFixed(2)} aplicados na comanda e R$ ${debtPaymentAmount.toFixed(2)} abatidos do fiado do cliente.`);
+        await loadClientDebts(comanda.cliente_id);
+      } else {
+        toast.success("Pagamento registrado com sucesso.");
+      }
 
       setShowPaymentModal(false);
       setPartialAmount('');
-      toast.success("Pagamento registrado com sucesso.");
     } catch (error) {
       console.error("Erro ao processar pagamento:", error);
       toast.error("Erro ao processar pagamento: " + (error instanceof Error ? error.message : String(error)));
@@ -2446,167 +2500,62 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   <span className="text-primary">R$ {(comanda.subtotalProducts ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
                 
-                {/* Gorjeta / Caixinha Interactive Selector */}
+                {/* Financial Adjustments (+ Action Buttons) */}
                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                  <div className="space-y-3 pt-2">
-                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-1">
-                      <Sparkles size={10} className="text-amber-500" />
-                      Gorjeta para o Profissional
-                    </label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[0, 5, 10, 15, 20].map((tipVal) => (
-                        <button
-                          key={`tip-chip-${tipVal}`}
-                          type="button"
-                          disabled={loading}
-                          onClick={() => {
-                            setShowCustomTipInput(false);
-                            updateFinancials({ tip: tipVal });
-                          }}
-                          className={`px-3 py-2 text-[10px] font-black rounded-xl border transition-all active:scale-95 ${
-                            (comanda.tip || 0) === tipVal && !showCustomTipInput
-                              ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm shadow-emerald-600/10'
-                              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
-                          }`}
-                        >
-                          {tipVal === 0 ? 'Sem Gorjeta' : `R$ ${tipVal}`}
-                        </button>
-                      ))}
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <p className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Ajustes & Extras na Comanda</p>
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        disabled={loading}
                         onClick={() => {
-                          setShowCustomTipInput(true);
-                          setCustomTipValue(comanda.tip ? comanda.tip.toString() : '');
+                          setTempTipValue(comanda.tip ? comanda.tip.toString() : '');
+                          setFinancialModal('tip');
                         }}
-                        className={`px-3 py-2 text-[10px] font-black rounded-xl border transition-all active:scale-95 ${
-                          showCustomTipInput
-                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm shadow-emerald-600/10'
-                            : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          comanda.tip ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                         }`}
                       >
-                        Outro
+                        <Sparkles size={12} className={comanda.tip ? 'text-emerald-600' : 'text-amber-500'} />
+                        <span>{comanda.tip ? `Gorjeta: R$ ${comanda.tip.toFixed(2)}` : '+ Gorjeta'}</span>
                       </button>
-                    </div>
 
-                    {showCustomTipInput && (
-                      <div className="relative mt-2 animate-in slide-in-from-top-1 duration-150">
-                        <Plus className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500" size={12} />
-                        <input 
-                          type="number"
-                          value={customTipValue}
-                          disabled={loading}
-                          onChange={(e) => {
-                            setCustomTipValue(e.target.value);
-                            updateFinancials({ tip: Number(e.target.value) || 0 });
-                          }}
-                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-8 pr-3 text-xs text-emerald-600 font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500/50 transition-all"
-                          placeholder="Valor personalizado..."
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Cupom de Desconto */}
-                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                  <div className="space-y-1.5 pt-1 border-t border-slate-100">
-                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center justify-between">
-                      <span className="flex items-center gap-1"><Tag size={11} className="text-amber-500" /> Cupom de Desconto</span>
-                      {availableCoupons.length > 0 && (
-                        <span className="text-[9px] text-amber-600 font-bold bg-amber-50 px-1.5 py-0.5 rounded-full">
-                          {availableCoupons.length} disponível{availableCoupons.length > 1 ? 'is' : ''}
-                        </span>
-                      )}
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
-                        <input 
-                          type="text"
-                          value={couponInput}
-                          disabled={loading}
-                          onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
-                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleApplyCoupon(); } }}
-                          className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-xs text-primary font-bold uppercase placeholder:normal-case placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500/50 transition-all disabled:opacity-50"
-                          placeholder="Digite o cupom (ex: PROMO10)"
-                        />
-                      </div>
                       <button
                         type="button"
-                        disabled={loading || !couponInput.trim()}
-                        onClick={() => handleApplyCoupon()}
-                        className="px-3.5 py-2 bg-amber-500 text-white font-bold text-xs rounded-xl hover:bg-amber-600 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm"
+                        onClick={() => {
+                          setTempDiscountValue(comanda.discount ? comanda.discount.toString() : '');
+                          setFinancialModal('discount');
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          comanda.discount ? 'bg-rose-50 text-rose-700 border-rose-200 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
                       >
-                        Aplicar
+                        <Tag size={12} className={comanda.discount ? 'text-rose-600' : 'text-red-500'} />
+                        <span>{comanda.discount ? `Desconto: R$ ${comanda.discount.toFixed(2)}` : '+ Desconto'}</span>
                       </button>
-                    </div>
 
-                    {/* Quick badges for available coupons */}
-                    {availableCoupons.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 pt-1">
-                        {availableCoupons.slice(0, 4).map((c, cIdx) => (
-                          <button
-                            key={`cp-badge-${c.id || cIdx}-${cIdx}`}
-                            type="button"
-                            onClick={() => handleApplyCoupon(c.code)}
-                            className="text-[10px] font-black px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shadow-2xs"
-                          >
-                            <Tag size={9} />
-                            <span>{c.code} ({c.discount}%)</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Resgate de Voucher de Pontos (Token) */}
-                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-indigo-700 uppercase tracking-widest ml-1 flex items-center gap-1">
-                      <Sparkles size={11} className="text-indigo-600" />
-                      <span>Resgate de Fidelidade (Token / Voucher)</span>
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Award className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-500" size={13} />
-                        <input 
-                          type="text"
-                          value={voucherTokenInput}
-                          disabled={loading || isValidatingVoucher}
-                          onChange={(e) => setVoucherTokenInput(e.target.value.toUpperCase())}
-                          className="w-full bg-white border border-indigo-200 rounded-xl py-2 pl-8 pr-3 text-xs text-indigo-950 font-mono font-bold uppercase placeholder:normal-case placeholder:font-sans focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-2xs"
-                          placeholder="Ex: RESG-ABC123"
-                        />
-                      </div>
                       <button
                         type="button"
-                        disabled={loading || isValidatingVoucher || !voucherTokenInput.trim()}
-                        onClick={handleApplyLoyaltyVoucher}
-                        className="px-3.5 py-2 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm flex items-center gap-1"
+                        onClick={() => {
+                          setVoucherTokenInput('');
+                          setFinancialModal('voucher');
+                        }}
+                        className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
                       >
-                        <Sparkles size={12} />
-                        <span>Validar Token</span>
+                        <Award size={12} className="text-indigo-600" />
+                        <span>+ Voucher Fidelidade</span>
                       </button>
-                    </div>
-                  </div>
-                )}
 
-                {/* Desconto Input */}
-                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Aplicar Desconto Manual (R$)</label>
-                    <div className="relative">
-                      <Trash2 className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500" size={12} />
-                      <input 
-                        type="number"
-                        value={comanda.discount || ''}
-                        disabled={loading}
-                        onChange={(e) => updateFinancials({ discount: Number(e.target.value) })}
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-8 pr-3 text-xs text-red-600 font-bold focus:outline-none focus:ring-2 focus:ring-red-500/10 focus:border-red-500/50 transition-all disabled:opacity-50"
-                        placeholder="R$ 0,00"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCouponInput('');
+                          setFinancialModal('coupon');
+                        }}
+                        className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                      >
+                        <Tag size={12} className="text-amber-600" />
+                        <span>+ Cupom</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -3046,6 +2995,27 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
               {/* Search Bar & Category Filter */}
               <div className="p-4 border-b border-border bg-slate-50/50 shrink-0 space-y-3">
+                {/* Professional Selector for Multi-Professional Comandas */}
+                {showItemSelector === 'service' && barbers.length > 0 && (
+                  <div className="bg-emerald-50/80 border border-emerald-200/80 p-3 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
+                    <label className="text-xs font-black text-emerald-950 flex items-center gap-2">
+                      <Scissors size={14} className="text-emerald-600" />
+                      <span>Profissional para este serviço:</span>
+                    </label>
+                    <select
+                      value={selectedBarberForService || comanda?.profissional_id || ''}
+                      onChange={(e) => setSelectedBarberForService(e.target.value)}
+                      className="bg-white border border-emerald-300 rounded-xl px-3 py-1.5 text-xs text-primary font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs"
+                    >
+                      {barbers.map(b => (
+                        <option key={b.uid || b.id} value={b.uid || b.id}>
+                          {(b.nome || b.displayName || b.name)} {(b.uid === comanda?.profissional_id || b.id === comanda?.profissional_id) ? '(Principal da Comanda)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="relative">
                   <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   <input
@@ -3357,6 +3327,35 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   <p className="text-[10px] text-emerald-600 uppercase tracking-widest font-black mb-1">Valor Pendente</p>
                   <p className="text-5xl font-black text-emerald-700 tracking-tighter">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                 </div>
+
+                {/* Notice banner for active client debts abatement */}
+                {(() => {
+                  const totalPendingDebts = clientDebts.reduce((sum, d) => sum + (d.remainingAmount || 0), 0);
+                  if (totalPendingDebts <= 0 || !comanda.cliente_id || comanda.cliente_id === 'avulso') return null;
+                  const enteredAmt = Number(partialAmount) || 0;
+                  const excessAmt = Math.max(0, enteredAmt - (comanda.pendingAmount || 0));
+                  const abateAmt = Math.min(excessAmt, totalPendingDebts);
+
+                  return (
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                      <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={18} />
+                      <div className="text-xs text-amber-900 space-y-1">
+                        <p className="font-bold">
+                          O cliente <span className="underline">{comanda.cliente_name}</span> possui <strong className="text-amber-700">R$ {totalPendingDebts.toFixed(2)}</strong> em fiado pendente.
+                        </p>
+                        <p className="text-[11px] text-amber-700 leading-relaxed font-medium">
+                          Ao informar um valor maior que R$ {comanda.pendingAmount.toFixed(2)}, o valor excedente será abatido automaticamente das dívidas antigas do cliente.
+                        </p>
+                        {abateAmt > 0 && (
+                          <div className="mt-2 pt-2 border-t border-amber-200/80 font-black text-amber-800 flex items-center justify-between">
+                            <span>Abatimento de Fiado Previsto:</span>
+                            <span className="text-sm bg-amber-200/80 px-2.5 py-0.5 rounded-lg">R$ {abateAmt.toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor a Pagar Agora</label>
@@ -3924,6 +3923,272 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   </button>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Financial Adjustment Modals (Tip, Discount, Voucher, Coupon) */}
+      <AnimatePresence>
+        {financialModal && (
+          <div 
+            className="fixed inset-0 z-[100005] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md"
+            onClick={() => setFinancialModal(null)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white border border-slate-200 w-full max-w-md rounded-3xl shadow-2xl overflow-hidden p-6 space-y-5"
+            >
+              {financialModal === 'tip' && (
+                <>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                        <Sparkles size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900">Gorjeta para o Profissional</h3>
+                        <p className="text-xs text-muted font-medium">Insira o valor que deseja adicionar de caixinha</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setFinancialModal(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {[0, 5, 10, 15, 20].map((tipVal) => (
+                        <button
+                          key={`modal-tip-${tipVal}`}
+                          type="button"
+                          onClick={() => setTempTipValue(tipVal.toString())}
+                          className={`px-3.5 py-2 text-xs font-black rounded-xl border transition-all cursor-pointer ${
+                            parseFloat(tempTipValue) === tipVal
+                              ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm'
+                              : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {tipVal === 0 ? 'Sem Gorjeta' : `R$ ${tipVal},00`}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-slate-500">Valor Personalizado (R$)</label>
+                      <input
+                        type="number"
+                        step="0.50"
+                        value={tempTipValue}
+                        onChange={(e) => setTempTipValue(e.target.value)}
+                        placeholder="R$ 0,00"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setFinancialModal(null)}
+                      className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-200 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const val = parseFloat(tempTipValue) || 0;
+                        updateFinancials({ tip: val });
+                        setFinancialModal(null);
+                        toast.success(val > 0 ? `Gorjeta de R$ ${val.toFixed(2)} aplicada!` : 'Gorjeta removida.');
+                      }}
+                      className="flex-[2] py-3 bg-emerald-600 text-white font-bold text-xs rounded-xl hover:bg-emerald-700 shadow-sm cursor-pointer"
+                    >
+                      Confirmar Gorjeta
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {financialModal === 'discount' && (
+                <>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100">
+                        <Tag size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900">Desconto Manual</h3>
+                        <p className="text-xs text-muted font-medium">Informe o valor total de desconto em reais</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setFinancialModal(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-500">Valor do Desconto (R$)</label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      value={tempDiscountValue}
+                      onChange={(e) => setTempDiscountValue(e.target.value)}
+                      placeholder="R$ 0,00"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-rose-600 focus:bg-white focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-500/20"
+                    />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setFinancialModal(null)}
+                      className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-200 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const val = parseFloat(tempDiscountValue) || 0;
+                        updateFinancials({ discount: val });
+                        setFinancialModal(null);
+                        toast.success(val > 0 ? `Desconto de R$ ${val.toFixed(2)} aplicado!` : 'Desconto removido.');
+                      }}
+                      className="flex-[2] py-3 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 shadow-sm cursor-pointer"
+                    >
+                      Confirmar Desconto
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {financialModal === 'voucher' && (
+                <>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                        <Award size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900">Voucher de Fidelidade</h3>
+                        <p className="text-xs text-muted font-medium">Insira o código/token do voucher resgatado pelo cliente</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setFinancialModal(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase text-indigo-700">Token do Voucher</label>
+                    <input
+                      type="text"
+                      value={voucherTokenInput}
+                      onChange={(e) => setVoucherTokenInput(e.target.value.toUpperCase())}
+                      placeholder="Ex: RESG-ABC123"
+                      className="w-full bg-slate-50 border border-indigo-200 rounded-xl px-4 py-3 text-sm font-mono font-bold uppercase text-indigo-950 focus:bg-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setFinancialModal(null)}
+                      className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-200 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!voucherTokenInput.trim() || isValidatingVoucher}
+                      onClick={async () => {
+                        await handleApplyLoyaltyVoucher();
+                        setFinancialModal(null);
+                      }}
+                      className="flex-[2] py-3 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                    >
+                      {isValidatingVoucher ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                      <span>Validar e Aplicar</span>
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {financialModal === 'coupon' && (
+                <>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100">
+                        <Tag size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900">Cupom de Desconto</h3>
+                        <p className="text-xs text-muted font-medium">Digite ou selecione um cupom ativo</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setFinancialModal(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-amber-800">Código do Cupom</label>
+                      <input
+                        type="text"
+                        value={couponInput}
+                        onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                        placeholder="Ex: PROMO10"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold uppercase text-slate-900 focus:bg-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                      />
+                    </div>
+
+                    {availableCoupons.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase text-slate-400">Cupons Disponíveis:</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {availableCoupons.map((c, cIdx) => (
+                            <button
+                              key={`cp-mod-${c.id || cIdx}`}
+                              type="button"
+                              onClick={() => setCouponInput(c.code)}
+                              className="px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-bold hover:bg-amber-100 cursor-pointer"
+                            >
+                              {c.code} ({c.discount}%)
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setFinancialModal(null)}
+                      className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-200 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!couponInput.trim()}
+                      onClick={async () => {
+                        await handleApplyCoupon();
+                        setFinancialModal(null);
+                      }}
+                      className="flex-[2] py-3 bg-amber-500 text-white font-bold text-xs rounded-xl hover:bg-amber-600 shadow-sm disabled:opacity-50 cursor-pointer"
+                    >
+                      Aplicar Cupom
+                    </button>
+                  </div>
+                </>
+              )}
             </motion.div>
           </div>
         )}

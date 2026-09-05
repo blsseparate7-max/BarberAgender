@@ -48,7 +48,8 @@ import {
   Pause,
   Activity,
   Trash2,
-  Landmark
+  Landmark,
+  Globe
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -4766,15 +4767,15 @@ function TransactionItem({ transaction }: { transaction: FinancialTransaction, k
   );
 }
 
-function PaymentIcon({ method }: { method: PaymentMethod }) {
-  switch (method) {
-    case 'pix': return <Smartphone size={16} className="text-emerald-500" />;
-    case 'dinheiro': return <Wallet size={16} className="text-emerald-500" />;
-    case 'credito':
-    case 'debito': return <CreditCard size={16} className="text-blue-500" />;
-    case 'fiado': return <Clock size={16} className="text-amber-500" />;
-    default: return <DollarSign size={16} />;
-  }
+function PaymentIcon({ method }: { method: any }) {
+  const m = String(method || '').toLowerCase();
+  if (m.includes('pix')) return <Smartphone size={16} className="text-emerald-500" />;
+  if (m.includes('dinheiro') || m.includes('money') || m.includes('especie')) return <Wallet size={16} className="text-emerald-500" />;
+  if (m.includes('debito') || m.includes('débito')) return <CreditCard size={16} className="text-blue-500" />;
+  if (m.includes('credito') || m.includes('crédito') || m.includes('cartao') || m.includes('cartão')) return <CreditCard size={16} className="text-indigo-500" />;
+  if (m.includes('fiado')) return <Clock size={16} className="text-amber-500" />;
+  if (m.includes('online') || m.includes('asaas') || m.includes('assinatura') || m.includes('boleto')) return <Globe size={16} className="text-cyan-500" />;
+  return <DollarSign size={16} className="text-slate-500" />;
 }
 
 function StatusBadge({ status }: { status: string }) {

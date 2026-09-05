@@ -65,9 +65,12 @@ service cloud.firestore {
     function isBarbeiro() {
       return isAuthenticated() && 
         (
+          getUserEmail() == "eufixo@gbcortes7.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro' &&
-           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true)
+           (get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true || 
+            !('ativo' in get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data) || 
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == null))
         );
     }
 
@@ -213,7 +216,7 @@ service cloud.firestore {
           )
         ) ||
         (
-          isBarbeiro() && resource != null && resource.data.tipo == 'cliente' &&
+          (isBarbeiro() || getUserEmail() == "eufixo@gbcortes7.com") && resource != null &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager'
           ])

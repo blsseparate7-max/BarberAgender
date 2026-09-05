@@ -164,6 +164,34 @@ export const subscriptionService = {
       });
 
       return subscriptionRef.id;
+    }).then(async (subId) => {
+      // Also register cash_movement if active cash session exists
+      try {
+        const activeCash = await cashService.getCurrentCash();
+        if (activeCash && activeCash.id) {
+          const planRef = doc(db, PLANS_COLLECTION, data.plano_id);
+          const planSnap = await getDoc(planRef);
+          const planPrice = planSnap.exists() ? planSnap.data()?.price || 0 : 0;
+          const planName = planSnap.exists() ? planSnap.data()?.name || '' : '';
+          const todayStr = format(new Date(), 'yyyy-MM-dd');
+          
+          await cashService.addMovement({
+            caixa_id: activeCash.id,
+            type: 'income',
+            category: 'Assinaturas',
+            description: `Assinatura: ${planName} - ${data.cliente_name}`,
+            amount: planPrice,
+            paymentMethod: 'pix' as any,
+            is_receivable: false,
+            usuario_id: data.cliente_id,
+            usuario_name: data.cliente_name,
+            date: todayStr
+          });
+        }
+      } catch (cashErr) {
+        console.warn("Aviso ao registrar caixa na criação de assinatura:", cashErr);
+      }
+      return subId;
     });
   },
 
@@ -882,6 +910,21 @@ export const subscriptionService = {
     } catch (e) {
       console.error("Erro ao gerar PIX alternativo:", e);
       return { success: false, error: 'Falha na comunicação' };
+    }
+  },
+
+  async syncAllAsaasSubscriptions(tenantId?: string) {
+    try {
+      const activeTenantId = tenantId || getActiveTenantId();
+      const res = await fetch('/api/saas/subscription/sync-all-asaas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: activeTenantId })
+      });
+      return await res.json();
+    } catch (e) {
+      console.error("Erro ao sincronizar assinaturas Asaas:", e);
+      return { success: false, error: 'Falha na comunicação com o servidor.' };
     }
   }
 };

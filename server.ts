@@ -945,7 +945,7 @@ function encodeFirestoreFields(data: any): any {
 }
 
   // Helper to get Asaas credentials (tenant-specific subaccount or master fallback)
-  async function getTenantAsaasCredentials(tenantId?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; hasCustomKey: boolean; tenantData?: any }> {
+  async function getTenantAsaasCredentials(tenantId?: string, clientToken?: string): Promise<{ apiKey: string; baseUrl: string; env: string; isSubaccount: boolean; hasCustomKey: boolean; tenantData?: any }> {
     const rawMasterKey = process.env.ASAAS_API_KEY || '';
     const masterApiKey = rawMasterKey.trim().replace(/^['"]|['"]$/g, '');
     let masterEnv = (process.env.ASAAS_ENVIRONMENT || 'production').toLowerCase().trim();
@@ -980,14 +980,36 @@ function encodeFirestoreFields(data: any): any {
     }
 
     // 2. Fallback to Firestore REST API if tData is missing or dbAdmin is null
-    if (!tData) {
+    if (!tData || !privData) {
       try {
         const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
-        const restRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${tenantId}`);
-        if (restRes.ok) {
-          const json = await restRes.json();
-          if (json?.fields) {
-            tData = parseFirestoreFields(json.fields);
+        const authHeaders: Record<string, string> = {};
+        if (clientToken) {
+          authHeaders['Authorization'] = `Bearer ${clientToken}`;
+        }
+        
+        if (!tData) {
+          const restRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${tenantId}`, {
+            headers: authHeaders
+          });
+          if (restRes.ok) {
+            const json = await restRes.json();
+            if (json?.fields) {
+              tData = parseFirestoreFields(json.fields);
+            }
+          }
+        }
+
+        // Try reading private_settings/asaas if clientToken is provided or we still need privData
+        if (!privData && clientToken) {
+          const privRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${tenantId}/private_settings/asaas`, {
+            headers: authHeaders
+          });
+          if (privRes.ok) {
+            const privJson = await privRes.json();
+            if (privJson?.fields) {
+              privData = parseFirestoreFields(privJson.fields);
+            }
           }
         }
       } catch (restErr) {
@@ -2459,6 +2481,289 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
+  // Endpoint para Sincronização/Reconciliação Geral de Assinaturas pagas via Asaas (Cartão / PIX)
+  app.post(["/api/saas/subscription/sync-all-asaas", "/saas/subscription/sync-all-asaas", "/api/admin/sync-asaas-subscriptions"], async (req, res) => {
+    try {
+      const { tenantId } = req.body || {};
+      const targetTenant = tenantId || 'gbcortes7';
+      const dbAdmin = getAdminDb();
+
+      // 1. Obter credenciais do Asaas
+      const asaasCreds = await getTenantAsaasCredentials(targetTenant);
+      if (!asaasCreds || !asaasCreds.apiKey) {
+        return res.status(400).json({
+          success: false,
+          error: "Chave do Asaas não configurada para esta empresa."
+        });
+      }
+
+      const { apiKey: asaasApiKey, baseUrl } = asaasCreds;
+
+      // 2. Buscar pagamentos confirmados no Asaas (Cartão / PIX / Boleto)
+      let asaasPayments: any[] = [];
+      try {
+        const payRes = await fetch(`${baseUrl}/payments?status=RECEIVED,CONFIRMED,RECEIVED_IN_CASH,RECEIVED_IN_CASH_FEE&limit=100`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        const payData = await safeJsonFetch(payRes);
+        if (payData?.data && Array.isArray(payData.data)) {
+          asaasPayments = payData.data;
+        }
+      } catch (payErr) {
+        console.warn("[sync-all-asaas] Erro ao buscar pagamentos no Asaas:", payErr);
+      }
+
+      // Buscar também assinaturas ativas na API do Asaas
+      let asaasSubscriptionsList: any[] = [];
+      try {
+        const subRes = await fetch(`${baseUrl}/subscriptions?status=ACTIVE&limit=100`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        const subData = await safeJsonFetch(subRes);
+        if (subData?.data && Array.isArray(subData.data)) {
+          asaasSubscriptionsList = subData.data;
+        }
+      } catch (subErr) {
+        console.warn("[sync-all-asaas] Erro ao buscar assinaturas no Asaas:", subErr);
+      }
+
+      console.log(`[sync-all-asaas] Encontrados ${asaasPayments.length} pagamentos confirmados e ${asaasSubscriptionsList.length} assinaturas ativas no Asaas.`);
+
+      // 3. Buscar todas as assinaturas salvas no Firestore para este tenant
+      let localSubs: any[] = [];
+      if (dbAdmin) {
+        const subsSnap = await dbAdmin.collection('subscriptions').where('tenantId', '==', targetTenant).get();
+        localSubs = subsSnap.docs.map((d: any) => ({ id: d.id, ref: d.ref, data: d.data() }));
+      } else {
+        const restSubs = await queryFirestoreRest('subscriptions', 'tenantId', 'EQUAL', targetTenant);
+        if (Array.isArray(restSubs)) {
+          localSubs = restSubs.map((r: any) => ({ id: r.id, ref: null, data: r.data || r }));
+        }
+      }
+
+      // Buscar sessão de caixa aberta para este tenant (se existir)
+      let openCashDoc: any = null;
+      if (dbAdmin) {
+        const cashSnap = await dbAdmin.collection('cash_sessions').where('tenantId', '==', targetTenant).get();
+        openCashDoc = cashSnap.docs.find((d: any) => d.data()?.status === 'open' || d.data()?.status === 'reopened');
+      } else {
+        const restCash = await queryFirestoreRest('cash_sessions', 'tenantId', 'EQUAL', targetTenant);
+        if (Array.isArray(restCash)) {
+          const found = restCash.find((c: any) => c.data?.status === 'open' || c.data?.status === 'reopened');
+          if (found) openCashDoc = found;
+        }
+      }
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      let syncedCount = 0;
+      let totalAmountSynced = 0;
+      const syncedDetails: any[] = [];
+
+      // 4. Processar cada assinatura local contra as informações do Asaas
+      for (const localSub of localSubs) {
+        const subData = localSub.data || {};
+        const subId = localSub.id;
+        const subAsaasSubId = subData.asaasSubscriptionId;
+        const subAsaasInvId = subData.asaasInvoiceId;
+        const clienteId = subData.cliente_id;
+
+        // Tentar encontrar um pagamento correspondente no Asaas
+        let matchedPayment = asaasPayments.find((p: any) => {
+          if (subAsaasSubId && p.subscription === subAsaasSubId) return true;
+          if (subAsaasInvId && p.id === subAsaasInvId) return true;
+          if (p.externalReference && (p.externalReference === subId || p.externalReference === `client_sub:${subId}`)) return true;
+          return false;
+        });
+
+        // Se não achou em asaasPayments mas subAsaasSubId está ativa em asaasSubscriptionsList
+        const matchedAsaasSub = asaasSubscriptionsList.find((s: any) => s.id === subAsaasSubId);
+
+        if (matchedPayment || matchedAsaasSub || subData.status === 'active') {
+          const paymentValue = Number(matchedPayment?.value || matchedAsaasSub?.value || subData.price || subData.amount || 0);
+          const payDateStr = matchedPayment?.paymentDate || matchedPayment?.clientPaymentDate || todayStr;
+          const billingTypeRaw = String(matchedPayment?.billingType || matchedAsaasSub?.billingType || 'CREDIT_CARD').toLowerCase();
+          const detectedMethod = billingTypeRaw.includes('credit') ? 'Cartão de Crédito (Online)' : (billingTypeRaw.includes('pix') ? 'PIX (Online)' : 'Boleto (Online)');
+          const detectedMethodKey = billingTypeRaw.includes('credit') ? 'cartao' : 'pix';
+
+          // A. Atualizar assinatura no Firestore se necessário
+          const nextMonth = new Date();
+          nextMonth.setMonth(nextMonth.getMonth() + 1);
+          const nextMonthStr = nextMonth.toISOString().split('T')[0];
+
+          const updateFields: any = {
+            status: 'active',
+            asaasPaymentStatus: 'received',
+            startDate: subData.startDate || payDateStr,
+            endDate: subData.endDate && subData.endDate > todayStr ? subData.endDate : nextMonthStr,
+            lastRenewalDate: payDateStr,
+            updatedAt: new Date().toISOString()
+          };
+          if (matchedPayment?.id) updateFields.asaasInvoiceId = matchedPayment.id;
+          if (matchedPayment?.subscription) updateFields.asaasSubscriptionId = matchedPayment.subscription;
+
+          if (localSub.ref) {
+            await localSub.ref.update(updateFields);
+          } else {
+            await updateFirestoreRestDoc('subscriptions', subId, updateFields);
+          }
+
+          // B. Ativar usuário no perfil
+          if (clienteId && clienteId !== 'sem_cadastro') {
+            try {
+              if (dbAdmin) {
+                await dbAdmin.collection('usuarios').doc(clienteId).set({
+                  tenantId: targetTenant,
+                  ativo: true,
+                  updatedAt: new Date().toISOString()
+                }, { merge: true });
+              } else {
+                await updateFirestoreRestDoc('usuarios', clienteId, {
+                  ativo: true,
+                  updatedAt: new Date().toISOString()
+                });
+              }
+            } catch (uErr) {
+              console.warn("Aviso ao ativar usuário:", uErr);
+            }
+          }
+
+          // C. Verificar e criar Lançamento Financeiro em financial_transactions
+          let txExists = false;
+          const payIdToMatch = matchedPayment?.id || subAsaasInvId;
+
+          if (dbAdmin) {
+            let q = dbAdmin.collection('financial_transactions').where('tenantId', '==', targetTenant);
+            if (payIdToMatch) {
+              const snap = await q.where('asaasPaymentId', '==', payIdToMatch).limit(1).get();
+              if (!snap.empty) txExists = true;
+            }
+            if (!txExists && clienteId) {
+              const snap2 = await q.where('cliente_id', '==', clienteId).where('date', '==', payDateStr).where('category', '==', 'Assinaturas').limit(1).get();
+              if (!snap2.empty) txExists = true;
+            }
+          }
+
+          if (!txExists && paymentValue > 0) {
+            const newTx = {
+              tenantId: targetTenant,
+              type: 'income',
+              amount: paymentValue,
+              subscription_amount: paymentValue,
+              service_amount: 0,
+              product_amount: 0,
+              package_amount: 0,
+              date: payDateStr,
+              category: 'Assinaturas',
+              description: `Assinatura Confirmada Asaas (${detectedMethod}): ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+              paymentMethod: detectedMethod,
+              payment_method: detectedMethodKey,
+              status: 'pago',
+              cliente_id: clienteId || 'N/A',
+              cliente_name: subData.cliente_name || 'Cliente',
+              responsavel_id: clienteId || 'N/A',
+              responsavel_name: subData.cliente_name || 'Cliente',
+              asaasPaymentId: payIdToMatch || null,
+              asaasSubscriptionId: subAsaasSubId || null,
+              net_amount: paymentValue,
+              settlement_date: payDateStr,
+              is_settled: true,
+              createdAt: new Date().toISOString()
+            };
+
+            if (dbAdmin) {
+              await dbAdmin.collection('financial_transactions').add(newTx);
+            } else {
+              await createFirestoreRestDoc('financial_transactions', null, newTx);
+            }
+
+            // D. Registrar no Caixa Diário (cash_movements & cash_sessions) se houver caixa aberto
+            if (openCashDoc) {
+              try {
+                let cashMovedAlready = false;
+                if (dbAdmin && payIdToMatch) {
+                  const cmCheck = await dbAdmin.collection('cash_movements').where('asaasPaymentId', '==', payIdToMatch).limit(1).get();
+                  if (!cmCheck.empty) cashMovedAlready = true;
+                }
+
+                if (!cashMovedAlready) {
+                  const cashId = openCashDoc.id;
+                  const cmPayload = {
+                    tenantId: targetTenant,
+                    caixa_id: cashId,
+                    type: 'income',
+                    category: 'Assinaturas',
+                    description: `Assinatura (${detectedMethod}): ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+                    amount: paymentValue,
+                    subscription_amount: paymentValue,
+                    payment_method: detectedMethodKey,
+                    paymentMethod: detectedMethod,
+                    asaasPaymentId: payIdToMatch || null,
+                    date: payDateStr,
+                    createdAt: new Date().toISOString()
+                  };
+
+                  if (dbAdmin) {
+                    await dbAdmin.collection('cash_movements').add(cmPayload);
+                    const openData = openCashDoc.data ? openCashDoc.data() : openCashDoc;
+                    const prevIncome = Number(openData.total_income || openData.totalIncome || 0);
+                    const prevExpected = Number(openData.expected_balance || openData.expectedBalance || 0);
+                    await openCashDoc.ref.update({
+                      total_income: prevIncome + paymentValue,
+                      totalIncome: prevIncome + paymentValue,
+                      expected_balance: prevExpected + paymentValue,
+                      expectedBalance: prevExpected + paymentValue,
+                      updatedAt: new Date()
+                    });
+                  } else {
+                    await createFirestoreRestDoc('cash_movements', null, cmPayload);
+                    const openData = openCashDoc.data || openCashDoc;
+                    const prevIncome = Number(openData.total_income || openData.totalIncome || 0);
+                    const prevExpected = Number(openData.expected_balance || openData.expectedBalance || 0);
+                    await updateFirestoreRestDoc('cash_sessions', cashId, {
+                      total_income: prevIncome + paymentValue,
+                      totalIncome: prevIncome + paymentValue,
+                      expected_balance: prevExpected + paymentValue,
+                      expectedBalance: prevExpected + paymentValue,
+                      updatedAt: new Date().toISOString()
+                    });
+                  }
+                }
+              } catch (cmErr) {
+                console.warn("[sync-all-asaas] Erro ao registrar no caixa:", cmErr);
+              }
+            }
+
+            syncedCount++;
+            totalAmountSynced += paymentValue;
+            syncedDetails.push({
+              subId,
+              cliente_name: subData.cliente_name,
+              planName: subData.planName,
+              amount: paymentValue,
+              paymentMethod: detectedMethod
+            });
+          }
+        }
+      }
+
+      console.log(`✅ [sync-all-asaas] Sincronização concluída para tenant ${targetTenant}: ${syncedCount} assinaturas sincronizadas, R$ ${totalAmountSynced} no caixa/fluxo.`);
+
+      return res.json({
+        success: true,
+        countSynced: syncedCount,
+        totalAmountSynced,
+        syncedDetails,
+        message: syncedCount > 0
+          ? `Sincronização concluída! ${syncedCount} assinatura(s) confirmada(s) e integradas ao Caixa Diário e Fluxo de Caixa (Total: R$ ${totalAmountSynced.toFixed(2)}).`
+          : `Sincronização concluída! Todas as assinaturas do Asaas já estavam sincronizadas no Caixa.`
+      });
+
+    } catch (error: any) {
+      console.error("Erro na sincronização de assinaturas Asaas:", error);
+      res.status(500).json({ error: error.message || "Erro durante a sincronização de assinaturas do Asaas." });
+    }
+  });
+
   // Retry / Recobrar charge endpoint for Asaas Subscription (Credit Card / Asaas)
   app.post(["/api/saas/subscription/retry-charge", "/saas/subscription/retry-charge", "/api/saas/subscription/recobrar", "/recobrar"], async (req, res) => {
     try {
@@ -3066,7 +3371,9 @@ function encodeFirestoreFields(data: any): any {
   app.get(["/api/saas/gateway/digital-account/summary", "/api/digital-account/summary"], async (req, res) => {
     try {
       const tenantId = (req.query.tenantId as string) || '';
-      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, isSubaccount, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId);
+      const authHeader = req.headers.authorization;
+      const clientToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined;
+      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, isSubaccount, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId, clientToken);
 
       // If tenant has no custom key configured and no subaccount registered
       if (!hasCustomKey && !tenantData?.asaas?.subaccountId) {
@@ -3173,8 +3480,10 @@ function encodeFirestoreFields(data: any): any {
       const startDate = req.query.startDate as string;
       const finishDate = req.query.finishDate as string;
       const tenantId = (req.query.tenantId as string) || '';
+      const authHeader = req.headers.authorization;
+      const clientToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined;
 
-      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId);
+      const { apiKey: asaasApiKey, baseUrl, env: asaasEnv, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId, clientToken);
 
       if (!hasCustomKey && !tenantData?.asaas?.subaccountId) {
         return res.json({
@@ -3444,26 +3753,50 @@ function encodeFirestoreFields(data: any): any {
         return res.status(400).json({ error: "tenantId é obrigatório." });
       }
 
+      let tData: any = null;
       const dbAdmin = getAdminDb();
-      if (!dbAdmin) {
-        return res.json({ success: true, officialCnpjCpf: '', payoutAccount: null });
+      if (dbAdmin) {
+        try {
+          const tenantDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
+          if (tenantDoc.exists) {
+            tData = tenantDoc.data();
+          }
+        } catch (dbErr) {
+          console.warn("Aviso ao buscar tenant via dbAdmin para payout-account:", dbErr);
+        }
       }
 
-      const tenantDoc = await dbAdmin.collection('tenants').doc(tenantId).get();
-      if (!tenantDoc.exists) {
-        return res.status(404).json({ error: "Barbearia / Tenant não encontrado." });
+      if (!tData) {
+        try {
+          const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
+          const authHeader = req.headers.authorization;
+          const authHeaders: Record<string, string> = {};
+          if (authHeader) {
+            authHeaders['Authorization'] = authHeader;
+          }
+          const restRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/tenants/${tenantId}`, {
+            headers: authHeaders
+          });
+          if (restRes.ok) {
+            const json = await restRes.json();
+            if (json?.fields) {
+              tData = parseFirestoreFields(json.fields);
+            }
+          }
+        } catch (restErr) {
+          console.warn("Aviso ao buscar tenant via REST para payout-account:", restErr);
+        }
       }
 
-      const tData = tenantDoc.data() || {};
-      const officialCnpjCpf = tData.cnpjCpf || tData.asaas?.cpfCnpj || '';
-      const officialName = tData.name || tData.ownerName || '';
-      const payoutAccount = tData.payoutAccount || null;
+      const officialCnpjCpf = tData?.cnpjCpf || tData?.asaas?.cpfCnpj || '';
+      const officialName = tData?.name || tData?.ownerName || '';
+      const payoutAccount = tData?.payoutAccount || null;
 
       return res.json({
         success: true,
         officialCnpjCpf,
         officialName,
-        tenantName: tData.name,
+        tenantName: tData?.name || '',
         payoutAccount
       });
     } catch (error: any) {
@@ -3622,7 +3955,9 @@ function encodeFirestoreFields(data: any): any {
     try {
       const limit = Math.min(Number(req.query.limit) || 30, 100);
       const tenantId = (req.query.tenantId as string) || '';
-      const { apiKey: asaasApiKey, baseUrl, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId);
+      const authHeader = req.headers.authorization;
+      const clientToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined;
+      const { apiKey: asaasApiKey, baseUrl, hasCustomKey, tenantData } = await getTenantAsaasCredentials(tenantId, clientToken);
 
       if (!hasCustomKey && !tenantData?.asaas?.subaccountId) {
         return res.json({ success: true, transfers: [] });
@@ -3705,7 +4040,9 @@ function encodeFirestoreFields(data: any): any {
         }
       }
 
-      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
+      const authHeader = req.headers.authorization;
+      const clientToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined;
+      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId, clientToken);
 
       if (!asaasApiKey) {
         return res.status(400).json({ error: "Chave de API do Asaas não configurada." });
@@ -4139,28 +4476,117 @@ function encodeFirestoreFields(data: any): any {
             await updateFirestoreRestDoc('subscriptions', subMatch.id, subUpdateData);
           }
 
+          // Detect accurate payment method from Asaas payload
+          let detectedMethod = 'Pagamento Online';
+          let detectedMethodKey = 'pagamento_online';
+          const billingType = String(payment?.billingType || '').toUpperCase();
+          if (billingType === 'PIX') {
+            detectedMethod = 'PIX (Online)';
+            detectedMethodKey = 'pix';
+          } else if (billingType === 'CREDIT_CARD') {
+            detectedMethod = 'Cartão de Crédito (Online)';
+            detectedMethodKey = 'credito';
+          } else if (billingType === 'DEBIT_CARD') {
+            detectedMethod = 'Cartão de Débito (Online)';
+            detectedMethodKey = 'debito';
+          } else if (billingType === 'BOLETO') {
+            detectedMethod = 'Boleto (Online)';
+            detectedMethodKey = 'boleto';
+          }
+
           // Record in financial_transactions with deduplication by asaasPaymentId / asaasInvoiceId
           const finalVal = value || subData.amount || 0;
           const currentPayId = payment?.id || subData.asaasInvoiceId || null;
+          const targetTenant = tenantId || subData.tenantId || 'gbcortes7';
 
-          if (finalVal > 0 && dbAdmin) {
+          if (finalVal > 0) {
             try {
               let alreadyExists = false;
-              if (currentPayId) {
-                const existingFt = await dbAdmin.collection('financial_transactions')
-                  .where('tenantId', '==', tenantId)
-                  .where('asaasPaymentId', '==', currentPayId)
-                  .limit(1)
-                  .get();
-                if (!existingFt.empty) {
-                  alreadyExists = true;
-                  console.log(`ℹ️ [ASAAS AUDIT] Lançamento financeiro já existe para o pagamento ${currentPayId}. Não duplicando.`);
+              if (dbAdmin) {
+                if (currentPayId) {
+                  const existingFt = await dbAdmin.collection('financial_transactions')
+                    .where('tenantId', '==', targetTenant)
+                    .where('asaasPaymentId', '==', currentPayId)
+                    .limit(1)
+                    .get();
+                  if (!existingFt.empty) {
+                    alreadyExists = true;
+                    console.log(`ℹ️ [ASAAS AUDIT] Lançamento financeiro já existe para o pagamento ${currentPayId}. Não duplicando.`);
+                  }
                 }
-              }
 
-              if (!alreadyExists) {
-                await dbAdmin.collection('financial_transactions').add({
-                  tenantId: tenantId || 'gbcortes7',
+                if (!alreadyExists) {
+                  await dbAdmin.collection('financial_transactions').add({
+                    tenantId: targetTenant,
+                    type: 'income',
+                    amount: finalVal,
+                    subscription_amount: finalVal,
+                    service_amount: 0,
+                    product_amount: 0,
+                    package_amount: 0,
+                    date: todayStr,
+                    category: 'Assinaturas',
+                    description: `Assinatura Confirmada (${detectedMethod}): ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+                    paymentMethod: detectedMethod,
+                    payment_method: detectedMethodKey,
+                    status: 'pago',
+                    cliente_id: subData.cliente_id || 'N/A',
+                    cliente_name: subData.cliente_name || 'Cliente',
+                    responsavel_id: subData.cliente_id || 'N/A',
+                    responsavel_name: subData.cliente_name || 'Cliente',
+                    asaasPaymentId: currentPayId,
+                    asaasSubscriptionId: subscription?.id || payment?.subscription || subData.asaasSubscriptionId || null,
+                    net_amount: finalVal,
+                    settlement_date: todayStr,
+                    is_settled: true,
+                    createdAt: new Date()
+                  });
+
+                  // Check open cash session & record in cash_movements
+                  try {
+                    const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
+                      .where('tenantId', '==', targetTenant)
+                      .get();
+
+                    const openCashDoc = cashSessionsQuery.docs.find((doc: any) => {
+                      const s = doc.data().status;
+                      return s === 'open' || s === 'reopened';
+                    });
+
+                    if (openCashDoc) {
+                      const cashId = openCashDoc.id;
+                      await dbAdmin.collection('cash_movements').add({
+                        tenantId: targetTenant,
+                        caixa_id: cashId,
+                        type: 'income',
+                        category: 'Assinaturas',
+                        description: `Assinatura (${detectedMethod}): ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                        amount: finalVal,
+                        subscription_amount: finalVal,
+                        payment_method: detectedMethodKey,
+                        paymentMethod: detectedMethod,
+                        asaasPaymentId: currentPayId,
+                        date: todayStr,
+                        createdAt: new Date()
+                      });
+
+                      await openCashDoc.ref.update({
+                        total_income: (openCashDoc.data().total_income || openCashDoc.data().totalIncome || 0) + finalVal,
+                        totalIncome: (openCashDoc.data().totalIncome || openCashDoc.data().total_income || 0) + finalVal,
+                        expected_balance: (openCashDoc.data().expected_balance || openCashDoc.data().expectedBalance || 0) + finalVal,
+                        expectedBalance: (openCashDoc.data().expectedBalance || openCashDoc.data().expected_balance || 0) + finalVal,
+                        updatedAt: new Date()
+                      });
+                    }
+                  } catch (cErr) {
+                    console.warn("Aviso ao registrar movimento no caixa via Admin SDK:", cErr);
+                  }
+                }
+              } else {
+                // Fallback via Firestore REST API
+                console.log(`🌐 [ASAAS REST] Gravando transação financeira e caixa para ${currentPayId || subMatch.id}`);
+                const txPayload = {
+                  tenantId: targetTenant,
                   type: 'income',
                   amount: finalVal,
                   subscription_amount: finalVal,
@@ -4169,8 +4595,9 @@ function encodeFirestoreFields(data: any): any {
                   package_amount: 0,
                   date: todayStr,
                   category: 'Assinaturas',
-                  description: `Assinatura Confirmada: ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
-                  paymentMethod: 'Pagamento Online',
+                  description: `Assinatura Confirmada (${detectedMethod}): ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
+                  paymentMethod: detectedMethod,
+                  payment_method: detectedMethodKey,
                   status: 'pago',
                   cliente_id: subData.cliente_id || 'N/A',
                   cliente_name: subData.cliente_name || 'Cliente',
@@ -4181,47 +4608,42 @@ function encodeFirestoreFields(data: any): any {
                   net_amount: finalVal,
                   settlement_date: todayStr,
                   is_settled: true,
-                  createdAt: new Date()
-                });
+                  createdAt: new Date().toISOString()
+                };
+                await createFirestoreRestDoc('financial_transactions', null, txPayload);
 
-                // Check open cash session & record in cash_movements
+                // Find open cash via REST
                 try {
-                  const cashSessionsQuery = await dbAdmin.collection('cash_sessions')
-                    .where('tenantId', '==', tenantId)
-                    .get();
-
-                  const openCashDoc = cashSessionsQuery.docs.find((doc: any) => {
-                    const s = doc.data().status;
-                    return s === 'open' || s === 'reopened';
-                  });
-
-                  if (openCashDoc) {
-                    const cashId = openCashDoc.id;
-                    await dbAdmin.collection('cash_movements').add({
-                      tenantId,
-                      caixa_id: cashId,
+                  const openCash = await queryFirestoreRest('cash_sessions', 'tenantId', 'EQUAL', targetTenant);
+                  const openDoc = Array.isArray(openCash) ? openCash.find(c => c.data?.status === 'open' || c.data?.status === 'reopened') : (openCash && (openCash.data?.status === 'open' || openCash.data?.status === 'reopened') ? openCash : null);
+                  if (openDoc) {
+                    await createFirestoreRestDoc('cash_movements', null, {
+                      tenantId: targetTenant,
+                      caixa_id: openDoc.id,
                       type: 'income',
                       category: 'Assinaturas',
-                      description: `Assinatura Rull: ${subData.planName || 'Plano'} - ${subData.cliente_name}`,
+                      description: `Assinatura (${detectedMethod}): ${subData.planName || 'Plano'} - ${subData.cliente_name || 'Cliente'}`,
                       amount: finalVal,
                       subscription_amount: finalVal,
-                      payment_method: 'pagamento_online',
-                      paymentMethod: 'Pagamento Online',
+                      payment_method: detectedMethodKey,
+                      paymentMethod: detectedMethod,
                       asaasPaymentId: currentPayId,
                       date: todayStr,
-                      createdAt: new Date()
+                      createdAt: new Date().toISOString()
                     });
 
-                    await openCashDoc.ref.update({
-                      total_income: (openCashDoc.data().total_income || openCashDoc.data().totalIncome || 0) + finalVal,
-                      totalIncome: (openCashDoc.data().totalIncome || openCashDoc.data().total_income || 0) + finalVal,
-                      expected_balance: (openCashDoc.data().expected_balance || openCashDoc.data().expectedBalance || 0) + finalVal,
-                      expectedBalance: (openCashDoc.data().expectedBalance || openCashDoc.data().expected_balance || 0) + finalVal,
-                      updatedAt: new Date()
+                    const prevIncome = openDoc.total_income || openDoc.totalIncome || 0;
+                    const prevExpected = openDoc.expected_balance || openDoc.expectedBalance || 0;
+                    await updateFirestoreRestDoc('cash_sessions', openDoc.id, {
+                      total_income: prevIncome + finalVal,
+                      totalIncome: prevIncome + finalVal,
+                      expected_balance: prevExpected + finalVal,
+                      expectedBalance: prevExpected + finalVal,
+                      updatedAt: new Date().toISOString()
                     });
                   }
-                } catch (cErr) {
-                  console.warn("Aviso ao registrar movimento no caixa:", cErr);
+                } catch (rCashErr) {
+                  console.warn("Aviso ao buscar/atualizar caixa via REST:", rCashErr);
                 }
               }
             } catch (ftErr) {

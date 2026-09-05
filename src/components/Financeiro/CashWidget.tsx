@@ -367,10 +367,11 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
     
     let label = 'Outros';
     if (methodStr === 'dinheiro' || methodStr === 'money' || methodStr === 'especie') label = 'Dinheiro';
-    else if (methodStr === 'pix') label = 'Pix';
-    else if (methodStr === 'credito' || methodStr === 'crédito') label = 'Cartão de Crédito';
-    else if (methodStr === 'debito' || methodStr === 'débito') label = 'Cartão de Débito';
+    else if (methodStr.includes('pix')) label = 'Pix';
+    else if (methodStr.includes('credito') || methodStr.includes('crédito')) label = 'Cartão de Crédito';
+    else if (methodStr.includes('debito') || methodStr.includes('débito')) label = 'Cartão de Débito';
     else if (methodStr === 'fiado') label = 'Fiado';
+    else if (methodStr.includes('online') || methodStr.includes('asaas')) label = 'Pagamento Online';
     else label = mov.paymentMethod || 'Outros';
 
     acc[label] = (acc[label] || 0) + mov.amount;

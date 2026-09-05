@@ -57,7 +57,7 @@ import { subscriptionService } from '../services/subscriptionService';
 import { inventoryService } from '../services/inventoryService';
 import { getActiveTenantId, tenantService, TenantProfile } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
-import { UserProfile, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher } from '../types';
+import { UserProfile, UserRole, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher } from '../types';
 import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -419,8 +419,51 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   };
 
   const handleClientSubscribePlan = async (plan: any, billingType: 'PIX' | 'CREDIT_CARD') => {
-    if (!profile) {
-      toast.error("Você precisa estar logado para assinar.");
+    let activeProfile = profile;
+
+    if (!activeProfile) {
+      if (!guestName.trim()) {
+        toast.error("Por favor, informe seu Nome Completo para assinar.");
+        return;
+      }
+      if (!guestPhone.replace(/\D/g, '')) {
+        toast.error("Por favor, informe seu WhatsApp para ativação da assinatura.");
+        return;
+      }
+
+      try {
+        const cleanPhone = guestPhone.replace(/\D/g, '');
+        const newUid = 'guest_sub_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+        const newUserData: UserProfile = {
+          uid: newUid,
+          nome: guestName.trim(),
+          telefone: cleanPhone,
+          phone: cleanPhone,
+          email: checkoutEmail.trim() || `cliente_${cleanPhone}@barbearia.com`,
+          tipo: 'cliente' as UserRole,
+          ativo: true,
+          tenantId: (tenantInfo?.id || getActiveTenantId() || 'default').toLowerCase(),
+          saldo_atual: 0,
+          total_gasto: 0,
+          total_pago: 0,
+          total_em_aberto: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        await setDoc(doc(db, 'usuarios', newUid), {
+          ...newUserData,
+          createdAt: serverTimestamp()
+        });
+
+        activeProfile = newUserData;
+      } catch (err) {
+        console.error("Erro ao registrar cliente convidado para assinatura:", err);
+      }
+    }
+
+    if (!activeProfile) {
+      toast.error("Não foi possível validar seus dados. Tente novamente.");
       return;
     }
 
@@ -444,17 +487,17 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     setIsSubscribingPlan(true);
     try {
       // Save CPF and Email to user profile in Firestore if present
-      if (profile.uid) {
+      if (activeProfile.uid) {
         try {
-          await updateDoc(doc(db, 'usuarios', profile.uid), {
+          await updateDoc(doc(db, 'usuarios', activeProfile.uid), {
             cpf: cleanCpfCnpj,
             cpfCnpj: cleanCpfCnpj,
             email: cleanEmail,
             updatedAt: serverTimestamp()
           });
-          profile.cpf = cleanCpfCnpj;
-          (profile as any).cpfCnpj = cleanCpfCnpj;
-          profile.email = cleanEmail;
+          activeProfile.cpf = cleanCpfCnpj;
+          (activeProfile as any).cpfCnpj = cleanCpfCnpj;
+          activeProfile.email = cleanEmail;
           setEditCpf(formatCpfCnpjMask(cleanCpfCnpj));
         } catch (e) {
           console.warn("Aviso ao salvar CPF e Email no perfil do cliente:", e);
@@ -462,8 +505,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
       }
 
       const res = await subscriptionService.createAsaasSubscription({
-        cliente_id: profile.uid,
-        cliente_name: profile.nome || 'Cliente',
+        cliente_id: activeProfile.uid,
+        cliente_name: activeProfile.nome || 'Cliente',
         plano_id: plan.id,
         ownerEmail: cleanEmail,
         ownerCpfCnpj: cleanCpfCnpj,
@@ -1625,13 +1668,13 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
   // Unified Navigation Items
   const navItems = [
-    { id: 'home', label: 'Início', icon: Calendar },
-    { id: 'schedule', label: 'Reservar', icon: Scissors },
+    { id: 'home', label: 'A Barbearia', icon: MapPin },
+    { id: 'schedule', label: 'Agendar', icon: Scissors },
+    { id: 'assinaturas', label: 'Clube VIP', icon: Sparkles },
     ...(profile ? [
       { id: 'history', label: 'Histórico', icon: History },
       { id: 'fidelidade', label: 'Fidelidade', icon: Award },
       { id: 'pacotes', label: 'Pacotes', icon: Briefcase },
-      { id: 'assinaturas', label: 'Assinaturas', icon: Sparkles },
       { id: 'perfil', label: 'Perfil', icon: User }
     ] : [])
   ];
@@ -4160,7 +4203,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {availablePlans.filter(p => p.status === 'active' || p.status === undefined).map((plan, planIdx) => {
                         const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
-                        const waText = encodeURIComponent(`Olá! Sou o cliente ${profile.nome} e tenho muito interesse em fazer parte do Clube de Assinatura assinando o plano "${plan.name}" (R$ ${plan.price.toFixed(2)}/mês) na Barbearia!`);
+                        const clientDisplayName = profile?.nome || guestName || 'Cliente';
+                        const waText = encodeURIComponent(`Olá! Sou o cliente ${clientDisplayName} e tenho muito interesse em fazer parte do Clube de Assinatura assinando o plano "${plan.name}" (R$ ${plan.price.toFixed(2)}/mês) na Barbearia!`);
                         const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
 
                         return (
@@ -5303,8 +5347,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                 </p>
               </div>
 
-              {/* Solicitação elegante do CPF e E-mail caso ainda não estejam cadastrados ou validados */}
-              {(!profile?.cpf || !isValidCPF(profile.cpf.replace(/\D/g, '')) || !profile?.email || !profile.email.includes('@') || profile.email.includes('manual_') || profile.email.includes('placeholder')) ? (
+              {/* Solicitação elegante do Nome, WhatsApp, CPF e E-mail caso ainda não estejam cadastrados ou validados */}
+              {(!profile || !profile?.cpf || !isValidCPF(profile.cpf.replace(/\D/g, '')) || !profile?.email || !profile.email.includes('@') || profile.email.includes('manual_') || profile.email.includes('placeholder')) ? (
                 <div className="space-y-2.5 text-left bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
                   <div className="flex items-center gap-2 text-slate-800">
                     <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
@@ -5314,10 +5358,42 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     Para ativar sua assinatura do Clube e gerar seus recibos bancários, informe seus dados:
                   </p>
                   
+                  {!profile && (
+                    <>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                          Seu Nome Completo *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ex: Carlos Silva"
+                          value={guestName}
+                          onChange={(e) => setGuestName(e.target.value)}
+                          className="w-full text-xs font-bold text-slate-800 bg-white rounded-xl p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all"
+                        />
+                      </div>
+
+                      <div className="space-y-1 mt-2">
+                        <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                          Seu WhatsApp *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="(11) 99999-9999"
+                          value={guestPhone}
+                          onChange={(e) => setGuestPhone(e.target.value)}
+                          className="w-full text-xs font-bold text-slate-800 bg-white rounded-xl p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all"
+                        />
+                      </div>
+                    </>
+                  )}
+
                   {(!profile?.cpf || !isValidCPF(profile.cpf.replace(/\D/g, ''))) && (
-                    <div className="space-y-1">
+                    <div className="space-y-1 mt-2">
                       <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                        CPF do Assinante
+                        CPF do Assinante *
                       </label>
                       <input
                         type="text"
@@ -5333,7 +5409,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                   {(!profile?.email || !profile.email.includes('@') || profile.email.includes('manual_') || profile.email.includes('placeholder')) && (
                     <div className="space-y-1 mt-2">
                       <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
-                        E-mail do Assinante
+                        E-mail do Assinante *
                       </label>
                       <input
                         type="email"
@@ -6156,6 +6232,40 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Sticky Floating Bottom Summary Bar for Mobile & Desktop during Service Selection */}
+      <AnimatePresence>
+        {activeTab === 'schedule' && bookingStep === 2 && selectedServices.length > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-indigo-100/80 shadow-[0_-8px_30px_rgb(0,0,0,0.12)] p-4 md:p-5 flex items-center justify-between"
+          >
+            <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-4">
+              <div className="flex flex-col">
+                <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Selecionado</span>
+                <span className="text-sm font-black text-slate-800 leading-tight">
+                  {selectedServices.length} {selectedServices.length === 1 ? 'Serviço' : 'Serviços'}
+                </span>
+                <span className="text-emerald-600 font-extrabold text-xs">
+                  R$ {calculateEffectivePrice(selectedServices).toFixed(2)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTime(null);
+                  setBookingStep(3);
+                }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-600/20 flex items-center gap-2 transition active:scale-95 cursor-pointer"
+              >
+                Escolher Data & Horário <ChevronRight size={14} className="stroke-[3]" />
+              </button>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

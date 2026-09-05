@@ -226,6 +226,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   // State for Skip Invoice / Baixa Manual Modal
   const [skipInvoiceSub, setSkipInvoiceSub] = useState<Subscription | null>(null);
   const [isSkippingInvoice, setIsSkippingInvoice] = useState(false);
+  const [isSyncingAsaas, setIsSyncingAsaas] = useState(false);
 
   // State for Invoices History Modal
   const [invoicesHistorySub, setInvoicesHistorySub] = useState<Subscription | null>(null);
@@ -1103,6 +1104,25 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     }
   };
 
+  // Action to sync all Asaas subscriptions manually
+  const handleSyncAsaasSubscriptions = async () => {
+    setIsSyncingAsaas(true);
+    try {
+      const res = await subscriptionService.syncAllAsaasSubscriptions();
+      if (res.success) {
+        toast.success(res.message || "Sincronização com Asaas concluída!");
+        await loadData();
+      } else {
+        toast.error(res.error || "Erro ao sincronizar assinaturas com o Asaas.");
+      }
+    } catch (error: any) {
+      console.error("Erro na sincronização Asaas:", error);
+      toast.error("Falha ao comunicar com o servidor para sincronização.");
+    } finally {
+      setIsSyncingAsaas(false);
+    }
+  };
+
   // Action to save plans (create/edit)
   const { execute: handleSavePlan, isLoading: isSavingPlan } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1645,6 +1665,16 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         </div>
         {canManage && (
           <div className="flex items-center gap-2 self-start md:self-center shrink-0">
+            <button
+              type="button"
+              onClick={handleSyncAsaasSubscriptions}
+              disabled={isSyncingAsaas}
+              className="flex items-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-emerald-700 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+              title="Sincronizar pagamentos do Asaas com o Caixa Diário e Fluxo de Caixa"
+            >
+              <RefreshCw size={15} className={isSyncingAsaas ? "animate-spin" : ""} />
+              <span>{isSyncingAsaas ? "Sincronizando..." : "Sincronizar Asaas"}</span>
+            </button>
             {['assinaturas_planos'].includes(activeTab) && (
               <button 
                 onClick={() => { setEditingPlan(null); setShowPlanModal(true); }}

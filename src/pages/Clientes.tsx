@@ -28,6 +28,7 @@ import {
   Calendar, 
   DollarSign, 
   User as UserIcon,
+  Award,
   ChevronRight,
   ChevronLeft,
   LayoutGrid,
@@ -1369,7 +1370,10 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
   const [loadingDebts, setLoadingDebts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingNotes, setLoadingNotes] = useState(true);
-  const [activeTab, setActiveTab] = useState<'history' | 'debts' | 'notes'>('history');
+  const [activeTab, setActiveTab] = useState<'history' | 'debts' | 'notes' | 'loyalty'>('history');
+  const [loyaltyData, setLoyaltyData] = useState<{ points: number; cashback: number } | null>(null);
+  const [loyaltyHistoryList, setLoyaltyHistoryList] = useState<any[]>([]);
+  const [loadingLoyaltyHistory, setLoadingLoyaltyHistory] = useState(true);
   const [showPrintStatement, setShowPrintStatement] = useState(false);
   
   const [paymentModal, setPaymentModal] = useState<{ isOpen: boolean; debt: ClientDebt | null }>({ isOpen: false, debt: null });
@@ -1485,13 +1489,46 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
       setLoadingNotes(false);
     });
 
+    // Fetch Real-time Loyalty Points
+    const activeTenant = tenantId || 'gbcortes7';
+    const pointsDocRef = doc(db, 'loyalty_points', `${activeTenant}_${customer.uid}`);
+    const unsubscribeLoyaltyPoints = onSnapshot(pointsDocRef, (snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        setLoyaltyData({ points: d.points || 0, cashback: d.cashback || 0 });
+      } else {
+        setLoyaltyData({ points: customer.points || customer.pontos || 0, cashback: customer.cashback || 0 });
+      }
+    }, (err) => console.error("Error fetching loyalty points:", err));
+
+    // Fetch Real-time Loyalty History
+    const qLoyaltyHist = query(
+      collection(db, 'loyalty_history'),
+      where('cliente_id', '==', customer.uid)
+    );
+    const unsubscribeLoyaltyHist = onSnapshot(qLoyaltyHist, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      docs.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.seconds || (a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0);
+        const timeB = b.createdAt?.seconds || (b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0);
+        return timeB - timeA;
+      });
+      setLoyaltyHistoryList(docs);
+      setLoadingLoyaltyHistory(false);
+    }, (error) => {
+      console.error("Error fetching loyalty history:", error);
+      setLoadingLoyaltyHistory(false);
+    });
+
     return () => {
       unsubscribe();
       unsubscribeDebts();
       unsubscribePayments();
       unsubscribeNotes();
+      unsubscribeLoyaltyPoints();
+      unsubscribeLoyaltyHist();
     };
-  }, [customer.uid]);
+  }, [customer.uid, tenantId]);
 
   const { execute: handlePayDebt, isLoading: isPayingDebt } = useAsyncAction(async () => {
     if (!user || !paymentModal.debt) return;
@@ -1916,7 +1953,8 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
   // Login do Usuário se possui ou não (vinculado com senha ativada)
   const temLogin = isCustomerLinked(customer);
   // Fidelidade se está ativado
-  const pontosFidelidade = customer.pontos ?? customer.points ?? 0;
+  const pontosFidelidade = loyaltyData ? loyaltyData.points : (customer.pontos ?? customer.points ?? 0);
+  const cashbackFidelidade = loyaltyData ? loyaltyData.cashback : (customer.cashback ?? 0);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm overflow-hidden">
@@ -2038,7 +2076,7 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
 
                     {loyaltyConfig?.loyaltyMode === 'saldo' && (
                       <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-amber-50 text-amber-700 border border-amber-100 rounded-full shadow-inner text-[11px] font-black">
-                        💰 R$ {(customer.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CASHBACK
+                        💰 R$ {(cashbackFidelidade ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CASHBACK
                       </div>
                     )}
 
@@ -2486,6 +2524,15 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                   <MessageSquare size={16} />
                   <span>Anotações ({notes.length})</span>
                 </button>
+                <button 
+                  onClick={() => setActiveTab('loyalty')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-black transition-all ${
+                    activeTab === 'loyalty' ? 'bg-white text-primary shadow-sm' : 'text-muted hover:text-primary'
+                  }`}
+                >
+                  <Award size={16} className="text-amber-500" />
+                  <span>Fidelidade ({loyaltyHistoryList.length})</span>
+                </button>
               </div>
               
               {activeTab === 'history' ? (
@@ -2748,6 +2795,71 @@ function CustomerDetails({ customer, onClose, onEdit, onLinkAccount }: { custome
                               <span className="text-[9px] font-black bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md uppercase tracking-wider">Por {note.authorName}</span>
                             </div>
                             <p className="text-sm text-slate-700 leading-relaxed font-bold break-words whitespace-pre-line">{note.content}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'loyalty' && (
+                <div className="space-y-4">
+                  <div className="bg-gradient-to-r from-amber-500/10 via-blue-500/10 to-indigo-500/10 border border-amber-200/50 p-5 rounded-2xl flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Saldo de Pontos</p>
+                      <p className="text-2xl font-black text-amber-900">⭐ {pontosFidelidade} pts</p>
+                    </div>
+                    {loyaltyConfig?.cashbackEnabled !== false && (
+                      <div className="text-right">
+                        <p className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">Saldo de Cashback</p>
+                        <p className="text-2xl font-black text-emerald-700">💰 R$ {cashbackFidelidade.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {loadingLoyaltyHistory ? (
+                    <div className="flex justify-center py-12">
+                      <Loader2 className="animate-spin text-accent" size={32} />
+                    </div>
+                  ) : loyaltyHistoryList.length === 0 ? (
+                    <div className="text-center py-12 bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
+                      <p className="text-muted text-sm font-bold italic">Nenhum histórico de pontos ou cashback encontrado.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {loyaltyHistoryList.map((item, idx) => {
+                        const isPositive = (item.points > 0 || item.cashback > 0);
+                        const dateFormatted = item.createdAt?.seconds 
+                          ? format(new Date(item.createdAt.seconds * 1000), "dd/MM/yyyy 'às' HH:mm")
+                          : 'Data recente';
+                        return (
+                          <div key={`loyalty-hist-${item.id || idx}-${idx}`} className="bg-white border border-slate-200 p-4 rounded-2xl flex items-center justify-between shadow-sm">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center border font-black text-xs ${
+                                isPositive 
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                  : 'bg-rose-50 text-rose-700 border-rose-200'
+                              }`}>
+                                {isPositive ? '➕' : '➖'}
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-primary">{item.description || 'Movimentação de Fidelidade'}</p>
+                                <p className="text-[10px] text-muted font-bold">{dateFormatted} • {item.source ? `Origem: ${item.source}` : 'Sistema'}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              {item.points !== 0 && (
+                                <p className={`text-xs font-black ${item.points > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  {item.points > 0 ? `+${item.points}` : item.points} pts
+                                </p>
+                              )}
+                              {item.cashback !== 0 && (
+                                <p className={`text-xs font-black ${item.cashback > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  {item.cashback > 0 ? `+R$ ${item.cashback.toFixed(2)}` : `-R$ ${Math.abs(item.cashback).toFixed(2)}`}
+                                </p>
+                              )}
+                            </div>
                           </div>
                         );
                       })}

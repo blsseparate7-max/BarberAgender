@@ -739,7 +739,7 @@ export const comandaService = {
                 uData.cliente_id,
                 0,
                 actualPaidAmount,
-                `Cashback - Comanda #${uData.number}`,
+                `Pontos Comanda #${uData.number || id}`,
                 'appointment'
               );
             }
@@ -1409,7 +1409,7 @@ export const comandaService = {
                 postData.cliente_id,
                 0,
                 actualPaidAmount,
-                `Acúmulo - Comanda #${postData.number}`,
+                `Pontos Comanda #${postData.number || id}`,
                 'appointment'
               );
             }

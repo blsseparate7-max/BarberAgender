@@ -273,7 +273,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     return () => unsubscribe();
   }, []);
 
-  // 3. Fetch Commissions and Financial Data in real-time
+  // 3. Fetch Commissions and Financial Data in real-time (Optimized, lightweight listeners)
   useEffect(() => {
     if (profile?.uid) {
       setLoadingCommissions(true);
@@ -281,22 +281,12 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
       const refreshAllFinancial = async () => {
         try {
-          await commissionService.fixLuizMiguelAndOtherProfessionalsCommissions(proTenant);
           const [commsData, advsData, payoutsData] = await Promise.all([
-            commissionService.getCommissions({ profissional_id: profile.uid, tenantId: proTenant }),
+            commissionService.getCommissions({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant }),
             commissionService.getAdvances({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant }),
             commissionService.getPayouts(profile.uid, proTenant)
           ]);
           setCommissions(commsData);
-          console.log("=== DEBUG LUIZ MIGUEL COMMISSIONS (TODAY 2026-09-05) ===", commsData.filter(c => (c.date || '').includes('2026-09-05')).map(c => ({
-            id: c.id,
-            cliente: c.cliente_name,
-            servico: c.servico_name,
-            valor: c.commission_value,
-            data: c.date,
-            status: c.status,
-            createdAt: c.createdAt
-          })));
           setAdvances(advsData);
           setPayouts(payoutsData);
         } catch (e) {
@@ -308,28 +298,17 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
       refreshAllFinancial();
 
-      // Realtime listeners for commissions, comandas, advances, accounts payable, cash movements
+      // Lightweight Realtime listener ONLY for this barber's commissions
       const qComms = query(collection(db, 'commissions'), where('profissional_id', '==', profile.uid));
       const unsubComms = onSnapshot(qComms, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
-      const qComandas = query(collection(db, 'comandas'));
-      const unsubComandas = onSnapshot(qComandas, () => { refreshAllFinancial(); }, (e) => console.warn(e));
-
+      // Lightweight Realtime listener ONLY for this barber's advances
       const qAdvs = query(collection(db, 'professional_advances'), where('profissional_id', '==', profile.uid));
       const unsubAdvs = onSnapshot(qAdvs, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
-      const qPay = query(collection(db, 'accounts_payable'), where('profissional_id', '==', profile.uid));
-      const unsubPay = onSnapshot(qPay, () => { refreshAllFinancial(); }, (e) => console.warn(e));
-
-      const qCash = query(collection(db, 'cash_movements'));
-      const unsubCash = onSnapshot(qCash, () => { refreshAllFinancial(); }, (e) => console.warn(e));
-
       return () => {
         unsubComms();
-        unsubComandas();
         unsubAdvs();
-        unsubPay();
-        unsubCash();
       };
     }
   }, [profile?.uid, profile?.tenantId, profile?.nome]);
@@ -505,12 +484,13 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       saldo_atual: 0,
       total_gasto: 0,
       total_pago: 0,
-      percentual_comissao: profile.percentual_comissao,
-      commission_percentage: profile.commission_percentage
+      percentual_comissao: profile.percentual_comissao ?? profile.commission_percentage ?? 50,
+      commission_percentage: profile.commission_percentage ?? profile.percentual_comissao ?? 50
     } as UserProfile;
-    const currentMonthStr = format(selectedDate, 'yyyy-MM');
+    // Current month fixed to actual month (e.g. 2026-09) to ensure 100% fidelity with Portal Admin
+    const currentMonthStr = format(new Date(), 'yyyy-MM');
     return calculateProfessionalLedger(currentBarberProfile, commissions, advances, currentMonthStr);
-  }, [profile, commissions, advances, selectedDate]);
+  }, [profile, commissions, advances]);
 
   const stats = React.useMemo(() => {
     // 1. Pending commission (Comissão pendente bruta menos vales pendentes)
@@ -518,10 +498,24 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     const pendingAdvances = ledger.valesPendentes;
     const toReceive = ledger.saldoPendenteLiquido;
 
-    // 2. Customers served today
-    const servedTodayCount = appointments
-      .filter(app => app.status === 'concluído')
-      .length;
+    // 2. Customers served today / on selected date
+    // Count completed appointments + any commissions generated on that date (covering avulso/direct comanda cuts)
+    const viewDateStr = format(selectedDate, 'yyyy-MM-dd');
+    const completedAppointments = appointments
+      .filter(app => app.status === 'concluído');
+    
+    // Unique clients served on selectedDate from both completed appointments and commissions
+    const dateCommissionClients = commissions
+      .filter(c => (c.date || '').split('T')[0] === viewDateStr && c.status !== 'cancelado' && c.status !== 'estornado')
+      .map(c => (c.cliente_name || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    const dateAppointmentClients = completedAppointments
+      .map(app => (app.cliente_nome || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    const uniqueClientsForDate = new Set([...dateAppointmentClients, ...dateCommissionClients]);
+    const servedTodayCount = Math.max(uniqueClientsForDate.size, completedAppointments.length);
 
     // 3. This month's total generated commission
     const receivedThisMonth = ledger.comissaoGeradaMes;
@@ -533,7 +527,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       servedTodayCount,
       receivedThisMonth
     };
-  }, [ledger, appointments]);
+  }, [ledger, appointments, commissions, selectedDate]);
 
   // Filtered commissions and advances based on the selected date range and status/type filters
   const filteredCommissions = React.useMemo(() => {
@@ -937,44 +931,6 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         {/* COMISSÃO TAB */}
         {activeTab === 'comissao' && (
           <div className="space-y-4">
-            
-            {/* AUDITORIA DE COMISSÕES DE HOJE (05/09/2026) */}
-            <div className="bg-amber-50 border border-amber-200 p-4 rounded-3xl text-xs space-y-2">
-              <div className="font-black text-amber-900 uppercase tracking-wide flex items-center justify-between">
-                <span>🔍 Auditoria de Comissões de Hoje (05/09/2026)</span>
-                <span className="text-[10px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-bold">
-                  {commissions.filter(c => (c.date || '').includes('2026-09-05')).length} registros
-                </span>
-              </div>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                {commissions.filter(c => (c.date || '').includes('2026-09-05')).length === 0 ? (
-                  <p className="text-amber-700 italic">Nenhuma comissão registrada para hoje (05/09/2026).</p>
-                ) : (
-                  commissions.filter(c => (c.date || '').includes('2026-09-05')).map((c, i) => {
-                    let timeStr = 'Hora não informada';
-                    if (c.createdAt) {
-                      const sec = c.createdAt.seconds || (typeof c.createdAt === 'number' ? c.createdAt / 1000 : 0);
-                      if (sec) {
-                        timeStr = new Date(sec * 1000).toLocaleTimeString('pt-BR');
-                      }
-                    }
-                    return (
-                      <div key={c.id || i} className="bg-white/90 p-2.5 rounded-2xl border border-amber-200/60 flex items-center justify-between font-medium">
-                        <div>
-                          <span className="font-bold text-slate-800">{c.cliente_name || 'Cliente'}</span>
-                          <span className="text-slate-500 text-[10px] block">{c.servico_name || 'Serviço'} • <strong className="text-amber-700">{timeStr}</strong></span>
-                        </div>
-                        <div className="text-right">
-                          <span className="font-black text-emerald-600">R$ {Number(c.commission_value || 0).toFixed(2)}</span>
-                          <span className="text-[9px] block text-slate-400 capitalize">{c.status}</span>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
             {/* Header / Primary Stats */}
             <div className="bg-slate-900 text-white p-5 rounded-3xl shadow-md space-y-4 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-28 h-28 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />

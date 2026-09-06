@@ -93,6 +93,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   const { user, profile } = useAuth();
   const isBarbeiro = profile?.tipo === 'barbeiro';
   const [loading, setLoading] = useState(true);
+  const [isSettlingPreSeptember, setIsSettlingPreSeptember] = useState(false);
   
   const [allCommissions, setAllCommissions] = useState<Commission[]>([]);
   const [allAdvances, setAllAdvances] = useState<ProfessionalAdvance[]>([]);
@@ -564,49 +565,26 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       }
 
       const todayString = new Date().toISOString().split('T')[0];
-      const advanceId = await commissionService.registerAdvance({
+      const isCaixa = valeData.source === 'caixa';
+      
+      if (isCaixa && !isOpenCash) {
+        toast.error("O caixa diário não está aberto! Selecione a opção 'Financeiro Geral'.");
+        return;
+      }
+
+      await commissionService.registerCompleteVale({
         profissional_id: professionalId,
         profissional_name: professionalName,
         amount,
         description: valeData.description || 'Vale/Adiantamento Avulso',
+        category: 'Adiantamento de Comissão',
         date: todayString,
-        status: 'pendente',
-        responsible_id: user.uid,
-        responsible_name: profile?.nome || 'Admin'
+        source: valeData.source as 'caixa' | 'financeiro',
+        paymentMethod: valeData.paymentMethod,
+        userId: user.uid,
+        userName: profile?.nome || 'Admin',
+        currentCashId: isCaixa && isOpenCash ? isOpenCash.id : undefined
       });
-
-      if (valeData.source === 'caixa' && isOpenCash) {
-        await cashService.addMovement({
-          caixa_id: isOpenCash.id,
-          type: 'expense',
-          category: 'Parceiro Adiantamento (Vale)',
-          description: `Saída Vale/Adiantamento p/ ${professionalName} - ${valeData.description || 'Adiant.'}`,
-          amount,
-          paymentMethod: valeData.paymentMethod as any,
-          is_receivable: false,
-          usuario_id: user.uid,
-          usuario_name: profile?.nome || 'Admin',
-          date: todayString
-        });
-      } else {
-        await financialService.createTransaction({
-          type: 'expense',
-          category: 'Controle de Vales (Parceiros)',
-          description: `Adiantamento Vale - ${professionalName} (${valeData.description || 'Adi.'})`,
-          amount,
-          net_amount: amount,
-          fee_amount: 0,
-          paymentMethod: valeData.paymentMethod as any,
-          date: todayString,
-          settlement_date: todayString,
-          status: 'pago',
-          is_settled: true,
-          profissional_id: professionalId,
-          profissional_name: professionalName,
-          responsavel_id: user.uid,
-          responsavel_name: profile?.nome || 'Admin'
-        });
-      }
 
       toast.success("Vale registrado com sucesso!");
       setIsValeModalOpen(false);
@@ -683,6 +661,20 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
   const handlePrintSummary = () => {
     window.print();
+  };
+
+  const handleSettlePreSeptember = async () => {
+    if (!tenantId) return;
+    setIsSettlingPreSeptember(true);
+    try {
+      const res = await commissionService.settleHistoricalPendingBeforeSeptember(tenantId);
+      toast.success(`Acerto de implantação realizado! Registros anteriores a 01/09/2026 foram baixados.`);
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao realizar acerto de implantação.");
+    } finally {
+      setIsSettlingPreSeptember(false);
+    }
   };
 
   // 1. Categorize Filtered Period Commissions to show clear granular insights
@@ -969,45 +961,53 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
         {/* Global Bookkeeping Warning */}
         {allTimePendingCommissionsTotal !== totals.pending && (
-          <div className="p-4 bg-blue-50 border border-blue-100/70 rounded-2xl text-blue-800 text-xs flex items-center gap-3">
-            <Info size={18} className="text-blue-500 shrink-0" />
-            <p className="font-medium">
-              Nota: Este profissional tem <strong>R$ {allTimePendingCommissionsTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> em comissões pendentes acumuladas totais (incluindo outros períodos fora do intervalo visual ajustado acima).
-            </p>
+          <div className="p-4 bg-blue-50 border border-blue-100/70 rounded-2xl text-blue-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-3">
+              <Info size={18} className="text-blue-500 shrink-0" />
+              <p className="font-medium">
+                Nota: Este profissional tem <strong>R$ {allTimePendingCommissionsTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> em comissões pendentes acumuladas totais (incluindo outros períodos fora do intervalo visual ajustado acima).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSettlePreSeptember}
+              disabled={isSettlingPreSeptember}
+              className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition-all shadow-sm active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+            >
+              <CheckCircle2 size={14} />
+              {isSettlingPreSeptember ? 'Baixando...' : 'Baixar Pendências Anteriores a 01/09'}
+            </button>
           </div>
         )}
 
         {/* Stats Board */}
         {isBarbeiro ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
-            <SummaryCard title="Comissão Gerada (Filtro)" value={totals.serviceCommission - periodCommissionsByCategory.gorjetas - periodCommissionsByCategory.assinaturas} icon={<PercentIcon size={18} />} color="emerald" />
+            <SummaryCard title="Comissão Gerada" value={totals.serviceCommission - periodCommissionsByCategory.gorjetas - periodCommissionsByCategory.assinaturas} icon={<PercentIcon size={18} />} color="emerald" />
             <SummaryCard title="Bônus / Ajuda de Custo" value={totals.bonus} icon={<Gift size={18} />} color="emerald" />
-            <SummaryCard title="Gorjetas (Filtro)" value={periodCommissionsByCategory.gorjetas} icon={<Sparkles size={18} />} color="blue" />
+            <SummaryCard title="Gorjetas" value={periodCommissionsByCategory.gorjetas} icon={<Sparkles size={18} />} color="blue" />
             <SummaryCard 
               title="Vales do Período (Abertos)" 
               value={periodPendingAdvancesTotal} 
               icon={<Receipt size={18} />} 
               color="amber" 
               negative 
-              subtitle={allTimePendingAdvancesTotal > periodPendingAdvancesTotal ? `Histórico total: R$ ${allTimePendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
             />
             <SummaryCard 
-              title="Saldo Líquido a Receber (Filtro)" 
+              title="Saldo Líquido a Receber" 
               value={realBalanceToPayPeriod} 
               icon={<Wallet size={18} />} 
               color="primary" 
               highlight 
-              subtitle={realBalanceToPayAllTime !== realBalanceToPayPeriod ? `Acumulado total: R$ ${realBalanceToPayAllTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
             />
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
             <SummaryCard 
-              title="Produção Bruta (Filtro)" 
+              title="Produção Bruta" 
               value={totals.produced} 
               icon={<TrendingUp size={18} />} 
               color="slate" 
-              subtitle={totals.allTimeProduced > totals.produced ? `Total histórico: R$ ${totals.allTimeProduced.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
             />
             <SummaryCard title="Comissão de Serviços" value={totals.serviceCommission} icon={<PercentIcon size={18} />} color="emerald" />
             <SummaryCard title="Bônus / Ajuda Custo" value={totals.bonus} icon={<Gift size={18} />} color="blue" />
@@ -1017,15 +1017,13 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
               icon={<Receipt size={18} />} 
               color="amber" 
               negative 
-              subtitle={allTimePendingAdvancesTotal > periodPendingAdvancesTotal ? `Histórico total: R$ ${allTimePendingAdvancesTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
             />
             <SummaryCard 
-              title="Saldo Líquido a Pagar (Filtro)" 
+              title="Saldo Líquido a Pagar" 
               value={realBalanceToPayPeriod} 
               icon={<Wallet size={18} />} 
               color="primary" 
               highlight 
-              subtitle={realBalanceToPayAllTime !== realBalanceToPayPeriod ? `Acumulado total: R$ ${realBalanceToPayAllTime.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : undefined}
             />
           </div>
         )}

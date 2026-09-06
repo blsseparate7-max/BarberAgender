@@ -2,6 +2,7 @@ import {
   collection, 
   addDoc, 
   updateDoc, 
+  deleteDoc,
   doc, 
   query, 
   where, 
@@ -11,6 +12,7 @@ import {
 import { db } from '../firebase';
 import { FinancialTransaction, FinancialCategory, TransactionType } from '../types';
 import { getActiveTenantId } from './tenantService';
+import { cashService } from './cashService';
 
 const TRANSACTIONS_COLLECTION = 'financial_transactions';
 const CATEGORIES_COLLECTION = 'financial_categories';
@@ -60,6 +62,139 @@ export const financialService = {
       ...data,
       updatedAt: serverTimestamp(),
     });
+  },
+
+  async checkCashStatusForDate(date: string) {
+    const cashSession = await cashService.getCashByDate(date);
+    if (!cashSession) return { exists: false, status: 'none', cashSession: null };
+    return { exists: true, status: cashSession.status, cashSession };
+  },
+
+  async deleteTransaction(transaction: FinancialTransaction) {
+    if (transaction.comanda_id) {
+      throw new Error("Esta movimentação é fruto do fechamento de uma Comanda. Para cancelá-la com integridade contábil, estoques e comissões, reabra a Comanda correspondente.");
+    }
+
+    const cashSession = await cashService.getCashByDate(transaction.date);
+    if (cashSession && cashSession.status === 'closed') {
+      const err: any = new Error(`O caixa de ${transaction.date} está fechado. É necessário reabrir o caixa deste dia para remover a movimentação.`);
+      err.cashClosed = true;
+      err.cashSession = cashSession;
+      throw err;
+    }
+
+    // Delete financial transaction
+    const txRef = doc(db, TRANSACTIONS_COLLECTION, transaction.id);
+    await deleteDoc(txRef);
+
+    // Look for matching cash movement
+    try {
+      if (transaction.movement_id) {
+        await cashService.removeMovement(transaction.movement_id);
+      } else {
+        const qMove = query(
+          collection(db, 'cash_movements'),
+          where('referencia_id', '==', transaction.id)
+        );
+        const snap = await getDocs(qMove);
+        if (!snap.empty) {
+          for (const d of snap.docs) {
+            await cashService.removeMovement(d.id);
+          }
+        } else if (cashSession && (cashSession.status === 'open' || cashSession.status === 'reopened')) {
+          const sessionMovements = await cashService.getMovementsByCashId(cashSession.id);
+          const match = sessionMovements.find(m => 
+            m.amount === transaction.amount && 
+            m.type === transaction.type &&
+            m.description === transaction.description
+          );
+          if (match) {
+            await cashService.removeMovement(match.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Aviso ao remover movimento de caixa vinculado:", e);
+    }
+
+    return { success: true };
+  },
+
+  async updateTransactionWithCashCheck(
+    id: string, 
+    updatedData: Partial<FinancialTransaction>, 
+    originalTransaction: FinancialTransaction
+  ) {
+    if (originalTransaction.comanda_id) {
+      throw new Error("Esta movimentação pertence a uma Comanda fechada. Reabra a Comanda para alterar valores.");
+    }
+
+    // Check cash status of original date
+    const cashSession = await cashService.getCashByDate(originalTransaction.date);
+    if (cashSession && cashSession.status === 'closed') {
+      const err: any = new Error(`O caixa de ${originalTransaction.date} está fechado. É necessário reabrir o caixa deste dia para alterar a movimentação.`);
+      err.cashClosed = true;
+      err.cashSession = cashSession;
+      throw err;
+    }
+
+    // If date changed to another date, check target date
+    if (updatedData.date && updatedData.date !== originalTransaction.date) {
+      const targetCash = await cashService.getCashByDate(updatedData.date);
+      if (targetCash && targetCash.status === 'closed') {
+        const err: any = new Error(`O caixa do dia de destino (${updatedData.date}) está fechado. É necessário reabri-lo.`);
+        err.cashClosed = true;
+        err.cashSession = targetCash;
+        throw err;
+      }
+    }
+
+    // Update financial transaction
+    const txRef = doc(db, TRANSACTIONS_COLLECTION, id);
+    await updateDoc(txRef, {
+      ...updatedData,
+      updatedAt: serverTimestamp(),
+    });
+
+    // Update linked cash movement if exists
+    try {
+      let linkedMoveId = originalTransaction.movement_id;
+      if (!linkedMoveId) {
+        const qMove = query(
+          collection(db, 'cash_movements'),
+          where('referencia_id', '==', id)
+        );
+        const snap = await getDocs(qMove);
+        if (!snap.empty) {
+          linkedMoveId = snap.docs[0].id;
+        } else if (cashSession && (cashSession.status === 'open' || cashSession.status === 'reopened')) {
+          const sessionMovements = await cashService.getMovementsByCashId(cashSession.id);
+          const match = sessionMovements.find(m => 
+            m.amount === originalTransaction.amount && 
+            m.type === originalTransaction.type &&
+            m.description === originalTransaction.description
+          );
+          if (match) linkedMoveId = match.id;
+        }
+      }
+
+      if (linkedMoveId) {
+        await cashService.updateMovement(
+          linkedMoveId,
+          {
+            description: updatedData.description ?? originalTransaction.description,
+            category: updatedData.category ?? originalTransaction.category,
+            amount: updatedData.amount ?? originalTransaction.amount,
+            paymentMethod: updatedData.paymentMethod ?? originalTransaction.paymentMethod,
+          },
+          originalTransaction.amount
+        );
+      }
+    } catch (e) {
+      console.warn("Aviso ao sincronizar movimento de caixa vinculado:", e);
+    }
+
+    return { success: true };
   },
 
   // --- Categories ---

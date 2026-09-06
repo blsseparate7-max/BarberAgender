@@ -4,6 +4,7 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
+  deleteDoc,
   getDoc, 
   getDocs, 
   query, 
@@ -337,6 +338,152 @@ export const cashService = {
       reopened_por_name: data.userName,
       reopening_reason: data.reason,
       updatedAt: serverTimestamp()
+    });
+  },
+
+  async getCashByDate(date: string) {
+    const q = query(
+      collection(db, COLLECTION_CASH),
+      where('tenantId', '==', getActiveTenantId()),
+      where('date', '==', date)
+    );
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) return null;
+    const docs = querySnapshot.docs.map(doc => {
+      const data = doc.data() as any;
+      return { 
+        id: doc.id, 
+        ...data,
+        openedByName: data.aberto_por_name || data.openedByName,
+        closedByName: data.fechado_por_name || data.closedByName,
+        openingBalance: data.opening_balance ?? data.openingBalance ?? 0,
+        total_income: data.total_income ?? data.totalIncome ?? 0,
+        totalIncome: data.total_income ?? data.totalIncome ?? 0,
+        total_expense: data.total_expense ?? data.totalExpense ?? 0,
+        totalExpense: data.total_expense ?? data.totalExpense ?? 0,
+        total_sangria: data.total_sangria ?? data.totalSangria ?? 0,
+        totalSangria: data.total_sangria ?? data.totalSangria ?? 0,
+        total_reforco: data.total_reforco ?? data.totalReforco ?? 0,
+        totalReforco: data.total_reforco ?? data.totalReforco ?? 0,
+        total_receivables: data.total_receivables ?? data.totalReceivables ?? 0,
+        totalReceivables: data.total_receivables ?? data.totalReceivables ?? 0,
+        expected_balance: data.expected_balance ?? data.expectedBalance ?? 0,
+        expectedBalance: data.expected_balance ?? data.expectedBalance ?? 0,
+        actual_balance: data.actual_balance ?? data.actualBalance ?? 0,
+        actualBalance: data.actual_balance ?? data.actualBalance ?? 0,
+        closing_balance: data.closing_balance ?? data.closingBalance ?? 0,
+        closingBalance: data.closing_balance ?? data.closingBalance ?? 0
+      } as DailyCash;
+    });
+
+    docs.sort((a, b) => {
+      const valA = (a as any).openedAt?.seconds || 0;
+      const valB = (b as any).openedAt?.seconds || 0;
+      return valB - valA;
+    });
+    return docs[0];
+  },
+
+  async removeMovement(id: string) {
+    const movementRef = doc(db, COLLECTION_MOVEMENTS, id);
+    await runTransaction(db, async (transaction) => {
+      const moveSnap = await transaction.get(movementRef);
+      if (!moveSnap.exists()) return;
+      const movement = moveSnap.data() as CashMovement;
+      const cashRef = doc(db, COLLECTION_CASH, movement.caixa_id);
+      const cashSnap = await transaction.get(cashRef);
+
+      if (cashSnap.exists()) {
+        const cashData = cashSnap.data() as DailyCash;
+        if (cashData.status !== 'open' && cashData.status !== 'reopened') {
+          throw new Error("Operação negada: O caixa relacionado a este movimento está fechado.");
+        }
+
+        const updates: any = { updatedAt: serverTimestamp() };
+        if (movement.is_receivable) {
+          updates.total_receivables = increment(-movement.amount);
+          updates.totalReceivables = increment(-movement.amount);
+        } else {
+          switch (movement.type) {
+            case 'income':
+              updates.total_income = increment(-movement.amount);
+              updates.totalIncome = increment(-movement.amount);
+              updates.expected_balance = increment(-movement.amount);
+              updates.expectedBalance = increment(-movement.amount);
+              break;
+            case 'expense':
+              updates.total_expense = increment(-movement.amount);
+              updates.totalExpense = increment(-movement.amount);
+              updates.expected_balance = increment(movement.amount);
+              updates.expectedBalance = increment(movement.amount);
+              break;
+            case 'sangria':
+              updates.total_sangria = increment(-movement.amount);
+              updates.totalSangria = increment(-movement.amount);
+              updates.expected_balance = increment(movement.amount);
+              updates.expectedBalance = increment(movement.amount);
+              break;
+            case 'reforco':
+              updates.total_reforco = increment(-movement.amount);
+              updates.totalReforco = increment(-movement.amount);
+              updates.expected_balance = increment(-movement.amount);
+              updates.expectedBalance = increment(-movement.amount);
+              break;
+          }
+        }
+        transaction.update(cashRef, updates);
+      }
+
+      transaction.delete(movementRef);
+    });
+  },
+
+  async updateMovement(id: string, updated: Partial<CashMovement>, oldAmount?: number) {
+    const movementRef = doc(db, COLLECTION_MOVEMENTS, id);
+    await runTransaction(db, async (transaction) => {
+      const moveSnap = await transaction.get(movementRef);
+      if (!moveSnap.exists()) return;
+      const movement = moveSnap.data() as CashMovement;
+      const cashRef = doc(db, COLLECTION_CASH, movement.caixa_id);
+      const cashSnap = await transaction.get(cashRef);
+
+      if (cashSnap.exists()) {
+        const cashData = cashSnap.data() as DailyCash;
+        if (cashData.status !== 'open' && cashData.status !== 'reopened') {
+          throw new Error("Operação negada: O caixa relacionado a este movimento está fechado.");
+        }
+
+        const previousAmount = oldAmount !== undefined ? oldAmount : movement.amount;
+        if (updated.amount !== undefined && updated.amount !== previousAmount) {
+          const diff = updated.amount - previousAmount;
+          const updates: any = { updatedAt: serverTimestamp() };
+          if (movement.is_receivable) {
+            updates.total_receivables = increment(diff);
+            updates.totalReceivables = increment(diff);
+          } else {
+            switch (movement.type) {
+              case 'income':
+                updates.total_income = increment(diff);
+                updates.totalIncome = increment(diff);
+                updates.expected_balance = increment(diff);
+                updates.expectedBalance = increment(diff);
+                break;
+              case 'expense':
+                updates.total_expense = increment(diff);
+                updates.totalExpense = increment(diff);
+                updates.expected_balance = increment(-diff);
+                updates.expectedBalance = increment(-diff);
+                break;
+            }
+          }
+          transaction.update(cashRef, updates);
+        }
+      }
+
+      transaction.update(movementRef, {
+        ...updated,
+        updatedAt: serverTimestamp()
+      });
     });
   }
 };

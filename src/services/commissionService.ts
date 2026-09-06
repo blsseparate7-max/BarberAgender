@@ -16,6 +16,9 @@ import {
 import { db } from '../firebase';
 import { Commission, CommissionPayout, CommissionStatus, ProfessionalAdvance, ProfessionalPayment } from '../types';
 import { getActiveTenantId } from './tenantService';
+import { financialService } from './financialService';
+import { cashService } from './cashService';
+import { billService } from './billService';
 
 const COMMISSIONS_COLLECTION = 'commissions';
 const PAYOUTS_COLLECTION = 'professional_payments';
@@ -282,6 +285,128 @@ export const commissionService = {
       createdAt: serverTimestamp(),
     });
     return docRef.id;
+  },
+
+  async registerCompleteVale(data: {
+    profissional_id: string;
+    profissional_name: string;
+    amount: number;
+    date: string;
+    description: string;
+    category?: string;
+    source: 'caixa' | 'financeiro';
+    paymentMethod: string;
+    userId: string;
+    userName: string;
+    currentCashId?: string;
+  }): Promise<{ advanceId: string; transactionId: string; movementId?: string }> {
+    const activeTenant = getActiveTenantId();
+    const dateStr = data.date || new Date().toISOString().split('T')[0];
+    const categoryName = data.category || 'Adiantamento de Comissão';
+    const isCaixa = data.source === 'caixa';
+    
+    // 1. If source is 'caixa', verify that the cash session exists and is open
+    let targetCashId = data.currentCashId;
+    if (isCaixa) {
+      if (!targetCashId) {
+        const cashForDate = await cashService.getCashByDate(dateStr);
+        if (!cashForDate || (cashForDate.status !== 'open' && cashForDate.status !== 'reopened')) {
+          throw new Error(`O caixa de ${dateStr} não está aberto para saída em dinheiro na gaveta. Selecione a opção "Financeiro Geral (Bancos)" ou reabra o caixa do dia.`);
+        }
+        targetCashId = cashForDate.id;
+      }
+    }
+
+    // 2. Register Advance in professional_advances
+    const advanceRef = await addDoc(collection(db, ADVANCES_COLLECTION), {
+      tenantId: activeTenant,
+      profissional_id: data.profissional_id,
+      profissional_name: data.profissional_name,
+      amount: data.amount,
+      date: dateStr,
+      description: data.description || 'Vale/Adiantamento Avulso',
+      category: categoryName,
+      source: data.source,
+      paymentMethod: data.paymentMethod,
+      status: 'pendente',
+      responsible_id: data.userId,
+      responsible_name: data.userName,
+      createdAt: serverTimestamp(),
+    });
+    const advanceId = advanceRef.id;
+
+    // 3. Register Financial Transaction (Always! Expense for the establishment)
+    const transactionId = await financialService.createTransaction({
+      type: 'expense',
+      category: categoryName,
+      description: `Vale: ${data.profissional_name} (${data.description || 'Adiantamento'})`,
+      amount: data.amount,
+      net_amount: data.amount,
+      fee_amount: 0,
+      paymentMethod: data.paymentMethod as any,
+      date: dateStr,
+      settlement_date: dateStr,
+      status: 'pago',
+      is_settled: true,
+      profissional_id: data.profissional_id,
+      profissional_name: data.profissional_name,
+      responsavel_id: data.userId,
+      responsavel_name: data.userName,
+    });
+
+    // 4. Register in Accounts Payable (paid bill) for complete accounting audit
+    let payableId: string | undefined;
+    try {
+      payableId = await billService.createPayable({
+        description: `Vale: ${data.profissional_name} - ${data.description || 'Adiantamento'}`,
+        category: categoryName,
+        amount: data.amount,
+        dueDate: dateStr,
+        supplier: data.profissional_name,
+        recurrence: 'none',
+        status: 'paid',
+        paidAt: new Date().toISOString() as any,
+        paymentMethod: data.paymentMethod as any,
+        transactionId,
+        profissional_id: data.profissional_id,
+        profissional_name: data.profissional_name
+      });
+    } catch (err) {
+      console.warn("Could not create accounts_payable entry for vale:", err);
+    }
+
+    // 5. Register Cash Movement if source === 'caixa'
+    let movementId: string | undefined;
+    if (isCaixa && targetCashId) {
+      const move = await cashService.addMovement({
+        caixa_id: targetCashId,
+        type: 'expense',
+        category: categoryName,
+        description: `Vale/Adiantamento pago a ${data.profissional_name}: ${data.description || 'Adiantamento'}`,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod as any,
+        is_receivable: false,
+        usuario_id: data.userId,
+        usuario_name: data.userName,
+        profissional_id: data.profissional_id,
+        profissional_name: data.profissional_name,
+        date: dateStr,
+        referencia_id: transactionId
+      });
+      if (move?.id) {
+        movementId = move.id;
+        await financialService.updateTransaction(transactionId, { movement_id: movementId });
+      }
+    }
+
+    // 6. Update advance with reference IDs
+    await updateDoc(doc(db, ADVANCES_COLLECTION, advanceId), {
+      transaction_id: transactionId,
+      ...(payableId ? { payable_id: payableId } : {}),
+      ...(movementId ? { movement_id: movementId } : {})
+    });
+
+    return { advanceId, transactionId, movementId };
   },
 
   async registerBonus(data: {
@@ -984,69 +1109,16 @@ export const commissionService = {
         }
       };
 
-      // 1. Cancel comandas for Luiz Miguel post-João or with 0 payments
-      comandaMap.forEach((com, comId) => {
-        const proName = (com.profissional_name || '').toLowerCase();
-        const clientName = com.cliente_name || '';
-        const t = com.createdAt?.seconds || com.closedAt?.seconds || 0;
-
-        let shouldCancelComanda = false;
-        if (proName.includes('luiz') || proName.includes('miguel')) {
-          if (joaoCommissionTime > 0 && t > joaoCommissionTime && !isJoao(clientName)) {
-            shouldCancelComanda = true;
-          }
-        }
-
-        const payments = com.payments || [];
-        const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
-        if (totalPaid === 0 && com.status !== 'nao_paga' && com.status !== 'cancelada') {
-          shouldCancelComanda = true;
-        }
-
-        if (shouldCancelComanda && com.status !== 'cancelada') {
-          const comRef = doc(db, 'comandas', comId);
-          addOp(comRef, {
-            status: 'cancelada',
-            updatedAt: serverTimestamp(),
-            cancellationReason: 'Cancelado por limpeza pós-João / sem pagamento'
-          });
-        }
-      });
-
-      // 2. Cancel commissions
+      // Restore any commissions that were previously cancelled by the post-João automatic routine
       commsSnap.docs.forEach(docSnap => {
-        const comm = docSnap.data() as Commission;
-        const proName = (comm.profissional_name || '').toLowerCase();
-        const clientName = comm.cliente_name || '';
-        const t = comm.createdAt?.seconds || 0;
-
-        let shouldCancel = false;
-
-        if ((proName.includes('luiz') || proName.includes('miguel'))) {
-          if (joaoCommissionTime > 0 && t > joaoCommissionTime && !isJoao(clientName)) {
-            shouldCancel = true;
-          }
-          if (!comm.comanda_id) {
-            shouldCancel = true;
-          }
-        }
-
-        if (comm.comanda_id && comandaMap.has(comm.comanda_id)) {
-          const com = comandaMap.get(comm.comanda_id);
-          const payments = com.payments || [];
-          const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
-          if (totalPaid === 0 && com.status !== 'nao_paga') {
-            shouldCancel = true;
-          }
-        } else if (comm.comanda_id) {
-          shouldCancel = true;
-        }
-
-        if (shouldCancel && (comm.status as string) !== 'cancelado') {
+        const comm = docSnap.data() as any;
+        const reason = comm.settledReason || comm.cancellationReason || '';
+        if (comm.status === 'cancelado' && (reason.includes('pós-João') || reason.includes('pos-Joao') || reason.includes('pós-joao'))) {
           addOp(docSnap.ref, {
-            status: 'cancelado',
+            status: 'pendente',
             updatedAt: serverTimestamp(),
-            settledReason: 'Cancelado por ajuste de comissões indevidas pós-João / sem pagamento'
+            settledReason: null,
+            cancellationReason: null
           });
         }
       });
@@ -1069,6 +1141,142 @@ export const commissionService = {
     } catch (err) {
       console.error("Error fixing commissions:", err);
       return 0;
+    }
+  },
+
+  async settleHistoricalPendingBeforeSeptember(targetTenantId?: string) {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return { commissionsSettled: 0, advancesSettled: 0, payablesSettled: 0, comandasSettled: 0 };
+
+      const queryConstraints = activeTenant === 'gbcortes7'
+        ? [where('tenantId', 'in', [activeTenant, ''])]
+        : [where('tenantId', '==', activeTenant)];
+
+      let batches: any[] = [];
+      let currentBatch = writeBatch(db);
+      let opsCount = 0;
+
+      const addOp = (ref: any, data: any) => {
+        currentBatch.update(ref, data);
+        opsCount++;
+        if (opsCount >= 400) {
+          batches.push(currentBatch);
+          currentBatch = writeBatch(db);
+          opsCount = 0;
+        }
+      };
+
+      const isBeforeSept = (docData: any): boolean => {
+        if (docData.date) {
+          const d = String(docData.date).split('T')[0];
+          if (d && d < '2026-09-01') return true;
+          if (d && d >= '2026-09-01') return false;
+        }
+        if (docData.data) {
+          const d = String(docData.data).split('T')[0];
+          if (d && d < '2026-09-01') return true;
+          if (d && d >= '2026-09-01') return false;
+        }
+        if (docData.createdAt) {
+          if (typeof docData.createdAt === 'object' && docData.createdAt.seconds) {
+            const iso = new Date(docData.createdAt.seconds * 1000).toISOString().split('T')[0];
+            if (iso < '2026-09-01') return true;
+            if (iso >= '2026-09-01') return false;
+          } else if (typeof docData.createdAt === 'string') {
+            const iso = docData.createdAt.split('T')[0];
+            if (iso < '2026-09-01') return true;
+            if (iso >= '2026-09-01') return false;
+          }
+        }
+        return false;
+      };
+
+      // 1. Settle commissions before 01/09/2026 that are marked 'pendente'
+      const commsSnap = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
+      let commissionsSettled = 0;
+      commsSnap.docs.forEach(docSnap => {
+        const comm = docSnap.data() as Commission;
+        if (isBeforeSept(comm) && comm.status === 'pendente') {
+          addOp(docSnap.ref, {
+            status: 'pago',
+            settledReason: 'Acerto de implantação oficial - histórico anterior a 01/09/2026',
+            settledAs: 'acerto_implantacao',
+            paidAt: '2026-08-31T23:59:59',
+            updatedAt: serverTimestamp()
+          });
+          commissionsSettled++;
+        }
+      });
+
+      // 2. Settle advances before 01/09/2026 that are pending
+      const advsSnap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
+      let advancesSettled = 0;
+      advsSnap.docs.forEach(docSnap => {
+        const adv = docSnap.data() as ProfessionalAdvance;
+        if (isBeforeSept(adv) && adv.status !== 'pago' && (adv.status as string) !== 'cancelado') {
+          addOp(docSnap.ref, {
+            status: 'pago',
+            settledReason: 'Acerto de implantação oficial - histórico anterior a 01/09/2026',
+            settledAs: 'acerto_implantacao',
+            paidAt: '2026-08-31T23:59:59',
+            updatedAt: serverTimestamp()
+          });
+          advancesSettled++;
+        }
+      });
+
+      // 3. Settle accounts_payable before 01/09/2026
+      const paySnap = await getDocs(query(collection(db, 'accounts_payable'), ...queryConstraints));
+      let payablesSettled = 0;
+      paySnap.docs.forEach(docSnap => {
+        const p = docSnap.data() as any;
+        if (isBeforeSept(p) && p.status !== 'paid' && p.status !== 'cancelado') {
+          addOp(docSnap.ref, {
+            status: 'paid',
+            settledReason: 'Acerto de implantação oficial - histórico anterior a 01/09/2026',
+            paidAt: '2026-08-31T23:59:59',
+            updatedAt: serverTimestamp()
+          });
+          payablesSettled++;
+        }
+      });
+
+      // 4. Close any open comandas before 01/09/2026
+      const cmdSnap = await getDocs(query(collection(db, 'comandas'), ...queryConstraints));
+      let comandasSettled = 0;
+      cmdSnap.docs.forEach(docSnap => {
+        const cmd = docSnap.data() as any;
+        if (isBeforeSept(cmd) && cmd.status === 'aberta') {
+          addOp(docSnap.ref, {
+            status: 'fechada',
+            closedAt: '2026-08-31T23:59:59',
+            notes: ((cmd.notes || '') + ' [Encerrada em acerto de implantação anterior a 01/09/2026]').trim(),
+            updatedAt: serverTimestamp()
+          });
+          comandasSettled++;
+        }
+      });
+
+      if (opsCount > 0) {
+        batches.push(currentBatch);
+      }
+
+      for (const b of batches) {
+        await b.commit();
+      }
+
+      console.log(`[commissionService] Settle Pre-September completed:`, {
+        commissionsSettled,
+        advancesSettled,
+        payablesSettled,
+        comandasSettled
+      });
+
+      return { commissionsSettled, advancesSettled, payablesSettled, comandasSettled };
+    } catch (err) {
+      console.error("Erro ao liquidar histórico anterior a setembro:", err);
+      throw err;
     }
   }
 };

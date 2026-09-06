@@ -113,163 +113,15 @@ export function calculateProfessionalLedger(
     });
   }
 
-  let joaoTimestamp = 0;
-  const isLuizMiguel = barberName.includes('luiz miguel') || barberFirstName === 'luiz';
-  if (isLuizMiguel) {
-    if (Array.isArray(allComandas)) {
-      allComandas.forEach(com => {
-        if (isMatchingBarber(com) && ((com.cliente_name || '').toLowerCase().includes('joão') || (com.cliente_name || '').toLowerCase().includes('joao'))) {
-          const t = com.createdAt?.seconds || com.closedAt?.seconds || 0;
-          if (t > joaoTimestamp) joaoTimestamp = t;
-        }
-      });
-    }
-    if (joaoTimestamp === 0 && Array.isArray(allCommissions)) {
-      allCommissions.forEach(comm => {
-        if (isMatchingBarber(comm) && ((comm.cliente_name || '').toLowerCase().includes('joão') || (comm.cliente_name || '').toLowerCase().includes('joao'))) {
-          const t = comm.createdAt?.seconds || 0;
-          if (t > joaoTimestamp) joaoTimestamp = t;
-        }
-      });
-    }
-  }
-
   // 1. Iniciar com todas as comissões registradas ativas do profissional (ignorando canceladas)
   const proCommissionsAll = (allCommissions || [])
     .filter(isMatchingBarber)
     .filter(c => {
       if (c.status === 'cancelado' || c.status === 'estornado') return false;
       if (c.comanda_id && cancelledComandaIds.has(c.comanda_id)) return false;
-      if (isLuizMiguel && joaoTimestamp > 0) {
-        const cTime = c.createdAt?.seconds || 0;
-        const clientName = (c.cliente_name || '').toLowerCase();
-        if (cTime > joaoTimestamp && !clientName.includes('joão') && !clientName.includes('joao')) {
-          return false;
-        }
-      }
       return true;
     })
     .map(c => ({ ...c }));
-
-  // Rastrear comandas e agendamentos já computados para evitar duplicações
-  const accountedComandaItems = new Set<string>();
-  const accountedAppointments = new Set<string>();
-
-  for (const c of proCommissionsAll) {
-    if (c.comanda_id) {
-      accountedComandaItems.add(`${c.comanda_id}_${(c.servico_name || '').toLowerCase().trim()}`);
-      accountedComandaItems.add(`${c.comanda_id}`);
-    }
-    if (c.agendamento_id) {
-      accountedAppointments.add(c.agendamento_id);
-    }
-  }
-
-  // 1.1. Incorporar serviços de comandas concluídas/fechadas/fiado que possam não estar nas comissões
-  if (Array.isArray(allComandas) && allComandas.length > 0) {
-    for (const comanda of allComandas) {
-      const isClosed = comanda.status === 'fechada' || 
-                       comanda.status === 'concluída' || 
-                       comanda.status === 'concluido' || 
-                       comanda.status === 'nao_paga' || 
-                       comanda.status === 'paga' || 
-                       Boolean(comanda.closedAt);
-      if (!isClosed) continue;
-
-      if (isLuizMiguel && joaoTimestamp > 0) {
-        const comTime = comanda.createdAt?.seconds || comanda.closedAt?.seconds || 0;
-        const clientName = (comanda.cliente_name || '').toLowerCase();
-        if (comTime > joaoTimestamp && !clientName.includes('joão') && !clientName.includes('joao')) {
-          continue;
-        }
-      }
-
-      // Validate payments: ignore comandas with 0 payments unless fiado (nao_paga)
-      const payments = comanda.payments || [];
-      const totalPaid = payments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
-      const isFiado = comanda.status === 'nao_paga';
-      const hasValidPayment = totalPaid > 0 || isFiado;
-      if (!hasValidPayment) continue;
-
-      const comDate = extractDate(comanda) || (currentMonthOrStartDate ? currentMonthOrStartDate.substring(0, 10) : '');
-
-      if (Array.isArray(comanda.items)) {
-        for (const item of comanda.items) {
-          const itemProId = item.profissional_id || comanda.profissional_id;
-          const itemProName = item.profissional_name || comanda.profissional_name;
-          const itemMatches = isMatchingBarber({ profissional_id: itemProId, profissional_name: itemProName });
-          if (!itemMatches) continue;
-
-          const specificKey = `${comanda.id}_${(item.name || '').toLowerCase().trim()}`;
-          const realItemValue = Number(item.totalPrice) || (Number(item.unitPrice) * (Number(item.quantity) || 1)) || Number(item.price) || 0;
-
-          // Verificar se já existe comissão registrada para este item
-          const existingComm = proCommissionsAll.find(c => 
-            c.comanda_id === comanda.id && 
-            ((c.servico_name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim() || c.servico_id === item.id || c.servico_id === item.referencia_id)
-          );
-
-          if (existingComm) {
-            // Se a comissão já existe mas estava com base_value zerado ou ausente, reparar com o valor real do serviço
-            if ((existingComm.base_value === undefined || existingComm.base_value === null || Number(existingComm.base_value) === 0) && realItemValue > 0) {
-              existingComm.base_value = realItemValue;
-            }
-          } else if (!accountedComandaItems.has(specificKey) && realItemValue > 0) {
-            // Serviço realizado sem comissão direta (ex: plano/assinatura, cortesia ou pendência de gravação)
-            const isAssinatura = item.deductType === 'assinatura' || item.type === 'assinatura' || item.isCortesia;
-            const commPct = isAssinatura ? 0 : (barber.percentual_comissao ?? barber.commission_percentage ?? 50);
-            const commVal = isAssinatura ? 0 : (realItemValue * commPct) / 100;
-
-            proCommissionsAll.push({
-              id: `cmd-${comanda.id}-${item.id || item.name || Math.random()}`,
-              comanda_id: comanda.id,
-              servico_name: item.name || 'Serviço',
-              date: comDate,
-              base_value: realItemValue,
-              commission_value: commVal,
-              commission_percentage: commPct,
-              commission_type: isAssinatura ? 'assinatura' : (item.type === 'produto' || item.type === 'product' ? 'produto' : 'servico'),
-              status: 'pendente',
-              profissional_id: barberUid,
-              profissional_name: barber.nome
-            });
-            accountedComandaItems.add(specificKey);
-          }
-        }
-      }
-    }
-  }
-
-  // 1.2. Incorporar agendamentos concluídos sem comanda ou não rastreados
-  if (Array.isArray(allAppointments) && allAppointments.length > 0) {
-    for (const apt of allAppointments) {
-      const isConcluded = apt.status === 'concluído' || apt.status === 'concluido' || apt.status === 'realizado';
-      if (!isConcluded) continue;
-      if (!isMatchingBarber(apt)) continue;
-      if (apt.id && accountedAppointments.has(apt.id)) continue;
-      if (apt.comanda_id && (accountedComandaItems.has(apt.comanda_id) || (allComandas && allComandas.some(c => c.id === apt.comanda_id)))) continue;
-
-      const aptPrice = Number(apt.price) || Number(apt.valor) || 0;
-      if (aptPrice > 0) {
-        const aptDate = extractDate(apt) || (currentMonthOrStartDate ? currentMonthOrStartDate.substring(0, 10) : '');
-        const commPct = barber.percentual_comissao ?? barber.commission_percentage ?? 50;
-        proCommissionsAll.push({
-          id: `apt-${apt.id}`,
-          agendamento_id: apt.id,
-          servico_name: apt.servico_name || 'Atendimento',
-          date: aptDate,
-          base_value: aptPrice,
-          commission_value: (aptPrice * commPct) / 100,
-          commission_percentage: commPct,
-          commission_type: 'servico',
-          status: 'pendente',
-          profissional_id: barberUid,
-          profissional_name: barber.nome
-        });
-        if (apt.id) accountedAppointments.add(apt.id);
-      }
-    }
-  }
 
   // Helper para resolver o valor base faturado real do serviço
   const getCommissionBaseValue = (c: any) => {
@@ -306,6 +158,7 @@ export function calculateProfessionalLedger(
 
   const proCommissionsPeriod = proCommissionsAll.filter(c => isWithinPeriod(c.date));
 
+  // A. Ganhos e Atendimentos do Mês Selecionado
   const totalAtendimentosMes = proCommissionsPeriod.length;
   
   const faturamentoBrutoMes = proCommissionsPeriod
@@ -315,11 +168,16 @@ export function calculateProfessionalLedger(
   const comissaoGeradaMes = proCommissionsPeriod
     .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
 
-  const comissaoRepassadaMes = proCommissionsPeriod
+  // B. Repassado no Período
+  const comissaoRepassadaMes = proCommissionsAll
     .filter(c => c.status === 'pago')
+    .filter(c => {
+      const pDate = extractDate(c) || c.date;
+      return isWithinPeriod(pDate);
+    })
     .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
 
-  // 3. Totais Históricos Acumulados (Desde o Dia 1)
+  // C. Totais Históricos Acumulados (Desde o Dia 1)
   const totalAtendimentosTotal = proCommissionsAll.length;
 
   const faturamentoBrutoTotal = proCommissionsAll
@@ -329,23 +187,19 @@ export function calculateProfessionalLedger(
   const comissaoGeradaTotal = proCommissionsAll
     .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
 
-  // 4. Comissões Pendentes (filtradas pelo período selecionado se fornecido)
-  const comissaoPendenteBruta = proCommissionsPeriod
+  // D. Comissões Pendentes (Dívida Acumulada Real - o que a barbearia deve ao barbeiro)
+  // O saldo real a pagar ao barbeiro é contínuo e não é zerado ao mudar o filtro de mês
+  const comissaoPendenteBruta = proCommissionsAll
     .filter(c => c.status === 'pendente' || !c.status)
     .reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
 
-  // 5. Vales e Adiantamentos Pendentes (filtrados pelo período selecionado se fornecido)
-  const proAdvancesAll = allAdvances.filter(isMatchingBarber);
-  const proAdvancesPeriod = proAdvancesAll.filter(a => {
-    const advDate = extractDate(a);
-    return isWithinPeriod(advDate);
-  });
-
-  const valesPendentes = proAdvancesPeriod
+  // E. Vales e Adiantamentos Pendentes (Acumulados até serem deduzidos ou pagos)
+  const proAdvancesAll = (allAdvances || []).filter(isMatchingBarber);
+  const valesPendentes = proAdvancesAll
     .filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'))
     .reduce((acc, a) => acc + (Number(a.amount) || 0), 0);
 
-  // 6. Saldo Líquido Real Devedor
+  // F. Saldo Líquido Real Devedor (Pendente Líquido)
   const saldoPendenteLiquido = Math.max(0, comissaoPendenteBruta - valesPendentes);
 
   return {

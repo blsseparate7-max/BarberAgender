@@ -318,58 +318,31 @@ export function ProfessionalCommissions({
 
     try {
       const todayString = new Date().toISOString().split('T')[0];
+      const isCaixa = valeData.source === 'caixa';
+      let cashId: string | undefined;
 
-      // 1. Create a reference for the advance in the specialized advances collection
-      await commissionService.registerAdvance({
-        profissional_id: valePro.id,
-        profissional_name: valePro.nome,
-        amount,
-        description: valeData.description || 'Vale/Adiantamento',
-        date: todayString,
-        responsible_id: user.uid,
-        responsible_name: profile?.nome || 'Admin'
-      });
-
-      // 2. Register flow based on source choice
-      if (valeData.source === 'caixa') {
+      if (isCaixa) {
         const cash = await cashService.getCurrentCash();
         if (!cash) {
           toast.error("O caixa diário não está aberto! Selecione a opção 'Financeiro Geral'.");
           return;
         }
-
-        await cashService.addMovement({
-          caixa_id: cash.id,
-          type: 'expense',
-          category: 'Vale Profissional',
-          description: `Vale - ${valePro.nome} (S/ ${valeData.description || 'Adi.'})`,
-          amount,
-          paymentMethod: valeData.paymentMethod as any,
-          is_receivable: false,
-          usuario_id: user.uid,
-          usuario_name: profile?.nome || 'Admin',
-          date: todayString
-        });
-      } else {
-        // Source is General Finance, create a custom financial transaction
-        await financialService.createTransaction({
-          type: 'expense',
-          category: 'Controle de Vales (Parceiros)',
-          description: `Adiantamento Vale - ${valePro.nome} (S/ ${valeData.description || 'Adi.'})`,
-          amount,
-          net_amount: amount,
-          fee_amount: 0,
-          paymentMethod: valeData.paymentMethod as any,
-          date: todayString,
-          settlement_date: todayString,
-          status: 'pago',
-          is_settled: true,
-          profissional_id: valePro.id,
-          profissional_name: valePro.nome,
-          responsavel_id: user.uid,
-          responsavel_name: profile?.nome || 'Admin'
-        });
+        cashId = cash.id;
       }
+
+      await commissionService.registerCompleteVale({
+        profissional_id: valePro.id,
+        profissional_name: valePro.nome,
+        amount,
+        description: valeData.description || 'Vale/Adiantamento',
+        category: 'Adiantamento de Comissão',
+        date: todayString,
+        source: valeData.source as 'caixa' | 'financeiro',
+        paymentMethod: valeData.paymentMethod,
+        userId: user.uid,
+        userName: profile?.nome || 'Admin',
+        currentCashId: cashId
+      });
 
       toast.success("Vale registrado com sucesso!");
       setIsValeModalOpen(false);

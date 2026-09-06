@@ -129,59 +129,45 @@ export function Comissoes() {
   }, [tenantId]);
 
   useEffect(() => {
-    if (!tenantId) return;
-
-    // 0. Clean up ghost/unpaid auto-closed comandas and orphan commissions
-    commissionService.cleanupGhostCommissionsAndComandas(tenantId).then(count => {
-      if (count > 0) {
-        console.log(`Cleaned up ${count} ghost/empty commission/comanda records.`);
-        loadData();
-      }
-    }).catch(err => {
-      console.warn("Error cleaning up ghost records:", err);
-    });
-
-    // 0.5. Fix Luiz Miguel and other professionals post-João cutoff and unpaid items
-    commissionService.fixLuizMiguelAndOtherProfessionalsCommissions(tenantId).then(count => {
-      if (count > 0) {
-        console.log(`Fixed and cancelled ${count} invalid post-cutoff commissions.`);
-        loadData();
-      }
-    }).catch(err => {
-      console.warn("Error fixing post-cutoff commissions:", err);
-    });
-
-    // 1. Revert any falsely marked "pago" commissions back to "pendente" if no real payout exists
-    commissionService.revertUnpaidCommissionsToPending(tenantId).then(count => {
-      if (count > 0) {
-        console.log(`Reverted ${count} falsely marked paid commissions back to pending.`);
-        loadData();
-      }
-    }).catch(err => {
-      console.warn("Error reverting unpaid commissions:", err);
-    });
-
-    const sessionKey = `reconciled_commissions_v3_${tenantId}`;
-    if (!sessionStorage.getItem(sessionKey)) {
-      sessionStorage.setItem(sessionKey, 'true');
-      commissionService.reconcileHistoricalCommissions(tenantId).catch(err => {
-        console.warn("Reconciliação silenciosa de comissões históricas:", err);
-      });
-    }
-
-    // Auto-close and sync all daily flow comandas and appointments
-    comandaService.syncAgendaWithClosedComandas(tenantId).then(count => {
-      if (count > 0) {
-        loadData();
-      }
-    }).catch(err => {
-      console.warn("Error in automatic comanda flow cleanup:", err);
-    });
-  }, [tenantId]);
-
-  useEffect(() => {
     loadData();
   }, [dateRange.start, dateRange.end, selectedBarber, selectedStatus, tenantId]);
+
+  const [isSettlingPreSeptember, setIsSettlingPreSeptember] = useState(false);
+
+  const handleManualSettlePreSeptember = async () => {
+    if (!tenantId) return;
+    setIsSettlingPreSeptember(true);
+    try {
+      const res = await commissionService.settleHistoricalPendingBeforeSeptember(tenantId);
+      if (res.commissionsSettled > 0 || res.advancesSettled > 0 || res.payablesSettled > 0 || res.comandasSettled > 0) {
+        toast.success(`Acerto de implantação: ${res.commissionsSettled} comissões e ${res.advancesSettled} vales anteriores a 01/09 foram baixados.`);
+      } else {
+        toast.success("Nenhuma pendência anterior a 01/09 encontrada. Tudo regularizado!");
+      }
+      loadData();
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao realizar acerto pré-setembro.");
+    } finally {
+      setIsSettlingPreSeptember(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!tenantId) return;
+    const sessionKey = `settled_pre_september_${tenantId}_v3`;
+    if (!sessionStorage.getItem(sessionKey)) {
+      sessionStorage.setItem(sessionKey, 'true');
+      commissionService.settleHistoricalPendingBeforeSeptember(tenantId).then(res => {
+        if (res.commissionsSettled > 0 || res.advancesSettled > 0) {
+          toast.success(`Acerto de implantação automático: ${res.commissionsSettled} comissão(ões) e ${res.advancesSettled} vale(s) anteriores a 01/09 foram baixados.`);
+          loadData();
+        }
+      }).catch(err => {
+        console.warn("Erro no acerto de implantação pré-setembro:", err);
+      });
+    }
+  }, [tenantId]);
 
   const loadBarbers = async () => {
     try {
@@ -435,13 +421,25 @@ export function Comissoes() {
             </div>
 
             {(isAdmin || isGerente) && (
-              <button 
-                onClick={() => setIsPayoutModalOpen(true)}
-                className="flex items-center justify-center gap-2 bg-white hover:bg-slate-100 text-slate-950 px-5 py-3 rounded-2xl font-black text-xs transition-all shadow-lg active:scale-95"
-              >
-                <ArrowRightLeft size={16} />
-                <span>Registrar Repasse</span>
-              </button>
+              <>
+                <button 
+                  onClick={handleManualSettlePreSeptember}
+                  disabled={isSettlingPreSeptember}
+                  title="Liquidar comissões e vales pendentes anteriores a 01/09/2026 (Acerto de Implantação)"
+                  className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-4 py-3 rounded-2xl font-bold text-xs transition-all shadow-md active:scale-95 disabled:opacity-50"
+                >
+                  <CheckCircle2 size={16} className="text-emerald-400" />
+                  <span>{isSettlingPreSeptember ? 'Baixando...' : 'Acerto Pré-Setembro'}</span>
+                </button>
+
+                <button 
+                  onClick={() => setIsPayoutModalOpen(true)}
+                  className="flex items-center justify-center gap-2 bg-white hover:bg-slate-100 text-slate-950 px-5 py-3 rounded-2xl font-black text-xs transition-all shadow-lg active:scale-95"
+                >
+                  <ArrowRightLeft size={16} />
+                  <span>Registrar Repasse</span>
+                </button>
+              </>
             )}
           </div>
         </div>

@@ -14,7 +14,8 @@ import {
   runTransaction,
   writeBatch,
   onSnapshot,
-  deleteDoc
+  deleteDoc,
+  limit
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Comanda, ComandaItem, ComandaPayment, ComandaLog, ComandaStatus, ClientDebt, FinancialTransaction, CashMovement, PaymentMethod, PaymentMethodConfig } from '../types';
@@ -123,11 +124,12 @@ export const comandaService = {
       // 1. Close any open comandas that were originated from daily flow
       await this.closeAllOpenDailyFlowComandas(targetTenantId);
 
-      // 2. Fetch all closed comandas and make sure their matching appointments on agenda are marked concluído
+      // 2. Fetch recent closed comandas (limited to avoid quota exhaustion) and make sure their matching appointments on agenda are marked concluído
       const closedComandasSnap = await getDocs(query(
         collection(db, 'comandas'),
         where('tenantId', '==', targetTenantId),
-        where('status', '==', 'fechada')
+        where('status', '==', 'fechada'),
+        limit(20)
       ));
 
       let totalSynced = 0;
@@ -137,11 +139,12 @@ export const comandaService = {
         totalSynced++;
       }
 
-      // 3. Conclude any appointment matching completed daily flow items
+      // 3. Conclude any appointment matching completed daily flow items (limited to avoid quota exhaustion)
       const dfSnap = await getDocs(query(
         collection(db, 'daily_flow'),
         where('tenantId', '==', targetTenantId),
-        where('status', '==', 'completed')
+        where('status', '==', 'completed'),
+        limit(20)
       ));
 
       for (const dfDoc of dfSnap.docs) {

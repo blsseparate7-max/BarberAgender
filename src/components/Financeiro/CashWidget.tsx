@@ -11,7 +11,14 @@ import {
   X,
   CreditCard,
   History,
-  AlertCircle
+  AlertCircle,
+  Building2,
+  Coins,
+  DollarSign,
+  Calendar,
+  Sparkles,
+  CheckCircle2,
+  User
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DailyCash, UserProfile, CashMovement } from '../../types';
@@ -51,13 +58,22 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
   const [withdrawType, setWithdrawType] = useState<'expense' | 'sangria'>('expense');
   const [withdrawCategory, setWithdrawCategory] = useState<string>('Outros');
 
+  // Complete Vale state
   const [showValeModal, setShowValeModal] = useState(false);
   const [valeAmount, setValeAmount] = useState<string>('');
   const [valeDescription, setValeDescription] = useState<string>('');
-  const [valeCategory, setValeCategory] = useState<string>('Comissões');
+  const [valeCategory, setValeCategory] = useState<string>('Adiantamento de Comissão');
   const [selectedBarberId, setSelectedBarberId] = useState<string>('');
-  const [deductFromCash, setDeductFromCash] = useState<boolean>(true);
+  const [valeSource, setValeSource] = useState<'caixa' | 'financeiro'>('caixa');
+  const [valePaymentMethod, setValePaymentMethod] = useState<string>('dinheiro');
+  const [valeDate, setValeDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
+  const [barberBalanceLoading, setBarberBalanceLoading] = useState(false);
+  const [barberBalance, setBarberBalance] = useState<{
+    pendingCommissions: number;
+    pendingAdvances: number;
+    netAvailable: number;
+  } | null>(null);
 
   const loadBarbers = async () => {
     try {
@@ -65,6 +81,32 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
       setBarbers(data);
     } catch (error) {
       console.error("Erro ao carregar profissionais:", error);
+    }
+  };
+
+  const handleBarberSelect = async (barberId: string) => {
+    setSelectedBarberId(barberId);
+    if (!barberId) {
+      setBarberBalance(null);
+      return;
+    }
+    setBarberBalanceLoading(true);
+    try {
+      const [commissions, advances] = await Promise.all([
+        commissionService.getCommissions({ profissional_id: barberId, status: 'pendente' }),
+        commissionService.getAdvances({ profissional_id: barberId })
+      ]);
+      const pendingCommissions = commissions.reduce((acc, c) => acc + (c.commission_value || 0), 0);
+      const pendingAdvances = advances.filter(a => a.status === 'pendente' || !a.status).reduce((acc, a) => acc + (a.amount || 0), 0);
+      setBarberBalance({
+        pendingCommissions,
+        pendingAdvances,
+        netAvailable: pendingCommissions - pendingAdvances
+      });
+    } catch (error) {
+      console.error("Erro ao carregar saldo do profissional:", error);
+    } finally {
+      setBarberBalanceLoading(false);
     }
   };
 
@@ -179,9 +221,9 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
   };
 
   const handleVale = async () => {
-    if (!currentCash || !user) return;
+    if (!user) return;
     if (!selectedBarberId) {
-      toast.error("Selecione um profissional.");
+      toast.error("Selecione o profissional.");
       return;
     }
     const val = parseFloat(valeAmount);
@@ -189,11 +231,19 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
       toast.error("Por favor, informe um valor de vale válido.");
       return;
     }
-    
-    const available = currentCash.expected_balance ?? currentCash.expectedBalance ?? 0;
-    if (deductFromCash && val > available) {
-      toast.error("Saldo insuficiente no caixa para pagar este vale do caixa físico!");
-      return;
+
+    const isCaixa = valeSource === 'caixa';
+    if (isCaixa) {
+      const isCashOpen = currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened');
+      if (!isCashOpen) {
+        toast.error("O caixa diário de hoje não está aberto! Selecione a opção 'Financeiro Geral (Bancos)' ou abra o caixa.");
+        return;
+      }
+      const available = currentCash?.expected_balance ?? currentCash?.expectedBalance ?? 0;
+      if (val > available) {
+        toast.error(`Saldo insuficiente na gaveta do caixa (Disponível: R$ ${available.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}).`);
+        return;
+      }
     }
 
     const selectedBarber = barbers.find(b => b.uid === selectedBarberId);
@@ -204,76 +254,26 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
 
     setActionLoading(true);
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      
-      // 1. Register Professional Advance (Vale)
-      await commissionService.registerAdvance({
+      await commissionService.registerCompleteVale({
         profissional_id: selectedBarberId,
-        profissional_name: selectedBarber.nome || 'Profissional',
+        profissional_name: selectedBarber.nome || selectedBarber.displayName || 'Profissional',
         amount: val,
-        date: todayStr,
-        description: valeDescription || 'Vale antecipado',
-        status: 'pendente',
-        responsible_id: user.uid,
-        responsible_name: profile?.nome || user.displayName || 'Sistema'
+        date: valeDate || new Date().toISOString().split('T')[0],
+        description: valeDescription || 'Adiantamento de comissão',
+        category: valeCategory || 'Adiantamento de Comissão',
+        source: valeSource,
+        paymentMethod: valePaymentMethod,
+        userId: user.uid,
+        userName: profile?.nome || user.displayName || 'Admin',
+        currentCashId: isCaixa ? currentCash?.id : undefined
       });
-
-      // 2. Register Financial Transaction (Always! Because it's an outgoing expense)
-      const transactionId = await financialService.createTransaction({
-        type: 'expense',
-        category: valeCategory,
-        amount: val,
-        net_amount: val,
-        fee_amount: 0,
-        paymentMethod: deductFromCash ? 'dinheiro' : 'pix',
-        date: todayStr,
-        settlement_date: todayStr,
-        status: 'pago',
-        is_settled: true,
-        responsavel_id: user.uid,
-        responsavel_name: profile?.nome || user.displayName || 'Sistema',
-        description: `Vale p/ ${selectedBarber.nome || 'Profissional'} (${valeDescription || 'Adiantamento'})`
-      });
-
-      // 3. Register as a Paid Payable Bill to keep the financial ledger & bill reports 100% complete
-      await billService.createPayable({
-        description: `Vale: ${selectedBarber.nome || 'Profissional'} - ${valeDescription || 'Adiantamento'}`,
-        category: valeCategory,
-        amount: val,
-        dueDate: todayStr,
-        supplier: selectedBarber.nome || 'Profissional',
-        recurrence: 'none',
-        status: 'paid',
-        paidAt: new Date().toISOString() as any,
-        paymentMethod: deductFromCash ? 'dinheiro' : 'pix',
-        transactionId,
-        profissional_id: selectedBarberId,
-        profissional_name: selectedBarber.nome || 'Profissional'
-      });
-
-      // 4. Register Cash Movement if requested
-      if (deductFromCash) {
-        await cashService.addMovement({
-          caixa_id: currentCash.id,
-          type: 'expense',
-          category: 'Adiantamento de Comissão',
-          description: `Vale pago ao profissional ${selectedBarber.nome || 'Profissional'}: ${valeDescription || 'Adiantamento'}`,
-          amount: val,
-          paymentMethod: 'dinheiro',
-          is_receivable: false,
-          usuario_id: user.uid,
-          usuario_name: profile?.nome || user.displayName || 'Sistema',
-          profissional_id: selectedBarberId,
-          profissional_name: selectedBarber.nome || 'Profissional',
-          date: todayStr
-        } as any);
-      }
 
       setValeAmount('');
       setValeDescription('');
       setSelectedBarberId('');
+      setBarberBalance(null);
       setShowValeModal(false);
-      toast.success("Vale registrado com sucesso!");
+      toast.success("Vale registrado e sincronizado com sucesso!");
     } catch (err: any) {
       console.error("Erro ao registrar vale:", err);
       toast.error(err?.message || "Erro ao registrar vale.");
@@ -619,6 +619,19 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                   >
                     Abrir Caixa Corretamente
                   </button>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      loadBarbers();
+                      setValeSource('financeiro');
+                      setValePaymentMethod('pix');
+                      setShowValeModal(true);
+                    }}
+                    className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-xs uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Wallet size={15} className="text-amber-600" />
+                    Lançar Vale (Financeiro Geral)
+                  </button>
                 </div>
               )}
             </div>
@@ -928,20 +941,24 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
 
       {/* Vale (Advance) Modal */}
       <AnimatePresence>
-        {showValeModal && currentCash && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+        {showValeModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white border border-slate-200 w-full max-w-sm max-h-[90vh] rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white border border-slate-200 w-full max-w-md max-h-[92vh] rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col"
             >
-              <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between shrink-0">
+              {/* Header */}
+              <div className="p-6 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
+                  <div className="w-11 h-11 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 border border-amber-200 shadow-sm">
                     <Wallet size={20} />
                   </div>
-                  <h3 className="text-lg font-black text-primary">Lançar Vale</h3>
+                  <div>
+                    <h3 className="text-lg font-black text-primary leading-tight">Lançar Vale</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Adiantamento ao Profissional</p>
+                  </div>
                 </div>
                 <button 
                   onClick={() => setShowValeModal(false)} 
@@ -952,15 +969,18 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                 </button>
               </div>
 
-              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Profissional</label>
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar flex-1">
+                
+                {/* 1. Seleção de Profissional */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Profissional Beneficiário</label>
                   <select
                     value={selectedBarberId}
-                    onChange={(e) => setSelectedBarberId(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm"
+                    onChange={(e) => handleBarberSelect(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all shadow-sm"
                   >
-                    <option value="">Selecione um profissional...</option>
+                    <option value="">Selecione quem receberá o vale...</option>
                     {barbers.map((b, idx) => (
                       <option key={`${b.uid}-${idx}`} value={b.uid}>
                         {b.nome || b.displayName || 'Profissional'}
@@ -969,77 +989,232 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
                   </select>
                 </div>
 
+                {/* 2. Card de Saldo em Tempo Real do Profissional */}
+                {selectedBarberId && (
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                        <Sparkles size={12} className="text-amber-500" />
+                        Produção do Profissional
+                      </span>
+                      {barberBalanceLoading && (
+                        <span className="text-[10px] font-bold text-amber-600 flex items-center gap-1">
+                          <Loader2 size={11} className="animate-spin" /> Atualizando...
+                        </span>
+                      )}
+                    </div>
+                    {barberBalance ? (
+                      <div className="grid grid-cols-3 gap-2 pt-1">
+                        <div className="bg-white p-2 rounded-xl border border-slate-100 text-center">
+                          <p className="text-[9px] font-bold text-slate-400 uppercase">Comissões</p>
+                          <p className="text-xs font-black text-slate-700 mt-0.5">
+                            R$ {barberBalance.pendingCommissions.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div className="bg-white p-2 rounded-xl border border-slate-100 text-center">
+                          <p className="text-[9px] font-bold text-slate-400 uppercase">Vales Pegos</p>
+                          <p className="text-xs font-black text-rose-600 mt-0.5">
+                            -R$ {barberBalance.pendingAdvances.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div className={`p-2 rounded-xl border text-center ${
+                          barberBalance.netAvailable > 0 
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                            : 'bg-amber-50 border-amber-200 text-amber-800'
+                        }`}>
+                          <p className="text-[9px] font-black uppercase">Saldo Livre</p>
+                          <p className="text-xs font-black mt-0.5">
+                            R$ {barberBalance.netAvailable.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* 3. Origem do Recurso (Caixa vs Financeiro Geral) */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Categoria do Vale</label>
-                  <select
-                    value={valeCategory}
-                    onChange={(e) => setValeCategory(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm"
-                  >
-                    <option value="Comissões">Comissões (Adiantamento)</option>
-                    <option value="Adiantamentos">Adiantamentos Gerais</option>
-                    <option value="Outros">Outros</option>
-                  </select>
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">De Onde Sai o Dinheiro?</label>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* Opção Caixa */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setValeSource('caixa');
+                        setValePaymentMethod('dinheiro');
+                      }}
+                      className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between ${
+                        valeSource === 'caixa'
+                          ? 'border-amber-500 bg-amber-50/50 text-amber-950 ring-2 ring-amber-500/20 shadow-sm'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start w-full">
+                        <div className="flex items-center gap-1.5">
+                          <Coins size={15} className={valeSource === 'caixa' ? 'text-amber-600' : 'text-slate-400'} />
+                          <span className="text-[11px] font-black uppercase tracking-wider">Caixa Diário</span>
+                        </div>
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide ${
+                          currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened')
+                            ? 'bg-emerald-100 text-emerald-800' 
+                            : 'bg-slate-100 text-slate-400'
+                        }`}>
+                          {currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened') ? 'Aberto' : 'Fechado'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-2 leading-tight">
+                        Sai em dinheiro da gaveta física do balcão hoje.
+                      </p>
+                    </button>
+
+                    {/* Opção Financeiro Geral */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setValeSource('financeiro');
+                        setValePaymentMethod('pix');
+                      }}
+                      className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between ${
+                        valeSource === 'financeiro'
+                          ? 'border-blue-600 bg-blue-50/50 text-blue-950 ring-2 ring-blue-600/20 shadow-sm'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start w-full">
+                        <div className="flex items-center gap-1.5">
+                          <Building2 size={15} className={valeSource === 'financeiro' ? 'text-blue-600' : 'text-slate-400'} />
+                          <span className="text-[11px] font-black uppercase tracking-wider">Geral / Bancos</span>
+                        </div>
+                        <span className="text-[8px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-full font-bold uppercase tracking-wide">
+                          Bancário
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-2 leading-tight">
+                        Pix ou TED da conta bancária da empresa. Não mexe na gaveta.
+                      </p>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor do Vale</label>
-                  <div className="relative">
-                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-amber-500 font-black">R$</span>
+                {/* 4. Forma de Pagamento e Data */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>
+                    <select
+                      value={valePaymentMethod}
+                      onChange={(e) => setValePaymentMethod(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all"
+                    >
+                      {valeSource === 'caixa' ? (
+                        <>
+                          <option value="dinheiro">Dinheiro Físico (Gaveta)</option>
+                          <option value="pix">Pix (no Caixa)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="pix">Pix (Conta Empresa)</option>
+                          <option value="transferencia">Transferência / TED</option>
+                          <option value="dinheiro">Dinheiro (Reserva Externa)</option>
+                          <option value="outros">Outros</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Data do Lançamento</label>
                     <input 
-                      type="number"
-                      value={valeAmount}
-                      onChange={(e) => setValeAmount(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-3xl py-6 pl-14 pr-6 text-2xl font-black text-primary focus:outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all shadow-inner"
-                      placeholder="0,00"
+                      type="date"
+                      value={valeDate}
+                      onChange={(e) => setValeDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Descrição / Observação</label>
+                {/* 5. Valor do Vale */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor do Vale (R$)</label>
+                  <div className="relative">
+                    <span className="absolute left-5 top-1/2 -translate-y-1/2 text-amber-500 font-black text-lg">R$</span>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      value={valeAmount}
+                      onChange={(e) => setValeAmount(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-14 pr-5 text-2xl font-black text-primary focus:outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all shadow-inner"
+                      placeholder="0,00"
+                    />
+                  </div>
+                  {valeSource === 'caixa' && currentCash && (
+                    <p className="text-[10px] text-slate-400 font-medium px-1">
+                      Saldo disponível na gaveta: R$ {(currentCash.expected_balance ?? currentCash.expectedBalance ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                  )}
+                </div>
+
+                {/* 6. Chips de Motivo Rápido */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Motivo / Descrição</label>
+                    <span className="text-[9px] text-slate-400 font-bold uppercase">Atalhos rápidos:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['Almoço', 'Combustível', 'Adiantamento Semanal', 'Emergência', 'Outros'].map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => setValeDescription(tag)}
+                        className={`text-[10px] px-2.5 py-1 rounded-lg font-bold border transition-all ${
+                          valeDescription === tag 
+                            ? 'bg-amber-100 border-amber-300 text-amber-800' 
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
                   <input 
                     type="text"
                     value={valeDescription}
                     onChange={(e) => setValeDescription(e.target.value)}
-                    placeholder="Ex: Adiantamento semanal..."
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-inner"
+                    placeholder="Ex: Almoço, Adiantamento semanal..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all shadow-inner mt-1"
                   />
                 </div>
 
-                {/* Toggle to deduct from Cash Drawer */}
-                <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200/60 select-none">
-                  <input 
-                    type="checkbox"
-                    id="deductFromCashCheckbox"
-                    checked={deductFromCash}
-                    onChange={(e) => setDeductFromCash(e.target.checked)}
-                    className="mt-1 h-4.5 w-4.5 text-primary focus:ring-primary rounded border-slate-300 accent-primary"
-                  />
-                  <label htmlFor="deductFromCashCheckbox" className="cursor-pointer">
-                    <p className="text-xs font-black text-slate-800 leading-tight">Retirar do Caixa de Hoje (Gaveta)</p>
-                    <p className="text-[10px] text-muted font-medium mt-1 leading-normal">
-                      Ative se o dinheiro do vale estiver saindo fisicamente da gaveta do caixa de hoje. 
-                      Se desativado (PIX, etc.), o vale será registrado na conta do barbeiro sem alterar o caixa diário.
-                    </p>
-                  </label>
+                {/* Categoria Contábil */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Categoria Contábil (DRE)</label>
+                  <select
+                    value={valeCategory}
+                    onChange={(e) => setValeCategory(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all"
+                  >
+                    <option value="Adiantamento de Comissão">Adiantamento de Comissão</option>
+                    <option value="Comissões">Comissões e Salários</option>
+                    <option value="Adiantamentos Gerais">Adiantamentos Gerais</option>
+                    <option value="Outros">Outros</option>
+                  </select>
                 </div>
 
-                <div className="flex gap-4 pt-2">
+                {/* Footer Actions */}
+                <div className="flex gap-3 pt-2">
                   <button 
                     type="button"
                     onClick={() => setShowValeModal(false)}
-                    className="flex-1 py-4 border border-slate-200 rounded-[1.25rem] font-bold text-xs uppercase tracking-widest text-muted hover:bg-slate-50 transition-all"
+                    className="flex-1 py-3.5 border border-slate-200 rounded-2xl font-bold text-xs uppercase tracking-widest text-muted hover:bg-slate-50 transition-all"
                   >
-                    Voltar
+                    Cancelar
                   </button>
                   <button 
                     type="button"
                     onClick={handleVale}
                     disabled={actionLoading}
-                    className="flex-[2] py-4 bg-amber-500 text-white rounded-[1.25rem] font-bold text-xs uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                    className="flex-[2] py-3.5 bg-amber-500 text-white rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
                   >
-                    {actionLoading ? <Loader2 className="animate-spin" size={16} /> : 'Registrar Vale'}
+                    {actionLoading ? <Loader2 className="animate-spin" size={16} /> : 'Confirmar Vale'}
                   </button>
                 </div>
               </div>

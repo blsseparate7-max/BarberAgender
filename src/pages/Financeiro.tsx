@@ -101,6 +101,7 @@ import { AccountsPayableManager } from '../components/AccountsPayableManager';
 import { AccountsReceivableManager } from '../components/AccountsReceivableManager';
 import { InputModal } from '../components/InputModal';
 import { ContaDigitalAsaas } from '../components/Financeiro/ContaDigitalAsaas';
+import { EntriesExitsManager } from '../components/Financeiro/EntriesExitsManager';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -557,6 +558,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [isCashModalOpen, setIsCashModalOpen] = useState(false);
   const [cashToReopen, setCashToReopen] = useState<DailyCash | null>(null);
   const [reopenReason, setReopenReason] = useState('');
+  const [selectedMovementForDetails, setSelectedMovementForDetails] = useState<any | null>(null);
 
   const handleReopenCash = async (cash: DailyCash) => {
     if (!isAdmin && !isGerente) {
@@ -1619,134 +1621,23 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
-                className="bg-white border border-slate-200 rounded-[2.5rem] overflow-hidden shadow-sm"
               >
-                {/* Advanced Unified Entries & Exits Filter toolbar */}
-                <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <div>
-                    <h3 className="text-xl font-bold text-primary">Histórico de Entradas e Saídas</h3>
-                    <p className="text-xs text-muted font-medium mt-1">Lançamentos financeiros de caixas fechados e conciliações gerais.</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button 
-                      onClick={() => {
-                        setTransactionType('income');
-                        setIsTransactionModalOpen(true);
-                      }}
-                      className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-sm cursor-pointer"
-                    >
-                      <Plus size={14} />
-                      Nova Entrada
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setTransactionType('expense');
-                        setIsTransactionModalOpen(true);
-                      }}
-                      className="px-4 py-2.5 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-2 shadow-sm cursor-pointer"
-                    >
-                      <Minus size={14} />
-                      Nova Saída
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-8 bg-slate-50/30 border-b border-slate-100 flex flex-wrap items-center justify-between gap-6">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 bg-slate-100/80 border border-slate-200/50 rounded-2xl px-4 py-2.5 shadow-sm text-xs font-semibold text-primary">
-                      <Calendar className="text-slate-500" size={14} />
-                      <span>Filtrado por Período Geral: <strong className="font-extrabold">{format(new Date(dateRange.start + 'T00:00:00'), 'dd/MM/yyyy')}</strong> até <strong className="font-extrabold">{format(new Date(dateRange.end + 'T00:00:00'), 'dd/MM/yyyy')}</strong></span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-2xl p-1.5 shadow-sm">
-                    {(['all', 'income', 'expense'] as const).map((filterType) => (
-                      <button
-                        key={filterType}
-                        onClick={() => {
-                          setTxFilterType(filterType);
-                          setEntriesCurrentPage(1);
-                        }}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          txFilterType === filterType
-                            ? 'bg-primary text-white' 
-                            : 'text-muted hover:text-primary bg-transparent'
-                        }`}
-                      >
-                        {filterType === 'all' ? 'Ver Tudo' : filterType === 'income' ? 'Entradas' : 'Saídas'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50/50">
-                        <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Descrição</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Categoria</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Método</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Data</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Valor</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {transactions
-                        .filter(t => {
-                          if (txFilterType === 'income') return t.type === 'income';
-                          if (txFilterType === 'expense') return t.type === 'expense';
-                          return true;
-                        })
-                        .slice((entriesCurrentPage - 1) * entriesPageSize, entriesCurrentPage * entriesPageSize)
-                        .map((t, index) => (
-                        <tr key={`trans-rows-${t.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-8 py-6">
-                            <p className="text-sm font-bold text-primary">{t.description}</p>
-                            {t.cliente_name && <p className="text-[10px] text-muted font-bold">Cliente: {t.cliente_name}</p>}
-                          </td>
-                          <td className="px-8 py-6">
-                            <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg">{t.category}</span>
-                          </td>
-                          <td className="px-8 py-6 text-center">
-                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.paymentMethod}</span>
-                          </td>
-                          <td className="px-8 py-6 text-center text-xs text-slate-500 font-bold">
-                            {format(new Date(t.date + 'T00:00:00'), 'dd/MM/yyyy')}
-                          </td>
-                          <td className={`px-8 py-6 text-right text-sm font-black ${t.type === 'income' ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {t.type === 'income' ? '+' : '-'} R$ {t.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="px-8 py-6 text-center">
-                            <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                              t.status === 'pago' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                            }`}>
-                              {t.status === 'pago' ? 'Pago' : 'Pendente'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                      {transactions.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="text-center py-16 text-muted italic text-sm">Nenhum lançamento no período.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <PaginationControl
-                  currentPage={entriesCurrentPage}
-                  totalItems={transactions.filter(t => {
-                    if (txFilterType === 'income') return t.type === 'income';
-                    if (txFilterType === 'expense') return t.type === 'expense';
-                    return true;
-                  }).length}
-                  pageSize={entriesPageSize}
-                  onPageChange={setEntriesCurrentPage}
-                  onPageSizeChange={(size) => {
-                    setEntriesPageSize(size);
-                    setEntriesCurrentPage(1);
+                <EntriesExitsManager
+                  transactions={transactions}
+                  currentCash={currentCash}
+                  dateRange={dateRange}
+                  loadData={loadData}
+                  isAdmin={isAdmin}
+                  isGerente={isGerente}
+                  onOpenNewTransaction={(type) => {
+                    setTransactionType(type);
+                    setIsTransactionModalOpen(true);
+                  }}
+                  onReopenCash={(cash) => {
+                    handleReopenCash(cash);
+                  }}
+                  onViewMovement={(movement) => {
+                    setSelectedMovementForDetails(movement);
                   }}
                 />
               </motion.div>
@@ -3212,14 +3103,14 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 <div className="flex items-center gap-4 pt-4">
                   <button
                     onClick={() => setCashToReopen(null)}
-                    className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-primary rounded-2xl font-bold text-sm transition-all active:scale-95"
+                    className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-primary rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     onClick={confirmReopenCash}
                     disabled={!reopenReason}
-                    className="flex-1 py-4 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm transition-all shadow-lg shadow-amber-500/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 py-4 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-sm transition-all shadow-lg shadow-amber-500/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     Confirmar Reabertura
                   </button>
@@ -3227,6 +3118,13 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
               </div>
             </motion.div>
           </div>
+        )}
+
+        {selectedMovementForDetails && (
+          <MovementDetailsModal 
+            movement={selectedMovementForDetails} 
+            onClose={() => setSelectedMovementForDetails(null)} 
+          />
         )}
       </AnimatePresence>
     </div>
@@ -4851,7 +4749,15 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
     const isPaid = formData.paymentMethod !== 'fiado';
     const transactionStatus = isPaid ? 'pago' : 'pendente';
 
-    await financialService.createTransaction({
+    // Verify cash register status for the transaction date
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const targetCash = formData.date === today ? currentCash : await cashService.getCashByDate(formData.date);
+    if (targetCash && targetCash.status === 'closed') {
+      toast.error(`O caixa de ${format(new Date(formData.date + 'T00:00:00'), 'dd/MM/yyyy')} está fechado. Reabra o caixa deste dia para registrar movimentações nele.`);
+      return;
+    }
+
+    const txId = await financialService.createTransaction({
       ...formData,
       type,
       responsavel_id: user.uid,
@@ -4859,11 +4765,10 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
       status: transactionStatus
     });
 
-    // If it's a paid transaction for today and we have an open cash session, record movement
-    const today = format(new Date(), 'yyyy-MM-dd');
-    if (isPaid && formData.date === today && currentCash) {
-      await cashService.addMovement({
-        caixa_id: currentCash.id,
+    // If it's a paid transaction and we have an open cash session for that date, record movement
+    if (isPaid && targetCash && (targetCash.status === 'open' || targetCash.status === 'reopened')) {
+      const move = await cashService.addMovement({
+        caixa_id: targetCash.id,
         type: type as any,
         category: formData.category || (type === 'income' ? 'Entrada' : 'Saída'),
         description: formData.description,
@@ -4872,8 +4777,12 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
         is_receivable: formData.paymentMethod !== 'dinheiro' && formData.paymentMethod !== 'pix',
         usuario_id: user.uid,
         usuario_name: profile?.nome || 'Sistema',
-        date: today
+        date: formData.date,
+        referencia_id: txId
       });
+      if (move?.id) {
+        await financialService.updateTransaction(txId, { movement_id: move.id });
+      }
     }
 
     onSuccess();

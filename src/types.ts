@@ -295,6 +295,7 @@ export interface FinancialTransaction {
   is_settled: boolean;
   agendamento_id?: string;
   comanda_id?: string;
+  movement_id?: string;
   cliente_id?: string;
   cliente_name?: string;
   profissional_id?: string;
@@ -363,6 +364,8 @@ export interface CashMovement {
   referencia_id?: string;
   usuario_id: string;
   usuario_name: string;
+  profissional_id?: string;
+  profissional_name?: string;
   date: string;
   createdAt: any;
 }
@@ -527,12 +530,18 @@ export interface Commission {
 
 export interface ProfessionalAdvance {
   id: string;
+  tenantId?: string;
   profissional_id: string;
   profissional_name: string;
   amount: number;
   date: string;
   description: string;
   status?: 'pendente' | 'pago' | 'deduzido';
+  source?: 'caixa' | 'financeiro';
+  paymentMethod?: string;
+  transaction_id?: string;
+  payable_id?: string;
+  movement_id?: string;
   repasse_id?: string;
   responsible_id: string;
   responsible_name: string;

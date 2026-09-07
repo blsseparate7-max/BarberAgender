@@ -73,7 +73,54 @@ export const billService = {
 
   async deletePayable(id: string) {
     const docRef = doc(db, PAYABLES_COLLECTION, id);
+    let payableData: AccountPayable | null = null;
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        payableData = { id: snap.id, ...snap.data() } as AccountPayable;
+      }
+    } catch (_) {}
+
     await deleteDoc(docRef);
+
+    if (payableData) {
+      // 1. Delete linked transaction if exists
+      if (payableData.transactionId) {
+        try {
+          const txRef = doc(db, 'financial_transactions', payableData.transactionId);
+          const txSnap = await getDoc(txRef);
+          if (txSnap.exists()) {
+            await deleteDoc(txRef);
+          }
+        } catch (e) {
+          console.warn("Aviso ao deletar transação de conta a pagar excluída:", e);
+        }
+      }
+
+      // 2. Delete linked advance
+      try {
+        const qAdv = query(
+          collection(db, 'professional_advances'),
+          where('payable_id', '==', id)
+        );
+        const snapAdv = await getDocs(qAdv);
+        for (const d of snapAdv.docs) {
+          await deleteDoc(d.ref);
+        }
+        if (payableData.transactionId) {
+          const qAdvTx = query(
+            collection(db, 'professional_advances'),
+            where('transaction_id', '==', payableData.transactionId)
+          );
+          const snapAdvTx = await getDocs(qAdvTx);
+          for (const d of snapAdvTx.docs) {
+            await deleteDoc(d.ref);
+          }
+        }
+      } catch (e) {
+        console.warn("Aviso ao deletar vale vinculado a conta a pagar excluída:", e);
+      }
+    }
   },
 
   async settlePayable(id: string, paymentMethod: string, addMovementToCash: boolean, userId: string, userName: string) {

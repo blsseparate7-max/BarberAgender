@@ -4156,26 +4156,160 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
                 {/* Method-specific content */}
                 {createdChargeData.billingType === 'CREDIT_CARD' ? (
-                  <div className="space-y-4 bg-blue-50/60 border border-blue-200/60 p-5 rounded-2xl text-center">
-                    <div className="w-12 h-12 bg-blue-100 border border-blue-300 text-blue-700 rounded-full flex items-center justify-center mx-auto shadow-sm">
-                      <CreditCard size={24} />
+                  <div className="space-y-4 bg-blue-50/60 border border-blue-200/60 p-5 rounded-2xl text-left">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-100 border border-blue-300 text-blue-700 rounded-2xl flex items-center justify-center shrink-0 shadow-sm">
+                        <CreditCard size={20} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-slate-800 uppercase tracking-wide">Cadastro de Cartão Recorrente</p>
+                        <p className="text-[10px] text-slate-500 font-bold">O cartão será cobrado automaticamente a cada mês no Asaas.</p>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-black text-slate-800 uppercase tracking-wide">Cadastro de Cartão de Crédito</p>
-                      <p className="text-xs text-slate-600 font-bold leading-relaxed">
-                        Para ativar a assinatura recorrente, o cliente deve cadastrar o cartão de crédito com total segurança no ambiente de checkout homologado do Asaas.
-                      </p>
-                    </div>
+
+                    {/* Direct Card Inputs inside the Modal */}
+                    <form
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        const formData = new FormData(e.currentTarget);
+                        const holderName = formData.get('holderName') as string;
+                        const cardNumber = (formData.get('cardNumber') as string).replace(/\D/g, '');
+                        const expiry = formData.get('expiry') as string;
+                        const ccv = formData.get('ccv') as string;
+                        const holderCpf = (formData.get('holderCpf') as string).replace(/\D/g, '');
+
+                        const [expiryMonth, expiryYear] = expiry.split('/');
+
+                        setIsLoading(true);
+                        try {
+                          const res = await fetch('/api/saas/payment/update-credit-card', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              subscriptionId: createdChargeData.id,
+                              creditCard: {
+                                holderName,
+                                number: cardNumber,
+                                expiryMonth,
+                                expiryYear: expiryYear?.length === 2 ? `20${expiryYear}` : expiryYear,
+                                ccv
+                              },
+                              creditCardHolderInfo: {
+                                name: holderName,
+                                cpfCnpj: holderCpf,
+                                email: createdChargeData.clientEmail || `${createdChargeData.clientId}@barbearia.com`,
+                                postalCode: '01000-000',
+                                addressNumber: '1',
+                                phone: '11999999999'
+                              }
+                            })
+                          });
+                          const resData = await res.json();
+                          if (resData.error) {
+                            toast.error(resData.error);
+                          } else {
+                            toast.success("Cartão cadastrado e assinatura ativada com sucesso!");
+                            setShowCreatedChargeModal(false);
+                            loadData();
+                          }
+                        } catch (cardErr: any) {
+                          toast.error(cardErr.message || "Erro ao processar cartão.");
+                        } finally {
+                          setIsLoading(false);
+                        }
+                      }}
+                      className="space-y-3 pt-2"
+                    >
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-slate-600 tracking-wider block mb-1">Nome no Cartão</label>
+                        <input
+                          type="text"
+                          name="holderName"
+                          required
+                          placeholder="EX: JOAO S SILVA"
+                          className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-900 uppercase focus:outline-none focus:border-blue-500 font-mono"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-slate-600 tracking-wider block mb-1">Número do Cartão</label>
+                          <input
+                            type="text"
+                            name="cardNumber"
+                            required
+                            placeholder="0000 0000 0000 0000"
+                            maxLength={19}
+                            className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-slate-600 tracking-wider block mb-1">CPF do Titular</label>
+                          <input
+                            type="text"
+                            name="holderCpf"
+                            required
+                            placeholder="000.000.000-00"
+                            maxLength={14}
+                            className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-slate-600 tracking-wider block mb-1">Validade (MM/AA)</label>
+                          <input
+                            type="text"
+                            name="expiry"
+                            required
+                            placeholder="MM/AA"
+                            maxLength={5}
+                            className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-slate-600 tracking-wider block mb-1">CVV / CVC</label>
+                          <input
+                            type="text"
+                            name="ccv"
+                            required
+                            placeholder="123"
+                            maxLength={4}
+                            className="w-full bg-white border border-blue-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer flex items-center justify-center gap-2 mt-2"
+                      >
+                        {isLoading ? (
+                          <>
+                            <Loader2 size={16} className="animate-spin" />
+                            <span>Validando Cartão...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard size={16} />
+                            <span>Cadastrar Cartão & Ativar Recorrência</span>
+                          </>
+                        )}
+                      </button>
+                    </form>
+
                     {createdChargeData.paymentUrl && (
-                      <div className="pt-2">
+                      <div className="pt-2 text-center border-t border-blue-200/50">
                         <a
                           href={createdChargeData.paymentUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
+                          className="inline-flex items-center gap-1.5 text-[11px] font-extrabold text-blue-700 hover:text-blue-900 underline transition"
                         >
-                          <ExternalLink size={14} />
-                          <span>Ir para Checkout de Cartão Asaas</span>
+                          <ExternalLink size={12} />
+                          <span>Ou abrir tela externa do Asaas se preferir</span>
                         </a>
                       </div>
                     )}

@@ -102,6 +102,8 @@ export function ProfessionalCommissions({
     setLoading(true);
 
     const activeTenantId = getActiveTenantId();
+    commissionService.purgeOrphanedVales(activeTenantId);
+
     const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
     if (activeTenantId === 'gbcortes7') {
       constraints.push(where('tenantId', 'in', [activeTenantId, '']));

@@ -282,6 +282,12 @@ export const subscriptionService = {
         throw new Error("Assinatura aguardando pagamento ou inativa. O clube de benefícios somente pode ser utilizado após a confirmação do pagamento (Pix/Boleto).");
       }
 
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      if (sub.endDate && sub.endDate < todayStr) {
+        transaction.update(subRef, { status: 'past_due', updatedAt: serverTimestamp() });
+        throw new Error(`Assinatura vencida em ${sub.endDate}. Regularize o pagamento para continuar utilizando os benefícios do clube.`);
+      }
+
       const planRef = doc(db, PLANS_COLLECTION, sub.plano_id);
       const planSnap = await transaction.get(planRef);
       if (!planSnap.exists()) throw new Error("Plano não encontrado");
@@ -798,31 +804,23 @@ export const subscriptionService = {
     );
     
     const querySnapshot = await getDocs(q);
-    const results = { renewed: 0, expired: 0 };
+    const results = { pastDue: 0, expired: 0 };
     
     for (const d of querySnapshot.docs) {
       const sub = d.data() as Subscription;
-      if (sub.endDate < todayStr) {
+      if (sub.endDate && sub.endDate < todayStr) {
         // Expiration date has passed!
-        if (sub.autoRenew) {
-          try {
-            // Trigger automatic renewal!
-            await this.renewSubscription(d.id);
-            results.renewed++;
-          } catch (err) {
-            console.error(`Erro ao renovar assinatura automática ${d.id}:`, err);
-          }
-        } else {
-          try {
-            // Mark as expired
-            await updateDoc(doc(db, SUBSCRIPTIONS_COLLECTION, d.id), {
-              status: 'expired',
-              updatedAt: serverTimestamp()
-            });
-            results.expired++;
-          } catch (err) {
-            console.error(`Erro ao marcar assinatura como expirada ${d.id}:`, err);
-          }
+        // Move to 'past_due' (or 'expired' if autoRenew is false) awaiting payment
+        try {
+          const newStatus = sub.autoRenew ? 'past_due' : 'expired';
+          await updateDoc(doc(db, SUBSCRIPTIONS_COLLECTION, d.id), {
+            status: newStatus,
+            updatedAt: serverTimestamp()
+          });
+          if (newStatus === 'past_due') results.pastDue++;
+          else results.expired++;
+        } catch (err) {
+          console.error(`Erro ao atualizar status de assinatura vencida ${d.id}:`, err);
         }
       }
     }

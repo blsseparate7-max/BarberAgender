@@ -3,6 +3,7 @@ import {
   collection, 
   addDoc, 
   updateDoc, 
+  deleteDoc,
   doc, 
   query, 
   where, 
@@ -407,6 +408,161 @@ export const commissionService = {
     });
 
     return { advanceId, transactionId, movementId };
+  },
+
+  async deleteAdvance(advanceId: string) {
+    try {
+      const advanceRef = doc(db, ADVANCES_COLLECTION, advanceId);
+      const advSnap = await getDoc(advanceRef);
+      if (!advSnap.exists()) return;
+      const advance = { id: advSnap.id, ...advSnap.data() } as ProfessionalAdvance;
+
+      // 1. Delete advance document
+      await deleteDoc(advanceRef);
+
+      // 2. Cascade delete financial_transaction if linked
+      try {
+        if (advance.transaction_id) {
+          const txRef = doc(db, 'financial_transactions', advance.transaction_id);
+          const txSnap = await getDoc(txRef);
+          if (txSnap.exists()) {
+            await deleteDoc(txRef);
+          }
+        } else {
+          // Fallback search
+          const q = query(
+            collection(db, 'financial_transactions'),
+            where('amount', '==', advance.amount)
+          );
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            const tData = d.data();
+            if (
+              (tData.profissional_id === advance.profissional_id || (tData.description && tData.description.includes(advance.profissional_name))) &&
+              (tData.date === advance.date)
+            ) {
+              await deleteDoc(d.ref);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Aviso ao deletar transação vinculada ao vale:", e);
+      }
+
+      // 3. Cascade delete accounts_payable if linked
+      try {
+        if (advance.payable_id) {
+          const payRef = doc(db, 'accounts_payable', advance.payable_id);
+          const paySnap = await getDoc(payRef);
+          if (paySnap.exists()) {
+            await deleteDoc(payRef);
+          }
+        } else if (advance.transaction_id) {
+          const qPay = query(
+            collection(db, 'accounts_payable'),
+            where('transactionId', '==', advance.transaction_id)
+          );
+          const snap = await getDocs(qPay);
+          for (const d of snap.docs) {
+            await deleteDoc(d.ref);
+          }
+        }
+      } catch (e) {
+        console.warn("Aviso ao deletar conta a pagar vinculada ao vale:", e);
+      }
+
+      // 4. Cascade delete cash_movement if linked
+      try {
+        if (advance.movement_id) {
+          await cashService.removeMovement(advance.movement_id);
+        } else if (advance.transaction_id) {
+          const qMove = query(
+            collection(db, 'cash_movements'),
+            where('referencia_id', '==', advance.transaction_id)
+          );
+          const snap = await getDocs(qMove);
+          for (const d of snap.docs) {
+            await cashService.removeMovement(d.id);
+          }
+        }
+      } catch (e) {
+        console.warn("Aviso ao estornar movimento de caixa do vale:", e);
+      }
+    } catch (err) {
+      console.error("Erro ao deletar vale unificado:", err);
+      throw err;
+    }
+  },
+
+  async purgeOrphanedVales(tenantId?: string) {
+    try {
+      const activeTenant = tenantId || getActiveTenantId();
+      if (!activeTenant) return;
+
+      const queryConstraints = activeTenant === 'gbcortes7'
+        ? [where('tenantId', 'in', [activeTenant, ''])]
+        : [where('tenantId', '==', activeTenant)];
+
+      const advSnap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
+
+      for (const docSnap of advSnap.docs) {
+        const adv = { id: docSnap.id, ...docSnap.data() } as ProfessionalAdvance;
+        const name = (adv.profissional_name || '').toLowerCase();
+        const desc = (adv.description || '').toLowerCase();
+        
+        // 1. Explicit check for Luiz Henrique R$ 3 and Moisés R$ 40
+        const isLuiz3 = adv.amount === 3 && (name.includes('luiz') || desc.includes('luiz') || adv.profissional_id === 'luiz' || adv.profissional_id === 'luiz_henrique');
+        const isMoises40 = adv.amount === 40 && (name.includes('mois') || desc.includes('mois'));
+
+        // 2. Check if transaction_id was set but no longer exists in financial_transactions
+        let isOrphan = false;
+        if (adv.transaction_id) {
+          try {
+            const txDoc = await getDoc(doc(db, 'financial_transactions', adv.transaction_id));
+            if (!txDoc.exists()) {
+              isOrphan = true;
+            }
+          } catch (_) {}
+        }
+
+        if (isLuiz3 || isMoises40 || isOrphan) {
+          console.log(`[Purge Vale] Deletando vale órfão ${docSnap.id}: R$ ${adv.amount} (${adv.profissional_name})`);
+          await this.deleteAdvance(docSnap.id);
+        }
+      }
+
+      // Also clean up any lingering cash_movements or accounts_payable with Luiz 3,00 or Moises 40,00
+      try {
+        const paySnap = await getDocs(query(collection(db, 'accounts_payable'), ...queryConstraints));
+        for (const pDoc of paySnap.docs) {
+          const p = pDoc.data();
+          const desc = (p.description || '').toLowerCase();
+          const sup = (p.supplier || '').toLowerCase();
+          if (
+            (p.amount === 3 && (desc.includes('luiz') || sup.includes('luiz'))) ||
+            (p.amount === 40 && (desc.includes('mois') || sup.includes('mois')))
+          ) {
+            await deleteDoc(pDoc.ref);
+          }
+        }
+
+        const moveSnap = await getDocs(query(collection(db, 'cash_movements'), ...queryConstraints));
+        for (const mDoc of moveSnap.docs) {
+          const m = mDoc.data();
+          const desc = (m.description || '').toLowerCase();
+          if (
+            (m.amount === 3 && desc.includes('luiz')) ||
+            (m.amount === 40 && desc.includes('mois'))
+          ) {
+            await deleteDoc(mDoc.ref);
+          }
+        }
+      } catch (e) {
+        console.warn("Aviso ao limpar resíduos adicionais:", e);
+      }
+    } catch (err) {
+      console.error("Erro ao purgar vales órfãos:", err);
+    }
   },
 
   async registerBonus(data: {

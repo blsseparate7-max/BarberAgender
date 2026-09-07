@@ -33,7 +33,10 @@ import {
   Info,
   ChevronDown,
   Star,
-  Camera
+  Camera,
+  MessageCircle,
+  Sparkles,
+  CalendarPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -48,6 +51,7 @@ import { agendaBlockService } from '../services/agendaBlockService';
 import { teamGoalService, TeamGoal } from '../services/teamGoalService';
 import { subscriptionService } from '../services/subscriptionService';
 import { calculateProfessionalLedger } from '../services/ledgerService';
+import { comandaService } from '../services/comandaService';
 import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
@@ -270,8 +274,15 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       setClientes(data);
     });
     subscriptionService.getAllSubscriptionsSystem().then(setSubscriptions).catch(() => {});
+    
+    // Auto-heal and sync any orphaned daily flow items / appointments
+    const proTenant = profile?.tenantId || getActiveTenantId();
+    if (proTenant) {
+      comandaService.healAndSyncOrphanedComandas(proTenant).catch(console.warn);
+    }
+    
     return () => unsubscribe();
-  }, []);
+  }, [profile?.tenantId]);
 
   // 3. Fetch Commissions and Financial Data in real-time (Optimized, lightweight listeners)
   useEffect(() => {
@@ -430,8 +441,48 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     setIsAppointmentModalOpen(true);
   };
 
-  const handleOpenComanda = (app: Appointment) => {
+  const handleDirectCompleteAppointment = async (app: Appointment) => {
+    try {
+      await updateDoc(doc(db, 'appointments', app.id), {
+        status: 'concluído',
+        updatedAt: serverTimestamp()
+      });
+      if (app.daily_flow_id) {
+        try {
+          await updateDoc(doc(db, 'daily_flow', app.daily_flow_id), {
+            status: 'completed',
+            updatedAt: serverTimestamp()
+          });
+        } catch (_) {}
+      }
+      // If comanda exists, sync it too
+      if (app.comanda_id) {
+        try {
+          await comandaService.closeLinkedAppointments(app.comanda_id, app.id);
+        } catch (_) {}
+      }
+      toast.success(`Atendimento de ${app.cliente_name} concluído! Cadeira liberada.`);
+    } catch (err) {
+      console.error("Erro ao concluir agendamento:", err);
+      toast.error("Erro ao concluir atendimento.");
+    }
+  };
+
+  const handleOpenComanda = async (app: Appointment) => {
     setSelectedAppointment(app);
+    if (app.comanda_id) {
+      try {
+        const cSnap = await getDoc(doc(db, 'comandas', app.comanda_id));
+        if (cSnap.exists() && cSnap.data().status === 'fechada') {
+          await updateDoc(doc(db, 'appointments', app.id), {
+            status: 'concluído',
+            updatedAt: serverTimestamp()
+          });
+          toast.success(`Atendimento de ${app.cliente_name} já constava como pago e foi finalizado!`);
+          return;
+        }
+      } catch (_) {}
+    }
     setIsComandaModalOpen(true);
   };
 
@@ -726,119 +777,307 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       <main className="flex-1 w-full mx-auto px-4 -mt-6 relative z-10 max-w-4xl pb-24">
         
         {/* AGENDA TAB */}
-        {activeTab === 'agenda' && (
-          <div className="space-y-4">
-            
-            {/* Horizontal date selection bar */}
-            <div className="bg-white border border-slate-200/80 p-4 rounded-3xl shadow-sm space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
-                <div className="flex items-center gap-1.5">
-                  <Calendar size={14} className="text-indigo-600" />
-                  <span className="text-xs font-black uppercase text-slate-400 tracking-wider">
-                    Visualizar Escala
-                  </span>
-                </div>
-                
-                <div className="flex items-center gap-2">
-                  {!isToday(selectedDate) && (
-                    <button
-                      onClick={() => setSelectedDate(new Date())}
-                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg border border-indigo-100 transition active:scale-95"
-                    >
-                      Hoje
-                    </button>
-                  )}
-                  
-                  <span className="text-xs font-black text-indigo-600">
-                    {format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
-                  </span>
+        {activeTab === 'agenda' && (() => {
+          // Calculations for the barber's active and next appointments
+          const isSelectedDateToday = isToday(selectedDate);
+          const currentTimeStr = format(new Date(), 'HH:mm');
 
-                  <div className="relative">
-                    <input
-                      type="date"
-                      value={format(selectedDate, 'yyyy-MM-dd')}
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          setSelectedDate(parse(e.target.value, 'yyyy-MM-dd', new Date()));
-                        }
-                      }}
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-                    />
-                    <button className="bg-slate-50 hover:bg-slate-100 text-slate-600 p-1.5 rounded-lg border border-slate-200 transition flex items-center justify-center">
-                      <Calendar size={14} />
-                    </button>
+          const validDayApps = appointments
+            .filter(a => a.status !== 'cancelado' && a.status !== 'faltou')
+            .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+          const activeServingApp = appointments.find(a => a.status === 'em_atendimento');
+          
+          const nextUpcomingApp = isSelectedDateToday
+            ? validDayApps.find(a => (a.status === 'agendado' || a.status === 'confirmado') && a.startTime >= currentTimeStr) ||
+              validDayApps.find(a => a.status === 'agendado' || a.status === 'confirmado')
+            : validDayApps.find(a => a.status === 'agendado' || a.status === 'confirmado');
+
+          const completedCount = appointments.filter(a => a.status === 'concluído').length;
+
+          const getWhatsAppUrl = (phone?: string, clientName?: string, time?: string) => {
+            if (!phone) return null;
+            const cleanPhone = phone.replace(/\D/g, '');
+            const fullPhone = cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
+            const msg = encodeURIComponent(`Olá, ${clientName || 'amigo'}! Tudo bem? Passando para confirmar seu horário hoje às ${time || ''} aqui na barbearia.`);
+            return `https://wa.me/${fullPhone}?text=${msg}`;
+          };
+
+          return (
+            <div className="space-y-4">
+              
+              {/* 1. Horizontal date selection bar */}
+              <div className="bg-white border border-slate-200/80 p-4 rounded-3xl shadow-sm space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+                  <div className="flex items-center gap-1.5">
+                    <Calendar size={14} className="text-indigo-600" />
+                    <span className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                      Minha Escala
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    {!isToday(selectedDate) && (
+                      <button
+                        onClick={() => setSelectedDate(new Date())}
+                        className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg border border-indigo-100 transition active:scale-95"
+                      >
+                        Hoje
+                      </button>
+                    )}
+                    
+                    <span className="text-xs font-black text-indigo-600">
+                      {format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
+                    </span>
+
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={format(selectedDate, 'yyyy-MM-dd')}
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            setSelectedDate(parse(e.target.value, 'yyyy-MM-dd', new Date()));
+                          }
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                      />
+                      <button className="bg-slate-50 hover:bg-slate-100 text-slate-600 p-1.5 rounded-lg border border-slate-200 transition flex items-center justify-center">
+                        <Calendar size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
+                
+                <div className="flex gap-2 overflow-x-auto no-scrollbar py-0.5 pr-2">
+                  {dateStrip.map((d, dIdx) => {
+                    const isSelected = d.iso === format(selectedDate, 'yyyy-MM-dd');
+                    return (
+                      <button
+                         key={`barber-date-strip-${d.iso || dIdx}-${dIdx}`}
+                         onClick={() => setSelectedDate(parse(d.iso, 'yyyy-MM-dd', new Date()))}
+                         className={`flex flex-col items-center justify-center min-w-[50px] h-[64px] rounded-2xl transition border ${
+                          isSelected 
+                            ? 'bg-slate-900 border-slate-900 text-white shadow-md shadow-slate-950/25 scale-105' 
+                            : d.isToday
+                              ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-extrabold'
+                              : 'bg-slate-50 border-slate-200/70 text-slate-500 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span className="text-[9px] uppercase font-bold tracking-wider leading-none mb-1.5">
+                          {d.dayName}
+                        </span>
+                        <span className="text-base font-black leading-none">
+                          {d.dayNum}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              
-              <div className="flex gap-2 overflow-x-auto no-scrollbar py-0.5 pr-2">
-                {dateStrip.map((d, dIdx) => {
-                  const isSelected = d.iso === format(selectedDate, 'yyyy-MM-dd');
-                  return (
-                    <button
-                       key={`barber-date-strip-${d.iso || dIdx}-${dIdx}`}
-                       onClick={() => setSelectedDate(parse(d.iso, 'yyyy-MM-dd', new Date()))}
-                       className={`flex flex-col items-center justify-center min-w-[50px] h-[64px] rounded-2xl transition border ${
-                        isSelected 
-                          ? 'bg-slate-900 border-slate-900 text-white shadow-md shadow-slate-950/25 scale-105' 
-                          : d.isToday
-                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-extrabold'
-                            : 'bg-slate-50 border-slate-200/70 text-slate-500 hover:bg-slate-100'
-                      }`}
-                    >
-                      <span className="text-[9px] uppercase font-bold tracking-wider leading-none mb-1.5">
-                        {d.dayName}
+
+              {/* 2. SMART FOCUS HERO CARD (Cliente Atual ou Próximo na Cadeira) */}
+              {activeServingApp ? (
+                /* ⚡ CLIENTE EM ATENDIMENTO NA CADEIRA */
+                <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 border border-indigo-500/30 text-white p-5 rounded-3xl shadow-lg relative overflow-hidden">
+                  <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                  
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black uppercase tracking-wider animate-pulse">
+                      <Scissors size={12} className="text-amber-400" />
+                      Na Cadeira Agora
+                    </span>
+                    <span className="text-xs font-mono font-bold text-slate-300">
+                      Iniciado às {activeServingApp.startTime}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
+                        {activeServingApp.cliente_name}
+                        {activeServingApp.isSubscription && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-black border border-emerald-500/30">
+                            Assinante
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs font-bold text-indigo-200 mt-0.5">
+                        {activeServingApp.servico_name}
+                        {activeServingApp.price ? ` • R$ ${Number(activeServingApp.price).toFixed(2)}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {activeServingApp.cliente_telefone && (
+                        <a
+                          href={getWhatsAppUrl(activeServingApp.cliente_telefone, activeServingApp.cliente_name, activeServingApp.startTime) || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl shadow-sm transition active:scale-95 flex items-center justify-center"
+                          title="Chamar no WhatsApp"
+                        >
+                          <MessageCircle size={16} />
+                        </a>
+                      )}
+                      
+                      <button
+                        onClick={() => handleOpenAppointment(activeServingApp)}
+                        className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-2xl transition active:scale-95 flex items-center justify-center text-xs font-bold"
+                        title="Ver Detalhes"
+                      >
+                        <Edit3 size={16} />
+                      </button>
+
+                      <button
+                        onClick={() => handleDirectCompleteAppointment(activeServingApp)}
+                        className="px-3 py-2.5 bg-emerald-600/90 hover:bg-emerald-500 text-white font-black rounded-2xl text-xs shadow-md transition active:scale-95 flex items-center gap-1.5"
+                        title="Liberar cadeira e marcar como concluído"
+                      >
+                        <Check size={14} />
+                        <span className="hidden sm:inline">Liberar Cadeira</span>
+                        <span className="sm:hidden">Liberar</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleOpenComanda(activeServingApp)}
+                        className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-2xl text-xs shadow-md transition active:scale-95 flex items-center gap-1.5"
+                      >
+                        <Scissors size={14} />
+                        Finalizar / Comanda
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : nextUpcomingApp ? (
+                /* ⏱️ PRÓXIMO CLIENTE NA FILA */
+                <div className="bg-white border border-indigo-100 p-5 rounded-3xl shadow-sm relative overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-black uppercase tracking-wider">
+                      <Clock size={12} className="text-indigo-600" />
+                      Próximo Atendimento • {nextUpcomingApp.startTime}
+                    </span>
+                    {isSelectedDateToday && (
+                      <span className="text-[11px] font-bold text-slate-400">
+                        Hoje
                       </span>
-                      <span className="text-base font-black leading-none">
-                        {d.dayNum}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+                    )}
+                  </div>
 
-            {/* Today Quick Stats */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white border border-slate-200/80 p-3.5 rounded-2xl shadow-sm flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black">
-                  {stats.servedTodayCount}
-                </div>
-                <div>
-                  <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Atendidos Hoje</p>
-                  <p className="text-xs font-black text-slate-700">De {appointments.length} agendados</p>
-                </div>
-              </div>
-              <div className="bg-white border border-slate-200/80 p-3.5 rounded-2xl shadow-sm flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                  <DollarSign size={16} />
-                </div>
-                <div>
-                  <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Comissão Pendente</p>
-                  <p className="text-xs font-black text-slate-700">R$ {stats.toReceive.toFixed(2)}</p>
-                </div>
-              </div>
-            </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+                        {nextUpcomingApp.cliente_name}
+                        {nextUpcomingApp.isSubscription && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[9px] font-black border border-emerald-200">
+                            Assinante
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs font-bold text-slate-500 mt-0.5">
+                        {nextUpcomingApp.servico_name}
+                        {nextUpcomingApp.price ? ` • R$ ${Number(nextUpcomingApp.price).toFixed(2)}` : ''}
+                      </p>
+                    </div>
 
-            {/* Agenda Hourly Grid */}
-            <div className="bg-white border border-slate-200/80 p-1.5 rounded-3xl shadow-sm overflow-hidden">
-              <AgendaGeneral
-                selectedDate={selectedDate}
-                setSelectedDate={setSelectedDate}
-                barbers={[profile]}
-                appointments={appointments}
-                clients={clientes}
-                subscriptions={subscriptions}
-                blocks={blocks}
-                onNewAppointment={handleNewAppointment}
-                onOpenAppointment={handleOpenAppointment}
-                onOpenComanda={handleOpenComanda}
-                loading={loadingAppointments || loadingBlocks}
-              />
-            </div>
+                    <div className="flex items-center gap-2">
+                      {nextUpcomingApp.cliente_telefone && (
+                        <a
+                          href={getWhatsAppUrl(nextUpcomingApp.cliente_telefone, nextUpcomingApp.cliente_name, nextUpcomingApp.startTime) || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-2xl transition active:scale-95 flex items-center justify-center"
+                          title="Avisar no WhatsApp"
+                        >
+                          <MessageCircle size={16} />
+                        </a>
+                      )}
 
-          </div>
-        )}
+                      <button
+                        onClick={() => handleOpenAppointment(nextUpcomingApp)}
+                        className="p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-2xl transition active:scale-95 flex items-center justify-center text-xs font-bold"
+                        title="Ver Detalhes"
+                      >
+                        <Edit3 size={16} />
+                      </button>
+
+                      <button
+                        onClick={() => handleUpdateStatus(nextUpcomingApp.id, 'em_atendimento')}
+                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl text-xs shadow-md shadow-indigo-200 transition active:scale-95 flex items-center gap-1.5"
+                      >
+                        <Play size={14} className="fill-current" />
+                        Iniciar Atendimento
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* ☕ NENHUM PENDENTE / HORÁRIO LIVRE */
+                <div className="bg-slate-50/80 border border-dashed border-slate-200 p-4 rounded-3xl flex items-center justify-between gap-3 text-slate-600">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                      <Sparkles size={16} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-slate-800">Nenhum atendimento na fila neste momento</p>
+                      <p className="text-[10px] text-slate-400 font-bold">
+                        {appointments.length > 0 ? `${completedCount} de ${appointments.length} horários já foram atendidos.` : 'Agenda livre para encaixes e novos clientes.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleNewAppointment('09:00', profile.uid)}
+                    className="px-3 py-2 bg-white hover:bg-slate-100 text-indigo-600 border border-slate-200 font-black rounded-xl text-[11px] shadow-xs transition active:scale-95 flex items-center gap-1 shrink-0"
+                  >
+                    <Plus size={14} />
+                    Encaixe
+                  </button>
+                </div>
+              )}
+
+              {/* 3. MINI SUMMARY BAR */}
+              <div className="flex items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1.5 bg-white border border-slate-200/80 rounded-xl text-xs font-black text-slate-700 shadow-xs flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                    {appointments.length} agendados
+                  </span>
+                  <span className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-black text-emerald-700 shadow-xs flex items-center gap-1.5">
+                    <Check size={12} />
+                    {completedCount} concluídos
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => handleNewAppointment('09:00', profile.uid)}
+                  className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black transition active:scale-95 flex items-center gap-1 shadow-sm"
+                >
+                  <Plus size={14} />
+                  Novo Agendamento
+                </button>
+              </div>
+
+              {/* 4. AGENDA HOURLY GRID (LIMPA E FOCADA) */}
+              <div className="bg-white border border-slate-200/80 p-1.5 rounded-3xl shadow-sm overflow-hidden">
+                <AgendaGeneral
+                  selectedDate={selectedDate}
+                  setSelectedDate={setSelectedDate}
+                  barbers={[profile]}
+                  appointments={appointments}
+                  clients={clientes}
+                  subscriptions={subscriptions}
+                  blocks={blocks}
+                  onNewAppointment={handleNewAppointment}
+                  onOpenAppointment={handleOpenAppointment}
+                  onOpenComanda={handleOpenComanda}
+                  loading={loadingAppointments || loadingBlocks}
+                  hideManagementMetrics={true}
+                />
+              </div>
+
+            </div>
+          );
+        })()}
 
         {/* CLIENTES TAB */}
         {activeTab === 'clientes' && (

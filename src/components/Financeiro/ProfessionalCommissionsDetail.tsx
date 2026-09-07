@@ -4,7 +4,7 @@ import {
   ArrowLeft, Calendar, Plus, Printer, DollarSign, TrendingUp, Percent, 
   Receipt, CheckCircle2, Wallet, Briefcase, FileText, History, Loader2, Info,
   Scissors, Coffee, Box, Sparkles, Tag, Users, X, ChevronRight, Filter, Download, Share2,
-  Gift, Award
+  Gift, Award, Trash2
 } from 'lucide-react';
 import { format, parseISO, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { toast } from 'sonner';
@@ -201,6 +201,9 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   useEffect(() => {
     if (!tenantId) return;
     setLoading(true);
+
+    // Automatically purge orphaned vales in the background
+    commissionService.purgeOrphanedVales(tenantId);
 
     const commConstraints = tenantId === 'gbcortes7' 
       ? [where('tenantId', 'in', [tenantId, ''])] 
@@ -592,6 +595,24 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     } catch (error) {
       console.error("Erro ao registrar vale:", error);
       toast.error("Erro ao registrar vale.");
+    }
+  };
+
+  // Handle Deleting Advance (Vale) with Unified Cascade
+  const handleDeleteAdvance = async (advanceId: string, desc?: string, amount?: number) => {
+    if (!window.confirm(`Tem certeza que deseja cancelar e excluir o vale "${desc || 'Adiantamento'}" no valor de R$ ${(amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?\n\nEsta ação estornará a despesa do financeiro e da gaveta do caixa de forma unificada.`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await commissionService.deleteAdvance(advanceId);
+      toast.success("Vale excluído e estornado com sucesso!");
+    } catch (err: any) {
+      console.error("Erro ao excluir vale:", err);
+      toast.error(err.message || "Erro ao excluir vale.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1246,6 +1267,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                             <th className="px-8 py-4 text-[10px] font-black text-muted uppercase tracking-widest">Responsável</th>
                             <th className="px-8 py-4 text-[10px] font-black text-muted uppercase tracking-widest">Status / Liquidado em</th>
                             <th className="px-8 py-4 text-[10px] font-black text-muted uppercase tracking-widest text-right">Valor</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-muted uppercase tracking-widest text-center w-16">Ações</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
@@ -1260,10 +1282,22 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                 </span>
                               </td>
                               <td className="px-8 py-5 text-right text-sm font-black text-red-600">-R$ {a.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                              <td className="px-6 py-5 text-center">
+                                {a.status !== 'pago' && a.id && (
+                                  <button
+                                    id={`btn-del-vale-${a.id}`}
+                                    onClick={() => handleDeleteAdvance(a.id, a.description, a.amount)}
+                                    title="Excluir vale e estornar despesa"
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex items-center justify-center"
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                )}
+                              </td>
                             </tr>
                           ))}
                           {advances.length === 0 && (
-                            <tr><td colSpan={5} className="px-8 py-20 text-center text-muted font-medium italic">Nenhum vale registrado no período.</td></tr>
+                            <tr><td colSpan={6} className="px-8 py-20 text-center text-muted font-medium italic">Nenhum vale registrado no período.</td></tr>
                           )}
                         </tbody>
                       </table>
@@ -1762,8 +1796,24 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                               {format(parseISO(a.date), 'dd/MM')} • Aut: {a.responsible_name || 'Admin'}
                                             </span>
                                           </div>
-                                          <div className="text-right font-bold">
-                                            <span className="text-rose-600 block">- R$ {a.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                          <div className="flex items-center gap-2">
+                                            <div className="text-right font-bold">
+                                              <span className="text-rose-600 block">- R$ {a.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                            {a.status !== 'pago' && a.id && (
+                                              <button
+                                                id={`btn-del-sidebar-vale-${a.id}`}
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleDeleteAdvance(a.id, a.description, a.amount);
+                                                }}
+                                                title="Excluir vale"
+                                                className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors no-print"
+                                              >
+                                                <Trash2 size={13} />
+                                              </button>
+                                            )}
                                           </div>
                                         </div>
                                       ))

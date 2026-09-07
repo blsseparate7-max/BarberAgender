@@ -135,6 +135,48 @@ export const userService = {
     );
   },
 
+  async getUserByPhone(phone: string, tenantId?: string) {
+    if (!phone) return null;
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanPhone) return null;
+
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const usersRef = collection(db, COLLECTION);
+    
+    // Check both 'telefone' and 'phone'
+    const q1 = query(usersRef, where('telefone', '==', phone));
+    const q1Snap = await getDocs(q1);
+    const found1 = q1Snap.docs.find(d => {
+      const data = d.data();
+      const uTenant = (data.tenantId || '').trim().toLowerCase();
+      return !tid || uTenant === tid || (uTenant === '' && tid === 'gbcortes7');
+    });
+    if (found1) return { uid: found1.id, ...found1.data() } as UserProfile;
+
+    const q2 = query(usersRef, where('phone', '==', cleanPhone));
+    const q2Snap = await getDocs(q2);
+    const found2 = q2Snap.docs.find(d => {
+      const data = d.data();
+      const uTenant = (data.tenantId || '').trim().toLowerCase();
+      return !tid || uTenant === tid || (uTenant === '' && tid === 'gbcortes7');
+    });
+    if (found2) return { uid: found2.id, ...found2.data() } as UserProfile;
+
+    return null;
+  },
+
+  async checkPhoneExists(phone: string, currentUid?: string, tenantId?: string): Promise<{ exists: boolean; user?: UserProfile }> {
+    if (!phone) return { exists: false };
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (cleanPhone.length < 8) return { exists: false };
+
+    const foundUser = await this.getUserByPhone(phone, tenantId);
+    if (foundUser && (!currentUid || foundUser.uid !== currentUid)) {
+      return { exists: true, user: foundUser };
+    }
+    return { exists: false };
+  },
+
   async getUserProfile(uid: string) {
     if (!uid) return null;
     const docRef = doc(db, COLLECTION, uid);

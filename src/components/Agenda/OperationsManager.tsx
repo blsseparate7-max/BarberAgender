@@ -124,6 +124,9 @@ export function OperationsManager() {
       }
     );
 
+    // 6. Run background heal/sync to repair any disconnected flow or appointment items
+    comandaService.healAndSyncOrphanedComandas(tenantId).catch(console.warn);
+
     return () => {
       unsubscribeFlow();
       unsubscribeBarbers();
@@ -287,6 +290,78 @@ export function OperationsManager() {
       const barberRef = doc(db, 'usuarios', barber.uid);
       await updateDoc(barberRef, { rodizioStatus: 'atendendo' });
 
+      // Synchronize with Agenda (Appointments)
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        
+        // Check if there is an existing appointment for this client today
+        let linkedAppId: string | null = (item as any).agendamento_id || null;
+        
+        if (!linkedAppId && item.cliente_id && item.cliente_id !== 'avulso') {
+          const appQuery = query(
+            collection(db, 'appointments'),
+            where('tenantId', '==', tenantId),
+            where('cliente_id', '==', item.cliente_id),
+            where('date', '==', todayStr)
+          );
+          const appSnap = await getDocs(appQuery);
+          const activeApp = appSnap.docs.find(d => {
+            const st = d.data().status;
+            return st === 'agendado' || st === 'confirmado' || st === 'em_atendimento';
+          });
+          if (activeApp) {
+            linkedAppId = activeApp.id;
+          }
+        }
+
+        if (linkedAppId) {
+          // Update existing appointment to 'em_atendimento'
+          await updateDoc(doc(db, 'appointments', linkedAppId), {
+            status: 'em_atendimento',
+            profissional_id: barber.uid,
+            profissional_name: barber.nome,
+            daily_flow_id: item.id,
+            updatedAt: serverTimestamp()
+          });
+          await updateDoc(itemRef, { agendamento_id: linkedAppId });
+        } else {
+          // If it's a walk-in client without an appointment in Agenda, create an encaixe appointment so it shows on Agenda in real-time
+          const serviceObj = services.find(s => s.id === item.servico_id);
+          const duration = serviceObj?.duracao || serviceObj?.duracao_minutos || 30;
+          
+          // Calculate end time
+          const [h, m] = formatTime.split(':').map(Number);
+          const totalEndMin = (h * 60 + m) + duration;
+          const endH = Math.floor(totalEndMin / 60) % 24;
+          const endM = totalEndMin % 60;
+          const endTimeStr = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+
+          const createdApp = await addDoc(collection(db, 'appointments'), {
+            tenantId,
+            cliente_id: item.cliente_id || 'avulso',
+            cliente_name: item.cliente_name || 'Consumidor Final',
+            profissional_id: barber.uid,
+            profissional_name: barber.nome,
+            servico_id: item.servico_id || '',
+            servico_name: item.servico_name || serviceObj?.nome || 'Atendimento (Fluxo)',
+            date: todayStr,
+            startTime: formatTime,
+            endTime: endTimeStr,
+            status: 'em_atendimento',
+            origin: 'ordem_chegada',
+            daily_flow_id: item.id,
+            price: serviceObj?.preco || (serviceObj as any)?.price || 0,
+            duration,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+
+          await updateDoc(itemRef, { agendamento_id: createdApp.id });
+        }
+      } catch (agendaSyncErr) {
+        console.warn("Could not sync daily flow call with agenda:", agendaSyncErr);
+      }
+
       setAssignModalOpen(false);
       setSelectedFlowItem(null);
       toast.success(`Atendimento do cliente ${item.cliente_name} iniciado!`);
@@ -318,6 +393,7 @@ export function OperationsManager() {
         profissional_name: item.profissional_name || '',
         origin: 'balcao',
         daily_flow_id: item.id,
+        agendamento_id: (item as any).agendamento_id || '',
         items: item.servico_id ? [{
           id: item.servico_id,
           referencia_id: item.servico_id,

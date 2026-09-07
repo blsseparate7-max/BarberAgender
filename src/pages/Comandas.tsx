@@ -14,19 +14,22 @@ import {
   DollarSign,
   User,
   Scissors,
-  History
+  History,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { comandaService } from '../services/comandaService';
 import { Comanda, ComandaStatus } from '../types';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'sonner';
 
 export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
   const { profile, isBarbeiro } = useAuth();
   const [activeTab, setActiveTab] = useState<'abertas' | 'historico' | 'fiadas' | 'nova'>('abertas');
   const [comandas, setComandas] = useState<Comanda[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ComandaStatus | 'all'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -67,6 +70,31 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
       loadComandas();
     }
   }, [activeTab, statusFilter]);
+
+  useEffect(() => {
+    // Auto-sync orphaned daily flow comandas on mount
+    comandaService.healAndSyncOrphanedComandas().catch(console.warn);
+  }, []);
+
+  const handleManualSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await comandaService.healAndSyncOrphanedComandas();
+      if (res.healedComandas > 0 || res.syncedAppointments > 0) {
+        toast.success(`Sincronização concluída! ${res.healedComandas} comandas saneadas e ${res.syncedAppointments} agendamentos atualizados.`);
+      } else {
+        toast.success("Tudo sincronizado! Nenhuma comanda órfã encontrada.");
+      }
+      if (activeTab !== 'abertas') {
+        loadComandas();
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao sincronizar comandas.");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const loadComandas = async () => {
     setLoading(true);
@@ -134,6 +162,15 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
           <p className="text-muted text-sm font-medium mt-1">Controle de atendimentos, fluxo de caixa e pós-venda.</p>
         </div>
         <div className="flex gap-3">
+          <button 
+            onClick={handleManualSync}
+            disabled={syncing}
+            title="Sincronizar e sanear comandas com agenda e comissões"
+            className="flex items-center justify-center gap-2 bg-white border border-slate-200 text-slate-600 px-4 py-3 rounded-2xl font-bold text-sm hover:bg-slate-50 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+          >
+            <RefreshCw size={16} className={syncing ? 'animate-spin text-accent' : ''} />
+            <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : 'Sincronizar'}</span>
+          </button>
           <button 
             onClick={() => setActiveTab('historico')}
             className="flex items-center justify-center gap-2 bg-white border border-slate-200 text-slate-600 px-5 py-3 rounded-2xl font-bold text-sm hover:bg-slate-50 transition-all shadow-sm active:scale-95"

@@ -53,6 +53,7 @@ interface AgendaGeneralProps {
   onOpenAppointment: (app: Appointment) => void;
   onOpenComanda: (app: Appointment) => void;
   loading: boolean;
+  hideManagementMetrics?: boolean;
 }
 
 export function AgendaGeneral({ 
@@ -66,7 +67,8 @@ export function AgendaGeneral({
   onNewAppointment, 
   onOpenAppointment,
   onOpenComanda,
-  loading 
+  loading,
+  hideManagementMetrics = false
 }: AgendaGeneralProps) {
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [nowTime, setNowTime] = useState<Date>(new Date());
@@ -413,113 +415,117 @@ export function AgendaGeneral({
 
   return (
     <div className="flex flex-col gap-5 flex-1">
-      {/* 📊 TOP FLASH METRICS BAR (Resumo Inteligente para o Dono) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Card 1: Resumo de Cortes */}
-        <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Total do Dia</span>
-            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-              <CalendarIcon size={16} />
+      {!hideManagementMetrics && (
+        <>
+          {/* 📊 TOP FLASH METRICS BAR (Resumo Inteligente para o Dono) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Card 1: Resumo de Cortes */}
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Total do Dia</span>
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                  <CalendarIcon size={16} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <p className="text-2xl font-black text-slate-900 tracking-tight">{dayApps.length} <span className="text-xs font-bold text-slate-400">agendamentos</span></p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[9px] font-black border border-emerald-200">
+                    {concluidosCount} Concluídos
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[9px] font-black border border-amber-200 animate-pulse">
+                    {emAtendimentoCount} Na Cadeira
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[9px] font-black border border-blue-200">
+                    {agendadosCount} A Agendar
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 2: Barbeiros em Ação */}
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Cadeiras Ocupadas</span>
+                <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+                  <Scissors size={16} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <p className="text-2xl font-black text-slate-900 tracking-tight">
+                  {barbersOccupiedNow.length} <span className="text-xs font-bold text-slate-400">/ {barbers.length} em atendimento</span>
+                </p>
+                <p className="text-[11px] font-bold text-slate-500 mt-2 flex items-center gap-1">
+                  <span className={`w-2 h-2 rounded-full ${barbers.length - barbersOccupiedNow.length > 0 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span>{Math.max(0, barbers.length - barbersOccupiedNow.length)} barbeiros livres agora</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Card 3: Financeiro do Dia */}
+            <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-4 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider">Faturamento Previsto</span>
+                <div className="w-8 h-8 rounded-xl bg-white/10 text-emerald-400 flex items-center justify-center font-bold backdrop-blur-md">
+                  <TrendingUp size={16} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <p className="text-2xl font-black font-mono text-white tracking-tight">
+                  R$ {valorConcluido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+                <p className="text-[10px] font-bold text-indigo-200 mt-1">
+                  Previsto Total: R$ {valorPrevisto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+
+            {/* Card 4: Alertas e Oportunidades */}
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Atenção & Alertas</span>
+                <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+                  <Zap size={16} />
+                </div>
+              </div>
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-600 font-bold">Clientes c/ Fiado:</span>
+                  <span className={`font-black ${clientsWithDebtCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{clientsWithDebtCount} hoje</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-600 font-bold">Primeira vez:</span>
+                  <span className="font-black text-emerald-600">{newClientsCount} novos</span>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="mt-2">
-            <p className="text-2xl font-black text-slate-900 tracking-tight">{dayApps.length} <span className="text-xs font-bold text-slate-400">agendamentos</span></p>
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[9px] font-black border border-emerald-200">
-                {concluidosCount} Concluídos
+
+          {/* 🏷️ BARRA DE LEGENDA DISCRETA DE STATUS */}
+          <div className="bg-white border border-slate-200 px-4 py-2.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <Filter size={12} /> Status dos Horários:
+            </span>
+            <div className="flex flex-wrap items-center gap-3 text-xs font-bold">
+              <span className="flex items-center gap-1.5 text-blue-800 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
+                <span className="w-2 h-2 rounded-full bg-blue-500" /> Confirmado
               </span>
-              <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[9px] font-black border border-amber-200 animate-pulse">
-                {emAtendimentoCount} Na Cadeira
+              <span className="flex items-center gap-1.5 text-amber-900 bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-400 font-black ring-2 ring-amber-300/40">
+                <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping" /> Na Cadeira (Agol)
               </span>
-              <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[9px] font-black border border-blue-200">
-                {agendadosCount} A Agendar
+              <span className="flex items-center gap-1.5 text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" /> Concluído
+              </span>
+              <span className="flex items-center gap-1.5 text-rose-800 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
+                <span className="w-2 h-2 rounded-full bg-rose-500" /> Faltou / Cancelado
+              </span>
+              <span className="flex items-center gap-1.5 text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-300">
+                <Lock size={12} className="text-slate-600" /> Bloqueado / Intervalo
               </span>
             </div>
           </div>
-        </div>
-
-        {/* Card 2: Barbeiros em Ação */}
-        <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Cadeiras Ocupadas</span>
-            <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
-              <Scissors size={16} />
-            </div>
-          </div>
-          <div className="mt-2">
-            <p className="text-2xl font-black text-slate-900 tracking-tight">
-              {barbersOccupiedNow.length} <span className="text-xs font-bold text-slate-400">/ {barbers.length} em atendimento</span>
-            </p>
-            <p className="text-[11px] font-bold text-slate-500 mt-2 flex items-center gap-1">
-              <span className={`w-2 h-2 rounded-full ${barbers.length - barbersOccupiedNow.length > 0 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-              <span>{Math.max(0, barbers.length - barbersOccupiedNow.length)} barbeiros livres agora</span>
-            </p>
-          </div>
-        </div>
-
-        {/* Card 3: Financeiro do Dia */}
-        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-4 rounded-2xl shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider">Faturamento Previsto</span>
-            <div className="w-8 h-8 rounded-xl bg-white/10 text-emerald-400 flex items-center justify-center font-bold backdrop-blur-md">
-              <TrendingUp size={16} />
-            </div>
-          </div>
-          <div className="mt-2">
-            <p className="text-2xl font-black font-mono text-white tracking-tight">
-              R$ {valorConcluido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
-            <p className="text-[10px] font-bold text-indigo-200 mt-1">
-              Previsto Total: R$ {valorPrevisto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
-          </div>
-        </div>
-
-        {/* Card 4: Alertas e Oportunidades */}
-        <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Atenção & Alertas</span>
-            <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
-              <Zap size={16} />
-            </div>
-          </div>
-          <div className="mt-2 space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-600 font-bold">Clientes c/ Fiado:</span>
-              <span className={`font-black ${clientsWithDebtCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{clientsWithDebtCount} hoje</span>
-            </div>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-600 font-bold">Primeira vez:</span>
-              <span className="font-black text-emerald-600">{newClientsCount} novos</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 🏷️ BARRA DE LEGENDA DISCRETA DE STATUS */}
-      <div className="bg-white border border-slate-200 px-4 py-2.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
-        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-          <Filter size={12} /> Status dos Horários:
-        </span>
-        <div className="flex flex-wrap items-center gap-3 text-xs font-bold">
-          <span className="flex items-center gap-1.5 text-blue-800 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
-            <span className="w-2 h-2 rounded-full bg-blue-500" /> Confirmado
-          </span>
-          <span className="flex items-center gap-1.5 text-amber-900 bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-400 font-black ring-2 ring-amber-300/40">
-            <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping" /> Na Cadeira (Agol)
-          </span>
-          <span className="flex items-center gap-1.5 text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" /> Concluído
-          </span>
-          <span className="flex items-center gap-1.5 text-rose-800 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
-            <span className="w-2 h-2 rounded-full bg-rose-500" /> Faltou / Cancelado
-          </span>
-          <span className="flex items-center gap-1.5 text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-300">
-            <Lock size={12} className="text-slate-600" /> Bloqueado / Intervalo
-          </span>
-        </div>
-      </div>
+        </>
+      )}
 
       {/* 🗓️ QUADRO DA GRADE DE HORÁRIOS */}
       <div className="bg-surface border border-border rounded-2xl overflow-hidden flex flex-col flex-1 shadow-sm relative">
@@ -533,8 +539,8 @@ export function AgendaGeneral({
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Hora</span>
               </div>
               <div className="flex-1 flex">
-                {displayedBarbers.map(barber => {
-                  const bUid = barber.uid || barber.id;
+                {displayedBarbers.map((barber, barberIdx) => {
+                  const bUid = barber.uid || barber.id || `barber-b-${barberIdx}`;
                   const currentApp = dayApps.find(app => app.profissional_id === bUid && app.status === 'em_atendimento');
                   const totalBarberCuts = dayApps.filter(app => app.profissional_id === bUid && app.status !== 'cancelado').length;
                   const columnWidthClass = displayedBarbers.length <= 2
@@ -542,7 +548,7 @@ export function AgendaGeneral({
                     : 'min-w-[180px] sm:min-w-[220px] flex-1';
 
                   return (
-                    <div key={barber.uid} className={`${columnWidthClass} border-r border-border p-3 flex items-center justify-between gap-3 bg-slate-50/95`}>
+                    <div key={`barber-hdr-${barber.uid || barber.id || barber.nome || barberIdx}`} className={`${columnWidthClass} border-r border-border p-3 flex items-center justify-between gap-3 bg-slate-50/95`}>
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 bg-accent rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-sm border border-accent/20">
                           {barber.nome.charAt(0).toUpperCase()}
@@ -640,8 +646,10 @@ export function AgendaGeneral({
 
                               return (
                                 <motion.div
-                                  key={`block-start-${block.id || 'block'}-${time}`}
-                                  layoutId={block.id ? `block-layout-${block.id}` : undefined}
+                                  key={`block-start-${block.id || 'block'}-${barberKey}-${time}`}
+                                  initial={{ opacity: 0, scale: 0.95 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  transition={{ duration: 0.15 }}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (window.confirm(`Deseja realmente remover este bloqueio: "${block.reason || 'Bloqueado'}"?`)) {
@@ -729,8 +737,10 @@ export function AgendaGeneral({
 
                               return (
                                 <motion.div
-                                  key={`app-start-${app.id || 'app'}-${time}-${appIdx}`}
-                                  layoutId={app.id ? `app-layout-${app.id}` : undefined}
+                                  key={`app-start-${app.id || 'app'}-${barberKey}-${time}-${appIdx}`}
+                                  initial={{ opacity: 0, scale: 0.96 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  transition={{ duration: 0.15 }}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     onOpenAppointment(app);

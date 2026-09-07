@@ -130,6 +130,9 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
         const tId = getActiveTenantId();
         const profile = await tenantService.getTenant(tId);
         setTenantProfile(profile);
+        if (tId) {
+          comandaService.healAndSyncOrphanedComandas(tId).catch(console.warn);
+        }
       } catch (err) {
         console.error("Error loading tenant profile in Agenda:", err);
       }

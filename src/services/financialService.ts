@@ -87,6 +87,56 @@ export const financialService = {
     const txRef = doc(db, TRANSACTIONS_COLLECTION, transaction.id);
     await deleteDoc(txRef);
 
+    // Look for matching professional advance (vale) and cascade delete
+    try {
+      // 1. By transaction_id
+      const qAdv = query(
+        collection(db, 'professional_advances'),
+        where('transaction_id', '==', transaction.id)
+      );
+      const snapAdv = await getDocs(qAdv);
+      for (const d of snapAdv.docs) {
+        await deleteDoc(d.ref);
+      }
+
+      // 2. Fallback matching if not linked by transaction_id
+      if (
+        transaction.category?.toLowerCase().includes('vale') || 
+        transaction.category?.toLowerCase().includes('adiantamento') || 
+        transaction.description?.toLowerCase().includes('vale') ||
+        transaction.profissional_id
+      ) {
+        let advQueryConstraints: any[] = [];
+        if (transaction.profissional_id) {
+          advQueryConstraints.push(where('profissional_id', '==', transaction.profissional_id));
+        }
+        advQueryConstraints.push(where('amount', '==', transaction.amount));
+        const fallbackAdvSnap = await getDocs(query(collection(db, 'professional_advances'), ...advQueryConstraints));
+        for (const d of fallbackAdvSnap.docs) {
+          const advData = d.data();
+          if (advData.date === transaction.date || !advData.transaction_id || advData.transaction_id === transaction.id) {
+            await deleteDoc(d.ref);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Aviso ao remover vale vinculado à transação:", e);
+    }
+
+    // Look for matching accounts_payable and delete
+    try {
+      const qPay = query(
+        collection(db, 'accounts_payable'),
+        where('transactionId', '==', transaction.id)
+      );
+      const snapPay = await getDocs(qPay);
+      for (const d of snapPay.docs) {
+        await deleteDoc(d.ref);
+      }
+    } catch (e) {
+      console.warn("Aviso ao remover conta a pagar vinculada à transação:", e);
+    }
+
     // Look for matching cash movement
     try {
       if (transaction.movement_id) {

@@ -2266,13 +2266,74 @@ function encodeFirestoreFields(data: any): any {
 
 
 
+  // In-memory rate limiter for credit card tokenization attempts (Anti-Brute Force / Anti-Card Testing)
+  const ccAttemptTracker = new Map<string, { count: number; resetTime: number }>();
+
   // Update Credit Card endpoint for Asaas Subscription
   app.post(["/api/saas/payment/update-credit-card", "/saas/payment/update-credit-card", "/payment/update-credit-card", "/update-credit-card"], async (req, res) => {
     try {
-      const { subscriptionId, creditCard, creditCardHolderInfo } = req.body;
-      if (!subscriptionId || !creditCard) {
-        return res.status(400).json({ error: "Parâmetros subscriptionId e creditCard são obrigatórios." });
+      const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+      const now = Date.now();
+      
+      // Rate Limit Check: max 5 credit card attempts per IP every 10 minutes
+      const tracker = ccAttemptTracker.get(clientIp);
+      if (tracker) {
+        if (now < tracker.resetTime) {
+          if (tracker.count >= 5) {
+            console.warn(`🚨 [SECURITY ALERT] Rate limit de cartão excedido para o IP ${clientIp}`);
+            return res.status(429).json({ 
+              error: "Muitas tentativas de cadastro de cartão seguidas. Por medida de segurança, aguarde 10 minutos para tentar novamente." 
+            });
+          }
+        } else {
+          // Reset window
+          ccAttemptTracker.set(clientIp, { count: 0, resetTime: now + 10 * 60 * 1000 });
+        }
+      } else {
+        ccAttemptTracker.set(clientIp, { count: 0, resetTime: now + 10 * 60 * 1000 });
       }
+
+      const { subscriptionId, creditCard, creditCardHolderInfo } = req.body;
+      if (!subscriptionId || !creditCard || !creditCard.number || !creditCard.ccv) {
+        return res.status(400).json({ error: "Parâmetros subscriptionId e dados completos do cartão são obrigatórios." });
+      }
+
+      // Input Sanitization & Pre-Validation
+      const cleanCardNumber = String(creditCard.number || '').replace(/\D/g, '');
+      const cleanCcv = String(creditCard.ccv || '').replace(/\D/g, '');
+      const cleanHolderName = String(creditCard.holderName || creditCardHolderInfo?.name || '').trim().toUpperCase();
+      const cleanCpf = String(creditCardHolderInfo?.cpfCnpj || '').replace(/\D/g, '');
+
+      if (cleanCardNumber.length < 13 || cleanCardNumber.length > 19) {
+        return res.status(400).json({ error: "Número de cartão de crédito inválido." });
+      }
+      if (cleanCcv.length < 3 || cleanCcv.length > 4) {
+        return res.status(400).json({ error: "Código de segurança (CVV) inválido." });
+      }
+      if (cleanCpf.length !== 11 && cleanCpf.length !== 14) {
+        return res.status(400).json({ error: "CPF ou CNPJ do titular inválido." });
+      }
+
+      const sanitizedCard = {
+        holderName: cleanHolderName,
+        number: cleanCardNumber,
+        expiryMonth: String(creditCard.expiryMonth || '').padStart(2, '0'),
+        expiryYear: String(creditCard.expiryYear || ''),
+        ccv: cleanCcv
+      };
+
+      const sanitizedHolderInfo = {
+        name: cleanHolderName,
+        email: String(creditCardHolderInfo?.email || '').trim().toLowerCase(),
+        cpfCnpj: cleanCpf,
+        postalCode: String(creditCardHolderInfo?.postalCode || '01000-000').replace(/\D/g, ''),
+        addressNumber: String(creditCardHolderInfo?.addressNumber || '1').trim(),
+        phone: String(creditCardHolderInfo?.phone || '11999999999').replace(/\D/g, '')
+      };
+
+      // Increment attempt counter for rate limiting
+      const currentTrack = ccAttemptTracker.get(clientIp);
+      if (currentTrack) currentTrack.count += 1;
 
       // 1. Resolve target subscription to find real Asaas subscriptionId and tenantId
       let asaasSubId = subscriptionId;
@@ -2326,8 +2387,8 @@ function encodeFirestoreFields(data: any): any {
           'access_token': asaasApiKey
         },
         body: JSON.stringify({
-          creditCard,
-          creditCardHolderInfo
+          creditCard: sanitizedCard,
+          creditCardHolderInfo: sanitizedHolderInfo
         })
       });
 

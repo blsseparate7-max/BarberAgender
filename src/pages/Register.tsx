@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithPopup, sendEmailVerification } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { getActiveTenantId } from '../services/tenantService';
-import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles, Building2, Globe, Phone, MapPin } from 'lucide-react';
+import { userService } from '../services/userService';
+import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles, Building2, Globe, Phone, MapPin, CheckCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface RegisterPageProps {
@@ -16,6 +17,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
   const [role, setRole] = useState<'cliente' | 'admin'>(initialRole);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [tenantName, setTenantName] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
@@ -28,6 +30,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [refCode, setRefCode] = useState<string | null>(null);
   const [linkClientId, setLinkClientId] = useState<string | null>(null);
   const [linkingProfile, setLinkingProfile] = useState<any | null>(null);
@@ -260,6 +263,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
     console.log('handleRegister triggered');
     setLoading(true);
     setError('');
+    setSuccessMessage('');
 
     if (password.length < 6) {
       setError('A senha deve ter pelo menos 6 caracteres.');
@@ -277,6 +281,27 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
         setError('O link/identificador da barbearia é obrigatório.');
         setLoading(false);
         return;
+      }
+    }
+
+    // Check duplicate phone if provided
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (cleanPhone) {
+      if (cleanPhone.length < 10) {
+        setError('Por favor, informe um número de WhatsApp/Telefone válido com DDD.');
+        setLoading(false);
+        return;
+      }
+      try {
+        const activeTid = role === 'admin' ? tenantSlug : getActiveTenantId();
+        const phoneCheck = await userService.checkPhoneExists(phone, undefined, activeTid);
+        if (phoneCheck.exists) {
+          setError(`O telefone "${phone}" já está cadastrado nesta barbearia para o cliente ${phoneCheck.user?.nome || ''}. Utilize outro número ou entre em contato com a recepção.`);
+          setLoading(false);
+          return;
+        }
+      } catch (phoneErr) {
+        console.warn("Could not verify phone uniqueness:", phoneErr);
       }
     }
 
@@ -298,6 +323,14 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       const user = userCredential.user;
 
       await updateProfile(user, { displayName: name });
+
+      // Send email verification link
+      try {
+        await sendEmailVerification(user);
+        setSuccessMessage('Um e-mail de verificação foi enviado para o seu e-mail. Por favor, confirme para validar sua conta.');
+      } catch (emailErr) {
+        console.warn("Could not send email verification:", emailErr);
+      }
 
       // 3. If admin, create tenant document
       const activeTenantId = role === 'admin' ? tenantSlug : getActiveTenantId();
@@ -380,6 +413,8 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             uid: user.uid,
             email: user.email?.toLowerCase().trim() || email.toLowerCase().trim(),
             nome: name,
+            telefone: phone,
+            phone: phone.replace(/\D/g, ''),
             tipo: role, // 'admin' or 'cliente'
             isLinked: true,
             linkedAt: serverTimestamp(),
@@ -534,6 +569,13 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             </div>
           )}
 
+          {successMessage && (
+            <div className="bg-emerald-500/10 border border-emerald-500/40 p-4 rounded-xl flex items-start gap-3 text-emerald-400 text-xs">
+              <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
+              <span>{successMessage}</span>
+            </div>
+          )}
+
           {/* New Fields for Admin / Barbershop Registration */}
           {role === 'admin' && (
             <motion.div 
@@ -654,6 +696,22 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
               />
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">WhatsApp / Telefone</label>
+            <div className="relative">
+              <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+              <input 
+                type="tel" 
+                required
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="(11) 99999-9999"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
+              />
+            </div>
+            <p className="text-[10px] text-zinc-500 ml-1">Usado para identificação única do seu perfil e notificações</p>
           </div>
 
           <div className="space-y-1">

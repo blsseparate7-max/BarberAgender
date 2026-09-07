@@ -436,6 +436,20 @@ export const cashService = {
 
       transaction.delete(movementRef);
     });
+
+    // Cleanup linked advance and transactions if exists
+    try {
+      const qAdv = query(
+        collection(db, 'professional_advances'),
+        where('movement_id', '==', id)
+      );
+      const snapAdv = await getDocs(qAdv);
+      for (const d of snapAdv.docs) {
+        await deleteDoc(d.ref);
+      }
+    } catch (e) {
+      console.warn("Aviso ao remover avanço vinculado ao movimento:", e);
+    }
   },
 
   async updateMovement(id: string, updated: Partial<CashMovement>, oldAmount?: number) {

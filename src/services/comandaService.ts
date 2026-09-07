@@ -78,6 +78,193 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 export const comandaService = {
+  async healAndSyncOrphanedComandas(tenantId?: string) {
+    const targetTenantId = tenantId || getActiveTenantId();
+    if (!targetTenantId) return { healedComandas: 0, syncedAppointments: 0 };
+
+    try {
+      let healedComandas = 0;
+      let syncedAppointments = 0;
+
+      const normalizeStr = (s?: string) => {
+        if (!s) return '';
+        return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      };
+
+      // 1. Find open comandas that already have paid commissions or are linked to completed daily flow items
+      const openComandasSnap = await getDocs(query(
+        collection(db, 'comandas'),
+        where('tenantId', '==', targetTenantId),
+        where('status', '==', 'aberta')
+      ));
+
+      for (const cDoc of openComandasSnap.docs) {
+        const cData = cDoc.data();
+        const comandaId = cDoc.id;
+
+        // Check if there are commissions generated for this comanda
+        const commSnap = await getDocs(query(
+          collection(db, 'commissions'),
+          where('tenantId', '==', targetTenantId),
+          where('comanda_id', '==', comandaId)
+        ));
+
+        // Check if linked daily flow is completed
+        let isDailyFlowCompleted = false;
+        const dfId = cData.daily_flow_id || cData.dailyFlowId;
+        if (dfId) {
+          const dfSnap = await getDoc(doc(db, 'daily_flow', dfId));
+          if (dfSnap.exists() && dfSnap.data().status === 'completed') {
+            isDailyFlowCompleted = true;
+          }
+        }
+
+        // If commissions already exist or daily flow is completed, mark comanda as closed
+        if (!commSnap.empty || isDailyFlowCompleted) {
+          await updateDoc(cDoc.ref, {
+            status: 'fechada',
+            closedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          healedComandas++;
+
+          // Synchronize appointments
+          await this.closeLinkedAppointments(comandaId, cData.agendamento_id || cData.agendamentoId);
+          syncedAppointments++;
+        }
+      }
+
+      // 2. Fetch all closed comandas & all commissions in this tenant for cross-referencing
+      const closedSnap = await getDocs(query(
+        collection(db, 'comandas'),
+        where('tenantId', '==', targetTenantId),
+        where('status', '==', 'fechada')
+      ));
+
+      const closedComandas = closedSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const commissionsSnap = await getDocs(query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', targetTenantId)
+      ));
+      const commissionsList = commissionsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // 3. Directly inspect all appointments with status 'em_atendimento' in this tenant
+      const inServiceAppsSnap = await getDocs(query(
+        collection(db, 'appointments'),
+        where('tenantId', '==', targetTenantId),
+        where('status', '==', 'em_atendimento')
+      ));
+
+      for (const aDoc of inServiceAppsSnap.docs) {
+        const aData = aDoc.data();
+        const aId = aDoc.id;
+        const normClient = normalizeStr(aData.cliente_name);
+        const normPro = normalizeStr(aData.profissional_name);
+
+        // Check if matching closed comanda exists
+        const matchedClosedComanda = closedComandas.find((c: any) => {
+          if (c.id === aData.comanda_id) return true;
+          if (c.agendamento_id === aId || c.agendamentoId === aId || c.appointment_id === aId) return true;
+          if (aData.daily_flow_id && (c.daily_flow_id === aData.daily_flow_id || c.dailyFlowId === aData.daily_flow_id)) return true;
+          
+          const cNormClient = normalizeStr(c.cliente_name);
+          if (normClient && normClient !== 'consumidor final' && normClient.length > 2 && cNormClient) {
+            if (cNormClient === normClient || cNormClient.includes(normClient) || normClient.includes(cNormClient)) {
+              return true;
+            }
+          }
+          return false;
+        });
+
+        // Check if matching commission exists
+        const matchedCommission = commissionsList.find((comm: any) => {
+          if (comm.agendamento_id === aId) return true;
+          if (aData.comanda_id && comm.comanda_id === aData.comanda_id) return true;
+          const commNormClient = normalizeStr(comm.cliente_name);
+          if (normClient && normClient !== 'consumidor final' && normClient.length > 2 && commNormClient) {
+            if (commNormClient === normClient || commNormClient.includes(normClient) || normClient.includes(commNormClient)) {
+              return true;
+            }
+          }
+          return false;
+        });
+
+        // Check if linked daily_flow is completed
+        let dfCompleted = false;
+        if (aData.daily_flow_id) {
+          try {
+            const dfDoc = await getDoc(doc(db, 'daily_flow', aData.daily_flow_id));
+            if (dfDoc.exists() && dfDoc.data().status === 'completed') {
+              dfCompleted = true;
+            }
+          } catch (_) {}
+        }
+
+        if (matchedClosedComanda || matchedCommission || dfCompleted) {
+          await updateDoc(aDoc.ref, {
+            status: 'concluído',
+            comanda_id: (matchedClosedComanda as any)?.id || (matchedCommission as any)?.comanda_id || aData.comanda_id || '',
+            comanda_number: (matchedClosedComanda as any)?.number || (matchedCommission as any)?.comanda_number || '',
+            updatedAt: serverTimestamp()
+          });
+          syncedAppointments++;
+
+          // Also make sure if daily_flow exists, it is marked completed
+          if (aData.daily_flow_id) {
+            try {
+              await updateDoc(doc(db, 'daily_flow', aData.daily_flow_id), {
+                status: 'completed',
+                comanda_id: (matchedClosedComanda as any)?.id || (matchedCommission as any)?.comanda_id || '',
+                comanda_status: 'fechada',
+                updatedAt: serverTimestamp()
+              });
+            } catch (_) {}
+          }
+        }
+      }
+
+      // 4. Also run closeLinkedAppointments for all closed comandas
+      for (const cDoc of closedSnap.docs) {
+        const cData = cDoc.data();
+        await this.closeLinkedAppointments(cDoc.id, cData.agendamento_id || cData.agendamentoId);
+      }
+
+      // 5. Cross-check daily_flow: ensure completed items have their comanda_id linked if a matching closed comanda exists
+      const dfSnap = await getDocs(query(
+        collection(db, 'daily_flow'),
+        where('tenantId', '==', targetTenantId),
+        where('status', '==', 'completed')
+      ));
+
+      for (const dfDoc of dfSnap.docs) {
+        const dfData = dfDoc.data();
+        if (!dfData.comanda_id) {
+          const normDfClient = normalizeStr(dfData.cliente_name);
+          const matchedComanda = closedComandas.find((c: any) => {
+            if (c.daily_flow_id === dfDoc.id || c.dailyFlowId === dfDoc.id) return true;
+            const normCClient = normalizeStr(c.cliente_name);
+            return normDfClient && normCClient && (normDfClient === normCClient || normDfClient.includes(normCClient) || normCClient.includes(normDfClient));
+          });
+
+          if (matchedComanda) {
+            await updateDoc(dfDoc.ref, {
+              comanda_id: (matchedComanda as any).id,
+              comanda_number: (matchedComanda as any).number || '',
+              comanda_status: 'fechada',
+              updatedAt: serverTimestamp()
+            });
+          }
+        }
+      }
+
+      return { healedComandas, syncedAppointments };
+    } catch (err) {
+      console.warn("Error in healAndSyncOrphanedComandas:", err);
+      return { healedComandas: 0, syncedAppointments: 0 };
+    }
+  },
+
   async closeAllOpenDailyFlowComandas(tenantId: string) {
     if (!tenantId) return 0;
     try {
@@ -924,6 +1111,41 @@ export const comandaService = {
             updatedCount++;
           }
         });
+      }
+
+      // If comanda has a daily_flow_id, find and close daily_flow and any appointments connected to it
+      const dfId = cData?.daily_flow_id || cData?.dailyFlowId;
+      if (dfId) {
+        try {
+          const dfSnap = await getDoc(doc(db, 'daily_flow', dfId));
+          if (dfSnap.exists()) {
+            const dfData = dfSnap.data();
+            batch.update(dfSnap.ref, {
+              status: 'completed',
+              comanda_id: comandaId,
+              comanda_number: cData?.number || '',
+              comanda_status: 'fechada',
+              updatedAt: serverTimestamp()
+            });
+
+            const dfAppId = dfData.agendamento_id || dfData.agendamentoId;
+            if (dfAppId && !touchedAppIds.has(dfAppId)) {
+              const dfAppSnap = await getDoc(doc(db, 'appointments', dfAppId));
+              if (dfAppSnap.exists() && dfAppSnap.data().status !== 'concluído') {
+                batch.update(dfAppSnap.ref, {
+                  status: 'concluído',
+                  comanda_id: comandaId,
+                  comanda_number: cData?.number || '',
+                  updatedAt: serverTimestamp()
+                });
+                touchedAppIds.add(dfAppId);
+                updatedCount++;
+              }
+            }
+          }
+        } catch (dfErr) {
+          console.warn("Error closing daily flow from closeLinkedAppointments:", dfErr);
+        }
       }
 
       // If comanda had daily_flow_id or client/date info, find matching appointments on that date

@@ -99,10 +99,11 @@ export const serviceService = {
   },
 
   // --- Categories ---
-  async getCategories(onlyActive = true) {
+  async getCategories(onlyActive = true, tenantId?: string) {
+    const tid = tenantId || getActiveTenantId();
     let q = query(
       collection(db, CATEGORIES_COLLECTION),
-      where('tenantId', '==', getActiveTenantId())
+      where('tenantId', '==', tid)
     );
     if (onlyActive) {
       q = query(q, where('active', '==', true));

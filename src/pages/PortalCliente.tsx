@@ -48,7 +48,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
 import { signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { collection, query, where, getDocs, addDoc, doc, updateDoc, setDoc, serverTimestamp, getDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, setDoc, serverTimestamp, getDoc, onSnapshot, writeBatch } from 'firebase/firestore';
 import { userService } from '../services/userService';
 import { appointmentService } from '../services/appointmentService';
 import { serviceService } from '../services/serviceService';
@@ -57,7 +57,7 @@ import { subscriptionService } from '../services/subscriptionService';
 import { inventoryService } from '../services/inventoryService';
 import { getActiveTenantId, tenantService, TenantProfile } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
-import { UserProfile, UserRole, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher } from '../types';
+import { UserProfile, UserRole, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher, ServiceCategory } from '../types';
 import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -173,6 +173,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loyalty, setLoyalty] = useState<LoyaltyPoints | null>(null);
@@ -1091,6 +1092,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
       try {
         const activeServices = await serviceService.getServices(true, undefined, activeTenantId);
         setServices(activeServices.filter(s => s.active !== false && s.showInPortal !== false));
+        const activeCategories = await serviceService.getCategories(true, activeTenantId);
+        setCategories(activeCategories);
       } catch (err) {
         console.warn("Could not load services list:", err);
       }
@@ -1519,8 +1522,49 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
   const executeCancelAppointment = async (appId: string) => {
     try {
-      await appointmentService.cancelAppointment(appId);
-      toast.success("Agendamento cancelado com sucesso.");
+      const appRef = doc(db, 'appointments', appId);
+      const appSnap = await getDoc(appRef);
+      
+      const batch = writeBatch(db);
+      
+      if (appSnap.exists()) {
+        const appData = appSnap.data();
+        const comandaId = appData.comanda_id || appData.comandaId || '';
+        
+        // 1. Delete the appointment document
+        batch.delete(appRef);
+        
+        // 2. Delete the comanda document if linked
+        if (comandaId) {
+          batch.delete(doc(db, 'comandas', comandaId));
+          
+          // Also delete other appointments belonging to this comanda
+          const otherApptsQuery = query(
+            collection(db, 'appointments'),
+            where('comanda_id', '==', comandaId)
+          );
+          const otherApptsSnap = await getDocs(otherApptsQuery);
+          otherApptsSnap.forEach((docSnap) => {
+            batch.delete(docSnap.ref);
+          });
+        }
+        
+        // 3. Find any comanda where agendamento_id is this appId
+        const comandaQuery = query(
+          collection(db, 'comandas'),
+          where('agendamento_id', '==', appId)
+        );
+        const comandaSnap = await getDocs(comandaQuery);
+        comandaSnap.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+        });
+        
+        await batch.commit();
+        toast.success("Agendamento e comanda cancelados com sucesso.");
+      } else {
+        toast.error("Agendamento não encontrado.");
+      }
+      
       await loadData();
     } catch (err) {
       console.error("Error canceling appointment:", err);
@@ -1670,7 +1714,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const navItems = [
     { id: 'home', label: 'A Barbearia', icon: MapPin },
     { id: 'schedule', label: 'Agendar', icon: Scissors },
-    { id: 'assinaturas', label: 'Clube VIP', icon: Sparkles },
+    { id: 'assinaturas', label: tenantInfo?.customSubscriptionLabel || 'Assinaturas', icon: Sparkles },
     ...(profile ? [
       { id: 'history', label: 'Histórico', icon: History },
       { id: 'fidelidade', label: 'Fidelidade', icon: Award },
@@ -2724,6 +2768,60 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                         <p className="text-xs text-slate-500 font-medium">Você pode escolher um ou mais procedimentos para o mesmo agendamento. Você está agendando com <strong>{selectedBarber?.nome}</strong>.</p>
                       </div>
 
+                      {services.length > 0 && services.some(s => s.isPopular) && (
+                        <div className="space-y-3 pt-1 border-t border-slate-100/50 mt-2">
+                          <div className="flex items-center gap-1.5 text-amber-500">
+                            <Sparkles size={13} className="fill-amber-500/20" />
+                            <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-600">Serviços Mais Procurados</h5>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {services.filter(s => s.isPopular).slice(0, 4).map((s, idx) => {
+                              const isSelected = selectedServices.some(item => item.id === s.id);
+                              const origPrice = s.preco || s.price || 0;
+                              return (
+                                <button
+                                  key={`pop-srv-${s.id || idx}`}
+                                  type="button"
+                                  onClick={() => handleToggleService(s)}
+                                  className={`p-3 rounded-2xl border text-left flex items-center justify-between gap-3 relative group transition-all ${
+                                    isSelected
+                                      ? 'border-indigo-600 bg-indigo-50/25 shadow-sm ring-2 ring-indigo-600/5'
+                                      : 'border-amber-100/80 bg-amber-50/5 hover:bg-amber-50/15 hover:border-amber-200/80 shadow-sm'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className={`w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center transition-all shrink-0 border bg-slate-100 text-slate-600 shadow-sm ${
+                                      isSelected ? 'border-indigo-600 bg-white' : 'border-white bg-slate-50'
+                                    }`}>
+                                      {s.fotoUrl ? (
+                                        <img src={s.fotoUrl} alt={s.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                      ) : (
+                                        <Scissors size={14} className="text-slate-400" />
+                                      )}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-1.5">
+                                        <h6 className="text-xs font-black text-slate-800 line-clamp-1">{s.nome}</h6>
+                                      </div>
+                                      <p className="text-[10px] text-slate-450 font-bold flex items-center gap-1 mt-0.5">
+                                        <span>{s.duracao_minutos || s.duration || 30} min</span>
+                                        <span className="text-slate-300">•</span>
+                                        <span className="text-indigo-600 font-extrabold">R$ {origPrice.toFixed(2)}</span>
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center transition-all shrink-0 ${
+                                    isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-250 bg-white text-transparent'
+                                  }`}>
+                                    <Check size={9} className="stroke-[3]" />
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
                       {services.length === 0 ? (
                         <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
                           <p className="text-xs text-slate-400 font-semibold">Nenhum serviço disponível no portal no momento.</p>
@@ -2732,27 +2830,38 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                         <div className="space-y-6 pt-2">
                           {/* Categorias - Abas Estilo Pills Horizontais */}
                           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none snap-x">
-                            {['Todos', ...Array.from(new Set(services.map(s => s.categoria || 'Geral')))].map((cat) => {
-                              const isSelected = activeCategoryTab === cat;
-                              const count = cat === 'Todos' 
-                                ? services.length 
-                                : services.filter(s => (s.categoria || 'Geral') === cat).length;
+                            {(() => {
+                              const presentCategoryNames = Array.from(new Set(services.map(s => s.categoria || 'Geral')));
+                              const sortedCategoryList = presentCategoryNames.sort((a, b) => {
+                                const idxA = categories.findIndex(c => c.name === a);
+                                const idxB = categories.findIndex(c => c.name === b);
+                                const valA = idxA === -1 ? 999999 : idxA;
+                                const valB = idxB === -1 ? 999999 : idxB;
+                                return valA - valB;
+                              });
 
-                              return (
-                                <button
-                                  key={`cat-pill-${cat}`}
-                                  type="button"
-                                  onClick={() => setActiveCategoryTab(cat)}
-                                  className={`px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap border snap-start ${
-                                    isSelected
-                                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
-                                      : 'bg-white text-slate-600 border-slate-100 hover:bg-slate-50'
-                                  }`}
-                                >
-                                  {cat} ({count})
-                                </button>
-                              );
-                            })}
+                              return ['Todos', ...sortedCategoryList].map((cat) => {
+                                const isSelected = activeCategoryTab === cat;
+                                const count = cat === 'Todos' 
+                                  ? services.length 
+                                  : services.filter(s => (s.categoria || 'Geral') === cat).length;
+
+                                return (
+                                  <button
+                                    key={`cat-pill-${cat}`}
+                                    type="button"
+                                    onClick={() => setActiveCategoryTab(cat)}
+                                    className={`px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap border snap-start ${
+                                      isSelected
+                                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                        : 'bg-white text-slate-600 border-slate-100 hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    {cat} ({count})
+                                  </button>
+                                );
+                              });
+                            })()}
                           </div>
 
                           {/* Lista de Serviços */}
@@ -2769,7 +2878,22 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                 grouped[cat].push(s);
                               });
 
-                              return Object.entries(grouped).map(([catName, sList]) => {
+                              const presentCategoryNames = Array.from(new Set(services.map(s => s.categoria || 'Geral')));
+                              const sortedCategoryList = presentCategoryNames.sort((a, b) => {
+                                const idxA = categories.findIndex(c => c.name === a);
+                                const idxB = categories.findIndex(c => c.name === b);
+                                const valA = idxA === -1 ? 999999 : idxA;
+                                const valB = idxB === -1 ? 999999 : idxB;
+                                return valA - valB;
+                              });
+
+                              const sortedEntries = Object.entries(grouped).sort(([catA], [catB]) => {
+                                const idxA = sortedCategoryList.indexOf(catA);
+                                const idxB = sortedCategoryList.indexOf(catB);
+                                return idxA - idxB;
+                              });
+
+                              return sortedEntries.map(([catName, sList]) => {
                                 const isCabelo = catName.toLowerCase().includes('cabelo') || catName.toLowerCase().includes('corte');
                                 const isBarba = catName.toLowerCase().includes('barba');
                                 const isCombo = catName.toLowerCase().includes('combo');

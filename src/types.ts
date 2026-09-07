@@ -109,6 +109,7 @@ export interface Service {
   comissoes_por_profissional?: Record<string, { tipo: 'padrao' | 'percentual' | 'fixo'; valor: number }>;
   barbeiros_ids?: string[];
   showInPortal?: boolean;
+  isPopular?: boolean;
   fotoUrl?: string;
   name?: string; // legado
   duration?: number; // legado

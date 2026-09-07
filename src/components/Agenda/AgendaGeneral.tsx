@@ -299,19 +299,19 @@ export function AgendaGeneral({
     switch (status) {
       case 'confirmado':
       case 'agendado': 
-        return 'bg-blue-50/95 border-2 border-blue-400 text-slate-900 shadow-sm hover:border-blue-600';
+        return 'bg-blue-100 border-2 border-blue-600 text-blue-950 shadow-sm font-black hover:border-blue-800';
       case 'em_atendimento': 
-        return 'bg-amber-100/95 border-2 border-amber-500 text-amber-950 shadow-md ring-2 ring-amber-400/40 hover:border-amber-600';
+        return 'bg-amber-200 border-2 border-amber-600 text-amber-950 shadow-md ring-2 ring-amber-500/40 hover:border-amber-800 font-black';
       case 'concluído': 
-        return 'bg-emerald-50/95 border-2 border-emerald-500 text-slate-900 shadow-sm hover:border-emerald-600';
+        return 'bg-emerald-100 border-2 border-emerald-600 text-emerald-950 shadow-sm font-black hover:border-emerald-800';
       case 'cancelado': 
-        return 'bg-rose-50/90 border-2 border-rose-300 text-rose-800 opacity-75';
+        return 'bg-rose-100 border-2 border-rose-500 text-rose-950 opacity-90 font-bold';
       case 'faltou': 
-        return 'bg-slate-100 border-2 border-slate-300 text-slate-500 line-through opacity-75';
+        return 'bg-slate-200 border-2 border-slate-400 text-slate-700 line-through opacity-85';
       case 'bloqueado': 
-        return 'bg-slate-900 border-2 border-slate-800 text-white';
+        return 'bg-slate-900 border-2 border-slate-700 text-white font-black';
       default: 
-        return 'bg-slate-50 border-2 border-slate-200 text-slate-700';
+        return 'bg-slate-100 border-2 border-slate-300 text-slate-800';
     }
   };
 
@@ -726,10 +726,14 @@ export function AgendaGeneral({
                               const cleanPhone = clientPhone.replace(/\D/g, '');
 
                               const subscriptionBorderClass = hasActiveSub 
-                                ? '!border-indigo-600 !ring-2 !ring-indigo-500/30' 
+                                ? '!border-yellow-600 !ring-2 !ring-yellow-400/50' 
                                 : hasExpiredSub 
                                   ? '!border-rose-600 !ring-4 !ring-red-500/30' 
                                   : '';
+
+                              const cardBgColorClass = hasActiveSub 
+                                ? 'bg-gradient-to-br from-amber-400 via-yellow-400 to-amber-500 text-amber-950 font-black shadow-lg shadow-yellow-500/30 hover:border-yellow-700' 
+                                : getStatusColor(app.status);
 
                               const appPos = layoutMap?.get(app.id) || { colIndex: 0, totalCols: 1 };
                               const colWidth = 100 / appPos.totalCols;
@@ -763,11 +767,11 @@ export function AgendaGeneral({
                                     left: appPos.totalCols === 1 ? '4px' : `calc(${leftPos}% + 2px)`,
                                     width: appPos.totalCols === 1 ? 'calc(100% - 8px)' : `calc(${colWidth}% - 4px)`
                                   }}
-                                  className={`absolute rounded-xl ${appPos.totalCols > 1 ? 'p-1.5 sm:p-2' : 'p-2.5'} flex flex-col justify-between shadow-md z-10 transition-all cursor-pointer overflow-hidden ${getStatusColor(app.status)} ${subscriptionBorderClass} hover:z-20`}
+                                  className={`absolute rounded-xl ${appPos.totalCols > 1 ? 'p-1.5 sm:p-2' : 'p-2.5'} flex flex-col justify-between shadow-md z-10 transition-all cursor-pointer overflow-hidden ${cardBgColorClass} ${subscriptionBorderClass} hover:z-20`}
                                 >
                                   <div className="overflow-hidden">
                                     <div className="flex items-center justify-between gap-1 mb-1">
-                                      <p className="text-xs font-black uppercase leading-tight truncate tracking-tight">{app.cliente_name}</p>
+                                      <p className={`text-xs font-black uppercase leading-tight truncate tracking-tight ${hasActiveSub ? 'text-amber-950 font-black' : ''}`}>{app.cliente_name}</p>
                                       {app.status === 'em_atendimento' && (
                                         <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded font-black text-[8px] uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0">
                                           <Scissors size={10} /> {appPos.totalCols === 1 && 'NA CADEIRA'}
@@ -776,8 +780,8 @@ export function AgendaGeneral({
                                     </div>
 
                                     <div className="flex items-center justify-between text-[10px] font-bold text-slate-700">
-                                      <span className="truncate">{app.servico_name}</span>
-                                      <span className="font-mono font-black shrink-0 text-slate-900 ml-1">
+                                      <span className={`truncate ${hasActiveSub ? 'text-amber-900 font-extrabold' : 'text-slate-700'}`}>{app.servico_name}</span>
+                                      <span className={`font-mono font-black shrink-0 ml-1 ${hasActiveSub ? 'text-amber-950 font-black' : 'text-slate-900'}`}>
                                         {getAppPrice(app) === 0 ? 'CLUBE' : `R$ ${getAppPrice(app).toFixed(0)}`}
                                       </span>
                                     </div>

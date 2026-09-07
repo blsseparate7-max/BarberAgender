@@ -1114,7 +1114,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     
     setLoading(true);
     try {
+      const itemToRemove = comanda.items.find(i => i.id === itemId);
       const updatedItems = comanda.items.filter(i => i.id !== itemId);
+
+      if (updatedItems.length === 0) {
+        // If no items remain, delete the comanda completely and delete all of its linked appointments
+        const batch = writeBatch(db);
+        batch.delete(doc(db, 'comandas', comanda.id));
+
+        const allApptsQuery = query(
+          collection(db, 'appointments'),
+          where('comanda_id', '==', comanda.id)
+        );
+        const allApptsSnap = await getDocs(allApptsQuery);
+        allApptsSnap.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+        });
+
+        await batch.commit();
+        toast.success("Comanda vazia e seus horários foram removidos.");
+        onClose();
+        return;
+      }
+
       await comandaService.updateComandaItems(
         comanda.id, 
         updatedItems, 
@@ -1123,6 +1145,31 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         user.uid, 
         profile?.nome || user.email || 'Usuário'
       );
+
+      // If a service item was removed, delete its linked appointment from the database
+      if (itemToRemove && itemToRemove.type === 'servico') {
+        try {
+          const apptsQuery = query(
+            collection(db, 'appointments'),
+            where('comanda_id', '==', comanda.id),
+            where('servico_id', '==', itemId)
+          );
+          const apptsSnap = await getDocs(apptsQuery);
+          const batch = writeBatch(db);
+          let deletedAppCount = 0;
+          apptsSnap.forEach((docSnap) => {
+            batch.delete(docSnap.ref);
+            deletedAppCount++;
+          });
+          if (deletedAppCount > 0) {
+            await batch.commit();
+            console.log(`Deleted ${deletedAppCount} linked appointments on service removal.`);
+          }
+        } catch (appDelErr) {
+          console.error("Error deleting linked appointment on service removal:", appDelErr);
+        }
+      }
+
       toast.success("Item removido.");
     } catch (err) {
       console.error(err);

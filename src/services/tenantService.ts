@@ -51,6 +51,7 @@ export interface TenantProfile {
   aboutText?: string;
   coverImage?: string;
   monthlyGoal?: number;
+  customSubscriptionLabel?: string;
 
   // Configurações de SaaS, Planos e Período de Teste (Trial)
   planId?: string;

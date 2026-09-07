@@ -39,7 +39,7 @@ import {
   CalendarPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
@@ -447,9 +447,9 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         status: 'concluído',
         updatedAt: serverTimestamp()
       });
-      if (app.daily_flow_id) {
+      if ((app as any).daily_flow_id) {
         try {
-          await updateDoc(doc(db, 'daily_flow', app.daily_flow_id), {
+          await updateDoc(doc(db, 'daily_flow', (app as any).daily_flow_id), {
             status: 'completed',
             updatedAt: serverTimestamp()
           });
@@ -710,6 +710,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     }
   };
 
+  const completedCount = React.useMemo(() => {
+    return appointments.filter(a => a.status === 'concluído').length;
+  }, [appointments]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950 flex flex-col pb-24 font-sans selection:bg-indigo-100 selection:text-indigo-900">
       
@@ -729,52 +733,54 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       )}
 
       {/* Header Banner */}
-      <header className="bg-slate-900 text-white pt-6 pb-12 px-4 shadow-md rounded-b-[2rem] relative shrink-0 z-30">
-        <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 opacity-95 rounded-b-[2rem] overflow-hidden pointer-events-none">
-          <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl" />
-          <div className="absolute top-1/2 left-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-xl" />
-        </div>
+      {activeTab !== 'agenda' && (
+        <header className="bg-slate-900 text-white pt-6 pb-12 px-4 shadow-md rounded-b-[2rem] relative shrink-0 z-30">
+          <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 opacity-95 rounded-b-[2rem] overflow-hidden pointer-events-none">
+            <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl" />
+            <div className="absolute top-1/2 left-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-xl" />
+          </div>
 
-        <div className="max-w-md mx-auto flex items-center justify-between relative z-10">
-          <div className="flex items-center gap-3">
-            <div 
-              onClick={() => fileInputRef.current?.click()}
-              className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner uppercase overflow-hidden relative group cursor-pointer"
-              title="Toque para alterar foto de perfil"
-            >
-              {currentProfile.fotoUrl || currentProfile.avatarUrl ? (
-                <img 
-                  src={currentProfile.fotoUrl || currentProfile.avatarUrl} 
-                  alt={currentProfile.nome} 
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                currentProfile.nome.substring(0, 2)
-              )}
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                <Camera size={14} />
+          <div className="max-w-md mx-auto flex items-center justify-between relative z-10">
+            <div className="flex items-center gap-3">
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner uppercase overflow-hidden relative group cursor-pointer"
+                title="Toque para alterar foto de perfil"
+              >
+                {currentProfile.fotoUrl || currentProfile.avatarUrl ? (
+                  <img 
+                    src={currentProfile.fotoUrl || currentProfile.avatarUrl} 
+                    alt={currentProfile.nome} 
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  currentProfile.nome.substring(0, 2)
+                )}
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                  <Camera size={14} />
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase font-black tracking-widest text-indigo-300">Painel do Barbeiro</p>
+                <h2 className="text-lg font-black tracking-tight">{currentProfile.nome}</h2>
               </div>
             </div>
-            <div>
-              <p className="text-[10px] uppercase font-black tracking-widest text-indigo-300">Painel do Barbeiro</p>
-              <h2 className="text-lg font-black tracking-tight">{currentProfile.nome}</h2>
+            <div className="flex items-center gap-2">
+              <NotificationBell />
+              <button 
+                onClick={handleLogout}
+                className="p-2.5 bg-slate-800/80 hover:bg-red-500/20 hover:text-red-400 text-slate-300 rounded-xl transition border border-slate-700/50"
+                title="Sair do Sistema"
+              >
+                <LogOut size={16} />
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <NotificationBell />
-            <button 
-              onClick={handleLogout}
-              className="p-2.5 bg-slate-800/80 hover:bg-red-500/20 hover:text-red-400 text-slate-300 rounded-xl transition border border-slate-700/50"
-              title="Sair do Sistema"
-            >
-              <LogOut size={16} />
-            </button>
-          </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full mx-auto px-4 -mt-6 relative z-10 max-w-4xl pb-24">
+      <main className={`flex-1 w-full mx-auto px-4 relative z-10 max-w-4xl pb-24 ${activeTab === 'agenda' ? 'pt-4' : '-mt-6'}`}>
         
         {/* AGENDA TAB */}
         {activeTab === 'agenda' && (() => {
@@ -806,73 +812,62 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           return (
             <div className="space-y-4">
               
-              {/* 1. Horizontal date selection bar */}
-              <div className="bg-white border border-slate-200/80 p-4 rounded-3xl shadow-sm space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
-                  <div className="flex items-center gap-1.5">
-                    <Calendar size={14} className="text-indigo-600" />
-                    <span className="text-xs font-black uppercase text-slate-400 tracking-wider">
-                      Minha Escala
-                    </span>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    {!isToday(selectedDate) && (
-                      <button
-                        onClick={() => setSelectedDate(new Date())}
-                        className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg border border-indigo-100 transition active:scale-95"
-                      >
-                        Hoje
-                      </button>
-                    )}
-                    
-                    <span className="text-xs font-black text-indigo-600">
-                      {format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
-                    </span>
+              {/* 1. Horizontal date selection bar - Minimalist & Compact */}
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prev = new Date(selectedDate);
+                    prev.setDate(prev.getDate() - 1);
+                    setSelectedDate(prev);
+                  }}
+                  className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl border border-slate-200/60 transition active:scale-95 flex items-center gap-1 shrink-0"
+                >
+                  &lt; Ontem
+                </button>
 
-                    <div className="relative">
-                      <input
-                        type="date"
-                        value={format(selectedDate, 'yyyy-MM-dd')}
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            setSelectedDate(parse(e.target.value, 'yyyy-MM-dd', new Date()));
-                          }
-                        }}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-                      />
-                      <button className="bg-slate-50 hover:bg-slate-100 text-slate-600 p-1.5 rounded-lg border border-slate-200 transition flex items-center justify-center">
-                        <Calendar size={14} />
-                      </button>
-                    </div>
+                <div className="flex items-center gap-1.5 font-sans justify-center min-w-0">
+                  <span className="text-xs font-black text-slate-800 capitalize truncate">
+                    {format(selectedDate, "eeee, dd 'de' MMMM", { locale: ptBR })}
+                  </span>
+                  
+                  <div className="relative shrink-0">
+                    <input
+                      type="date"
+                      value={format(selectedDate, 'yyyy-MM-dd')}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedDate(parse(e.target.value, 'yyyy-MM-dd', new Date()));
+                        }
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                    />
+                    <button className="bg-slate-50 hover:bg-slate-100 text-slate-500 p-1.5 rounded-lg border border-slate-200 transition flex items-center justify-center">
+                      <Calendar size={13} />
+                    </button>
                   </div>
+
+                  {!isToday(selectedDate) && (
+                    <button
+                      onClick={() => setSelectedDate(new Date())}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg border border-indigo-100 transition shrink-0"
+                    >
+                      Hoje
+                    </button>
+                  )}
                 </div>
-                
-                <div className="flex gap-2 overflow-x-auto no-scrollbar py-0.5 pr-2">
-                  {dateStrip.map((d, dIdx) => {
-                    const isSelected = d.iso === format(selectedDate, 'yyyy-MM-dd');
-                    return (
-                      <button
-                         key={`barber-date-strip-${d.iso || dIdx}-${dIdx}`}
-                         onClick={() => setSelectedDate(parse(d.iso, 'yyyy-MM-dd', new Date()))}
-                         className={`flex flex-col items-center justify-center min-w-[50px] h-[64px] rounded-2xl transition border ${
-                          isSelected 
-                            ? 'bg-slate-900 border-slate-900 text-white shadow-md shadow-slate-950/25 scale-105' 
-                            : d.isToday
-                              ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-extrabold'
-                              : 'bg-slate-50 border-slate-200/70 text-slate-500 hover:bg-slate-100'
-                        }`}
-                      >
-                        <span className="text-[9px] uppercase font-bold tracking-wider leading-none mb-1.5">
-                          {d.dayName}
-                        </span>
-                        <span className="text-base font-black leading-none">
-                          {d.dayNum}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = new Date(selectedDate);
+                    next.setDate(next.getDate() + 1);
+                    setSelectedDate(next);
+                  }}
+                  className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl border border-slate-200/60 transition active:scale-95 flex items-center gap-1 shrink-0"
+                >
+                  Amanhã &gt;
+                </button>
               </div>
 
               {/* 2. SMART FOCUS HERO CARD (Cliente Atual ou Próximo na Cadeira) */}
@@ -1010,52 +1005,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                     </div>
                   </div>
                 </div>
-              ) : (
-                /* ☕ NENHUM PENDENTE / HORÁRIO LIVRE */
-                <div className="bg-slate-50/80 border border-dashed border-slate-200 p-4 rounded-3xl flex items-center justify-between gap-3 text-slate-600">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                      <Sparkles size={16} />
-                    </div>
-                    <div>
-                      <p className="text-xs font-black text-slate-800">Nenhum atendimento na fila neste momento</p>
-                      <p className="text-[10px] text-slate-400 font-bold">
-                        {appointments.length > 0 ? `${completedCount} de ${appointments.length} horários já foram atendidos.` : 'Agenda livre para encaixes e novos clientes.'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleNewAppointment('09:00', profile.uid)}
-                    className="px-3 py-2 bg-white hover:bg-slate-100 text-indigo-600 border border-slate-200 font-black rounded-xl text-[11px] shadow-xs transition active:scale-95 flex items-center gap-1 shrink-0"
-                  >
-                    <Plus size={14} />
-                    Encaixe
-                  </button>
-                </div>
-              )}
-
-              {/* 3. MINI SUMMARY BAR */}
-              <div className="flex items-center justify-between gap-2 px-1">
-                <div className="flex items-center gap-2">
-                  <span className="px-3 py-1.5 bg-white border border-slate-200/80 rounded-xl text-xs font-black text-slate-700 shadow-xs flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-indigo-600" />
-                    {appointments.length} agendados
-                  </span>
-                  <span className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-black text-emerald-700 shadow-xs flex items-center gap-1.5">
-                    <Check size={12} />
-                    {completedCount} concluídos
-                  </span>
-                </div>
-
-                <button
-                  onClick={() => handleNewAppointment('09:00', profile.uid)}
-                  className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black transition active:scale-95 flex items-center gap-1 shadow-sm"
-                >
-                  <Plus size={14} />
-                  Novo Agendamento
-                </button>
-              </div>
+              ) : null}
 
               {/* 4. AGENDA HOURLY GRID (LIMPA E FOCADA) */}
               <div className="bg-white border border-slate-200/80 p-1.5 rounded-3xl shadow-sm overflow-hidden">
@@ -1194,6 +1144,26 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                     <span>Vales Pendentes: <strong className="text-rose-400 font-bold">- R$ {stats.pendingAdvances.toFixed(2)}</strong></span>
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* Atendimentos Summary (Moved from Schedule Tab) */}
+            <div className="bg-white border border-slate-200/80 p-4 rounded-3xl shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Calendar size={14} className="text-indigo-600" />
+                <span className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                  Atendimentos do Dia ({format(selectedDate, "dd/MM")})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs font-black text-slate-700 shadow-xs flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                  {appointments.length} agendados
+                </span>
+                <span className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-black text-emerald-700 shadow-xs flex items-center gap-1.5">
+                  <Check size={12} />
+                  {completedCount} concluídos
+                </span>
               </div>
             </div>
 

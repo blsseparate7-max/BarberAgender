@@ -148,6 +148,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Search/Filters/View Mode/Pagination for Assinantes (Gestão)
   const [searchQuery, setSearchQuery] = useState('');
@@ -404,7 +405,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     try {
       // Process reactive renewals for expired/renewed subscriptions
       try {
-        const renewalResults = await subscriptionService.processReactiveRenewals();
+        const renewalResults: any = await subscriptionService.processReactiveRenewals();
         if (renewalResults.renewed > 0 || renewalResults.expired > 0) {
           toast.info(
             `Fidelidade Recorrente: ${renewalResults.renewed} renovadas automaticamente, ${renewalResults.expired} expiradas.`

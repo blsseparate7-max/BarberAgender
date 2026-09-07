@@ -283,7 +283,14 @@ export function AppointmentModal({
         }
       }
 
-      const start = parse(formData.startTime, 'HH:mm', new Date());
+      if (!formData.startTime) {
+        throw new Error('Por favor, defina um horário para o agendamento.');
+      }
+
+      // Slice to first 5 characters (HH:mm) to ensure Android/Motorola native picker compatibility (ignoring seconds)
+      const sanitizedStartTime = formData.startTime.slice(0, 5);
+
+      const start = parse(sanitizedStartTime, 'HH:mm', new Date());
       const endTime = format(addMinutes(start, finalDuration), 'HH:mm');
 
       const appointmentData = {
@@ -294,7 +301,7 @@ export function AppointmentModal({
         servico_id: service.id,
         servico_name: service.name,
         date: formData.date,
-        startTime: formData.startTime,
+        startTime: sanitizedStartTime,
         endTime,
         duration: finalDuration,
         price: service.price,

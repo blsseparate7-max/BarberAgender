@@ -582,6 +582,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       whatsapp: formData.get('whatsapp') as string,
       aboutText: formData.get('aboutText') as string,
       coverImage,
+      customSubscriptionLabel: (formData.get('customSubscriptionLabel') as string || '').trim().slice(0, 16),
       address: {
         street: formData.get('street') as string,
         city: formData.get('city') as string,
@@ -1420,6 +1421,21 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                           placeholder="https://facebook.com/sua_pagina"
                           className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                         />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-1">
+                          <Sparkles size={12} className="text-indigo-500" /> Nome da Aba de Assinatura (Ex: Clube VIP)
+                        </label>
+                        <input 
+                          name="customSubscriptionLabel"
+                          type="text"
+                          maxLength={16}
+                          defaultValue={tenant?.customSubscriptionLabel || ""}
+                          placeholder="Padrão: Assinaturas"
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                        <p className="text-[10px] text-slate-400 font-semibold ml-1">Personalize como os seus clientes enxergarão o seu clube de benefícios (Máx. 16 caracteres)</p>
                       </div>
                     </div>
                   </div>

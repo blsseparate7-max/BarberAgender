@@ -24,7 +24,9 @@ import {
   Layers,
   ChevronDown,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Service, ServiceCategory, UserProfile } from '../types';
@@ -507,6 +509,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
   const [activeTab, setActiveTab] = useState<'dados' | 'comissao'>('dados');
   const [permiteCortesia, setPermiteCortesia] = useState(service?.permite_cortesia || false);
   const [showInPortal, setShowInPortal] = useState(service?.showInPortal ?? true);
+  const [isPopular, setIsPopular] = useState(service?.isPopular ?? false);
   const [pontosResgate, setPontosResgate] = useState<number | ''>(service?.pontos_resgate ?? '');
   const [tipoComissao, setTipoComissao] = useState<'padrao' | 'percentual' | 'fixo'>(service?.tipo_comissao || 'padrao');
   const [valorComissao, setValorComissao] = useState<number>(service?.valor_comissao || 0);
@@ -617,6 +620,7 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
       comissoes_por_profissional: comissoesPorProfissional,
       barbeiros_ids: barbeirosIds,
       showInPortal,
+      isPopular,
       fotoUrl,
       active: service ? service.active : true
     };
@@ -850,6 +854,24 @@ function ServiceModal({ service, categories, onClose }: ServiceModalProps) {
                       <span className="text-xs font-black uppercase tracking-wider">{showInPortal ? 'Exibido' : 'Oculto'}</span>
                       <div className={`w-10 h-5 rounded-full relative transition-all ${showInPortal ? 'bg-emerald-500' : 'bg-slate-350'}`}>
                         <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${showInPortal ? 'left-5.5' : 'left-0.5'}`} />
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Destacar como Mais Procurado?</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsPopular(!isPopular)}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
+                        isPopular 
+                          ? 'bg-indigo-50 border-indigo-250 text-indigo-700' 
+                          : 'bg-slate-50 border-slate-200 text-slate-500'
+                      }`}
+                    >
+                      <span className="text-xs font-black uppercase tracking-wider">{isPopular ? 'Destacado' : 'Não'}</span>
+                      <div className={`w-10 h-5 rounded-full relative transition-all ${isPopular ? 'bg-indigo-500' : 'bg-slate-350'}`}>
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${isPopular ? 'left-5.5' : 'left-0.5'}`} />
                       </div>
                     </button>
                   </div>
@@ -1134,6 +1156,26 @@ function CategoryModal({ categories, onClose }: CategoryModalProps) {
     }
   };
 
+  const handleMove = async (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= categories.length) return;
+    
+    const currentCat = categories[index];
+    const otherCat = categories[targetIndex];
+    
+    try {
+      const currentOrder = currentCat.order !== undefined ? currentCat.order : index;
+      const otherOrder = otherCat.order !== undefined ? otherCat.order : targetIndex;
+      
+      await serviceService.updateCategory(currentCat.id, { order: otherOrder });
+      await serviceService.updateCategory(otherCat.id, { order: currentOrder });
+      toast.success("Ordem de exibição atualizada!");
+    } catch (err) {
+      console.error("Erro ao ordenar categoria:", err);
+      toast.error("Não foi possível alterar a ordem.");
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
       <motion.div 
@@ -1180,13 +1222,33 @@ function CategoryModal({ categories, onClose }: CategoryModalProps) {
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
                   <span className="text-sm font-bold text-slate-700">{cat.name}</span>
                 </div>
-                <button 
-                  onClick={() => setConfirmDeleteId(cat.id)}
-                  className="p-1 px-1.5 bg-white border text-red-500 rounded-lg hover:bg-red-50 border-slate-150-f100 transition-colors opacity-0 group-hover:opacity-100"
-                  title="remover categoria"
-                >
-                  <Trash2 size={13} />
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button 
+                    type="button"
+                    disabled={index === 0}
+                    onClick={() => handleMove(index, 'up')}
+                    className="p-1 bg-white border border-slate-150 text-slate-500 rounded-lg hover:bg-slate-100 disabled:opacity-20 disabled:hover:bg-white transition-colors"
+                    title="Mover para cima"
+                  >
+                    <ArrowUp size={11} />
+                  </button>
+                  <button 
+                    type="button"
+                    disabled={index === categories.length - 1}
+                    onClick={() => handleMove(index, 'down')}
+                    className="p-1 bg-white border border-slate-150 text-slate-500 rounded-lg hover:bg-slate-100 disabled:opacity-20 disabled:hover:bg-white transition-colors"
+                    title="Mover para baixo"
+                  >
+                    <ArrowDown size={11} />
+                  </button>
+                  <button 
+                    onClick={() => setConfirmDeleteId(cat.id)}
+                    className="p-1 px-1.5 bg-white border border-slate-150 text-red-500 rounded-lg hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                    title="remover categoria"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

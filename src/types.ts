@@ -674,6 +674,8 @@ export interface SubscriptionPlan {
   discounts?: SubscriptionDiscount[];
   allowedPaymentMethods?: ('PIX' | 'CREDIT_CARD')[];
   allowClientCancel?: boolean;
+  allowedDaysOfWeek?: number[]; // [0, 1, 2, 3, 4, 5, 6] where 0 = Dom, 1 = Seg, ..., 6 = Sáb. If undefined/empty, all days allowed.
+  customRestrictionNote?: string;
   createdAt: any;
   updatedAt: any;
 }
@@ -703,6 +705,8 @@ export interface Subscription {
   billingType?: 'PIX' | 'CREDIT_CARD';
   allowedPaymentMethods?: ('PIX' | 'CREDIT_CARD')[];
   allowClientCancel?: boolean;
+  allowedDaysOfWeek?: number[];
+  customRestrictionNote?: string;
   createdAt: any;
   updatedAt: any;
 }

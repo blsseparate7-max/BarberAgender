@@ -12,6 +12,7 @@ import { agendaBlockService } from '../../services/agendaBlockService';
 import { toast } from 'sonner';
 import { format, addMinutes, parse } from 'date-fns';
 import { ClientSelectCombobox } from '../Common/ClientSelectCombobox';
+import { isDateAllowedForPlan, formatAllowedDays, isDateWithinSubscriptionCycle } from '../../utils/subscriptionDays';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -759,13 +760,20 @@ export function AppointmentModal({
 
             {/* Seleção de Data */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Data</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Data</label>
+                {(currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') && (
+                  <span className="text-[10px] text-slate-400 font-semibold">
+                    Permitido agendar dias anteriores (retroativo)
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
                 <input 
                   type="date" 
                   required
-                  min={format(new Date(), 'yyyy-MM-dd')}
+                  min={currentUser.tipo === 'cliente' ? format(new Date(), 'yyyy-MM-dd') : undefined}
                   value={formData.date}
                   onChange={(e) => setFormData({...formData, date: e.target.value})}
                   className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-medium"
@@ -842,10 +850,14 @@ export function AppointmentModal({
             );
 
             const activeSub = clientSubscriptions.find(s => s.status === 'active');
+            const cycleCheck = isDateWithinSubscriptionCycle(activeSub, formData.date);
+            const isSubDayAllowed = activeSub ? isDateAllowedForPlan(activeSub.allowedDaysOfWeek, formData.date) : true;
+            const isSubValidForDate = isSubDayAllowed && cycleCheck.isWithinCycle;
+
             const subHasRemainingCuts = activeSub && isHaircut && (activeSub.haircutsUsed < (activeSub.haircutsPerMonth || 999));
             const subHasRemainingBeards = activeSub && isBeard && (activeSub.beardsUsed < (activeSub.beardsPerMonth || 999));
 
-            if (matchingPackage || subHasRemainingCuts || subHasRemainingBeards) {
+            if (matchingPackage || (isSubValidForDate && (subHasRemainingCuts || subHasRemainingBeards))) {
               return (
                 <div className="p-4 bg-emerald-50 border border-emerald-100/50 rounded-2xl flex items-start gap-3 text-emerald-800 animate-in slide-in-from-top-4 duration-300">
                   <CheckCircle2 size={18} className="text-emerald-600 mt-0.5 shrink-0" />
@@ -854,9 +866,43 @@ export function AppointmentModal({
                     {matchingPackage && (
                       <p className="font-semibold text-emerald-700">O cliente possui o pacote <strong className="font-extrabold">"{matchingPackage.packageName}"</strong> com <strong className="font-black">{matchingPackage.remainingCuts} cortes</strong> em haver. Este atendimento poderá ser descontado diretamente do pacote na comanda.</p>
                     )}
-                    {(subHasRemainingCuts || subHasRemainingBeards) && (
+                    {isSubValidForDate && (subHasRemainingCuts || subHasRemainingBeards) && (
                       <p className="font-semibold text-emerald-700">O cliente é assinante ativo do plano <strong className="font-extrabold">"{activeSub?.planName}"</strong>. Este serviço ({isHaircut ? 'Corte' : 'Barba'}) poderá ser consumido da assinatura.</p>
                     )}
+                  </div>
+                </div>
+              );
+            }
+
+            if (activeSub && !cycleCheck.isWithinCycle && (subHasRemainingCuts || subHasRemainingBeards)) {
+              return (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3 text-amber-900 animate-in slide-in-from-top-4 duration-300">
+                  <AlertCircle size={18} className="text-amber-600 mt-0.5 shrink-0" />
+                  <div className="text-xs space-y-1">
+                    <p className="font-black uppercase tracking-widest text-amber-950">Data fora da vigência da assinatura (Ciclo de 30 dias)</p>
+                    <p className="font-semibold text-amber-800">
+                      O plano <strong className="font-extrabold">"{activeSub?.planName}"</strong> do cliente é válido até <strong>{cycleCheck.endDateStr ? format(parse(cycleCheck.endDateStr, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : 'o vencimento do ciclo'}</strong>.
+                    </p>
+                    <p className="text-[11px] text-amber-700 font-medium">
+                      Para a data selecionada ({formData.date ? format(parse(formData.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}), este atendimento <strong>não</strong> está coberto pelo ciclo atual e deverá ser cobrado normalmente na comanda (ou renovado na data).
+                    </p>
+                  </div>
+                </div>
+              );
+            }
+
+            if (activeSub && !isSubDayAllowed && (subHasRemainingCuts || subHasRemainingBeards)) {
+              return (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3 text-amber-900 animate-in slide-in-from-top-4 duration-300">
+                  <AlertCircle size={18} className="text-amber-600 mt-0.5 shrink-0" />
+                  <div className="text-xs space-y-1">
+                    <p className="font-black uppercase tracking-widest text-amber-950">Assinatura com Restrição de Dias</p>
+                    <p className="font-semibold text-amber-800">
+                      O cliente é assinante do plano <strong className="font-extrabold">"{activeSub?.planName}"</strong>, que é válido exclusivamente em <strong>{formatAllowedDays(activeSub?.allowedDaysOfWeek, activeSub?.customRestrictionNote)}</strong>.
+                    </p>
+                    <p className="text-[11px] text-amber-700 font-medium">
+                      Para a data selecionada ({formData.date ? format(parse(formData.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}), este atendimento <strong>não</strong> está coberto pela assinatura e deverá ser cobrado pelo valor avulso na comanda.
+                    </p>
                   </div>
                 </div>
               );

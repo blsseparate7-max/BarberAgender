@@ -46,13 +46,14 @@ import {
   Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, parseISO, isBefore, startOfDay, addMonths } from 'date-fns';
+import { format, parseISO, isBefore, startOfDay, addMonths, addDays, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '../contexts/AuthContext';
 import { subscriptionService } from '../services/subscriptionService';
 import { userService } from '../services/userService';
 import { SubscriptionPlan, Subscription, SubscriptionStatus, UserProfile, Service, Product, SubscriptionDiscount } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
+import { DAYS_OF_WEEK_OPTIONS, formatAllowedDays, isDateAllowedForPlan } from '../utils/subscriptionDays';
 import { db, auth } from '../firebase';
 import { 
   collection, 
@@ -237,6 +238,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [planShowInPortal, setPlanShowInPortal] = useState(true);
   const [planAllowedPaymentMethods, setPlanAllowedPaymentMethods] = useState<('PIX' | 'CREDIT_CARD')[]>(['PIX', 'CREDIT_CARD']);
   const [planAllowClientCancel, setPlanAllowClientCancel] = useState(true);
+  const [planAllowedDaysOfWeek, setPlanAllowedDaysOfWeek] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+  const [planCustomRestrictionNote, setPlanCustomRestrictionNote] = useState<string>('');
 
   // States for viewing subscriber details & updating dates
   const [selectedSubDetail, setSelectedSubDetail] = useState<Subscription | null>(null);
@@ -598,6 +601,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setPlanDiscounts(editingPlan.discounts || []);
         setDiscountItemId('');
         setDiscountPercentage(10);
+        setPlanAllowedDaysOfWeek(editingPlan.allowedDaysOfWeek && editingPlan.allowedDaysOfWeek.length > 0 ? editingPlan.allowedDaysOfWeek : [0, 1, 2, 3, 4, 5, 6]);
+        setPlanCustomRestrictionNote(editingPlan.customRestrictionNote || '');
       } else {
         setPlanShowInPortal(true);
         setPlanAllowedPaymentMethods(['PIX', 'CREDIT_CARD']);
@@ -613,6 +618,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         setPlanDiscounts([]);
         setDiscountItemId('');
         setDiscountPercentage(10);
+        setPlanAllowedDaysOfWeek([0, 1, 2, 3, 4, 5, 6]);
+        setPlanCustomRestrictionNote('');
       }
     }
   }, [showPlanModal, editingPlan, services]);
@@ -755,13 +762,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     if (!selectedSubDetail) return;
     setIsSavingSubDates(true);
     try {
-      await subscriptionService.updateSubscriptionDates(selectedSubDetail.id, newSubStartDate, newSubEndDate);
-      toast.success("Datas da assinatura atualizadas com sucesso!");
+      const result: any = await subscriptionService.updateSubscriptionDates(selectedSubDetail.id, newSubStartDate, newSubEndDate);
+      if (result && result.message) {
+        toast.success(result.message);
+      } else {
+        toast.success("Datas da assinatura atualizadas com sucesso!");
+      }
       await loadData();
       setSelectedSubDetail(prev => prev ? { ...prev, startDate: newSubStartDate, endDate: newSubEndDate } : null);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Erro ao atualizar datas da assinatura:", err);
-      toast.error("Erro ao salvar novas datas da assinatura.");
+      toast.error(err?.message || "Erro ao salvar novas datas da assinatura.");
     } finally {
       setIsSavingSubDates(false);
     }
@@ -1162,6 +1173,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       pontos_outros: planPontosOutros,
       pontos_servicos: pontosServicosObj,
       discounts: planDiscounts,
+      allowedDaysOfWeek: planAllowedDaysOfWeek,
+      customRestrictionNote: planCustomRestrictionNote,
     };
 
     try {
@@ -3213,24 +3226,87 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   <div className="lg:col-span-5 space-y-6">
                     {/* Alterar Data de Vencimento Form */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-sm">
-                      <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
-                        <Calendar size={16} className="text-accent" />
-                        <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider">Ajustar Datas do Ciclo</h4>
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                        <div className="flex items-center gap-2">
+                          <Calendar size={16} className="text-accent" />
+                          <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider">Ajustar Datas do Ciclo</h4>
+                        </div>
+                        {(() => {
+                          if (!newSubStartDate || !newSubEndDate) return null;
+                          try {
+                            const diff = differenceInDays(parseISO(newSubEndDate), parseISO(newSubStartDate));
+                            return (
+                              <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${
+                                diff === 30 
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}>
+                                {diff} dias {diff === 30 ? '(30d padrão)' : ''}
+                              </span>
+                            );
+                          } catch {
+                            return null;
+                          }
+                        })()}
+                      </div>
+
+                      {/* Quick 30-day rotation presets */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!newSubStartDate) return;
+                            try {
+                              const s = parseISO(newSubStartDate);
+                              const e = addDays(s, 30);
+                              setNewSubEndDate(format(e, 'yyyy-MM-dd'));
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }}
+                          className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-slate-200 rounded-lg text-[10px] font-extrabold text-slate-600 transition-all text-center cursor-pointer"
+                        >
+                          +30 Dias Exatos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const today = new Date();
+                            const sStr = format(today, 'yyyy-MM-dd');
+                            const eStr = format(addDays(today, 30), 'yyyy-MM-dd');
+                            setNewSubStartDate(sStr);
+                            setNewSubEndDate(eStr);
+                          }}
+                          className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 rounded-lg text-[10px] font-extrabold text-slate-600 transition-all text-center cursor-pointer"
+                        >
+                          Início Hoje (D+30)
+                        </button>
                       </div>
 
                       <div className="space-y-3.5">
                         <div>
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Data de Início</label>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Data de Início / Contratação</label>
                           <input 
                             type="date" 
                             value={newSubStartDate}
-                            onChange={(e) => setNewSubStartDate(e.target.value)}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setNewSubStartDate(val);
+                              // Auto-recalculate 30 days if valid date
+                              if (val) {
+                                try {
+                                  const s = parseISO(val);
+                                  const e = addDays(s, 30);
+                                  setNewSubEndDate(format(e, 'yyyy-MM-dd'));
+                                } catch { /* ignore */ }
+                              }
+                            }}
                             className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-accent focus:bg-white transition-all"
                           />
                         </div>
 
                         <div>
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Data de Vencimento</label>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Data de Vencimento / Próx. Cobrança</label>
                           <input 
                             type="date" 
                             value={newSubEndDate}
@@ -3238,6 +3314,16 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                             className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-accent focus:bg-white transition-all"
                           />
                         </div>
+
+                        {/* Asaas status banner */}
+                        {!!(selectedSubDetail.asaasSubscriptionId || selectedSubDetail.asaasInvoiceId) && (
+                          <div className="p-3 bg-indigo-50/70 border border-indigo-150 rounded-xl flex items-start gap-2 text-[11px] text-indigo-900 leading-snug">
+                            <Zap size={14} className="text-indigo-600 shrink-0 mt-0.5" />
+                            <span>
+                              <strong>Espelhamento Asaas Ativo:</strong> Ao salvar, o Asaas atualizará o vencimento da assinatura e das faturas pendentes automaticamente.
+                            </span>
+                          </div>
+                        )}
 
                         <button
                           type="button"
@@ -3248,10 +3334,10 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           {isSavingSubDates ? (
                             <>
                               <Loader2 size={14} className="animate-spin" />
-                              <span>Salvando...</span>
+                              <span>Sincronizando com Asaas...</span>
                             </>
                           ) : (
-                            <span>Salvar Novas Datas</span>
+                            <span>Salvar & Espelhar Datas</span>
                           )}
                         </button>
                       </div>
@@ -3720,12 +3806,177 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   )}
                 </div>
 
-                {/* SEÇÃO 4: DESCONTOS EXTRAS PARA ASSINANTES */}
+                {/* SEÇÃO 4: DIAS DA SEMANA PERMITIDOS PARA ATENDIMENTO */}
+                <div className="bg-slate-50/60 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                    <div>
+                      <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                        <Calendar size={16} className="text-indigo-600" />
+                        4. Dias Permitidos para Atendimento (Bloqueios / Promoções)
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                        Defina os dias da semana em que os benefícios deste plano podem ser usufruídos (Ex: Plano Econômico Seg-Qui).
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-extrabold px-3 py-1 rounded-full self-start sm:self-auto border ${
+                      planAllowedDaysOfWeek.length === 7 
+                        ? 'bg-emerald-50 border-emerald-100 text-emerald-700' 
+                        : 'bg-amber-50 border-amber-200 text-amber-800'
+                    }`}>
+                      {formatAllowedDays(planAllowedDaysOfWeek, planCustomRestrictionNote)}
+                    </span>
+                  </div>
+
+                  {/* Quick Presets */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
+                      Atalhos Rápidos de Seleção
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPlanAllowedDaysOfWeek([0, 1, 2, 3, 4, 5, 6])}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                          planAllowedDaysOfWeek.length === 7 
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        ✨ Todos os Dias (Sem bloqueios)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPlanAllowedDaysOfWeek([1, 2, 3, 4])}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                          JSON.stringify([...planAllowedDaysOfWeek].sort((a,b)=>a-b)) === JSON.stringify([1, 2, 3, 4])
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        🔥 Segunda a Quinta (Promoção)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPlanAllowedDaysOfWeek([1, 2, 3, 4, 5])}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                          JSON.stringify([...planAllowedDaysOfWeek].sort((a,b)=>a-b)) === JSON.stringify([1, 2, 3, 4, 5])
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        💼 Segunda a Sexta (Dias Úteis)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPlanAllowedDaysOfWeek([5, 6, 0])}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                          JSON.stringify([...planAllowedDaysOfWeek].sort((a,b)=>a-b)) === JSON.stringify([0, 5, 6])
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        🎉 Fim de Semana (Sex, Sáb e Dom)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Individual Day Toggles */}
+                  <div className="space-y-1.5 pt-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
+                      Clique nos dias para permitir ou bloquear
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                      {DAYS_OF_WEEK_OPTIONS.map((dayOpt) => {
+                        const isAllowed = planAllowedDaysOfWeek.includes(dayOpt.day);
+                        return (
+                          <button
+                            key={`day-toggle-${dayOpt.day}`}
+                            type="button"
+                            onClick={() => {
+                              if (isAllowed) {
+                                if (planAllowedDaysOfWeek.length === 1) {
+                                  toast.error('Pelo menos 1 dia da semana deve permanecer selecionado.');
+                                  return;
+                                }
+                                setPlanAllowedDaysOfWeek(prev => prev.filter(d => d !== dayOpt.day));
+                              } else {
+                                setPlanAllowedDaysOfWeek(prev => [...prev, dayOpt.day]);
+                              }
+                            }}
+                            className={`p-3 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                              isAllowed
+                                ? 'bg-indigo-50/70 border-indigo-300 text-indigo-900 shadow-xs'
+                                : 'bg-white/80 border-slate-200 text-slate-400 hover:border-slate-300 opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1">
+                              <span className={`w-2 h-2 rounded-full ${isAllowed ? 'bg-indigo-600' : 'bg-slate-300'}`} />
+                              <span className="text-xs font-black uppercase tracking-tight">{dayOpt.shortLabel}</span>
+                            </div>
+                            <span className={`text-[9px] font-extrabold uppercase ${isAllowed ? 'text-indigo-700 font-black' : 'text-slate-400'}`}>
+                              {isAllowed ? 'Liberado' : 'Bloqueado'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Dynamic Explanatory Box */}
+                  <div className={`p-4 rounded-2xl border text-xs space-y-1 ${
+                    planAllowedDaysOfWeek.length === 7
+                      ? 'bg-emerald-50/60 border-emerald-200 text-emerald-900'
+                      : 'bg-amber-50/70 border-amber-200 text-amber-950'
+                  }`}>
+                    <div className="flex items-center gap-2 font-black">
+                      {planAllowedDaysOfWeek.length === 7 ? (
+                        <>
+                          <CheckCircle2 size={16} className="text-emerald-600" />
+                          <span>Sem Bloqueios de Agendamento</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle size={16} className="text-amber-600" />
+                          <span>Regra de Bloqueio em Vigor</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-[11px] font-medium leading-relaxed">
+                      {planAllowedDaysOfWeek.length === 7 ? (
+                        'O cliente poderá agendar e usufruir dos serviços inclusos neste plano em qualquer dia da semana (Segunda a Domingo).'
+                      ) : (
+                        <>
+                          Este plano cobre atendimentos <strong>apenas em: {formatAllowedDays(planAllowedDaysOfWeek)}</strong>. 
+                          Se o cliente agendar nos dias não selecionados, o sistema informará que o dia não está coberto e o serviço será cobrado como avulso.
+                        </>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Optional Custom Note */}
+                  <div>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                      Mensagem / Rótulo Personalizado da Regra (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={planCustomRestrictionNote}
+                      onChange={(e) => setPlanCustomRestrictionNote(e.target.value)}
+                      placeholder="Ex: Válido exclusivamente de Segunda a Quinta-feira"
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2 px-4 text-xs font-semibold text-slate-800 focus:outline-none focus:border-accent transition-all placeholder:text-slate-350"
+                    />
+                  </div>
+                </div>
+
+                {/* SEÇÃO 5: DESCONTOS EXTRAS PARA ASSINANTES */}
                 <div className="bg-slate-50/60 border border-slate-200/80 p-5 rounded-2xl space-y-4">
                   <div className="border-b border-slate-200/60 pb-3">
                     <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
                       <Tag size={16} className="text-indigo-600" />
-                      4. Descontos Exclusivos para Assinantes deste Plano
+                      5. Descontos Exclusivos para Assinantes deste Plano
                     </h3>
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
                       Descontos especiais em produtos do estoque ou outros serviços avulsos
@@ -5006,6 +5257,12 @@ function PlanCard({ plan, isAdmin, onEdit, onDelete, onAssign }: PlanCardProps) 
         {plan.extraBenefits.map((benefit, i) => (
           <BenefitItem key={`extra-benefit-${i}`} icon={<CheckCircle2 size={14} />} text={benefit} />
         ))}
+        {plan.allowedDaysOfWeek && plan.allowedDaysOfWeek.length > 0 && plan.allowedDaysOfWeek.length < 7 && (
+          <BenefitItem 
+            icon={<Calendar size={14} />} 
+            text={`Válido: ${formatAllowedDays(plan.allowedDaysOfWeek, plan.customRestrictionNote)}`} 
+          />
+        )}
       </div>
 
       {isAdmin && (
@@ -5156,6 +5413,11 @@ function SubscriptionCard({
                 <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-lg border ${statusColors[sub.status]} font-black`}>
                   {sub.status === 'pending' ? 'Aguardando Pagamento' : sub.status}
                 </span>
+                {((sub.allowedDaysOfWeek && sub.allowedDaysOfWeek.length > 0 && sub.allowedDaysOfWeek.length < 7) || (plan.allowedDaysOfWeek && plan.allowedDaysOfWeek.length > 0 && plan.allowedDaysOfWeek.length < 7)) && (
+                  <span className="text-[8px] font-extrabold uppercase bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg tracking-wider" title="Restrição de dias para atendimento">
+                    📅 {formatAllowedDays(sub.allowedDaysOfWeek || plan.allowedDaysOfWeek, sub.customRestrictionNote || plan.customRestrictionNote)}
+                  </span>
+                )}
                 {sub.activationType === 'asaas' && (
                   <span className="text-[8px] font-extrabold uppercase bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 rounded-lg tracking-widest">
                     Asaas

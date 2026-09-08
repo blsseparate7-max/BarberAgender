@@ -3158,6 +3158,144 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
+  // Update Subscription Dates & Mirror to Asaas
+  app.post(["/api/saas/subscription/update-dates", "/saas/subscription/update-dates", "/api/saas/subscription/alterar-vencimento"], async (req, res) => {
+    try {
+      const { subscriptionId, startDate, endDate, tenantId } = req.body;
+      if (!subscriptionId || !startDate || !endDate) {
+        return res.status(400).json({ error: "Campos subscriptionId, startDate e endDate são obrigatórios." });
+      }
+
+      const dbAdmin = getAdminDb();
+      let subDocData: any = null;
+      let targetSubDocId = subscriptionId;
+      let isRestDoc = false;
+
+      if (dbAdmin) {
+        let docSnap = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
+        if (docSnap.exists) {
+          subDocData = docSnap.data();
+        } else {
+          const found = await findSubscriptionInFirestore(dbAdmin, { docId: subscriptionId, externalReference: subscriptionId });
+          if (found) {
+            subDocData = found.data;
+            targetSubDocId = found.id;
+            isRestDoc = found.isRest;
+          }
+        }
+      } else {
+        const rDoc = await getFirestoreRestDoc('subscriptions', subscriptionId);
+        if (rDoc) {
+          subDocData = rDoc.data;
+          isRestDoc = true;
+        }
+      }
+
+      if (!subDocData) {
+        return res.status(404).json({ error: "Assinatura não encontrada." });
+      }
+
+      const targetTenantId = tenantId || subDocData.tenantId || 'gbcortes7';
+      const tenantCreds = await getTenantAsaasCredentials(targetTenantId);
+      const asaasApiKey = tenantCreds.apiKey;
+      const baseUrl = tenantCreds.baseUrl;
+
+      let asaasSubSynced = false;
+      let asaasInvoiceSynced = false;
+      let asaasFeedback = '';
+
+      // 1. Update Asaas Subscription if asaasSubscriptionId exists and is real
+      if (asaasApiKey && subDocData.asaasSubscriptionId && String(subDocData.asaasSubscriptionId).startsWith('sub_')) {
+        try {
+          const updateSubRes = await fetch(`${baseUrl}/subscriptions/${subDocData.asaasSubscriptionId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'access_token': asaasApiKey
+            },
+            body: JSON.stringify({
+              nextDueDate: endDate,
+              updatePendingPayments: true
+            })
+          });
+          const updateSubJson = await safeJsonFetch(updateSubRes);
+          if (updateSubRes.ok && updateSubJson && !updateSubJson.errors) {
+            asaasSubSynced = true;
+            console.log(`[Update Dates] Assinatura Asaas ${subDocData.asaasSubscriptionId} atualizada para nextDueDate=${endDate}`);
+          } else {
+            console.warn(`[Update Dates] Aviso ao atualizar assinatura Asaas ${subDocData.asaasSubscriptionId}:`, updateSubJson?.errors || updateSubJson);
+            if (updateSubJson?.errors?.[0]?.description) {
+              asaasFeedback = updateSubJson.errors[0].description;
+            }
+          }
+        } catch (subApiErr) {
+          console.warn("[Update Dates] Erro ao conectar na API Asaas para subscription:", subApiErr);
+        }
+      }
+
+      // 2. Update Asaas Pending Invoice if asaasInvoiceId exists and is real
+      if (asaasApiKey && subDocData.asaasInvoiceId && String(subDocData.asaasInvoiceId).startsWith('pay_') && !String(subDocData.asaasInvoiceId).startsWith('pay_sandbox_')) {
+        try {
+          const updatePayRes = await fetch(`${baseUrl}/payments/${subDocData.asaasInvoiceId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'access_token': asaasApiKey
+            },
+            body: JSON.stringify({
+              dueDate: endDate
+            })
+          });
+          const updatePayJson = await safeJsonFetch(updatePayRes);
+          if (updatePayRes.ok && updatePayJson && !updatePayJson.errors) {
+            asaasInvoiceSynced = true;
+            console.log(`[Update Dates] Cobrança Asaas ${subDocData.asaasInvoiceId} atualizada para dueDate=${endDate}`);
+          } else {
+            console.warn(`[Update Dates] Aviso ao atualizar cobrança Asaas ${subDocData.asaasInvoiceId}:`, updatePayJson?.errors || updatePayJson);
+          }
+        } catch (payApiErr) {
+          console.warn("[Update Dates] Erro ao conectar na API Asaas para payment:", payApiErr);
+        }
+      }
+
+      // 3. Update Firestore Subscription document
+      const updatePayload: any = {
+        startDate,
+        endDate,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (asaasSubSynced || asaasInvoiceSynced) {
+        updatePayload.asaasLastSyncedAt = new Date().toISOString();
+      }
+
+      if (dbAdmin && !isRestDoc) {
+        await dbAdmin.collection('subscriptions').doc(targetSubDocId).update(updatePayload);
+      } else {
+        await updateFirestoreRestDoc('subscriptions', targetSubDocId, updatePayload);
+      }
+
+      const isAsaasConnected = !!(subDocData.asaasSubscriptionId || subDocData.asaasInvoiceId);
+      const message = (asaasSubSynced || asaasInvoiceSynced)
+        ? `Datas atualizadas e espelhadas com sucesso no Asaas! Novo vencimento programado: ${endDate}`
+        : isAsaasConnected
+        ? `Datas atualizadas no sistema! ${asaasFeedback ? `(Aviso Asaas: ${asaasFeedback})` : '(Próxima cobrança será gerada no vencimento)'}`
+        : "Datas da assinatura atualizadas com sucesso no sistema!";
+
+      return res.json({
+        success: true,
+        message,
+        asaasSynced: asaasSubSynced || asaasInvoiceSynced,
+        startDate,
+        endDate
+      });
+
+    } catch (error: any) {
+      console.error("Erro ao atualizar datas da assinatura:", error);
+      res.status(500).json({ error: error.message || "Falha ao atualizar datas da assinatura." });
+    }
+  });
+
   // Get Invoices History for Subscription (Asaas + Local Firestore)
   app.get(["/api/saas/subscription/invoices", "/saas/subscription/invoices"], async (req, res) => {
     try {

@@ -1121,10 +1121,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider flex items-center gap-1.5">
                   <DollarSign size={13} className="text-emerald-400" />
-                  Saldo Líquido a Receber
+                  Saldo Líquido A Receber
                 </span>
                 <span className="text-[9px] bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/20">
-                  A Receber Geral
+                  Saldo Real Atual
                 </span>
               </div>
 
@@ -1135,8 +1135,9 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-300 font-medium mt-1.5 pt-2 border-t border-slate-800">
                   <span>Comissões Pendentes: <strong className="text-emerald-400 font-bold">R$ {stats.toReceiveCommissions.toFixed(2)}</strong></span>
                   {stats.pendingAdvances > 0 && (
-                    <span>Vales Pendentes: <strong className="text-rose-400 font-bold">- R$ {stats.pendingAdvances.toFixed(2)}</strong></span>
+                    <span>Vales A Abater: <strong className="text-rose-400 font-bold">- R$ {stats.pendingAdvances.toFixed(2)}</strong></span>
                   )}
+                  <span>= Saldo Líquido: <strong className="text-indigo-300 font-bold">R$ {stats.toReceive.toFixed(2)}</strong></span>
                 </div>
               </div>
             </div>
@@ -1233,12 +1234,12 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
             </div>
 
             {/* Resumo Financeiro do Período */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
               <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                    Gerado
+                    Gerado (Bruto)
                   </p>
                   <p className="text-sm font-black text-slate-800">
                     R$ {periodStats.totalComissoesGeradas.toFixed(2)}
@@ -1251,39 +1252,52 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 <div>
                   <p className="text-[9px] font-black text-emerald-600 uppercase tracking-wider mb-1 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    Recebido
+                    Já Recebido
                   </p>
                   <p className="text-sm font-black text-emerald-600">
                     R$ {periodStats.totalComissoesPagas.toFixed(2)}
                   </p>
                 </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Valores repassados</p>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Repasses efetuados</p>
               </div>
 
               <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
                 <div>
                   <p className="text-[9px] font-black text-amber-600 uppercase tracking-wider mb-1 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                    Pendente
+                    Pendente (Bruto)
                   </p>
                   <p className="text-sm font-black text-amber-600">
                     R$ {periodStats.totalComissoesPendentes.toFixed(2)}
                   </p>
                 </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">A receber no período</p>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">A repassar no período</p>
               </div>
 
               <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
                 <div>
                   <p className="text-[9px] font-black text-rose-600 uppercase tracking-wider mb-1 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                    Retiradas
+                    Vales A Abater
                   </p>
                   <p className="text-sm font-black text-rose-600">
-                    R$ {periodStats.totalVales.toFixed(2)}
+                    - R$ {periodStats.totalValesPendentes.toFixed(2)}
                   </p>
                 </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Adiantamentos pegos</p>
+                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Adiantamentos pendentes</p>
+              </div>
+
+              <div className="bg-indigo-50/80 border border-indigo-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between col-span-2 sm:col-span-1">
+                <div>
+                  <p className="text-[9px] font-black text-indigo-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                    A Receber (Líquido)
+                  </p>
+                  <p className="text-sm font-black text-indigo-900">
+                    R$ {periodStats.saldoLiquidoPeriodo.toFixed(2)}
+                  </p>
+                </div>
+                <p className="text-[8px] text-indigo-600/80 font-bold mt-1.5">Pendente bruto menos vales</p>
               </div>
             </div>
 

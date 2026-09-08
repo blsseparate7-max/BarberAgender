@@ -79,7 +79,8 @@ import {
   ClientDebt, 
   DebtPayment,
   Commission,
-  Product
+  Product,
+  UserProfile
 } from '../types';
 import { financialService } from '../services/financialService';
 import { cashService } from '../services/cashService';
@@ -4699,6 +4700,8 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
   const [categories, setCategories] = useState<FinancialCategory[]>([]);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [barbers, setBarbers] = useState<UserProfile[]>([]);
+  const [selectedProfissionalId, setSelectedProfissionalId] = useState('');
   const [formData, setFormData] = useState({
     description: '',
     amount: 0,
@@ -4710,12 +4713,41 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
 
   useEffect(() => {
     loadCategories();
-  }, []);
+    if (type === 'expense') {
+      userService.getAllBarbers().then(setBarbers).catch(console.error);
+    }
+  }, [type]);
 
   const loadCategories = async () => {
     const cats = await financialService.getCategories(type);
-    setCategories(cats);
-    if (cats.length > 0) setFormData(prev => ({ ...prev, category: cats[0].name }));
+    const defaultExpenseCats = [
+      'Vale / Adiantamento',
+      'Aluguel',
+      'Água / Luz / Internet',
+      'Produtos / Estoque',
+      'Salários / Comissões',
+      'Manutenção / Reformas',
+      'Impostos / Taxas',
+      'Marketing / Publicidade',
+      'Outros'
+    ];
+    const defaultIncomeCats = [
+      'Serviços de Cabelo / Barba',
+      'Venda de Produtos',
+      'Assinatura / Pacote',
+      'Outros'
+    ];
+    
+    const defaultNames = type === 'expense' ? defaultExpenseCats : defaultIncomeCats;
+    const mergedList: FinancialCategory[] = [
+      ...defaultNames.map(name => ({ id: name, name, type, active: true })),
+      ...cats.filter(c => !defaultNames.includes(c.name))
+    ];
+
+    setCategories(mergedList);
+    if (mergedList.length > 0 && !formData.category) {
+      setFormData(prev => ({ ...prev, category: mergedList[0].name }));
+    }
   };
 
   const handleAddNewCategory = async () => {
@@ -4726,8 +4758,7 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
     try {
       await financialService.createCategory(newCategoryName.trim(), type);
       toast.success("Categoria criada com sucesso!");
-      const cats = await financialService.getCategories(type);
-      setCategories(cats);
+      await loadCategories();
       setFormData(prev => ({ ...prev, category: newCategoryName.trim() }));
       setNewCategoryName('');
       setShowAddCategory(false);
@@ -4737,12 +4768,56 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
     }
   };
 
+  const isValeCategory = type === 'expense' && (
+    formData.category.toLowerCase().includes('vale') ||
+    formData.category.toLowerCase().includes('adiantamento')
+  );
+
   const { execute: handleSubmit, isLoading: loading } = useAsyncAction(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
 
     if (!formData.amount || isNaN(formData.amount) || formData.amount <= 0) {
       toast.error("Por favor, insira um valor válido maior que zero!");
+      return;
+    }
+
+    // Special flow if this expense is a Vale / Adiantamento linked to a professional
+    if (isValeCategory) {
+      if (!selectedProfissionalId) {
+        toast.error("Por favor, selecione o profissional que está recebendo o Vale.");
+        return;
+      }
+      const prof = barbers.find(b => b.uid === selectedProfissionalId);
+      if (!prof) {
+        toast.error("Profissional selecionado não foi encontrado.");
+        return;
+      }
+
+      const today = format(new Date(), 'yyyy-MM-dd');
+      const targetCash = formData.date === today ? currentCash : await cashService.getCashByDate(formData.date);
+      if (formData.paymentMethod === 'dinheiro' && targetCash && targetCash.status === 'closed') {
+        toast.error(`O caixa de ${format(new Date(formData.date + 'T00:00:00'), 'dd/MM/yyyy')} está fechado.`);
+        return;
+      }
+
+      await commissionService.registerCompleteVale({
+        profissional_id: prof.uid,
+        profissional_name: prof.nome,
+        amount: formData.amount,
+        date: formData.date,
+        description: formData.description.trim() || `Vale: ${prof.nome}`,
+        category: formData.category || 'Vale / Adiantamento',
+        source: formData.paymentMethod === 'dinheiro' ? 'caixa' : 'financeiro',
+        paymentMethod: formData.paymentMethod,
+        userId: user.uid,
+        userName: profile?.nome || 'Admin',
+        currentCashId: targetCash?.id
+      });
+
+      toast.success(`Vale de R$ ${formData.amount.toFixed(2)} registrado e abatido das comissões de ${prof.nome}!`);
+      onSuccess();
+      onClose();
       return;
     }
 
@@ -4894,7 +4969,6 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
                   className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none font-bold shadow-inner"
                 >
                   {categories.map((cat, idx) => <option key={`cat-opt-${cat.id || idx}-${idx}`} value={cat.name}>{cat.name}</option>)}
-                  <option value="Outros">Outros</option>
                 </select>
               )}
             </div>
@@ -4914,6 +4988,30 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
               </select>
             </div>
           </div>
+
+          {/* If category is Vale, show Professional selector */}
+          {isValeCategory && (
+            <div className="space-y-2 p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl animate-fade-in">
+              <label className="text-[10px] font-black text-amber-800 uppercase tracking-widest ml-1 flex items-center gap-1.5">
+                <User size={14} className="text-amber-600" />
+                <span>Profissional Beneficiário (Débito em Comissão)</span>
+              </label>
+              <select
+                required
+                value={selectedProfissionalId}
+                onChange={(e) => setSelectedProfissionalId(e.target.value)}
+                className="w-full bg-white border border-amber-200 rounded-xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-amber-500/20 shadow-sm"
+              >
+                <option value="">-- Selecione o Profissional --</option>
+                {barbers.map(b => (
+                  <option key={b.uid} value={b.uid}>{b.nome}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-amber-700 font-medium leading-relaxed">
+                Este vale será registrado e descontado automaticamente do extrato de comissões do profissional.
+              </p>
+            </div>
+          )}
 
           <div className="pt-6 flex gap-4">
             <button 

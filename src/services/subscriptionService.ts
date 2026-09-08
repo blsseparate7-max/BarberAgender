@@ -126,6 +126,8 @@ export const subscriptionService = {
         serviceUsages: {},
         lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
         discounts: plan.discounts || [],
+        allowedDaysOfWeek: plan.allowedDaysOfWeek || [0, 1, 2, 3, 4, 5, 6],
+        customRestrictionNote: plan.customRestrictionNote || '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
@@ -224,6 +226,8 @@ export const subscriptionService = {
         serviceUsages: {},
         lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
         discounts: plan.discounts || [],
+        allowedDaysOfWeek: plan.allowedDaysOfWeek || [0, 1, 2, 3, 4, 5, 6],
+        customRestrictionNote: plan.customRestrictionNote || '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
@@ -251,12 +255,34 @@ export const subscriptionService = {
   },
 
   async updateSubscriptionDates(id: string, startDate: string, endDate: string) {
+    const activeTenantId = getActiveTenantId();
+
+    // 1. Update directly in Firestore for instant UI reactivity
     const docRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
     await updateDoc(docRef, {
       startDate,
       endDate,
       updatedAt: serverTimestamp()
     });
+
+    // 2. Call backend to mirror new dates with Asaas gateway
+    try {
+      const response = await fetch('/api/saas/subscription/update-dates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptionId: id,
+          startDate,
+          endDate,
+          tenantId: activeTenantId
+        })
+      });
+      const data = await response.json();
+      return data;
+    } catch (apiErr) {
+      console.warn("Aviso ao espelhar datas no Asaas via backend:", apiErr);
+      return { success: true, asaasSynced: false, message: "Datas da assinatura atualizadas com sucesso no sistema!" };
+    }
   },
 
   // Usage
@@ -623,8 +649,12 @@ export const subscriptionService = {
       autoRenew: true,
       haircutsUsed: 0,
       beardsUsed: 0,
+      services: plan.services || [],
+      serviceUsages: {},
       lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
       discounts: plan.discounts || [],
+      allowedDaysOfWeek: plan.allowedDaysOfWeek || [0, 1, 2, 3, 4, 5, 6],
+      customRestrictionNote: plan.customRestrictionNote || '',
       activationType: 'asaas',
       asaasPaymentStatus: 'pending',
       asaasInvoiceId: null,

@@ -60,6 +60,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, UserRole, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher, ServiceCategory } from '../types';
 import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { isDateAllowedForPlan, formatAllowedDays, isDateWithinSubscriptionCycle } from '../utils/subscriptionDays';
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, '').slice(0, 11);
@@ -767,18 +768,53 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   };
 
   // Helper to check if a specific service is covered by the user's active subscription
-  const getServiceSubscriptionStatus = (service: Service | null | undefined) => {
+  const getServiceSubscriptionStatus = (service: Service | null | undefined, targetDateStr?: string) => {
     if (!service || !profile) {
-      return { isCovered: false, effectivePrice: service ? (service.preco || service.price || 0) : 0, planName: null };
+      return { isCovered: false, effectivePrice: service ? (service.preco || service.price || 0) : 0, planName: null, isDayBlocked: false, allowedDaysText: '' };
     }
 
     const activeSub = subscriptions.find(s => s.status === 'active');
     if (!activeSub) {
-      return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null };
+      return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null, isDayBlocked: false, allowedDaysText: '' };
     }
 
     const plan = availablePlans.find(p => p.id === activeSub.plano_id);
     const serviceName = (service.nome || service.name || '').toLowerCase().trim();
+
+    // Day restriction check and 30-day Cycle Validity check
+    const checkDate = targetDateStr || selectedDate;
+    const allowedDays = activeSub.allowedDaysOfWeek || plan?.allowedDaysOfWeek;
+    const isDayAllowed = isDateAllowedForPlan(allowedDays, checkDate);
+    const cycleCheck = isDateWithinSubscriptionCycle(activeSub, checkDate);
+
+    if (!cycleCheck.isWithinCycle) {
+      return { 
+        isCovered: false, 
+        effectivePrice: service.preco || service.price || 0, 
+        planName: activeSub.planName || plan?.name || null,
+        isDayBlocked: false,
+        isCycleBlocked: true,
+        cycleEndDateStr: cycleCheck.endDateStr,
+        allowedDaysText: '',
+        limit: 0, 
+        used: 0, 
+        isUnlimited: false 
+      };
+    }
+
+    if (!isDayAllowed) {
+      return { 
+        isCovered: false, 
+        effectivePrice: service.preco || service.price || 0, 
+        planName: activeSub.planName || plan?.name || null,
+        isDayBlocked: true,
+        isCycleBlocked: false,
+        allowedDaysText: formatAllowedDays(allowedDays, activeSub.customRestrictionNote || plan?.customRestrictionNote),
+        limit: 0, 
+        used: 0, 
+        isUnlimited: false 
+      };
+    }
 
     // 1. Specific services declared in plan.services (e.g. Acabamento, Barboterapia, etc.)
     if (plan?.services && plan.services.length > 0) {
@@ -797,7 +833,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
             planName: activeSub.planName || plan.name, 
             limit: planService.limit, 
             used, 
-            isUnlimited 
+            isUnlimited,
+            isDayBlocked: false,
+            allowedDaysText: ''
           };
         }
       }
@@ -816,7 +854,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
             planName: activeSub.planName || plan.name, 
             limit: plan.haircutsPerMonth, 
             used, 
-            isUnlimited 
+            isUnlimited,
+            isDayBlocked: false,
+            allowedDaysText: ''
           };
         }
       }
@@ -831,13 +871,15 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
             planName: activeSub.planName || plan.name, 
             limit: plan.beardsPerMonth, 
             used, 
-            isUnlimited 
+            isUnlimited,
+            isDayBlocked: false,
+            allowedDaysText: ''
           };
         }
       }
     }
 
-    return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null };
+    return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null, isDayBlocked: false, allowedDaysText: '' };
   };
 
   const calculateEffectivePrice = (serviceList: Service[]) => {
@@ -3171,6 +3213,12 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                           {dateOptions.map((opt, dIdx) => {
                             const isSelected = selectedDate === opt.dateStr;
                             const [dayWeek, dayNum] = opt.dayLabel.split(', ');
+                            const activeSub = subscriptions.find(s => s.status === 'active');
+                            const subAllowedDays = activeSub?.allowedDaysOfWeek || availablePlans.find(p => p.id === activeSub?.plano_id)?.allowedDaysOfWeek;
+                            const hasSubRestriction = activeSub && subAllowedDays && subAllowedDays.length > 0 && subAllowedDays.length < 7;
+                            const isDateCoveredBySub = hasSubRestriction ? isDateAllowedForPlan(subAllowedDays, opt.dateStr) : true;
+                            const cycleCheck = isDateWithinSubscriptionCycle(activeSub, opt.dateStr);
+
                             return (
                               <button
                                 key={`date-item-${opt.dateStr || dIdx}-${dIdx}`}
@@ -3188,6 +3236,12 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                 {isSelected && (
                                   <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-white" />
                                 )}
+                                {activeSub && !cycleCheck.isWithinCycle && (
+                                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500" title="Data além da vigência atual da assinatura (30 dias)" />
+                                )}
+                                {activeSub && cycleCheck.isWithinCycle && hasSubRestriction && !isDateCoveredBySub && (
+                                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-400" title="Dia fora da cobertura da assinatura (cobrado como avulso)" />
+                                )}
                                 <span className={`text-[8px] font-black uppercase tracking-wider ${isSelected ? 'text-indigo-200' : 'text-slate-400'}`}>
                                   {opt.monthLabel}
                                 </span>
@@ -3201,6 +3255,44 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                             );
                           })}
                         </div>
+
+                        {/* Subscription Cycle & Day Restriction Notification in Step 3 */}
+                        {(() => {
+                          const activeSub = subscriptions.find(s => s.status === 'active');
+                          if (!activeSub) return null;
+
+                          const cycleCheck = isDateWithinSubscriptionCycle(activeSub, selectedDate);
+                          if (!cycleCheck.isWithinCycle) {
+                            return (
+                              <div className="p-3.5 bg-rose-50 border border-rose-200/80 rounded-2xl flex items-start gap-2.5 text-rose-900 animate-in fade-in">
+                                <AlertCircle size={16} className="text-rose-600 mt-0.5 shrink-0" />
+                                <div className="text-xs space-y-0.5">
+                                  <p className="font-black text-rose-950">Data fora da vigência da assinatura</p>
+                                  <p className="text-[11px] font-semibold text-rose-800 leading-snug">
+                                    Seu ciclo de 30 dias do plano <strong>"{activeSub?.planName}"</strong> é válido até <strong>{cycleCheck.endDateStr ? format(parse(cycleCheck.endDateStr, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : 'o vencimento'}</strong>. Para datas futuras além deste período, o agendamento é cobrado pelo valor avulso normal.
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          const subAllowedDays = activeSub?.allowedDaysOfWeek || availablePlans.find(p => p.id === activeSub?.plano_id)?.allowedDaysOfWeek;
+                          const hasSubRestriction = activeSub && subAllowedDays && subAllowedDays.length > 0 && subAllowedDays.length < 7;
+                          if (hasSubRestriction && !isDateAllowedForPlan(subAllowedDays, selectedDate)) {
+                            return (
+                              <div className="p-3.5 bg-amber-50 border border-amber-200/80 rounded-2xl flex items-start gap-2.5 text-amber-900 animate-in fade-in">
+                                <AlertCircle size={16} className="text-amber-600 mt-0.5 shrink-0" />
+                                <div className="text-xs space-y-0.5">
+                                  <p className="font-black text-amber-950">Data fora dos dias permitidos pelo seu plano</p>
+                                  <p className="text-[11px] font-semibold text-amber-800 leading-snug">
+                                    Seu plano <strong>"{activeSub?.planName}"</strong> é válido exclusivamente em <strong>{formatAllowedDays(subAllowedDays, activeSub?.customRestrictionNote)}</strong>. Agendamentos nesta data serão cobrados pelo valor avulso.
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
 
                       {/* Time Slots Selector (Grouped) */}
@@ -3417,10 +3509,27 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                 );
                               }
 
+                              const subAllowedDays = activeSub?.allowedDaysOfWeek || availablePlans.find(p => p.id === activeSub?.plano_id)?.allowedDaysOfWeek;
+                              const hasDayRestriction = activeSub && subAllowedDays && subAllowedDays.length > 0 && subAllowedDays.length < 7;
+                              const isDayBlocked = hasDayRestriction && !isDateAllowedForPlan(subAllowedDays, selectedDate);
+                              const cycleCheck = isDateWithinSubscriptionCycle(activeSub, selectedDate);
+                              const isCycleBlocked = activeSub && !cycleCheck.isWithinCycle;
+
                               return (
-                                <p className="text-2xl font-black text-amber-400 mt-1">
-                                  R$ {effPrice.toFixed(2)}
-                                </p>
+                                <div className="mt-1 space-y-1">
+                                  <p className="text-2xl font-black text-amber-400">
+                                    R$ {effPrice.toFixed(2)}
+                                  </p>
+                                  {isCycleBlocked ? (
+                                    <span className="inline-flex items-center gap-1 bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                                      ⚠️ Avulso (Data além da vigência de 30 dias do plano)
+                                    </span>
+                                  ) : isDayBlocked ? (
+                                    <span className="inline-flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                                      ⚠️ Avulso (Plano válido em: {formatAllowedDays(subAllowedDays, activeSub?.customRestrictionNote)})
+                                    </span>
+                                  ) : null}
+                                </div>
                               );
                             })()}
                           </div>
@@ -4383,6 +4492,13 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                     <span>{benefit}</span>
                                   </div>
                                 ))}
+
+                                {plan.allowedDaysOfWeek && plan.allowedDaysOfWeek.length > 0 && plan.allowedDaysOfWeek.length < 7 && (
+                                  <div className="flex items-center gap-2 text-xs font-bold text-amber-700 bg-amber-50/70 border border-amber-200/60 p-2 rounded-xl">
+                                    <Calendar size={14} className="text-amber-600 flex-shrink-0" />
+                                    <span>Válido em: {formatAllowedDays(plan.allowedDaysOfWeek, plan.customRestrictionNote)}</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
 

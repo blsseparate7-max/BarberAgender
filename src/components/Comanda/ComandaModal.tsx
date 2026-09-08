@@ -145,6 +145,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [closureChoice, setClosureChoice] = useState<'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago'>('fiado');
   const [closureNote, setClosureNote] = useState('');
 
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string>('');
+  const [paymentInputAmount, setPaymentInputAmount] = useState<string>('');
+  const [entersCashChoice, setEntersCashChoice] = useState<boolean>(true);
+  const [excessMode, setExcessMode] = useState<'abater_fiado' | 'credito_haver' | 'troco'>('abater_fiado');
+
   const [amountToPay, setAmountToPay] = useState<string>('');
   const [customTipValue, setCustomTipValue] = useState<string>('');
   const [showCustomTipInput, setShowCustomTipInput] = useState(false);
@@ -1322,13 +1327,22 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
-  const handleAddPayment = async (method: PaymentMethod, amount: number, metodo_pagamento_id?: string) => {
+  const handleAddPayment = async (
+    method: PaymentMethod,
+    amount: number,
+    metodo_pagamento_id?: string,
+    options?: {
+      entersCash?: boolean;
+      excessMode?: 'abater_fiado' | 'credito_haver' | 'troco';
+    }
+  ) => {
     if (!comanda || !user || loading) return;
     setLoading(true);
     try {
       const currentCash = await cashService.getCurrentCash();
+      const entersCash = options?.entersCash !== false;
       
-      if (['fiado', 'resgate'].indexOf(method) === -1 && !currentCash) {
+      if (['fiado', 'resgate'].indexOf(method) === -1 && !currentCash && entersCash) {
         toast.error("O caixa precisa estar aberto para receber pagamentos.");
         return;
       }
@@ -1356,16 +1370,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         setClientLoyalty({ points: updatedLoyalty.points, cashback: updatedLoyalty.cashback });
       }
 
-      // Check if user is overpaying comanda and has active client debts to abate
+      // Check if user is overpaying comanda
       const totalPendingComanda = comanda.pendingAmount || 0;
       const totalPendingDebts = clientDebts.reduce((sum, d) => sum + (d.remainingAmount || 0), 0);
       
       let comandaPaymentAmount = amount;
       let debtPaymentAmount = 0;
+      let creditHaverAmount = 0;
 
-      if (amount > totalPendingComanda && totalPendingDebts > 0 && comanda.cliente_id && comanda.cliente_id !== 'avulso') {
+      if (amount > totalPendingComanda && comanda.cliente_id && comanda.cliente_id !== 'avulso') {
         comandaPaymentAmount = totalPendingComanda;
-        debtPaymentAmount = Math.min(amount - totalPendingComanda, totalPendingDebts);
+        const excess = amount - totalPendingComanda;
+
+        if (options?.excessMode === 'credito_haver') {
+          creditHaverAmount = excess;
+        } else if (options?.excessMode === 'troco') {
+          toast.info(`Troco a devolver ao cliente: R$ ${excess.toFixed(2)}`);
+        } else {
+          // Default or 'abater_fiado'
+          debtPaymentAmount = Math.min(excess, totalPendingDebts);
+          if (excess > totalPendingDebts) {
+            creditHaverAmount = excess - totalPendingDebts;
+          }
+        }
       }
 
       // 1. Pay comanda portion if > 0
@@ -1406,12 +1433,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
         toast.success(`Pagamento registrado! R$ ${comandaPaymentAmount.toFixed(2)} aplicados na comanda e R$ ${debtPaymentAmount.toFixed(2)} abatidos do fiado do cliente.`);
         await loadClientDebts(comanda.cliente_id);
-      } else {
+      }
+
+      // 3. Credit remaining excess as "Crédito em Haver"
+      if (creditHaverAmount > 0 && comanda.cliente_id && comanda.cliente_id !== 'avulso') {
+        const clientProf = await userService.getUserProfile(comanda.cliente_id);
+        if (clientProf) {
+          const currentBal = clientProf.saldo_atual ?? clientProf.balance ?? 0;
+          const newBal = currentBal + creditHaverAmount;
+          await userService.updateUserProfile(comanda.cliente_id, {
+            saldo_atual: newBal,
+            balance: newBal
+          });
+          toast.success(`R$ ${creditHaverAmount.toFixed(2)} adicionados como Crédito em Haver na conta do cliente!`);
+        }
+      }
+
+      if (debtPaymentAmount === 0 && creditHaverAmount === 0) {
         toast.success("Pagamento registrado com sucesso.");
       }
 
       setShowPaymentModal(false);
       setPartialAmount('');
+      setPaymentInputAmount('');
     } catch (error) {
       console.error("Erro ao processar pagamento:", error);
       toast.error("Erro ao processar pagamento: " + formatErrorMessage(error));
@@ -2760,44 +2804,149 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         })()
                       )}
 
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-black text-muted uppercase tracking-widest ml-1 block">Clique no método para registrar</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          {paymentMethods.filter(method => method.type !== 'fiado' && !method.goesToClientAccount).map((method, index) => {
-                            const valToPay = Number(amountToPay) || comanda.pendingAmount;
-                            const isFiado = method.type === 'fiado' || method.goesToClientAccount;
-                            
-                            return (
-                              <button
-                                key={`pm-btn-${method.id || index}-${index}`}
-                                type="button"
-                                disabled={valToPay <= 0 || (valToPay < comanda.pendingAmount && !method.allowsPartial) || (isFiado && comanda.cliente_id === 'avulso')}
-                                onClick={() => {
-                                  if (valToPay <= 0) return;
-                                  if (isFiado) {
-                                    setConfirmFiado({ amount: valToPay, method: method.type, methodId: method.id });
-                                    return;
-                                  }
-                                  handleAddPayment(method.type, valToPay, method.id);
-                                }}
-                                className={`flex flex-col items-center justify-center p-4 border rounded-2xl transition-all relative text-center active:scale-95 group ${
-                                  valToPay <= 0 || (valToPay < comanda.pendingAmount && !method.allowsPartial) || (isFiado && comanda.cliente_id === 'avulso')
-                                    ? 'bg-slate-50 border-slate-100 opacity-40 cursor-not-allowed'
-                                    : 'bg-white border-slate-200 hover:border-emerald-500/50 hover:bg-emerald-50/30'
-                                }`}
-                              >
-                                <div className={`p-2.5 rounded-xl mb-1.5 transition-transform group-hover:scale-110 ${
-                                  isFiado ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                                }`}>
-                                  {method.type === 'pix' ? <Smartphone size={16} /> : 
-                                   method.type === 'dinheiro' ? <DollarSign size={16} /> : 
-                                   method.type === 'fiado' ? <AlertCircle size={16} /> : 
-                                   method.type === 'assinatura' ? <Wallet size={16} /> : <CreditCard size={16} />}
-                                </div>
-                                <span className="text-xs font-bold text-primary block leading-none">{method.name}</span>
-                              </button>
-                            );
-                          })}
+                      <div className="bg-slate-50/70 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-1.5">
+                            <CreditCard size={15} className="text-emerald-600" />
+                            <span>Registrar Pagamento</span>
+                          </span>
+                          {comanda.pendingAmount > 0 && (
+                            <span className="text-xs font-black text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl">
+                              Pendente: R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {/* Select de Forma de Pagamento */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>
+                            <select
+                              value={selectedPaymentMethodId}
+                              onChange={(e) => setSelectedPaymentMethodId(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                            >
+                              <option value="">-- Selecione o Meio de Pagamento --</option>
+                              {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name} {m.type === 'dinheiro' ? '(Dinheiro)' : m.type === 'pix' ? '(PIX)' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Valor Pago */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor Pago (R$)</label>
+                            <div className="relative">
+                              <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                value={paymentInputAmount}
+                                onChange={(e) => setPaymentInputAmount(e.target.value)}
+                                placeholder={comanda.pendingAmount.toFixed(2)}
+                                className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-9 pr-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Detect Overpayment / Surplus logic */}
+                        {Number(paymentInputAmount) > comanda.pendingAmount && comanda.pendingAmount > 0 && (
+                          <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl space-y-3 animate-fade-in">
+                            <div className="flex items-center justify-between text-xs font-bold text-amber-900">
+                              <span className="flex items-center gap-1.5">
+                                <AlertCircle size={15} className="text-amber-600 shrink-0" />
+                                <span>Valor pago (R$ {Number(paymentInputAmount).toFixed(2)}) maior que a Comanda (R$ {comanda.pendingAmount.toFixed(2)}). Excedente: <strong>R$ {(Number(paymentInputAmount) - comanda.pendingAmount).toFixed(2)}</strong></span>
+                              </span>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-amber-800 uppercase tracking-widest">O que fazer com os R$ {(Number(paymentInputAmount) - comanda.pendingAmount).toFixed(2)} excedentes?</label>
+                              {(() => {
+                                const totalPendingDebts = clientDebts.reduce((sum, d) => sum + (d.remainingAmount || 0), 0);
+                                return (
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    {totalPendingDebts > 0 && comanda.cliente_id && comanda.cliente_id !== 'avulso' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setExcessMode('abater_fiado')}
+                                        className={`p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                                          excessMode === 'abater_fiado'
+                                            ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100/50'
+                                        }`}
+                                      >
+                                        Abater do Fiado (Dívida: R$ {totalPendingDebts.toFixed(2)})
+                                      </button>
+                                    )}
+
+                                    {comanda.cliente_id && comanda.cliente_id !== 'avulso' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setExcessMode('credito_haver')}
+                                        className={`p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                                          excessMode === 'credito_haver'
+                                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                            : 'bg-white text-slate-700 border-slate-200 hover:bg-emerald-50'
+                                        }`}
+                                      >
+                                        Deixar Crédito em Haver
+                                      </button>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => setExcessMode('troco')}
+                                      className={`p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                                        excessMode === 'troco'
+                                          ? 'bg-slate-800 text-white border-slate-800 shadow-sm'
+                                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                      }`}
+                                    >
+                                      Devolver Troco em Dinheiro
+                                    </button>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Confirm entry into Cash Register */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
+                          <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700 select-none">
+                            <input
+                              type="checkbox"
+                              checked={entersCashChoice}
+                              onChange={(e) => setEntersCashChoice(e.target.checked)}
+                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300"
+                            />
+                            <span>Registrar entrada no Caixa do Dia?</span>
+                          </label>
+
+                          <button
+                            type="button"
+                            disabled={loading || !selectedPaymentMethodId || Number(paymentInputAmount || comanda.pendingAmount) <= 0}
+                            onClick={() => {
+                              const methodObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
+                              const amountToSubmit = Number(paymentInputAmount) || comanda.pendingAmount;
+                              if (!methodObj) {
+                                toast.error("Selecione um meio de pagamento válido!");
+                                return;
+                              }
+                              handleAddPayment(methodObj.type as any, amountToSubmit, methodObj.id, {
+                                entersCash: entersCashChoice,
+                                excessMode
+                              });
+                            }}
+                            className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md transition-all active:scale-95 disabled:opacity-40 flex items-center gap-2 cursor-pointer"
+                          >
+                            {loading ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+                            <span>Lançar Pagamento</span>
+                          </button>
                         </div>
                       </div>
                     </>

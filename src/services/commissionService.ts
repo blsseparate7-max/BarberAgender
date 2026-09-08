@@ -165,15 +165,17 @@ export const commissionService = {
             (Math.abs(r.amount - pAmount) < 0.01 && (r.description.toLowerCase().includes(desc) || desc.includes(r.description.toLowerCase())))
           );
 
-          if (isDuplicate && p.status === 'paid') {
-            // Synchronize status in memory for matching advance doc
-            const match = results.find(r => 
-              r.id === docSnap.id || 
-              p.advanceId === r.id ||
-              p.transactionId === r.id ||
-              (Math.abs(r.amount - pAmount) < 0.01 && (r.description.toLowerCase().includes(desc) || desc.includes(r.description.toLowerCase())))
-            );
-            if (match) match.status = 'pago';
+          if (isDuplicate) {
+            // Only synchronize status if accounts_payable explicitly indicates a repasse/deduction
+            if (p.status === 'deduzido' || p.repasse_id || p.payout_id) {
+              const match = results.find(r => 
+                r.id === docSnap.id || 
+                p.advanceId === r.id ||
+                p.transactionId === r.id ||
+                (Math.abs(r.amount - pAmount) < 0.01 && (r.description.toLowerCase().includes(desc) || desc.includes(r.description.toLowerCase())))
+              );
+              if (match) match.status = 'deduzido';
+            }
           }
 
           if (!isDuplicate) {
@@ -185,7 +187,7 @@ export const commissionService = {
               amount: pAmount,
               date: pDate || new Date().toISOString().split('T')[0],
               description: p.description || 'Adiantamento / Vale',
-              status: p.status === 'paid' ? 'pago' : 'pendente',
+              status: (p.status === 'deduzido' || p.repasse_id || p.payout_id) ? 'deduzido' : 'pendente',
               responsible_id: '',
               responsible_name: '',
               createdAt: p.createdAt,

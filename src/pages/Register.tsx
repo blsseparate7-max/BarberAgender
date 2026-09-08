@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithPopup, sendEmailVerification } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, GoogleAuthProvider, signInWithPopup, sendEmailVerification } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { getActiveTenantId } from '../services/tenantService';
 import { userService } from '../services/userService';
-import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles, Building2, Globe, Phone, MapPin, CheckCircle2 } from 'lucide-react';
+import { Scissors, Mail, Lock, User, Loader2, AlertCircle, ArrowLeft, Chrome, Sparkles, Building2, Globe, Phone, MapPin, CheckCircle2, KeyRound } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface RegisterPageProps {
@@ -50,6 +50,8 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
     }
   }, []);
 
+  const [showResetPasswordBtn, setShowResetPasswordBtn] = useState(false);
+
   const loadLinkingProfile = async (id: string) => {
     setLoadingLinkingProfile(true);
     try {
@@ -69,6 +71,20 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       console.warn("Erro ao buscar perfil para vinculação:", err);
     } finally {
       setLoadingLinkingProfile(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!email) {
+      setError("Por favor, informe o e-mail para receber o link de redefinição.");
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setSuccessMessage("Link de redefinição enviado com sucesso para o seu e-mail! Verifique sua caixa de entrada ou spam.");
+      setError('');
+    } catch (err: any) {
+      setError("Não foi possível enviar o e-mail de redefinição: " + (err.message || err.toString()));
     }
   };
 
@@ -297,7 +313,8 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       }
       try {
         const activeTid = role === 'admin' ? tenantSlug : getActiveTenantId();
-        const phoneCheck = await userService.checkPhoneExists(phone, undefined, activeTid);
+        // Exclude linkClientId from phone uniqueness check so activating profile doesn't conflict with itself
+        const phoneCheck = await userService.checkPhoneExists(phone, linkClientId || undefined, activeTid);
         if (phoneCheck.exists) {
           setError(`O telefone "${phone}" já está cadastrado nesta barbearia para o cliente ${phoneCheck.user?.nome || ''}. Utilize outro número ou entre em contato com a recepção.`);
           setLoading(false);
@@ -320,19 +337,45 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
         }
       }
 
-      // 2. Create the auth user
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      console.log('Auth user created', userCredential.user.uid);
-      const user = userCredential.user;
-
-      await updateProfile(user, { displayName: name });
-
-      // Send email verification link
+      // 2. Create or login the auth user
+      let user: any = null;
       try {
-        await sendEmailVerification(user);
-        setSuccessMessage('Um e-mail de verificação foi enviado para o seu e-mail. Por favor, confirme para validar sua conta.');
-      } catch (emailErr) {
-        console.warn("Could not send email verification:", emailErr);
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        console.log('Auth user created', userCredential.user.uid);
+        user = userCredential.user;
+        await updateProfile(user, { displayName: name });
+
+        try {
+          await sendEmailVerification(user);
+          if (!linkClientId) {
+            setSuccessMessage('Um e-mail de verificação foi enviado para o seu e-mail. Por favor, confirme para validar sua conta.');
+          }
+        } catch (emailErr) {
+          console.warn("Could not send email verification:", emailErr);
+        }
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/email-already-in-use' && linkClientId) {
+          // The account already exists in Firebase Auth. Try signing in with the provided password to connect the link.
+          try {
+            const signInRes = await signInWithEmailAndPassword(auth, email, password);
+            user = signInRes.user;
+            console.log('Signed in existing auth user for link activation:', user.uid);
+          } catch (signInErr: any) {
+            console.warn("Sign in with existing account failed:", signInErr);
+            setShowResetPasswordBtn(true);
+            setError('Este e-mail já possui um cadastro no sistema. Digite a senha exata da sua conta para conectar ou redefina sua senha abaixo.');
+            setLoading(false);
+            return;
+          }
+        } else {
+          throw authErr;
+        }
+      }
+
+      if (!user) {
+        setError('Não foi possível obter a credencial do usuário. Tente novamente.');
+        setLoading(false);
+        return;
       }
 
       // 3. If admin, create tenant document
@@ -577,9 +620,21 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
           )}
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/40 p-4 rounded-xl flex items-start gap-3 text-red-500 text-xs">
-              <AlertCircle size={16} className="shrink-0 mt-0.5" />
-              <span>{error}</span>
+            <div className="bg-red-500/10 border border-red-500/40 p-4 rounded-xl flex flex-col gap-2 text-red-400 text-xs">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="shrink-0 mt-0.5 text-red-500" />
+                <span>{error}</span>
+              </div>
+              {showResetPasswordBtn && (
+                <button
+                  type="button"
+                  onClick={handleResetPassword}
+                  className="mt-1 self-start bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                >
+                  <KeyRound size={14} />
+                  Enviar Link para Redefinir Senha
+                </button>
+              )}
             </div>
           )}
 
@@ -698,62 +753,82 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
           )}
 
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Seu Nome Completo</label>
+            <div className="flex items-center justify-between ml-1">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Seu Nome Completo</label>
+              {linkClientId && linkingProfile?.nome && (
+                <span className="text-[10px] text-emerald-400 font-medium">Ficha da Barbearia</span>
+              )}
+            </div>
             <div className="relative">
               <User className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
               <input 
                 type="text" 
                 required
+                disabled={Boolean(linkClientId && linkingProfile?.nome)}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Seu nome"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white disabled:opacity-70 disabled:cursor-not-allowed"
               />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">WhatsApp / Telefone</label>
+            <div className="flex items-center justify-between ml-1">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">WhatsApp / Telefone</label>
+              {linkClientId && (linkingProfile?.telefone || linkingProfile?.phone) && (
+                <span className="text-[10px] text-emerald-400 font-medium">Cadastrado</span>
+              )}
+            </div>
             <div className="relative">
               <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
               <input 
                 type="tel" 
                 required
+                disabled={Boolean(linkClientId && (linkingProfile?.telefone || linkingProfile?.phone))}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="(11) 99999-9999"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white disabled:opacity-70 disabled:cursor-not-allowed"
               />
             </div>
-            <p className="text-[10px] text-zinc-500 ml-1">Usado para identificação única do seu perfil e notificações</p>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">E-mail</label>
+            <div className="flex items-center justify-between ml-1">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">E-mail</label>
+              {linkClientId && linkingProfile?.email && !linkingProfile?.email.includes('placeholder') && !linkingProfile?.email.includes('manual_') && (
+                <span className="text-[10px] text-emerald-400 font-medium">E-mail da Ficha</span>
+              )}
+            </div>
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
               <input 
                 type="email" 
                 required
+                disabled={Boolean(linkClientId && linkingProfile?.email && !linkingProfile?.email.includes('placeholder') && !linkingProfile?.email.includes('manual_'))}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="seu@email.com"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white disabled:opacity-70 disabled:cursor-not-allowed"
               />
             </div>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider ml-1">Senha</label>
+          <div className="space-y-1 pt-2 border-t border-zinc-800/60">
+            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-wider ml-1 flex items-center gap-1.5">
+              <KeyRound size={13} />
+              {linkClientId ? 'Cadastre sua Senha de Acesso' : 'Senha'}
+            </label>
             <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-500" size={18} />
               <input 
                 type="password" 
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Mínimo 6 caracteres"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
+                placeholder="Digite sua nova senha (mín. 6 caracteres)"
+                className="w-full bg-zinc-950 border border-emerald-500/40 focus:border-emerald-400 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none transition-colors text-white shadow-sm"
               />
             </div>
           </div>

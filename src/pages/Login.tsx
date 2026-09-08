@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { auth, db } from '../firebase';
-import { Scissors, Mail, Lock, Loader2, AlertCircle, Chrome, ArrowLeft } from 'lucide-react';
+import { Scissors, Mail, Lock, Loader2, AlertCircle, Chrome, ArrowLeft, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 
@@ -18,6 +18,25 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding, onG
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
+  const [linkingProfile, setLinkingProfile] = useState<any | null>(null);
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linkId = params.get('link_client_id') || params.get('link_id');
+    if (linkId) {
+      import('firebase/firestore').then(({ doc, getDoc }) => {
+        getDoc(doc(db, 'usuarios', linkId)).then(snap => {
+          if (snap.exists()) {
+            const data = snap.data();
+            setLinkingProfile(data);
+            if (data.email && !data.email.includes('placeholder') && !data.email.includes('manual_')) {
+              setEmail(data.email);
+            }
+          }
+        }).catch(err => console.warn("Erro ao buscar perfil no login:", err));
+      });
+    }
+  }, []);
 
   const checkAndMigrateLink = async (userUid: string, userEmail: string, displayName: string) => {
     const params = new URLSearchParams(window.location.search);
@@ -218,6 +237,18 @@ export function LoginPage({ onRegisterClick, onForgotClick, onBackToLanding, onG
         </div>
 
         <form onSubmit={handleLogin} className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl shadow-xl space-y-6">
+          {linkingProfile && (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl space-y-2">
+              <div className="flex items-center gap-2 text-emerald-400 font-black text-xs uppercase tracking-wider">
+                <Sparkles className="animate-pulse shrink-0" size={16} />
+                <span>Vínculo de Ficha Ativo</span>
+              </div>
+              <p className="text-xs text-zinc-300">
+                Olá, <strong>{linkingProfile.nome}</strong>! Faça login abaixo com sua conta para conectar todo o seu histórico da barbearia.
+              </p>
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-500/10 border border-red-500/40 p-4 rounded-xl flex items-start gap-3 text-red-500 text-xs">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />

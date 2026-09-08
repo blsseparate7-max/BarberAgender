@@ -57,7 +57,10 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       if (snap.exists()) {
         const data = snap.data();
         setLinkingProfile(data);
-        setName(data.nome || '');
+        if (data.nome) setName(data.nome);
+        if (data.telefone || data.phone) {
+          setPhone(data.telefone || data.phone || '');
+        }
         if (data.email && !data.email.includes('placeholder') && !data.email.includes('manual_')) {
           setEmail(data.email);
         }
@@ -532,23 +535,34 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             <Scissors className="text-zinc-950 w-7 h-7" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white mb-1">
-            {linkClientId ? 'Ative seu Cadastro' : 'Crie sua conta de Cliente'}
+            {linkClientId ? 'Ativação de Ficha de Cliente' : 'Crie sua conta de Cliente'}
           </h1>
           <p className="text-zinc-400 text-sm">
             {linkClientId 
-              ? (linkingProfile ? `Olá, ${linkingProfile.nome}! Complete seus dados de acesso para começar.` : 'Carregando detalhes do seu convite...')
+              ? (linkingProfile ? `Olá, ${linkingProfile.nome}! Crie sua senha de acesso para ativar seu cadastro.` : 'Carregando detalhes da sua ficha...')
               : 'Junte-se a nós para agendar seus serviços e acompanhar seus pontos de fidelidade'}
           </p>
         </div>
 
         <form onSubmit={handleRegister} className="bg-zinc-900/40 border border-zinc-800/80 p-8 rounded-3xl shadow-xl space-y-5">
           {linkingProfile && (
-            <div className="bg-emerald-500/10 border border-emerald-500/20 p-3.5 rounded-xl flex items-start gap-3 text-emerald-400 text-xs">
-              <Sparkles className="shrink-0 text-emerald-400 mt-0.5 animate-pulse" size={16} />
-              <div>
-                <p className="font-bold uppercase tracking-wider">Perfil Vinculado!</p>
-                <p className="text-zinc-400 text-[10px] mt-0.5">Seu histórico de visitas, pontos de fidelidade e saldo como <strong>{linkingProfile.nome}</strong> serão integrados à sua nova conta.</p>
+            <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl space-y-2.5">
+              <div className="flex items-center gap-2 text-emerald-400 font-black text-xs uppercase tracking-wider">
+                <Sparkles className="animate-pulse shrink-0" size={16} />
+                <span>Ficha de Cliente Localizada!</span>
               </div>
+              <div className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/80 text-xs space-y-1 text-zinc-300">
+                <p>👤 <strong>Nome:</strong> {linkingProfile.nome}</p>
+                {(linkingProfile.telefone || linkingProfile.phone) && (
+                  <p>📱 <strong>Telefone:</strong> {linkingProfile.telefone || linkingProfile.phone}</p>
+                )}
+                {linkingProfile.email && !linkingProfile.email.includes('placeholder') && !linkingProfile.email.includes('manual_') && (
+                  <p>✉️ <strong>E-mail:</strong> {linkingProfile.email}</p>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Crie sua senha abaixo ou entre com o Google para conectar seu histórico de visitas e agendamentos instantaneamente.
+              </p>
             </div>
           )}
 
@@ -749,7 +763,11 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
             disabled={loading || googleLoading}
             className="w-full bg-emerald-500 text-zinc-950 py-3 rounded-xl font-bold text-sm hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
           >
-            {loading ? <Loader2 className="animate-spin" size={18} /> : (role === 'admin' ? 'Registrar Minha Barbearia' : 'Criar Minha Conta')}
+            {loading ? <Loader2 className="animate-spin" size={18} /> : (
+              role === 'admin' 
+                ? 'Registrar Minha Barbearia' 
+                : (linkClientId ? 'Ativar Minha Ficha e Acessar' : 'Criar Minha Conta')
+            )}
           </button>
 
           {role === 'cliente' && (
@@ -772,7 +790,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
                 {googleLoading ? <Loader2 className="animate-spin" size={18} /> : (
                   <>
                     <Chrome size={18} className="text-emerald-500" />
-                    Entrar com Google
+                    {linkClientId ? 'Ativar e Vincular com Google em 1 Clique' : 'Entrar com Google'}
                   </>
                 )}
               </button>

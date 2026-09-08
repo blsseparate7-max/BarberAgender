@@ -3149,8 +3149,8 @@ function LinkingModal({ customer, tenantId, onClose }: { customer: UserProfile; 
   
   const formattedPhone = (customer.telefone || customer.phone || '').replace(/\D/g, '');
   const whatsappText = isLinked
-    ? `Olá, ${customer.nome}! Lembrando que sua conta de cliente na barbearia já está vinculada e ativa com o e-mail: ${customer.email}. Você pode acessar seus agendamentos e histórico a qualquer momento!`
-    : `Olá, ${customer.nome}! Para fazer seus agendamentos online, acompanhar seus pontos de fidelidade e ver seu histórico, clique no link abaixo para criar sua senha e ativar sua conta:\n\n🔗 ${generatedLink}`;
+    ? `Olá, ${customer.nome}! Lembrando que sua conta de cliente na barbearia já está vinculada e ativa. Você pode acessar seus agendamentos e histórico a qualquer momento!`
+    : `Olá, ${customer.nome}! Sua ficha na barbearia já está pronta! Para acessar seu histórico de cortes, ver seus pontos e agendar online, clique no link abaixo para criar sua senha e ativar seu acesso:\n\n🔗 ${generatedLink}`;
   
   const handleCopyLink = () => {
     navigator.clipboard.writeText(generatedLink);

@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { SubscriptionPlan, Subscription, SubscriptionUsage, SubscriptionStatus } from '../types';
-import { format, addMonths } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import { getActiveTenantId } from './tenantService';
 import { cashService } from './cashService';
 
@@ -107,7 +107,7 @@ export const subscriptionService = {
       const plan = planSnap.data() as SubscriptionPlan;
 
       const startDate = new Date();
-      const endDate = addMonths(startDate, 1);
+      const endDate = addDays(startDate, 30);
 
       const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
       const subscriptionData = {
@@ -205,7 +205,7 @@ export const subscriptionService = {
       const plan = planSnap.data() as SubscriptionPlan;
 
       const startDate = new Date();
-      const endDate = addMonths(startDate, 1);
+      const endDate = addDays(startDate, 30);
 
       const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
       const subscriptionData = {
@@ -505,7 +505,7 @@ export const subscriptionService = {
       newStartDateStr = todayStr;
     }
     const newStartDate = new Date(newStartDateStr + 'T12:00:00');
-    const newEndDate = addMonths(newStartDate, 1);
+    const newEndDate = addDays(newStartDate, 30);
     const newEndDateStr = format(newEndDate, 'yyyy-MM-dd');
 
     return await runTransaction(db, async (transaction) => {
@@ -583,7 +583,7 @@ export const subscriptionService = {
     const plan = planSnap.data() as SubscriptionPlan;
 
     const startDate = new Date();
-    const endDate = addMonths(startDate, 1);
+    const endDate = addDays(startDate, 30);
 
     // Clean up or cancel old pending subscriptions for this client and tenant to prevent duplicate rows
     try {
@@ -730,7 +730,7 @@ export const subscriptionService = {
       newStartDateStr = todayStr;
     }
     const newStartDate = new Date(newStartDateStr + 'T12:00:00');
-    const newEndDate = addMonths(newStartDate, 1);
+    const newEndDate = addDays(newStartDate, 30);
     const newEndDateStr = format(newEndDate, 'yyyy-MM-dd');
 
     return await runTransaction(db, async (transaction) => {

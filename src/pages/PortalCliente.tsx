@@ -48,7 +48,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth } from '../firebase';
 import { signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { collection, query, where, getDocs, addDoc, doc, updateDoc, setDoc, serverTimestamp, getDoc, onSnapshot, writeBatch } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, setDoc, serverTimestamp, getDoc, onSnapshot, writeBatch, limit } from 'firebase/firestore';
 import { userService } from '../services/userService';
 import { appointmentService } from '../services/appointmentService';
 import { serviceService } from '../services/serviceService';
@@ -882,11 +882,16 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const syncClientAppointmentsWithComandas = async (clientUid: string, apps: Appointment[]) => {
     if (!clientUid || !apps || apps.length === 0) return;
 
+    // Shield: if no appointments are pending or in-service, skip query completely
+    const hasUnfinished = apps.some(a => a.status !== 'concluído' && a.status !== 'cancelado' && a.status !== 'faltou');
+    if (!hasUnfinished) return;
+
     try {
       const qComandas = query(
         collection(db, 'comandas'),
         where('cliente_id', '==', clientUid),
-        where('status', '==', 'fechada')
+        where('status', '==', 'fechada'),
+        limit(15)
       );
       const snap = await getDocs(qComandas);
       if (snap.empty) return;
@@ -1498,6 +1503,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         price: selectedService.preco || selectedService.price || 0,
         tenantName: tenantInfo?.name || 'Barbearia',
         tenantPhone: tenantInfo?.phone || tenantInfo?.whatsapp || '',
+        tenantAddress: tenantInfo?.address ? (
+          `${tenantInfo.address.street || ''}${tenantInfo.address.number ? `, ${tenantInfo.address.number}` : ''}${tenantInfo.address.neighborhood ? ` - ${tenantInfo.address.neighborhood}` : ''}, ${tenantInfo.address.city || ''} - ${tenantInfo.address.state || 'SP'}`
+        ) : '',
         clientName: clientName
       };
 
@@ -3352,6 +3360,19 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                           <p className="text-white mt-1 font-black truncate">{tenantInfo?.name || 'Barbearia Unidade'}</p>
                         </div>
                         <div>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Endereço do Local</p>
+                          <p className="text-amber-300 mt-1 font-bold text-[11px] leading-tight flex items-start gap-1">
+                            <MapPin size={12} className="shrink-0 text-amber-400 mt-0.5" />
+                            <span>
+                              {tenantInfo?.address?.street ? (
+                                `${tenantInfo.address.street}${tenantInfo.address.number ? `, ${tenantInfo.address.number}` : ''}${tenantInfo.address.neighborhood ? ` - ${tenantInfo.address.neighborhood}` : ''}, ${tenantInfo.address.city || ''} - ${tenantInfo.address.state || 'SP'}`
+                              ) : (
+                                `${tenantInfo?.address?.city || 'Centro'} - ${tenantInfo?.address?.state || 'SP'}`
+                              )}
+                            </span>
+                          </p>
+                        </div>
+                        <div>
                           <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Profissional</p>
                           <p className="text-white mt-1 font-black truncate">{selectedBarber.nome}</p>
                         </div>
@@ -3359,7 +3380,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                           <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Serviço Selecionado</p>
                           <p className="text-white mt-1 font-black truncate">{selectedService.nome || selectedService.name}</p>
                         </div>
-                        <div>
+                        <div className="col-span-2">
                           <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Data e Horário</p>
                           <p className="text-white mt-1 font-black truncate">
                             {format(parse(selectedDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy')} às {selectedTime}
@@ -5010,10 +5031,10 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     {selectedPortfolioTenant.address ? (
                       <div className="space-y-2">
                         <p className="text-xs font-bold text-slate-700 leading-relaxed">
-                          {selectedPortfolioTenant.address.street}, {selectedPortfolioTenant.address.city} - {selectedPortfolioTenant.address.state}
+                          {selectedPortfolioTenant.address.street}{selectedPortfolioTenant.address.number ? `, ${selectedPortfolioTenant.address.number}` : ''}{selectedPortfolioTenant.address.neighborhood ? ` - ${selectedPortfolioTenant.address.neighborhood}` : ''}, {selectedPortfolioTenant.address.city} - {selectedPortfolioTenant.address.state || 'SP'}
                         </p>
                         <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedPortfolioTenant.name + " " + selectedPortfolioTenant.address.street + " " + selectedPortfolioTenant.address.city)}`}
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${selectedPortfolioTenant.name} ${selectedPortfolioTenant.address.street} ${selectedPortfolioTenant.address.number || ''} ${selectedPortfolioTenant.address.city}`)}`}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1.5 text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-wider"
@@ -6298,6 +6319,16 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                   <span className="text-slate-400 font-bold">Serviço:</span>
                   <span className="text-white font-black">{guestCreatedAppointment.serviceName}</span>
                 </div>
+                {/* Endereço do Estabelecimento com Rota */}
+                {guestCreatedAppointment.tenantAddress && (
+                  <div className="flex flex-col gap-1.5 border-b border-slate-800/80 pb-2.5">
+                    <span className="text-slate-400 font-bold">Endereço da Barbearia:</span>
+                    <span className="text-amber-300 font-black text-[11px] leading-snug flex items-start gap-1">
+                      <MapPin size={13} className="shrink-0 text-amber-400 mt-0.5" />
+                      <span>{guestCreatedAppointment.tenantAddress}</span>
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between border-b border-slate-800/80 pb-2.5">
                   <span className="text-slate-400 font-bold">Profissional:</span>
                   <span className="text-white font-black">{guestCreatedAppointment.barberName}</span>

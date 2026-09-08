@@ -141,6 +141,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
 
   // Controlled address states
   const [street, setStreet] = useState(tenant?.address?.street || '');
+  const [number, setNumber] = useState(tenant?.address?.number || '');
+  const [neighborhood, setNeighborhood] = useState(tenant?.address?.neighborhood || '');
   const [city, setCity] = useState(tenant?.address?.city || '');
   const [state, setState] = useState(tenant?.address?.state || '');
   const [zipCode, setZipCode] = useState(tenant?.address?.zipCode || '');
@@ -178,6 +180,8 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       setAccentColor(tenant.accentColor || '#6366F1');
       setLogoUrl(tenant.logoUrl || '');
       setStreet(tenant.address?.street || '');
+      setNumber(tenant.address?.number || '');
+      setNeighborhood(tenant.address?.neighborhood || '');
       setCity(tenant.address?.city || '');
       setState(tenant.address?.state || '');
       setZipCode(tenant.address?.zipCode || '');
@@ -584,10 +588,12 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       coverImage,
       customSubscriptionLabel: (formData.get('customSubscriptionLabel') as string || '').trim().slice(0, 16),
       address: {
-        street: formData.get('street') as string,
-        city: formData.get('city') as string,
-        state: formData.get('state') as string,
-        zipCode: formData.get('zipCode') as string,
+        street: (formData.get('street') as string || '').trim(),
+        number: (formData.get('number') as string || '').trim(),
+        neighborhood: (formData.get('neighborhood') as string || '').trim(),
+        city: (formData.get('city') as string || '').trim(),
+        state: (formData.get('state') as string || '').trim(),
+        zipCode: (formData.get('zipCode') as string || '').trim(),
       }
     };
 
@@ -1442,49 +1448,119 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                 </section>
 
                 <section className="pt-10 border-t border-slate-100 space-y-8 mt-10">
-                  <h3 className="text-xl font-black text-primary tracking-tight flex items-center gap-3">
-                    <MapPin size={22} className="text-accent" />
-                    Endereço Estratégico
-                  </h3>
-                  <div className="space-y-6">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Logradouro</label>
-                      <input 
-                        name="street"
-                        type="text" 
-                        value={street}
-                        onChange={(e) => setStreet(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
-                      />
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xl font-black text-primary tracking-tight flex items-center gap-3">
+                        <MapPin size={22} className="text-accent" />
+                        Endereço Estratégico
+                      </h3>
+                      <p className="text-xs text-slate-500 font-semibold mt-1">
+                        Endereço exibido no portal de agendamento online e rotas dos clientes.
+                      </p>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  </div>
+
+                  <div className="space-y-6">
+                    {/* Linha 1: Logradouro / Rua (70%) e Número (30%) */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                      <div className="md:col-span-3 space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                          Logradouro / Rua *
+                        </label>
+                        <input 
+                          name="street"
+                          type="text" 
+                          placeholder="Ex: Av. Paulista, Rua das Flores"
+                          value={street}
+                          onChange={(e) => setStreet(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
+                      <div className="md:col-span-1 space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                          Número *
+                        </label>
+                        <input 
+                          name="number"
+                          type="text" 
+                          placeholder="Ex: 120, S/N"
+                          value={number}
+                          onChange={(e) => setNumber(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Linha 2: Bairro, Cidade, Estado e CEP */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Cidade</label>
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                          Bairro
+                        </label>
+                        <input 
+                          name="neighborhood"
+                          type="text" 
+                          placeholder="Ex: Centro, Bela Vista"
+                          value={neighborhood}
+                          onChange={(e) => setNeighborhood(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                          Cidade *
+                        </label>
                         <input 
                           name="city"
                           type="text" 
+                          placeholder="Ex: São Paulo"
                           value={city}
                           onChange={(e) => setCity(e.target.value)}
                           className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Estado</label>
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                          Estado (UF) *
+                        </label>
                         <input 
                           name="state"
                           type="text" 
+                          maxLength={2}
+                          placeholder="SP"
                           value={state}
-                          onChange={(e) => setState(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
+                          onChange={(e) => setState(e.target.value.toUpperCase())}
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner uppercase"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">CEP</label>
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                          CEP
+                        </label>
                         <input 
                           name="zipCode"
                           type="text" 
+                          placeholder="00000-000"
                           value={zipCode}
-                          onChange={(e) => setZipCode(e.target.value)}
+                          onChange={async (e) => {
+                            const val = e.target.value;
+                            setZipCode(val);
+                            const cleanCep = val.replace(/\D/g, '');
+                            if (cleanCep.length === 8) {
+                              try {
+                                const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+                                const data = await res.json();
+                                if (!data.erro) {
+                                  if (data.logradouro) setStreet(data.logradouro);
+                                  if (data.bairro) setNeighborhood(data.bairro);
+                                  if (data.localidade) setCity(data.localidade);
+                                  if (data.uf) setState(data.uf);
+                                }
+                              } catch (err) {
+                                console.error("Erro ao buscar CEP:", err);
+                              }
+                            }
+                          }}
                           className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-inner"
                         />
                       </div>

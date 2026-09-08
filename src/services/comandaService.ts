@@ -77,10 +77,19 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+let lastHealRunTime = 0;
+
 export const comandaService = {
-  async healAndSyncOrphanedComandas(tenantId?: string) {
+  async healAndSyncOrphanedComandas(tenantId?: string, force = false) {
     const targetTenantId = tenantId || getActiveTenantId();
     if (!targetTenantId) return { healedComandas: 0, syncedAppointments: 0 };
+
+    // Anti-loop shield: prevent running more than once every 15 minutes unless explicitly forced by manual action
+    const now = Date.now();
+    if (!force && now - lastHealRunTime < 15 * 60 * 1000) {
+      return { healedComandas: 0, syncedAppointments: 0 };
+    }
+    lastHealRunTime = now;
 
     try {
       let healedComandas = 0;
@@ -91,11 +100,12 @@ export const comandaService = {
         return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       };
 
-      // 1. Find open comandas that already have paid commissions or are linked to completed daily flow items
+      // 1. Find open comandas (bounded limit to prevent quota exhaustion)
       const openComandasSnap = await getDocs(query(
         collection(db, 'comandas'),
         where('tenantId', '==', targetTenantId),
-        where('status', '==', 'aberta')
+        where('status', '==', 'aberta'),
+        limit(25)
       ));
 
       for (const cDoc of openComandasSnap.docs) {
@@ -106,7 +116,8 @@ export const comandaService = {
         const commSnap = await getDocs(query(
           collection(db, 'commissions'),
           where('tenantId', '==', targetTenantId),
-          where('comanda_id', '==', comandaId)
+          where('comanda_id', '==', comandaId),
+          limit(5)
         ));
 
         // Check if linked daily flow is completed
@@ -134,18 +145,20 @@ export const comandaService = {
         }
       }
 
-      // 2. Fetch all closed comandas & all commissions in this tenant for cross-referencing
+      // 2. Fetch recent closed comandas & commissions in this tenant (bounded to prevent quota exhaustion)
       const closedSnap = await getDocs(query(
         collection(db, 'comandas'),
         where('tenantId', '==', targetTenantId),
-        where('status', '==', 'fechada')
+        where('status', '==', 'fechada'),
+        limit(30)
       ));
 
       const closedComandas = closedSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
       const commissionsSnap = await getDocs(query(
         collection(db, 'commissions'),
-        where('tenantId', '==', targetTenantId)
+        where('tenantId', '==', targetTenantId),
+        limit(50)
       ));
       const commissionsList = commissionsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
@@ -153,7 +166,8 @@ export const comandaService = {
       const inServiceAppsSnap = await getDocs(query(
         collection(db, 'appointments'),
         where('tenantId', '==', targetTenantId),
-        where('status', '==', 'em_atendimento')
+        where('status', '==', 'em_atendimento'),
+        limit(30)
       ));
 
       for (const aDoc of inServiceAppsSnap.docs) {
@@ -234,7 +248,8 @@ export const comandaService = {
       const dfSnap = await getDocs(query(
         collection(db, 'daily_flow'),
         where('tenantId', '==', targetTenantId),
-        where('status', '==', 'completed')
+        where('status', '==', 'completed'),
+        limit(30)
       ));
 
       for (const dfDoc of dfSnap.docs) {

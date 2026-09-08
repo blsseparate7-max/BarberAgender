@@ -197,25 +197,37 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
       const fetchAlertsDetails = async () => {
         setLoadingAlerts(true);
         try {
-          // 1. Get Comandas
+          // 1. Get Active Comandas only
           const comandasSnap = await getDocs(
-            query(collection(db, 'comandas'), where('tenantId', '==', tenantId))
+            query(
+              collection(db, 'comandas'), 
+              where('tenantId', '==', tenantId),
+              where('status', 'in', ['aberta', 'aguardando_pagamento'])
+            )
           );
-          setComandasAbertas(comandasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((c: any) => !['fechada', 'cancelada'].includes(c.status)));
+          setComandasAbertas(comandasSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
-          // 2. Get Debts
+          // 2. Get Unpaid Debts only
           const debtsSnap = await getDocs(
-            query(collection(db, 'client_debts'), where('tenantId', '==', tenantId))
+            query(
+              collection(db, 'client_debts'), 
+              where('tenantId', '==', tenantId),
+              where('status', 'in', ['pendente', 'parcial', 'vencido'])
+            )
           );
-          setClientesDevedores(debtsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((d: any) => !['paga', 'pago', 'cancelada', 'quitado'].includes(d.status) && (d.remainingAmount || 0) > 0));
+          setClientesDevedores(debtsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter((d: any) => (d.remainingAmount || 0) > 0));
 
-          // 3. Get Low Stock
+          // 3. Get Active Products
           const productsSnap = await getDocs(
-            query(collection(db, 'products'), where('tenantId', '==', tenantId))
+            query(
+              collection(db, 'products'), 
+              where('tenantId', '==', tenantId),
+              where('status', '==', 'active')
+            )
           );
           const lowStock = productsSnap.docs
             .map(d => ({ id: d.id, ...d.data() }))
-            .filter((p: any) => p.currentStock <= p.minStock && p.status === 'active');
+            .filter((p: any) => p.currentStock <= p.minStock);
           setBaixoEstoque(lowStock);
         } catch (err) {
           console.error("Erro ao carregar detalhes dos alertas:", err);
@@ -1800,7 +1812,7 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
               <div className="flex items-start gap-3">
                 <MapPin size={14} className="text-emerald-400 mt-0.5 shrink-0" />
                 <span>
-                  {tenant.address.street}, {tenant.address.city} - {tenant.address.state}
+                  {tenant.address.street}{tenant.address.number ? `, ${tenant.address.number}` : ''}{tenant.address.neighborhood ? ` - ${tenant.address.neighborhood}` : ''}, {tenant.address.city} - {tenant.address.state || 'SP'}
                 </span>
               </div>
             )}
@@ -2143,7 +2155,7 @@ function ClientDashboard({ data, refresh, setActiveTab }: any) {
                           </div>
                           <p className="text-muted text-xs flex items-center gap-1 mt-1">
                             <MapPin size={12} className="text-muted-foreground shrink-0" />
-                            {unit.address?.street ? `${unit.address.street}, ${unit.address.city}` : 'Endereço não configurado'}
+                            {unit.address?.street ? `${unit.address.street}${unit.address.number ? `, ${unit.address.number}` : ''}, ${unit.address.city}` : 'Endereço não configurado'}
                           </p>
                         </div>
                       </div>

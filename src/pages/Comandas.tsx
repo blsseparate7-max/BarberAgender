@@ -71,15 +71,10 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
     }
   }, [activeTab, statusFilter]);
 
-  useEffect(() => {
-    // Auto-sync orphaned daily flow comandas on mount
-    comandaService.healAndSyncOrphanedComandas().catch(console.warn);
-  }, []);
-
   const handleManualSync = async () => {
     setSyncing(true);
     try {
-      const res = await comandaService.healAndSyncOrphanedComandas();
+      const res = await comandaService.healAndSyncOrphanedComandas(undefined, true);
       if (res.healedComandas > 0 || res.syncedAppointments > 0) {
         toast.success(`Sincronização concluída! ${res.healedComandas} comandas saneadas e ${res.syncedAppointments} agendamentos atualizados.`);
       } else {

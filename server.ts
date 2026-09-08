@@ -1531,7 +1531,7 @@ function encodeFirestoreFields(data: any): any {
             }
             const newStart = new Date(newStartStr + 'T12:00:00');
             const newEnd = new Date(newStart);
-            newEnd.setMonth(newEnd.getMonth() + 1);
+            newEnd.setDate(newEnd.getDate() + 30);
             const newEndStr = newEnd.toISOString().split('T')[0];
 
             const finalAmount = paymentValue || subData.amount || subData.preco || 0;
@@ -1757,7 +1757,7 @@ function encodeFirestoreFields(data: any): any {
       if (isPaidOnAsaas && subMatch) {
         const todayStr = new Date().toISOString().split('T')[0];
         const nextMonth = new Date();
-        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        nextMonth.setDate(nextMonth.getDate() + 30);
         const nextMonthStr = nextMonth.toISOString().split('T')[0];
 
         const updateFields: any = {
@@ -2648,7 +2648,7 @@ function encodeFirestoreFields(data: any): any {
 
           // A. Atualizar assinatura no Firestore se necessário
           const nextMonth = new Date();
-          nextMonth.setMonth(nextMonth.getMonth() + 1);
+          nextMonth.setDate(nextMonth.getDate() + 30);
           const nextMonthStr = nextMonth.toISOString().split('T')[0];
 
           const updateFields: any = {
@@ -4506,7 +4506,7 @@ function encodeFirestoreFields(data: any): any {
 
           if (!newEndStr) {
             const nextMonth = new Date(baseDate);
-            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            nextMonth.setDate(nextMonth.getDate() + 30);
             newEndStr = nextMonth.toISOString().split('T')[0];
           }
 

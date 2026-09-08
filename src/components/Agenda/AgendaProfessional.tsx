@@ -21,7 +21,8 @@ import {
   AlertTriangle,
   HeartHandshake,
   DollarSign,
-  Lock
+  Lock,
+  Crown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -47,6 +48,7 @@ interface AgendaProfessionalProps {
   onOpenAppointment: (app: Appointment) => void;
   onOpenComanda: (app: Appointment) => void;
   loading: boolean;
+  customSubscriptionLabel?: string;
 }
 
 export function AgendaProfessional({ 
@@ -60,7 +62,8 @@ export function AgendaProfessional({
   onNewAppointment, 
   onOpenAppointment,
   onOpenComanda,
-  loading 
+  loading,
+  customSubscriptionLabel = 'Clube VIP'
 }: AgendaProfessionalProps) {
   const [selectedProfissionalId, setSelectedProfissionalId] = useState<string>('');
   const [weekDays, setWeekDays] = useState<Date[]>([]);
@@ -132,15 +135,15 @@ export function AgendaProfessional({
 
     if (hasActiveSub) {
       badges.push({
-        label: 'Assinante',
-        icon: <Sparkles size={10} fill="currentColor" className="text-indigo-600 animate-pulse" />,
-        className: 'bg-indigo-600/10 text-indigo-700 border border-indigo-600/25 shadow-sm'
+        label: customSubscriptionLabel || 'Assinante',
+        icon: <Crown size={10} className="text-amber-300 fill-amber-300" />,
+        className: 'bg-slate-950 text-amber-300 border border-amber-400/50 font-black'
       });
     } else if (hasExpiredSub) {
       badges.push({
-        label: 'Assinatura Vencida',
+        label: `${customSubscriptionLabel || 'Clube'} Vencido`,
         icon: <AlertCircle size={10} />,
-        className: 'bg-red-500 text-white border border-red-600 font-extrabold animate-pulse'
+        className: 'bg-red-600 text-white border border-red-700 font-extrabold animate-pulse'
       });
     }
 
@@ -292,13 +295,21 @@ export function AgendaProfessional({
 
   const getStatusColor = (status: AppointmentStatus) => {
     switch (status) {
-      case 'confirmado': return 'bg-indigo-50 border-indigo-100 text-indigo-600';
-      case 'em_atendimento': return 'bg-amber-50 border-amber-100 text-amber-600';
-      case 'concluído': return 'bg-emerald-50 border-emerald-100 text-emerald-600';
-      case 'cancelado': return 'bg-red-50 border-red-100 text-red-600';
-      case 'faltou': return 'bg-slate-50 border-slate-100 text-slate-400';
-      case 'bloqueado': return 'bg-slate-900 border-slate-800 text-white';
-      default: return 'bg-slate-50 border-slate-100 text-slate-400';
+      case 'confirmado':
+      case 'agendado': 
+        return 'bg-blue-600 border-2 border-blue-700 text-white shadow-md hover:bg-blue-700 font-bold';
+      case 'em_atendimento': 
+        return 'bg-amber-500 border-2 border-amber-600 text-slate-950 shadow-lg ring-2 ring-amber-400/60 hover:bg-amber-600 font-black';
+      case 'concluído': 
+        return 'bg-emerald-600 border-2 border-emerald-700 text-white shadow-md hover:bg-emerald-700 font-bold';
+      case 'cancelado': 
+        return 'bg-rose-600 border-2 border-rose-700 text-white opacity-90 font-bold';
+      case 'faltou': 
+        return 'bg-slate-600 border-2 border-slate-700 text-slate-200 line-through opacity-85 font-medium';
+      case 'bloqueado': 
+        return 'bg-slate-900 border-2 border-slate-800 text-white font-black';
+      default: 
+        return 'bg-slate-700 border-2 border-slate-800 text-white';
     }
   };
 
@@ -469,11 +480,17 @@ export function AgendaProfessional({
                           const hasActiveSub = clientSubs.some(sub => sub.status === 'active');
                           const hasExpiredSub = !hasActiveSub && clientSubs.some(sub => sub.status === 'expired' || sub.status === 'past_due' || sub.status === 'inactive');
 
+                          const isYellowCard = hasActiveSub || app.status === 'em_atendimento';
+
                           const subscriptionBorderClass = hasActiveSub 
-                            ? '!border-indigo-500 !ring-2 !ring-indigo-500/20 shadow-indigo-100/50' 
+                            ? '!border-amber-400 !ring-2 !ring-amber-300/80 shadow-md shadow-amber-500/20' 
                             : hasExpiredSub 
-                              ? '!border-rose-500 !ring-4 !ring-red-500/20 bg-rose-50/20' 
+                              ? '!border-rose-600 !ring-4 !ring-red-500/30' 
                               : '';
+
+                          const cardBgColorClass = hasActiveSub 
+                            ? 'bg-gradient-to-br from-amber-400 via-yellow-400 to-amber-500 text-slate-950 font-black shadow-md shadow-yellow-500/25 border-2 border-amber-500 hover:border-amber-600' 
+                            : getStatusColor(app.status);
 
                           const appPos = layoutMap?.get(app.id) || { colIndex: 0, totalCols: 1 };
                           const colWidth = 100 / appPos.totalCols;
@@ -505,35 +522,31 @@ export function AgendaProfessional({
                                 left: appPos.totalCols === 1 ? '4px' : `calc(${leftPos}% + 2px)`,
                                 width: appPos.totalCols === 1 ? 'calc(100% - 8px)' : `calc(${colWidth}% - 4px)`
                               }}
-                              className={`absolute rounded-xl border ${appPos.totalCols > 1 ? 'p-1 sm:p-1.5' : 'p-2'} flex flex-col justify-between shadow-sm z-10 overflow-hidden ${getStatusColor(app.status)} ${subscriptionBorderClass} hover:z-20`}
+                              className={`absolute rounded-xl ${appPos.totalCols > 1 ? 'p-1 sm:p-1.5' : 'p-2'} flex flex-col justify-between shadow-sm z-10 overflow-hidden ${cardBgColorClass} ${subscriptionBorderClass} hover:z-20 hover:scale-[1.01]`}
                             >
                               <div className="overflow-hidden">
-                                <p className="text-[10px] font-bold uppercase leading-none mb-1 truncate">{app.cliente_name}</p>
-                                <p className="text-[8px] opacity-80 truncate font-medium">{app.servico_name}</p>
+                                {hasActiveSub && (
+                                  <div className="bg-slate-950/90 text-amber-300 px-1 py-0.5 rounded mb-1 flex items-center justify-between border border-amber-400/40">
+                                    <span className="flex items-center gap-0.5 text-[8px] font-black uppercase tracking-wider truncate">
+                                      <Crown size={9} className="text-amber-300 fill-amber-300 shrink-0" />
+                                      <span className="truncate">{customSubscriptionLabel || 'Clube VIP'}</span>
+                                    </span>
+                                  </div>
+                                )}
+                                <p className={`text-[10px] font-bold uppercase leading-none mb-1 truncate ${isYellowCard ? 'text-slate-950 font-black' : 'text-white'}`}>{app.cliente_name}</p>
+                                <p className={`text-[8px] truncate font-semibold ${isYellowCard ? 'text-slate-900' : 'text-slate-100'}`}>{app.servico_name}</p>
                                 <div className="flex flex-wrap gap-1 mt-1">
                                   {app.origin === 'encaixe' && (
-                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 text-amber-800 text-[8px] font-black uppercase tracking-wider">
+                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-black/30 text-white text-[8px] font-black uppercase tracking-wider">
                                       Encaixe
                                     </span>
                                   )}
                                   {app.comanda_number && (
-                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[8px] font-black uppercase tracking-wider">
+                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-white/20 text-white text-[8px] font-black uppercase tracking-wider">
                                       #{app.comanda_number}
                                     </span>
                                   )}
-                                  {clientsWithPackages.has(app.cliente_id) && (
-                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-50 text-amber-700 text-[7px] font-black uppercase tracking-wider border border-amber-200">
-                                      <Award size={8} />
-                                      {appPos.totalCols === 1 && 'PACOTE'}
-                                    </span>
-                                  )}
-                                  {clientsWithSubscriptions.has(app.cliente_id) && (
-                                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[7px] font-black uppercase tracking-wider border border-indigo-200">
-                                      <Sparkles size={8} />
-                                      {appPos.totalCols === 1 && 'CLUBE'}
-                                    </span>
-                                  )}
-                                  {getClientClassification(app.cliente_id, app.cliente_name).map((badge, idx) => (
+                                  {getClientClassification(app.cliente_id, app.cliente_name).filter(b => !hasActiveSub || !b.label.includes(customSubscriptionLabel || 'Assinante')).map((badge, idx) => (
                                     <span 
                                       key={`badge-${badge.label || idx}-${idx}`} 
                                       title={badge.label}
@@ -545,8 +558,8 @@ export function AgendaProfessional({
                                   ))}
                                 </div>
                               </div>
-                              <div className="flex items-center justify-between mt-1 pt-0.5 border-t border-black/5 gap-0.5">
-                                <span className="text-[8px] font-bold truncate">{app.startTime}</span>
+                              <div className={`flex items-center justify-between mt-1 pt-0.5 border-t ${isYellowCard ? 'border-black/15' : 'border-white/20'} gap-0.5`}>
+                                <span className={`text-[8px] font-bold truncate ${isYellowCard ? 'text-slate-950' : 'text-white'}`}>{app.startTime}</span>
                                 <div className="flex items-center gap-1 shrink-0">
                                   {(app.status === 'agendado' || app.status === 'confirmado') && (
                                     <button
@@ -559,7 +572,7 @@ export function AgendaProfessional({
                                         }
                                       }}
                                       title="Iniciar Atendimento"
-                                      className="p-1 hover:bg-black/5 rounded transition-colors"
+                                      className="p-1 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded transition-colors"
                                     >
                                       <Clock size={10} />
                                     </button>
@@ -571,13 +584,13 @@ export function AgendaProfessional({
                                         onOpenComanda(app);
                                       }}
                                       title="Finalizar e Abrir Comanda"
-                                      className="p-1 hover:bg-black/5 rounded transition-colors"
+                                      className="p-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
                                     >
                                       <Receipt size={10} />
                                     </button>
                                   )}
                                   {app.status === 'concluído' && (
-                                    <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[8px] font-black uppercase">
+                                    <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-800 text-white rounded text-[8px] font-black uppercase border border-emerald-700">
                                       <CheckCircle2 size={10} /> {appPos.totalCols === 1 && 'Pago'}
                                     </span>
                                   )}

@@ -130,9 +130,6 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
         const tId = getActiveTenantId();
         const profile = await tenantService.getTenant(tId);
         setTenantProfile(profile);
-        if (tId) {
-          comandaService.healAndSyncOrphanedComandas(tId).catch(console.warn);
-        }
       } catch (err) {
         console.error("Error loading tenant profile in Agenda:", err);
       }
@@ -190,26 +187,56 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
   }, [barbers, selectedBarberIds]);
 
   const dailySummary = React.useMemo(() => {
-    const filteredApps = appointments.filter(app => {
+    const selectedDayStr = format(selectedDate, 'yyyy-MM-dd');
+    const dayApps = appointments.filter(a => a.date === selectedDayStr);
+
+    const filteredApps = dayApps.filter(app => {
       if (selectedBarberIds.length === 0) return false;
       return selectedBarberIds.includes(app.profissional_id);
     });
 
-    const total = filteredApps.length;
+    const uniqueClients = new Set(
+      filteredApps
+        .filter(a => a.status !== 'cancelado')
+        .map(a => a.cliente_id || a.cliente_name || a.id)
+    ).size;
+
+    const totalServices = filteredApps
+      .filter(a => a.status !== 'cancelado')
+      .reduce((acc, a) => {
+        const extraCount = Array.isArray((a as any).servicos) ? (a as any).servicos.length : 0;
+        return acc + Math.max(1, extraCount);
+      }, 0);
+
     const completed = filteredApps.filter(a => a.status === 'concluído').length;
     const canceled = filteredApps.filter(a => a.status === 'cancelado').length;
     
-    // Average 16 slots per barber per day
-    const totalPossibleSlots = Math.max(1, selectedBarberIds.length * 16);
-    const activeAppointments = total - canceled;
+    // Day of week check for working barbers
+    const dayOfWeek = selectedDate.getDay();
+    const workingBarbers = barbers.filter(b => {
+      const bId = b.uid || b.id;
+      if (!selectedBarberIds.includes(bId)) return false;
+      if (b.bloqueadoParaAgendar) return false;
+      if (b.horario_de_trabalho && Array.isArray(b.horario_de_trabalho) && b.horario_de_trabalho.length > 0) {
+        const sched = b.horario_de_trabalho.find((h: any) => h.dayOfWeek === dayOfWeek || h.dia_semana === dayOfWeek);
+        if (sched && (sched.isOpen === false || (sched as any).is_open === false)) return false;
+      }
+      return true;
+    });
+
+    const activeBarbersCount = workingBarbers.length > 0 ? workingBarbers.length : Math.max(1, selectedBarberIds.length);
+    const totalPossibleSlots = Math.max(1, activeBarbersCount * 16);
+    const activeAppointments = filteredApps.filter(a => a.status !== 'cancelado').length;
     const occupancyPercent = Math.min(100, Math.round((activeAppointments / totalPossibleSlots) * 100));
 
     return {
-      total,
+      total: uniqueClients,
+      servicesCount: totalServices,
       completed,
+      workingBarbersCount: activeBarbersCount,
       occupancyPercent: isNaN(occupancyPercent) ? 0 : occupancyPercent
     };
-  }, [appointments, selectedBarberIds]);
+  }, [appointments, selectedBarberIds, selectedDate, barbers]);
 
   // Ranking do dia por barbeiro
   const [isDailyRankingModalOpen, setIsDailyRankingModalOpen] = useState(false);
@@ -553,9 +580,9 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
         ))}
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8 flex-1">
+      <div className="flex flex-col gap-8 flex-1 w-full">
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col gap-8">
+        <div className="flex-1 flex flex-col gap-8 w-full">
           {/* Header Controls (Only for Main Agenda View) */}
           {activeTab === 'main' && (
             <header className="bg-white border border-slate-200 p-6 rounded-[2rem] flex flex-col xl:flex-row gap-6 items-center justify-between shadow-sm">
@@ -665,8 +692,18 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                 </div>
 
                 <button 
+                  onClick={() => setActiveTab('blocks')}
+                  className="flex items-center justify-center gap-2 bg-white text-slate-700 px-4 py-3 rounded-2xl font-bold text-sm hover:bg-slate-100 transition-all border border-slate-200 shadow-xs active:scale-95"
+                  title="Bloquear Horário / Intervalo"
+                >
+                  <Lock size={16} className="text-slate-500" />
+                  <span className="hidden sm:inline">Bloquear</span>
+                </button>
+
+                <button 
                   onClick={() => handleNew(format(new Date(), 'HH:mm'), barbers[0]?.uid)}
-                  className="flex items-center justify-center gap-2 bg-white text-emerald-600 px-5 py-3 rounded-2xl font-bold text-sm hover:bg-emerald-50 transition-all border border-emerald-100 shadow-sm active:scale-95"
+                  className="flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 px-5 py-3 rounded-2xl font-black text-sm hover:bg-emerald-100 transition-all border border-emerald-200 shadow-xs active:scale-95"
+                  title="Novo Encaixe Rápido"
                 >
                   <ArrowRightLeft size={18} />
                   <span className="hidden sm:inline">Encaixe Rápido</span>
@@ -781,24 +818,24 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                 </button>
               </div>
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center">
-                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Total</p>
-                  <p className="text-2xl font-black">{dailySummary.total}</p>
+                <div className="bg-white/5 border border-white/10 p-3 rounded-2xl text-center">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Clientes / Serv.</p>
+                  <p className="text-xl font-black">{dailySummary.total} <span className="text-xs text-slate-400 font-semibold">({dailySummary.servicesCount}s)</span></p>
                 </div>
-                <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl text-center">
+                <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-2xl text-center">
                   <p className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Concluídos</p>
-                  <p className="text-2xl font-black text-emerald-400">{dailySummary.completed}</p>
+                  <p className="text-xl font-black text-emerald-400">{dailySummary.completed}</p>
                 </div>
-                <div className="bg-accent/10 border border-accent/20 p-4 rounded-2xl text-center">
+                <div className="bg-accent/10 border border-accent/20 p-3 rounded-2xl text-center">
                   <p className="text-[9px] font-bold text-accent uppercase tracking-wider mb-1">Ocupação</p>
-                  <p className="text-2xl font-black text-accent">{dailySummary.occupancyPercent}%</p>
+                  <p className="text-xl font-black text-accent">{dailySummary.occupancyPercent}%</p>
                 </div>
               </div>
             </div>
           )}
 
           {/* Dynamic Content */}
-          <div className="flex-1">
+          <div className="flex-1 w-full">
             {activeTab === 'main' && (
               viewType === 'day' ? (
                 <AgendaGeneral 
@@ -812,7 +849,9 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                   onNewAppointment={handleNew}
                   onOpenAppointment={handleOpenAppointment}
                   onOpenComanda={handleOpenComanda}
+                  onOpenRanking={() => setIsDailyRankingModalOpen(true)}
                   loading={loading}
+                  customSubscriptionLabel={tenantProfile?.customSubscriptionLabel || 'Clube VIP'}
                 />
               ) : viewType === 'week' ? (
                 <AgendaProfessional 
@@ -827,6 +866,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                   onOpenAppointment={handleOpenAppointment}
                   onOpenComanda={handleOpenComanda}
                   loading={loading}
+                  customSubscriptionLabel={tenantProfile?.customSubscriptionLabel || 'Clube VIP'}
                 />
               ) : (
                 <div className="bg-white border border-slate-200 p-20 rounded-[2.5rem] text-center shadow-sm">
@@ -862,69 +902,6 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
             )}
           </div>
         </div>
-
-        {/* Right Sidebar (Only for Main Agenda View) */}
-        {activeTab === 'main' && (
-          <aside className="w-full lg:w-80 flex flex-col gap-8">
-            {/* Mini Summary (Exibido apenas no Desktop, pois no Mobile já aparece no topo) */}
-            <div className="hidden lg:block bg-white border border-slate-200 p-8 rounded-[2rem] shadow-sm space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="font-black text-primary flex items-center gap-2">
-                  <CalendarCheck size={18} className="text-accent" />
-                  Resumo do Dia
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsDailyRankingModalOpen(true)}
-                  className="flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100 text-primary border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition active:scale-95 cursor-pointer"
-                  title="Ver ranking de atendimentos por profissional no dia"
-                >
-                  <Eye size={14} className="text-accent" />
-                  <span>Ranking</span>
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 shadow-inner">
-                  <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1.5">Total</p>
-                  <p className="text-3xl font-black text-primary tracking-tighter">{dailySummary.total}</p>
-                </div>
-                <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-100 shadow-inner">
-                  <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1.5">Concluídos</p>
-                  <p className="text-3xl font-black text-emerald-600 tracking-tighter">
-                    {dailySummary.completed}
-                  </p>
-                </div>
-              </div>
-              <div className="pt-4 border-t border-slate-100">
-                <div className="flex justify-between items-center text-xs font-bold mb-2">
-                  <span className="text-muted uppercase tracking-widest">Ocupação</span>
-                  <span className="text-primary">{dailySummary.occupancyPercent}%</span>
-                </div>
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-accent rounded-full transition-all duration-500" style={{ width: `${dailySummary.occupancyPercent}%` }} />
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="grid grid-cols-1 gap-3">
-              <button 
-                onClick={() => setActiveTab('blocks')}
-                className="w-full py-4 bg-white border border-slate-200 text-primary rounded-2xl font-bold text-xs hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-sm active:scale-95"
-              >
-                <Lock size={16} className="text-slate-400" /> 
-                <span>Bloquear Horário</span>
-              </button>
-              <button 
-                onClick={() => handleNew(format(new Date(), 'HH:mm'), barbers[0]?.uid)}
-                className="w-full py-4 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-2xl font-black text-xs hover:bg-emerald-100 transition-all flex items-center justify-center gap-3 shadow-sm active:scale-95"
-              >
-                <ArrowRightLeft size={16} /> 
-                <span>NOVO ENCAIXE</span>
-              </button>
-            </div>
-          </aside>
-        )}
       </div>
 
       {/* Modals */}

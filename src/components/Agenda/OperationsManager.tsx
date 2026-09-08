@@ -116,16 +116,13 @@ export function OperationsManager() {
       setRegisteredClients(data);
     });
 
-    // 5. Fetch comandas in real-time for status tracking
+    // 5. Fetch active comandas in real-time for status tracking
     const unsubscribeComandas = comandaService.subscribeToComandas(
-      ['aberta', 'aguardando_pagamento', 'fechada'],
+      ['aberta', 'aguardando_pagamento'],
       (list) => {
         setComandas(list);
       }
     );
-
-    // 6. Run background heal/sync to repair any disconnected flow or appointment items
-    comandaService.healAndSyncOrphanedComandas(tenantId).catch(console.warn);
 
     return () => {
       unsubscribeFlow();

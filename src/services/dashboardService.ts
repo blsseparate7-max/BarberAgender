@@ -18,6 +18,69 @@ import { getActiveTenantId } from './tenantService';
 import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays } from 'date-fns';
 import { cashService } from './cashService';
 
+// Helper to safely execute a query with date range, falling back to tenant-only query if composite index is missing
+async function safeTenantDateDocs(collectionName: string, activeTenantId: string, startStr?: string, endStr?: string, extraConstraints: any[] = []) {
+  if (!activeTenantId) return [];
+
+  // If single date, we can do equality query which doesn't need a composite index
+  if (startStr && endStr && startStr === endStr) {
+    try {
+      const snap = await getDocs(query(
+        collection(db, collectionName),
+        where('tenantId', '==', activeTenantId),
+        where('date', '==', startStr),
+        ...extraConstraints
+      ));
+      return snap.docs;
+    } catch (err: any) {
+      console.warn(`[safeTenantDateDocs] Single date query error for ${collectionName}:`, err?.message || err);
+    }
+  }
+
+  // Try composite index range query first
+  if (startStr && endStr) {
+    try {
+      const snap = await getDocs(query(
+        collection(db, collectionName),
+        where('tenantId', '==', activeTenantId),
+        where('date', '>=', startStr),
+        where('date', '<=', endStr),
+        ...extraConstraints
+      ));
+      return snap.docs;
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.includes('requires an index') || msg.includes('failed-precondition') || msg.includes('INDEX_REQUISITE')) {
+        console.warn(`[safeTenantDateDocs] Firestore composite index missing for ${collectionName} (tenantId + date). Falling back to client-side date filtering.`);
+      } else {
+        console.error(`Dashboard Query Error [${collectionName}]:`, err);
+      }
+    }
+  }
+
+  // Fallback: Query by tenantId (and extra constraints if any) then filter in-memory
+  try {
+    const snap = await getDocs(query(
+      collection(db, collectionName),
+      where('tenantId', '==', activeTenantId),
+      ...extraConstraints
+    ));
+    if (startStr || endStr) {
+      return snap.docs.filter(doc => {
+        const data = doc.data();
+        const d = data.date || (data.createdAt?.seconds ? new Date(data.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+        if (startStr && d && d < startStr) return false;
+        if (endStr && d && d > endStr) return false;
+        return true;
+      });
+    }
+    return snap.docs;
+  } catch (fallbackErr) {
+    console.error(`Dashboard Fallback Query Error [${collectionName}]:`, fallbackErr);
+    return [];
+  }
+}
+
 export const dashboardService = {
   async getAdminStats(startDate: Date, endDate: Date) {
     const startStr = format(startDate, 'yyyy-MM-dd');
@@ -27,43 +90,19 @@ export const dashboardService = {
 
     const activeTenantId = getActiveTenantId();
 
-    // Run independent queries in parallel
+    // Run independent queries in parallel with strict tenant and status/date bounds
     const [
-      appointmentsSnap,
-      financialSnap,
-      commissionsSnap,
+      appointmentDocs,
+      financialDocs,
+      commissionDocs,
       openCash,
       comandasSnap,
       productsSnap,
       debtsSnap
     ] = await Promise.all([
-      getDocs(
-        query(
-          collection(db, 'appointments'),
-          where('tenantId', '==', activeTenantId)
-        )
-      ).catch(err => {
-        console.error("Dashboard Query Error [appointments]:", err);
-        return { docs: [] };
-      }),
-      getDocs(
-        query(
-          collection(db, 'financial_transactions'),
-          where('tenantId', '==', activeTenantId)
-        )
-      ).catch(err => {
-        console.error("Dashboard Query Error [financial_transactions]:", err);
-        return { docs: [] };
-      }),
-      getDocs(
-        query(
-          collection(db, 'commissions'),
-          where('tenantId', '==', activeTenantId)
-        )
-      ).catch(err => {
-        console.error("Dashboard Query Error [commissions]:", err);
-        return { docs: [] };
-      }),
+      safeTenantDateDocs('appointments', activeTenantId, startStr, endStr),
+      safeTenantDateDocs('financial_transactions', activeTenantId, startStr, endStr),
+      safeTenantDateDocs('commissions', activeTenantId, startStr, endStr),
       cashService.getCurrentCash().catch(err => {
         console.error("Dashboard Query Error [cash_sessions]:", err);
         return null;
@@ -71,7 +110,8 @@ export const dashboardService = {
       getDocs(
         query(
           collection(db, 'comandas'),
-          where('tenantId', '==', activeTenantId)
+          where('tenantId', '==', activeTenantId),
+          where('status', 'in', ['aberta', 'aguardando_pagamento'])
         )
       ).catch(err => {
         console.error("Dashboard Query Error [comandas]:", err);
@@ -80,7 +120,8 @@ export const dashboardService = {
       getDocs(
         query(
           collection(db, 'products'),
-          where('tenantId', '==', activeTenantId)
+          where('tenantId', '==', activeTenantId),
+          where('status', '==', 'active')
         )
       ).catch(err => {
         console.error("Dashboard Query Error [products]:", err);
@@ -89,13 +130,18 @@ export const dashboardService = {
       getDocs(
         query(
           collection(db, 'client_debts'),
-          where('tenantId', '==', activeTenantId)
+          where('tenantId', '==', activeTenantId),
+          where('status', 'in', ['pendente', 'parcial', 'vencido'])
         )
       ).catch(err => {
         console.error("Dashboard Query Error [client_debts]:", err);
         return { docs: [] };
       })
     ]);
+
+    const appointmentsSnap = { docs: appointmentDocs };
+    const financialSnap = { docs: financialDocs };
+    const commissionsSnap = { docs: commissionDocs };
 
     const appointments: Appointment[] = appointmentsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
@@ -229,22 +275,13 @@ export const dashboardService = {
 
     const activeTenantId = getActiveTenantId();
 
-    const [appointmentsSnap, commissionsSnap] = await Promise.all([
-      getDocs(
-        query(
-          collection(db, 'appointments'),
-          where('tenantId', '==', activeTenantId),
-          where('profissional_id', '==', profissional_id)
-        )
-      ),
-      getDocs(
-        query(
-          collection(db, 'commissions'),
-          where('tenantId', '==', activeTenantId),
-          where('profissional_id', '==', profissional_id)
-        )
-      )
+    const [appointmentDocs, commissionDocs] = await Promise.all([
+      safeTenantDateDocs('appointments', activeTenantId, startStr, endStr, [where('profissional_id', '==', profissional_id)]),
+      safeTenantDateDocs('commissions', activeTenantId, startStr, endStr, [where('profissional_id', '==', profissional_id)])
     ]);
+
+    const appointmentsSnap = { docs: appointmentDocs };
+    const commissionsSnap = { docs: commissionDocs };
 
     const appointments = appointmentsSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))

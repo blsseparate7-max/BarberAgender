@@ -153,7 +153,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   // Search/Filters/View Mode/Pagination for Assinantes (Gestão)
   const [searchQuery, setSearchQuery] = useState('');
   const [subViewMode, setSubViewMode] = useState<'list' | 'grid'>('list');
-  const [subStatusFilter, setSubStatusFilter] = useState<string>('all');
+  const [subStatusFilter, setSubStatusFilter] = useState<string>('active');
   const [subPlanFilter, setSubPlanFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [itemsPerPage, setItemsPerPage] = useState<number>(25);
@@ -1214,6 +1214,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
   // --- GESTÃO DE COMISSÕES DE ASSINATURA ---
   const isSubActiveInMonth = (sub: Subscription, monthStr: string) => {
+    if (sub.status !== 'active') return false;
     if (!sub.startDate) return false;
     const startYm = sub.startDate.slice(0, 7);
     const endYm = sub.endDate ? sub.endDate.slice(0, 7) : startYm;
@@ -1233,6 +1234,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
   const activeSubsForSelectedMonth = React.useMemo(() => {
     return subscriptions.filter(s => {
+      if (s.status !== 'active') return false;
       if (!s.startDate) return false;
       if (commDateMode === 'month') {
         return isSubActiveInMonth(s, selectedMonth);

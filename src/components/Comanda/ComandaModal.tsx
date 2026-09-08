@@ -57,7 +57,7 @@ import { toast } from 'sonner';
 import { format, parse, addMinutes } from 'date-fns';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { InputModal } from '../InputModal';
-import { parseDate } from '../../lib/utils';
+import { parseDate, formatErrorMessage } from '../../lib/utils';
 import { QuickClientSelector } from './QuickClientSelector';
 import { QuickProfSelector } from './QuickProfSelector';
 import { ClientSelectCombobox } from '../Common/ClientSelectCombobox';
@@ -1414,7 +1414,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       setPartialAmount('');
     } catch (error) {
       console.error("Erro ao processar pagamento:", error);
-      toast.error("Erro ao processar pagamento: " + (error instanceof Error ? error.message : String(error)));
+      toast.error("Erro ao processar pagamento: " + formatErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -1647,7 +1647,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       onSave();
     } catch (error) {
       console.error("Erro ao excluir agendamento da agenda:", error);
-      toast.error("Erro ao excluir agendamento: " + (error instanceof Error ? error.message : String(error)));
+      toast.error("Erro ao excluir agendamento: " + formatErrorMessage(error));
     } finally {
       setLoading(false);
     }

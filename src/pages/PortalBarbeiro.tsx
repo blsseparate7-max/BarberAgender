@@ -275,12 +275,6 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     });
     subscriptionService.getAllSubscriptionsSystem().then(setSubscriptions).catch(() => {});
     
-    // Auto-heal and sync any orphaned daily flow items / appointments
-    const proTenant = profile?.tenantId || getActiveTenantId();
-    if (proTenant) {
-      comandaService.healAndSyncOrphanedComandas(proTenant).catch(console.warn);
-    }
-    
     return () => unsubscribe();
   }, [profile?.tenantId]);
 

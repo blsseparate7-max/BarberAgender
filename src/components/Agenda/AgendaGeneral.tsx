@@ -28,7 +28,10 @@ import {
   Play,
   Check,
   Zap,
-  Phone
+  Phone,
+  Trophy,
+  Eye,
+  Crown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Appointment, AppointmentStatus, UserProfile, AgendaBlock } from '../../types';
@@ -52,8 +55,10 @@ interface AgendaGeneralProps {
   onNewAppointment: (time: string, profissional_id: string) => void;
   onOpenAppointment: (app: Appointment) => void;
   onOpenComanda: (app: Appointment) => void;
+  onOpenRanking?: () => void;
   loading: boolean;
   hideManagementMetrics?: boolean;
+  customSubscriptionLabel?: string;
 }
 
 export function AgendaGeneral({ 
@@ -67,8 +72,10 @@ export function AgendaGeneral({
   onNewAppointment, 
   onOpenAppointment,
   onOpenComanda,
+  onOpenRanking,
   loading,
-  hideManagementMetrics = false
+  hideManagementMetrics = false,
+  customSubscriptionLabel = 'Clube VIP'
 }: AgendaGeneralProps) {
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [nowTime, setNowTime] = useState<Date>(new Date());
@@ -149,15 +156,15 @@ export function AgendaGeneral({
 
     if (hasActiveSub) {
       badges.push({
-        label: 'Assinante',
-        icon: <Sparkles size={10} fill="currentColor" className="text-indigo-600 animate-pulse" />,
-        className: 'bg-indigo-600/10 text-indigo-700 border border-indigo-600/25 shadow-sm'
+        label: customSubscriptionLabel || 'Assinante',
+        icon: <Crown size={11} className="text-amber-300 drop-shadow-sm fill-amber-300" />,
+        className: 'bg-slate-950 text-amber-300 border border-amber-400/50 shadow-sm font-black tracking-wider'
       });
     } else if (hasExpiredSub) {
       badges.push({
-        label: 'Assinatura Vencida',
+        label: `${customSubscriptionLabel || 'Clube'} Vencido`,
         icon: <AlertCircle size={10} />,
-        className: 'bg-red-500 text-white border border-red-600 font-extrabold animate-pulse'
+        className: 'bg-red-600 text-white border border-red-700 font-extrabold animate-pulse'
       });
     }
 
@@ -299,29 +306,84 @@ export function AgendaGeneral({
     switch (status) {
       case 'confirmado':
       case 'agendado': 
-        return 'bg-blue-100 border-2 border-blue-600 text-blue-950 shadow-sm font-black hover:border-blue-800';
+        return 'bg-blue-600 border-2 border-blue-700 text-white shadow-md hover:bg-blue-700 font-bold';
       case 'em_atendimento': 
-        return 'bg-amber-200 border-2 border-amber-600 text-amber-950 shadow-md ring-2 ring-amber-500/40 hover:border-amber-800 font-black';
+        return 'bg-amber-500 border-2 border-amber-600 text-slate-950 shadow-lg ring-2 ring-amber-400/60 hover:bg-amber-600 font-black';
       case 'concluído': 
-        return 'bg-emerald-100 border-2 border-emerald-600 text-emerald-950 shadow-sm font-black hover:border-emerald-800';
+        return 'bg-emerald-600 border-2 border-emerald-700 text-white shadow-md hover:bg-emerald-700 font-bold';
       case 'cancelado': 
-        return 'bg-rose-100 border-2 border-rose-500 text-rose-950 opacity-90 font-bold';
+        return 'bg-rose-600 border-2 border-rose-700 text-white opacity-90 font-bold';
       case 'faltou': 
-        return 'bg-slate-200 border-2 border-slate-400 text-slate-700 line-through opacity-85';
+        return 'bg-slate-600 border-2 border-slate-700 text-slate-200 line-through opacity-85 font-medium';
       case 'bloqueado': 
-        return 'bg-slate-900 border-2 border-slate-700 text-white font-black';
+        return 'bg-slate-900 border-2 border-slate-800 text-white font-black';
       default: 
-        return 'bg-slate-100 border-2 border-slate-300 text-slate-800';
+        return 'bg-slate-700 border-2 border-slate-800 text-white';
     }
   };
 
   // --- STATS FOR THE FLASH TOP BAR ---
   const selectedDayStr = format(selectedDate, 'yyyy-MM-dd');
   const dayApps = appointments.filter(a => a.date === selectedDayStr);
+
+  // 1. Separation of Client Appointments vs Total Services
+  // Unique Clients booked today
+  const uniqueClientsCount = new Set(
+    dayApps
+      .filter(a => a.status !== 'cancelado')
+      .map(a => a.cliente_id || a.cliente_name || a.id)
+  ).size;
+
+  // Total Services booked today (accounting for multi-service or total valid appointments)
+  const totalServicesCount = dayApps
+    .filter(a => a.status !== 'cancelado')
+    .reduce((acc, a) => {
+      const extraServicesCount = Array.isArray((a as any).servicos) ? (a as any).servicos.length : 0;
+      return acc + Math.max(1, extraServicesCount);
+    }, 0);
+
   const concluidosCount = dayApps.filter(a => a.status === 'concluído').length;
   const emAtendimentoCount = dayApps.filter(a => a.status === 'em_atendimento').length;
   const agendadosCount = dayApps.filter(a => a.status === 'agendado' || a.status === 'confirmado').length;
-  const faltouCount = dayApps.filter(a => a.status === 'faltou' || a.status === 'cancelado').length;
+  const faltouCount = dayApps.filter(a => a.status === 'faltou').length;
+
+  // 2. Professionals available on selected day (checking working hours and active status)
+  const dayOfWeekNumber = selectedDate.getDay(); // 0 = Domingo, 1 = Segunda, ... 6 = Sábado
+  const availableBarbersOnDay = barbers.filter(b => {
+    if (b.bloqueadoParaAgendar) return false;
+    if (b.horario_de_trabalho && Array.isArray(b.horario_de_trabalho) && b.horario_de_trabalho.length > 0) {
+      const daySchedule = b.horario_de_trabalho.find(
+        (h: any) => h.dayOfWeek === dayOfWeekNumber || h.dia_semana === dayOfWeekNumber
+      );
+      if (daySchedule && (daySchedule.isOpen === false || (daySchedule as any).is_open === false)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const totalWorkingBarbersCount = availableBarbersOnDay.length > 0 ? availableBarbersOnDay.length : barbers.length;
+
+  // Occupancy rate calculation of the day
+  // Standard capacity = ~16 half-hour slots per working professional
+  const totalDailyCapacity = Math.max(1, totalWorkingBarbersCount * 16);
+  const activeDayAppointments = dayApps.filter(a => a.status !== 'cancelado').length;
+  const dailyOccupancyRate = Math.min(100, Math.round((activeDayAppointments / totalDailyCapacity) * 100));
+
+  // Current moment occupancy
+  const barbersOccupiedNow = barbers.filter(b => {
+    const bUid = b.uid || b.id;
+    return dayApps.some(app => {
+      const matchProf = app.profissional_id === bUid;
+      if (!matchProf) return false;
+      if (app.status === 'em_atendimento') return true;
+      if (isSameDay(selectedDate, nowTime)) {
+        const nowStr = format(nowTime, 'HH:mm');
+        return app.startTime <= nowStr && app.endTime >= nowStr && app.status !== 'cancelado' && app.status !== 'faltou';
+      }
+      return false;
+    });
+  });
 
   const getAppPrice = (a: Appointment) => {
     // 1. If explicitly marked as subscription, cortesia, or price 0
@@ -368,20 +430,22 @@ export function AgendaGeneral({
   const valorConcluido = dayApps.filter(a => a.status === 'concluído').reduce((acc, a) => acc + getAppPrice(a), 0);
   const valorPrevisto = dayApps.filter(a => a.status !== 'cancelado' && a.status !== 'faltou').reduce((acc, a) => acc + getAppPrice(a), 0);
 
-  // Barber occupancy check for current moment
-  const barbersOccupiedNow = barbers.filter(b => {
-    const bUid = b.uid || b.id;
-    return dayApps.some(app => {
-      const matchProf = app.profissional_id === bUid;
-      if (!matchProf) return false;
-      if (app.status === 'em_atendimento') return true;
-      if (isSameDay(selectedDate, nowTime)) {
-        const nowStr = format(nowTime, 'HH:mm');
-        return app.startTime <= nowStr && app.endTime >= nowStr && app.status !== 'cancelado' && app.status !== 'faltou';
-      }
-      return false;
-    });
-  });
+  // 3. Top Barber ranking for the Day (to show directly in the ranking card next to Cadeiras Ocupadas)
+  const topBarberDayRanking = React.useMemo(() => {
+    return barbers.map(barber => {
+      const bId = barber.uid || barber.id;
+      const bApps = dayApps.filter(app => app.profissional_id === bId && app.status !== 'cancelado');
+      const completed = bApps.filter(a => a.status === 'concluído').length;
+      return {
+        barber,
+        id: bId,
+        nome: barber.nome || (barber as any).displayName || 'Barbeiro',
+        foto: barber.foto || barber.fotoUrl || (barber as any).photoURL || '',
+        total: bApps.length,
+        completed
+      };
+    }).sort((a, b) => b.total - a.total);
+  }, [barbers, dayApps]);
 
   const clientsWithDebtCount = dayApps.filter(a => {
     const c = clients.find(cl => cl.uid === a.cliente_id);
@@ -417,9 +481,9 @@ export function AgendaGeneral({
     <div className="flex flex-col gap-5 flex-1">
       {!hideManagementMetrics && (
         <>
-          {/* 📊 TOP FLASH METRICS BAR (Resumo Inteligente para o Dono) */}
+          {/* 📊 TOP FLASH METRICS BAR (Resumo Inteligente & Sincronizado) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Card 1: Resumo de Cortes */}
+            {/* Card 1: Resumo de Agendamentos e Serviços */}
             <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Total do Dia</span>
@@ -428,7 +492,15 @@ export function AgendaGeneral({
                 </div>
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-black text-slate-900 tracking-tight">{dayApps.length} <span className="text-xs font-bold text-slate-400">agendamentos</span></p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-black text-slate-900 tracking-tight">{uniqueClientsCount}</p>
+                  <span className="text-xs font-bold text-slate-500">
+                    {uniqueClientsCount === 1 ? 'cliente agendado' : 'clientes agendados'}
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                  <span className="font-bold text-indigo-600">{totalServicesCount}</span> {totalServicesCount === 1 ? 'serviço na grade' : 'serviços na grade'}
+                </p>
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[9px] font-black border border-emerald-200">
                     {concluidosCount} Concluídos
@@ -437,35 +509,98 @@ export function AgendaGeneral({
                     {emAtendimentoCount} Na Cadeira
                   </span>
                   <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[9px] font-black border border-blue-200">
-                    {agendadosCount} A Agendar
+                    {agendadosCount} Agendados
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Card 2: Barbeiros em Ação */}
+            {/* Card 2: Cadeiras Ocupadas + Taxa de Ocupação do Dia */}
             <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Cadeiras Ocupadas</span>
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Cadeiras & Ocupação</span>
                 <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
                   <Scissors size={16} />
                 </div>
               </div>
               <div className="mt-2">
-                <p className="text-2xl font-black text-slate-900 tracking-tight">
-                  {barbersOccupiedNow.length} <span className="text-xs font-bold text-slate-400">/ {barbers.length} em atendimento</span>
-                </p>
-                <p className="text-[11px] font-bold text-slate-500 mt-2 flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full ${barbers.length - barbersOccupiedNow.length > 0 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                  <span>{Math.max(0, barbers.length - barbersOccupiedNow.length)} barbeiros livres agora</span>
-                </p>
+                <div className="flex items-baseline justify-between">
+                  <p className="text-2xl font-black text-slate-900 tracking-tight">
+                    {barbersOccupiedNow.length} <span className="text-xs font-bold text-slate-400">/ {totalWorkingBarbersCount} em atendimento</span>
+                  </p>
+                  <span className="text-xs font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                    {dailyOccupancyRate}% dia
+                  </span>
+                </div>
+                
+                {/* Barra de Taxa de Ocupação */}
+                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mt-2">
+                  <div 
+                    className="h-full bg-amber-500 rounded-full transition-all duration-500"
+                    style={{ width: `${dailyOccupancyRate}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between mt-2 text-[11px] font-bold text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <span className={`w-2 h-2 rounded-full ${totalWorkingBarbersCount - barbersOccupiedNow.length > 0 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                    <span>{Math.max(0, totalWorkingBarbersCount - barbersOccupiedNow.length)} livres agora</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {availableBarbersOnDay.length} de {barbers.length} no dia
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Card 3: Financeiro do Dia */}
+            {/* Card 3: Ranking dos Barbeiros do Dia */}
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Trophy size={14} className="text-amber-500" />
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Ranking do Dia</span>
+                </div>
+                {onOpenRanking && (
+                  <button
+                    type="button"
+                    onClick={onOpenRanking}
+                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-accent bg-accent/10 hover:bg-accent/20 px-2 py-0.5 rounded-lg transition active:scale-95"
+                    title="Ver Ranking Completo"
+                  >
+                    <Eye size={12} />
+                    <span>Detalhes</span>
+                  </button>
+                )}
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {topBarberDayRanking.slice(0, 2).map((item, index) => (
+                  <div key={item.id} className="flex items-center justify-between text-xs py-0.5">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-black ${index === 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>
+                        {index + 1}
+                      </span>
+                      <span className="font-bold text-slate-800 truncate max-w-[100px]">{item.nome}</span>
+                    </div>
+                    <span className="font-black text-slate-700 text-xs">
+                      {item.total} <span className="text-[10px] font-normal text-slate-400">({item.completed} conc.)</span>
+                    </span>
+                  </div>
+                ))}
+                {topBarberDayRanking.length === 0 && (
+                  <p className="text-xs text-slate-400 italic">Nenhum barbeiro escalado</p>
+                )}
+                {topBarberDayRanking.length > 2 && (
+                  <p className="text-[10px] font-bold text-slate-400 text-right pt-0.5">
+                    +{topBarberDayRanking.length - 2} outros profissionais
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Card 4: Faturamento do Dia */}
             <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-4 rounded-2xl shadow-sm flex flex-col justify-between">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider">Faturamento Previsto</span>
+                <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider">Faturamento do Dia</span>
                 <div className="w-8 h-8 rounded-xl bg-white/10 text-emerald-400 flex items-center justify-center font-bold backdrop-blur-md">
                   <TrendingUp size={16} />
                 </div>
@@ -479,48 +614,31 @@ export function AgendaGeneral({
                 </p>
               </div>
             </div>
-
-            {/* Card 4: Alertas e Oportunidades */}
-            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Atenção & Alertas</span>
-                <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
-                  <Zap size={16} />
-                </div>
-              </div>
-              <div className="mt-2 space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-600 font-bold">Clientes c/ Fiado:</span>
-                  <span className={`font-black ${clientsWithDebtCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{clientsWithDebtCount} hoje</span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-600 font-bold">Primeira vez:</span>
-                  <span className="font-black text-emerald-600">{newClientsCount} novos</span>
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* 🏷️ BARRA DE LEGENDA DISCRETA DE STATUS */}
           <div className="bg-white border border-slate-200 px-4 py-2.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
             <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <Filter size={12} /> Status dos Horários:
+              <Filter size={12} /> Status & Destaques:
             </span>
-            <div className="flex flex-wrap items-center gap-3 text-xs font-bold">
-              <span className="flex items-center gap-1.5 text-blue-800 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
-                <span className="w-2 h-2 rounded-full bg-blue-500" /> Confirmado
+            <div className="flex flex-wrap items-center gap-2.5 text-xs font-bold">
+              <span className="flex items-center gap-1.5 text-white bg-gradient-to-r from-amber-500 to-yellow-600 px-2.5 py-1 rounded-lg border border-yellow-400 font-black shadow-xs text-[11px]">
+                <Crown size={12} className="text-yellow-200 fill-yellow-200" /> {customSubscriptionLabel || 'Clube VIP'}
               </span>
-              <span className="flex items-center gap-1.5 text-amber-900 bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-400 font-black ring-2 ring-amber-300/40">
-                <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping" /> Na Cadeira (Agol)
+              <span className="flex items-center gap-1.5 text-white bg-blue-600 px-2.5 py-1 rounded-lg border border-blue-700 shadow-xs text-[11px]">
+                <span className="w-2 h-2 rounded-full bg-white" /> Confirmado
               </span>
-              <span className="flex items-center gap-1.5 text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" /> Concluído
+              <span className="flex items-center gap-1.5 text-slate-950 bg-amber-400 px-2.5 py-1 rounded-lg border border-amber-500 font-black shadow-xs ring-2 ring-amber-300/40 text-[11px]">
+                <span className="w-2 h-2 rounded-full bg-amber-900 animate-ping" /> Na Cadeira
               </span>
-              <span className="flex items-center gap-1.5 text-rose-800 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
-                <span className="w-2 h-2 rounded-full bg-rose-500" /> Faltou / Cancelado
+              <span className="flex items-center gap-1.5 text-white bg-emerald-600 px-2.5 py-1 rounded-lg border border-emerald-700 shadow-xs text-[11px]">
+                <span className="w-2 h-2 rounded-full bg-white" /> Concluído
               </span>
-              <span className="flex items-center gap-1.5 text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-300">
-                <Lock size={12} className="text-slate-600" /> Bloqueado / Intervalo
+              <span className="flex items-center gap-1.5 text-white bg-rose-600 px-2.5 py-1 rounded-lg border border-rose-700 shadow-xs text-[11px]">
+                <span className="w-2 h-2 rounded-full bg-white" /> Cancelado / Faltou
+              </span>
+              <span className="flex items-center gap-1.5 text-white bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 text-[11px]">
+                <Lock size={12} className="text-slate-400" /> Bloqueado
               </span>
             </div>
           </div>
@@ -725,14 +843,17 @@ export function AgendaGeneral({
                               const clientPhone = app.cliente_telefone || clientObj?.telefone || clientObj?.phone || '';
                               const cleanPhone = clientPhone.replace(/\D/g, '');
 
+                              const isDarkCard = !hasActiveSub && ['confirmado', 'agendado', 'concluído', 'cancelado', 'faltou', 'bloqueado'].includes(app.status);
+                              const isYellowCard = hasActiveSub || app.status === 'em_atendimento';
+
                               const subscriptionBorderClass = hasActiveSub 
-                                ? '!border-yellow-600 !ring-2 !ring-yellow-400/50' 
+                                ? '!border-amber-400 !ring-2 !ring-amber-300/80 shadow-lg shadow-amber-500/20' 
                                 : hasExpiredSub 
                                   ? '!border-rose-600 !ring-4 !ring-red-500/30' 
                                   : '';
 
                               const cardBgColorClass = hasActiveSub 
-                                ? 'bg-gradient-to-br from-amber-400 via-yellow-400 to-amber-500 text-amber-950 font-black shadow-lg shadow-yellow-500/30 hover:border-yellow-700' 
+                                ? 'bg-gradient-to-br from-amber-400 via-yellow-400 to-amber-500 text-slate-950 font-black shadow-lg shadow-yellow-500/25 border-2 border-amber-500 hover:border-amber-600' 
                                 : getStatusColor(app.status);
 
                               const appPos = layoutMap?.get(app.id) || { colIndex: 0, totalCols: 1 };
@@ -767,37 +888,48 @@ export function AgendaGeneral({
                                     left: appPos.totalCols === 1 ? '4px' : `calc(${leftPos}% + 2px)`,
                                     width: appPos.totalCols === 1 ? 'calc(100% - 8px)' : `calc(${colWidth}% - 4px)`
                                   }}
-                                  className={`absolute rounded-xl ${appPos.totalCols > 1 ? 'p-1.5 sm:p-2' : 'p-2.5'} flex flex-col justify-between shadow-md z-10 transition-all cursor-pointer overflow-hidden ${cardBgColorClass} ${subscriptionBorderClass} hover:z-20`}
+                                  className={`absolute rounded-xl ${appPos.totalCols > 1 ? 'p-1.5 sm:p-2' : 'p-2.5'} flex flex-col justify-between shadow-md z-10 transition-all cursor-pointer overflow-hidden ${cardBgColorClass} ${subscriptionBorderClass} hover:z-20 hover:scale-[1.01]`}
                                 >
                                   <div className="overflow-hidden">
+                                    {/* 👑 High-Visibility VIP Subscriber Top Bar */}
+                                    {hasActiveSub && (
+                                      <div className="bg-slate-950/90 text-amber-300 px-1.5 py-0.5 rounded-md mb-1 flex items-center justify-between border border-amber-400/40 shadow-xs">
+                                        <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider truncate">
+                                          <Crown size={11} className="text-amber-300 fill-amber-300 shrink-0" />
+                                          <span className="truncate">{customSubscriptionLabel || 'Clube VIP'}</span>
+                                        </span>
+                                        <Sparkles size={10} className="text-amber-300 shrink-0 animate-pulse" />
+                                      </div>
+                                    )}
+
                                     <div className="flex items-center justify-between gap-1 mb-1">
-                                      <p className={`text-xs font-black uppercase leading-tight truncate tracking-tight ${hasActiveSub ? 'text-amber-950 font-black' : ''}`}>{app.cliente_name}</p>
+                                      <p className={`text-xs font-black uppercase leading-tight truncate tracking-tight ${isYellowCard ? 'text-slate-950 font-black' : 'text-white'}`}>{app.cliente_name}</p>
                                       {app.status === 'em_atendimento' && (
-                                        <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded font-black text-[8px] uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0">
+                                        <span className="px-1.5 py-0.5 bg-slate-950 text-amber-400 rounded font-black text-[8px] uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0 border border-amber-400/40">
                                           <Scissors size={10} /> {appPos.totalCols === 1 && 'NA CADEIRA'}
                                         </span>
                                       )}
                                     </div>
 
-                                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-700">
-                                      <span className={`truncate ${hasActiveSub ? 'text-amber-900 font-extrabold' : 'text-slate-700'}`}>{app.servico_name}</span>
-                                      <span className={`font-mono font-black shrink-0 ml-1 ${hasActiveSub ? 'text-amber-950 font-black' : 'text-slate-900'}`}>
+                                    <div className={`flex items-center justify-between text-[10px] font-bold ${isYellowCard ? 'text-slate-900' : 'text-slate-100'}`}>
+                                      <span className="truncate">{app.servico_name}</span>
+                                      <span className={`font-mono font-black shrink-0 ml-1 ${isYellowCard ? 'text-slate-950' : 'text-white'}`}>
                                         {getAppPrice(app) === 0 ? 'CLUBE' : `R$ ${getAppPrice(app).toFixed(0)}`}
                                       </span>
                                     </div>
 
                                     <div className="flex flex-wrap gap-1 mt-1">
                                       {app.origin === 'encaixe' && (
-                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 text-[8px] font-black uppercase tracking-wider">
+                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-black/30 text-white text-[8px] font-black uppercase tracking-wider">
                                           Encaixe
                                         </span>
                                       )}
                                       {app.comanda_number && (
-                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 text-[8px] font-black uppercase tracking-wider">
+                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-white/20 text-white text-[8px] font-black uppercase tracking-wider">
                                           #{app.comanda_number}
                                         </span>
                                       )}
-                                      {getClientClassification(app.cliente_id, app.cliente_name).map((badge, bIdx) => (
+                                      {getClientClassification(app.cliente_id, app.cliente_name).filter(b => !hasActiveSub || !b.label.includes(customSubscriptionLabel || 'Assinante')).map((badge, bIdx) => (
                                         <span 
                                           key={`badge-${badge.label}-${bIdx}`} 
                                           title={badge.label}
@@ -810,8 +942,10 @@ export function AgendaGeneral({
                                     </div>
                                   </div>
 
-                                  <div className="flex items-center justify-between mt-1.5 pt-1 border-t border-black/5 gap-1">
-                                    <span className="text-[10px] font-black font-mono text-slate-800 truncate">{app.startTime}{appPos.totalCols === 1 ? ` - ${app.endTime}` : ''}</span>
+                                  <div className={`flex items-center justify-between mt-1.5 pt-1 border-t ${isYellowCard ? 'border-black/15' : 'border-white/20'} gap-1`}>
+                                    <span className={`text-[10px] font-black font-mono truncate ${isYellowCard ? 'text-slate-950' : 'text-white'}`}>
+                                      {app.startTime}{appPos.totalCols === 1 ? ` - ${app.endTime}` : ''}
+                                    </span>
                                     
                                     <div className="flex items-center gap-1 shrink-0">
                                       {/* WhatsApp Quick Action */}
@@ -822,7 +956,7 @@ export function AgendaGeneral({
                                           rel="noopener noreferrer"
                                           onClick={(e) => e.stopPropagation()}
                                           title="Mensagem no WhatsApp"
-                                          className="p-1 bg-emerald-100 hover:bg-emerald-600 text-emerald-800 hover:text-white rounded-lg transition-colors border border-emerald-300"
+                                          className="p-1 bg-white/20 hover:bg-white text-white hover:text-emerald-700 rounded-lg transition-colors"
                                         >
                                           <MessageCircle size={12} />
                                         </a>
@@ -833,7 +967,7 @@ export function AgendaGeneral({
                                         <button
                                           onClick={(e) => handleStartService(app, e)}
                                           title="Iniciar Atendimento (Colocar na Cadeira)"
-                                          className="px-1.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs"
+                                          className="px-1.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs border border-amber-300"
                                         >
                                           <Play size={10} fill="currentColor" />
                                           {appPos.totalCols === 1 && <span>Iniciar</span>}
@@ -848,7 +982,7 @@ export function AgendaGeneral({
                                             onOpenComanda(app);
                                           }}
                                           title="Finalizar e Abrir Comanda"
-                                          className="px-1.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs"
+                                          className="px-1.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs border border-emerald-600"
                                         >
                                           <Receipt size={10} />
                                           {appPos.totalCols === 1 && <span>Caixa</span>}
@@ -856,7 +990,7 @@ export function AgendaGeneral({
                                       )}
 
                                       {app.status === 'concluído' && (
-                                        <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[8px] font-black uppercase">
+                                        <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-800 text-white rounded text-[8px] font-black uppercase border border-emerald-700">
                                           <CheckCircle2 size={10} /> {appPos.totalCols === 1 && 'Pago'}
                                         </span>
                                       )}

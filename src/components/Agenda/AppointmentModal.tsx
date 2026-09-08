@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2, ChevronDown, Search, Plus, Trash2 } from 'lucide-react';
+import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2, ChevronDown, Search, Plus, Trash2, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -8,6 +8,8 @@ import { Appointment, Service, UserProfile, AppointmentStatus } from '../../type
 import { appointmentService } from '../../services/appointmentService';
 import { serviceService } from '../../services/serviceService';
 import { userService } from '../../services/userService';
+import { agendaBlockService } from '../../services/agendaBlockService';
+import { toast } from 'sonner';
 import { format, addMinutes, parse } from 'date-fns';
 import { ClientSelectCombobox } from '../Common/ClientSelectCombobox';
 
@@ -37,6 +39,26 @@ export function AppointmentModal({
   const [error, setError] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   
+  const [modalMode, setModalMode] = useState<'appointment' | 'block'>('appointment');
+  const [blockData, setBlockData] = useState({
+    profissional_id: '',
+    date: format(new Date(), 'yyyy-MM-dd'),
+    startTime: '',
+    endTime: '',
+    reason: ''
+  });
+
+  const addMinutesToTimeString = (timeStr: string, minutesToAdd: number = 30): string => {
+    if (!timeStr) return '';
+    try {
+      const parsed = parse(timeStr, 'HH:mm', new Date());
+      const added = addMinutes(parsed, minutesToAdd);
+      return format(added, 'HH:mm');
+    } catch (_) {
+      return '';
+    }
+  };
+
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -127,6 +149,7 @@ export function AppointmentModal({
   }, [isOpen, currentUser.tipo]);
 
   useEffect(() => {
+    setModalMode('appointment');
     if (appointment) {
       setFormData({
         cliente_id: appointment.cliente_id,
@@ -159,8 +182,61 @@ export function AppointmentModal({
         status: 'agendado',
         origin: initialTime && targetProfId ? 'encaixe' : 'agenda'
       });
+
+      const startT = initialTime || '';
+      const endT = addMinutesToTimeString(startT, 30);
+      setBlockData({
+        profissional_id: targetProfId || (currentUser.tipo === 'barbeiro' ? (currentUser.uid || currentUser.id) : 'general'),
+        date: format(new Date(), 'yyyy-MM-dd'),
+        startTime: startT,
+        endTime: endT,
+        reason: ''
+      });
     }
   }, [appointment, currentUser, initialTime, initialProfissionalId, barbers]);
+
+  const handleCreateBlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      if (!blockData.startTime || !blockData.endTime) {
+        throw new Error("Informe o horário de início e término do bloqueio.");
+      }
+      if (blockData.startTime >= blockData.endTime) {
+        throw new Error("O horário de término deve ser posterior ao horário de início.");
+      }
+
+      const isGeneral = blockData.profissional_id === 'general';
+      let profName = 'Bloqueio Geral (Todos)';
+
+      if (!isGeneral) {
+        const b = barbers.find(b => b.uid === blockData.profissional_id || (b as any).id === blockData.profissional_id);
+        profName = b ? b.nome : (currentUser.nome || 'Profissional');
+      }
+
+      await agendaBlockService.createBlock({
+        profissional_id: isGeneral ? 'general' : blockData.profissional_id,
+        profissional_name: profName,
+        date: blockData.date,
+        startTime: blockData.startTime,
+        endTime: blockData.endTime,
+        reason: blockData.reason.trim() || 'Bloqueio de agenda',
+        isGeneral
+      });
+
+      toast.success("Horário bloqueado com sucesso!");
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Erro ao criar bloqueio.");
+      toast.error(err.message || "Erro ao criar bloqueio.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (formData.profissional_id && formData.date && formData.servico_id) {
@@ -380,15 +456,196 @@ export function AppointmentModal({
       >
         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
           <div>
-            <h2 className="text-xl font-bold text-primary">{appointment ? 'Editar Agendamento' : 'Novo Agendamento'}</h2>
-            <p className="text-xs text-muted">Preencha os dados para reservar o horário</p>
+            <h2 className="text-xl font-bold text-primary">
+              {appointment 
+                ? 'Editar Agendamento' 
+                : (modalMode === 'block' ? 'Bloquear Horário' : 'Novo Agendamento')}
+            </h2>
+            <p className="text-xs text-muted">
+              {modalMode === 'block' 
+                ? 'Indisponibilize horários na agenda do barbeiro ou da barbearia' 
+                : 'Preencha os dados para reservar o horário'}
+            </p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-muted hover:text-primary border border-slate-100 bg-white">
             <X size={20} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+        {/* Tab Switcher for New Appointment vs Block Slot */}
+        {!appointment && (currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') && (
+          <div className="flex border-b border-slate-100 bg-slate-100/60 p-1.5 gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setModalMode('appointment');
+                setError('');
+              }}
+              className={`flex-1 py-2.5 px-4 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 border-0 ${
+                modalMode === 'appointment'
+                  ? 'bg-white text-primary shadow-sm shadow-slate-200/50'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-white/50'
+              }`}
+            >
+              <Calendar size={15} className={modalMode === 'appointment' ? 'text-accent' : 'text-slate-400'} />
+              <span>Novo Agendamento</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setModalMode('block');
+                setError('');
+              }}
+              className={`flex-1 py-2.5 px-4 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 border-0 ${
+                modalMode === 'block'
+                  ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-white/50'
+              }`}
+            >
+              <Lock size={15} className={modalMode === 'block' ? 'text-amber-400' : 'text-slate-400'} />
+              <span>Bloquear Horário</span>
+            </button>
+          </div>
+        )}
+
+        {modalMode === 'block' ? (
+          /* FORMULÁRIO DE BLOQUEIO DE HORÁRIO */
+          <form onSubmit={handleCreateBlock} className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+            {error && (
+              <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-3 text-red-600 text-sm">
+                <AlertCircle size={18} />
+                {error}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+              {/* Seleção de Profissional / Geral */}
+              <div className="space-y-2 col-span-full text-left">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Profissional / Abrangência</label>
+                <div className="relative">
+                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                  <select 
+                    disabled={currentUser.tipo === 'barbeiro'}
+                    value={blockData.profissional_id}
+                    onChange={(e) => setBlockData({ ...blockData, profissional_id: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium appearance-none disabled:opacity-60"
+                  >
+                    {currentUser.tipo !== 'barbeiro' && (
+                      <option value="general" className="font-bold text-amber-700">★ Bloqueio Geral (Todos os Profissionais)</option>
+                    )}
+                    {eligibleBarbers.map((b, idx) => (
+                      <option key={`block-prof-${b.uid || idx}`} value={b.uid}>
+                        {b.nome}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" size={18} />
+                </div>
+              </div>
+
+              {/* Data do Bloqueio */}
+              <div className="space-y-2 col-span-full md:col-span-1 text-left">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Data</label>
+                <div className="relative">
+                  <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                  <input 
+                    type="date" 
+                    required
+                    value={blockData.date}
+                    onChange={(e) => setBlockData({ ...blockData, date: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Horários: Início e Fim */}
+              <div className="space-y-2 text-left">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Início</label>
+                <div className="relative">
+                  <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                  <input 
+                    type="time" 
+                    required
+                    value={blockData.startTime}
+                    onChange={(e) => {
+                      const newStart = e.target.value;
+                      const autoEnd = addMinutesToTimeString(newStart, 30);
+                      setBlockData(prev => ({
+                        ...prev,
+                        startTime: newStart,
+                        endTime: (!prev.endTime || prev.endTime <= newStart) ? autoEnd : prev.endTime
+                      }));
+                    }}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2 text-left">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Término</label>
+                <div className="relative">
+                  <Clock className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                  <input 
+                    type="time" 
+                    required
+                    value={blockData.endTime}
+                    onChange={(e) => setBlockData({ ...blockData, endTime: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Motivo do Bloqueio */}
+              <div className="space-y-2 col-span-full text-left">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider ml-1">Motivo do Bloqueio</label>
+                <input 
+                  type="text"
+                  placeholder="Ex: Almoço, Reunião, Intervalo, Pessoal, Folga"
+                  value={blockData.reason}
+                  onChange={(e) => setBlockData({ ...blockData, reason: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary font-medium"
+                />
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {['Almoço 🍲', 'Intervalo ☕', 'Reunião 💼', 'Compromisso 🚗', 'Folga 🌴'].map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setBlockData({ ...blockData, reason: tag })}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold transition-all border-0"
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer do formulário de bloqueio */}
+            <div className="sticky -bottom-6 bg-white/95 backdrop-blur-md pt-4 pb-2 border-t border-slate-100 z-10 -mx-6 -mb-6 px-6 flex gap-3">
+              <button 
+                type="button"
+                onClick={onClose}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3.5 rounded-xl font-bold text-sm transition-all"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="submit" 
+                disabled={loading || !blockData.startTime || !blockData.endTime}
+                className="flex-[2] bg-slate-900 text-white py-3.5 rounded-xl font-bold text-sm hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed border-0"
+              >
+                {loading ? <Loader2 className="animate-spin" size={18} /> : (
+                  <>
+                    <Lock size={18} className="text-amber-400" />
+                    <span>Confirmar Bloqueio</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
           {error && (
             <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-3 text-red-600 text-sm">
               <AlertCircle size={18} />
@@ -818,6 +1075,7 @@ export function AppointmentModal({
             </div>
           </div>
         </form>
+        )}
       </motion.div>
     </div>
   );

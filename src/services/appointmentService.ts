@@ -388,10 +388,45 @@ export const appointmentService = {
 
   async getAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }) {
     const activeTenantId = getActiveTenantId();
-    const q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+    const queryConstraints: any[] = [where('tenantId', '==', activeTenantId)];
 
-    const querySnapshot = await getDocs(q);
-    const rawAppointments = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
+    if (filters.date) {
+      queryConstraints.push(where('date', '==', filters.date));
+    } else if (filters.startDate && filters.endDate && filters.startDate === filters.endDate) {
+      queryConstraints.push(where('date', '==', filters.startDate));
+    } else if (filters.startDate && filters.endDate) {
+      queryConstraints.push(where('date', '>=', filters.startDate));
+      queryConstraints.push(where('date', '<=', filters.endDate));
+    } else if (filters.startDate) {
+      queryConstraints.push(where('date', '>=', filters.startDate));
+    }
+
+    if (filters.profissional_id) {
+      queryConstraints.push(where('profissional_id', '==', filters.profissional_id));
+    }
+    if (filters.cliente_id) {
+      queryConstraints.push(where('cliente_id', '==', filters.cliente_id));
+    }
+    if (filters.status) {
+      queryConstraints.push(where('status', '==', filters.status));
+    }
+
+    let querySnapshot: any;
+    try {
+      const q = query(collection(db, COLLECTION), ...queryConstraints);
+      querySnapshot = await getDocs(q);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.includes('requires an index') || msg.includes('failed-precondition')) {
+        console.warn("[appointmentService] Composite index missing. Executing tenant fallback query.");
+        const fallbackQuery = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+        querySnapshot = await getDocs(fallbackQuery);
+      } else {
+        throw err;
+      }
+    }
+
+    const rawAppointments = querySnapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
     
     const appointments = rawAppointments.filter(app => {
       if (app.tenantId && app.tenantId !== activeTenantId) return false;
@@ -416,13 +451,34 @@ export const appointmentService = {
 
   subscribeToAppointments(filters: { date?: string; startDate?: string; endDate?: string; profissional_id?: string; cliente_id?: string; status?: AppointmentStatus }, callback: (appointments: Appointment[]) => void) {
     const activeTenantId = getActiveTenantId();
-    const q = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+    const queryConstraints: any[] = [where('tenantId', '==', activeTenantId)];
 
-    return onSnapshot(q, (snapshot) => {
-      const rawAppointments = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
+    if (filters.date) {
+      queryConstraints.push(where('date', '==', filters.date));
+    } else if (filters.startDate && filters.endDate && filters.startDate === filters.endDate) {
+      queryConstraints.push(where('date', '==', filters.startDate));
+    } else if (filters.startDate && filters.endDate) {
+      queryConstraints.push(where('date', '>=', filters.startDate));
+      queryConstraints.push(where('date', '<=', filters.endDate));
+    } else if (filters.startDate) {
+      queryConstraints.push(where('date', '>=', filters.startDate));
+    }
+
+    if (filters.profissional_id) {
+      queryConstraints.push(where('profissional_id', '==', filters.profissional_id));
+    }
+    if (filters.cliente_id) {
+      queryConstraints.push(where('cliente_id', '==', filters.cliente_id));
+    }
+    if (filters.status) {
+      queryConstraints.push(where('status', '==', filters.status));
+    }
+
+    const filterAndCallback = (snapshot: any) => {
+      const rawAppointments = snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() as any) } as Appointment));
       const activeTenantId = getActiveTenantId();
       
-      const appointments = rawAppointments.filter(app => {
+      const appointments = rawAppointments.filter((app: any) => {
         if (app.tenantId && app.tenantId !== activeTenantId) return false;
         if (filters.cliente_id) {
           const appClientId = app.cliente_id || (app as any).client_id || (app as any).cliente_uid;
@@ -436,17 +492,40 @@ export const appointmentService = {
         return true;
       });
 
-      appointments.sort((a, b) => {
+      appointments.sort((a: any, b: any) => {
         const dateCompare = (a.date || '').localeCompare(b.date || '');
         if (dateCompare !== 0) return dateCompare;
         return (a.startTime || '').localeCompare(b.startTime || '');
       });
 
       callback(appointments);
-    }, (error) => {
-      console.error("Error in subscribeToAppointments:", error);
-      callback([]);
-    });
+    };
+
+    let unsubscribe: () => void = () => {};
+    try {
+      const q = query(collection(db, COLLECTION), ...queryConstraints);
+      unsubscribe = onSnapshot(q, (snapshot) => {
+        filterAndCallback(snapshot);
+      }, (error) => {
+        const msg = error?.message || String(error);
+        if (msg.includes('requires an index') || msg.includes('failed-precondition')) {
+          console.warn("[appointmentService] subscribeToAppointments index missing. Falling back to tenant query listener.");
+          const fallbackQ = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+          unsubscribe = onSnapshot(fallbackQ, filterAndCallback, (fallbackErr) => {
+            console.error("Error in fallback subscribeToAppointments:", fallbackErr);
+            callback([]);
+          });
+        } else {
+          console.error("Error in subscribeToAppointments:", error);
+          callback([]);
+        }
+      });
+    } catch (e) {
+      const fallbackQ = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+      unsubscribe = onSnapshot(fallbackQ, filterAndCallback, () => callback([]));
+    }
+
+    return () => unsubscribe();
   },
 
 

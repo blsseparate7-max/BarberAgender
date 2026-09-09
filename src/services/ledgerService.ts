@@ -200,7 +200,8 @@ export function calculateProfessionalLedger(
     .reduce((acc, a) => acc + (Number(a.amount) || 0), 0);
 
   // F. Saldo Líquido Real Devedor (Pendente Líquido)
-  const saldoPendenteLiquido = Math.max(0, comissaoPendenteBruta - valesPendentes);
+  // Permite saldo negativo caso os vales superem a comissão pendente acumulada
+  const saldoPendenteLiquido = comissaoPendenteBruta - valesPendentes;
 
   return {
     uid: barberUid,

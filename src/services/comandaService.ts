@@ -1252,12 +1252,21 @@ export const comandaService = {
           });
         }
 
-        // Match by client name if name is distinct (not empty or Consumidor Final)
-        if (cData.cliente_name && cData.cliente_name !== 'Consumidor Final' && cData.cliente_name.trim().length > 2) {
+        // Match by client name ONLY if it is a specific unique named client (never avulso, consumidor, or generic names)
+        const rawName = (cData.cliente_name || '').trim();
+        const isGenericName = !rawName || 
+          rawName.toLowerCase() === 'consumidor final' || 
+          rawName.toLowerCase() === 'avulso' || 
+          rawName.toLowerCase() === 'cliente avulso' ||
+          rawName.toLowerCase() === 'balcão' ||
+          rawName.toLowerCase() === 'balcao' ||
+          rawName.length < 3;
+
+        if (!isGenericName && cData.cliente_id && cData.cliente_id !== 'avulso') {
           const nameApptsQuery = query(
             collection(db, 'appointments'),
             where('tenantId', '==', tenantId),
-            where('cliente_name', '==', cData.cliente_name.trim()),
+            where('cliente_name', '==', rawName),
             where('date', '==', comandaDate)
           );
           const nameApptsSnap = await getDocs(nameApptsQuery);

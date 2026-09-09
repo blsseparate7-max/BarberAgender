@@ -66,8 +66,12 @@ service cloud.firestore {
       return isAuthenticated() && 
         (
           getUserEmail() == "eufixo@gbcortes7.com" ||
+          getUserEmail() == "rickbolado@gbcortes7.com" ||
+          (getUserEmail() != "" && getUserEmail().matches('.*@gbcortes7[.]com.*')) ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro' &&
+           (get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro' ||
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'gerente' ||
+            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin') &&
            (get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true || 
             !('ativo' in get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data) || 
             get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == null))
@@ -216,7 +220,7 @@ service cloud.firestore {
           )
         ) ||
         (
-          (isBarbeiro() || getUserEmail() == "eufixo@gbcortes7.com") && resource != null &&
+          (isBarbeiro() || getUserEmail() == "eufixo@gbcortes7.com" || getUserEmail() == "rickbolado@gbcortes7.com" || (getUserEmail() != "" && getUserEmail().matches('.*@gbcortes7[.]com.*'))) && resource != null &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager'
           ])

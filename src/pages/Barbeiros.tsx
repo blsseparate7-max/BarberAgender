@@ -619,10 +619,24 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
             <p className="text-[8px] text-slate-400 font-bold truncate">{ledger.totalAtendimentosMes} atendimentos</p>
           </div>
           <div>
-            <p className="text-[8px] font-black uppercase text-emerald-600 tracking-wider truncate">Saldo a Pagar</p>
-            <p className="text-base font-extrabold text-emerald-600 mt-0.5">R$ {ledger.saldoPendenteLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-            <p className="text-[8px] text-emerald-700/80 font-bold truncate">
-              {ledger.valesPendentes > 0 ? `-R$ ${ledger.valesPendentes.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} vales` : 'Pendente líquido'}
+            <p className={`text-[8px] font-black uppercase tracking-wider truncate ${
+              ledger.saldoPendenteLiquido < 0 ? 'text-rose-600' : 'text-emerald-600'
+            }`}>
+              {ledger.saldoPendenteLiquido < 0 ? 'Saldo Devedor' : 'Saldo a Pagar'}
+            </p>
+            <p className={`text-base font-extrabold mt-0.5 ${
+              ledger.saldoPendenteLiquido < 0 ? 'text-rose-600' : 'text-emerald-600'
+            }`}>
+              {ledger.saldoPendenteLiquido < 0 
+                ? `- R$ ${Math.abs(ledger.saldoPendenteLiquido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` 
+                : `R$ ${ledger.saldoPendenteLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+            </p>
+            <p className={`text-[8px] font-bold truncate ${
+              ledger.saldoPendenteLiquido < 0 ? 'text-rose-700/80' : 'text-emerald-700/80'
+            }`}>
+              {ledger.valesPendentes > 0 
+                ? (ledger.saldoPendenteLiquido < 0 ? `Devendo R$ ${Math.abs(ledger.saldoPendenteLiquido).toFixed(2)} em vales` : `-R$ ${ledger.valesPendentes.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} vales`)
+                : 'Pendente líquido'}
             </p>
           </div>
         </div>

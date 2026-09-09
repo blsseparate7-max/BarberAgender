@@ -1043,29 +1043,47 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         {activeTab === 'comissao' && (
           <div className="space-y-4">
             {/* Header / Primary Stats */}
-            <div className="bg-slate-900 text-white p-5 rounded-3xl shadow-md space-y-4 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-28 h-28 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />
+            <div className={`p-5 rounded-3xl shadow-md space-y-4 relative overflow-hidden transition-all ${
+              stats.toReceive < 0 
+                ? 'bg-rose-950 border border-rose-800/60 text-white' 
+                : stats.toReceive === 0 
+                ? 'bg-slate-900 border border-slate-800 text-white' 
+                : 'bg-slate-900 border border-slate-800 text-white'
+            }`}>
+              <div className={`absolute top-0 right-0 w-28 h-28 rounded-full blur-xl pointer-events-none ${
+                stats.toReceive < 0 ? 'bg-rose-500/20' : 'bg-emerald-500/10'
+              }`} />
               
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase text-indigo-300 tracking-wider flex items-center gap-1.5">
-                  <DollarSign size={13} className="text-emerald-400" />
-                  Saldo Líquido A Receber
+                <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+                  stats.toReceive < 0 ? 'text-rose-300' : 'text-indigo-300'
+                }`}>
+                  <DollarSign size={13} className={stats.toReceive < 0 ? 'text-rose-400' : 'text-emerald-400'} />
+                  {stats.toReceive < 0 ? 'Saldo Devedor / A Compensar' : 'Saldo Líquido A Receber'}
                 </span>
-                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/20">
-                  Saldo Real Atual
+                <span className={`text-[9px] font-bold px-2.5 py-0.5 rounded-full border ${
+                  stats.toReceive < 0 
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' 
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/20'
+                }`}>
+                  {stats.toReceive < 0 ? 'Vales Excedentes' : 'Saldo Real Atual'}
                 </span>
               </div>
 
               <div>
-                <p className="text-3xl font-black tracking-tight text-white">
-                  R$ {stats.toReceive.toFixed(2)}
+                <p className={`text-3xl font-black tracking-tight ${
+                  stats.toReceive < 0 ? 'text-rose-300' : 'text-white'
+                }`}>
+                  {stats.toReceive < 0 ? `- R$ ${Math.abs(stats.toReceive).toFixed(2)}` : `R$ ${stats.toReceive.toFixed(2)}`}
                 </p>
-                <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-300 font-medium mt-1.5 pt-2 border-t border-slate-800">
+                <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-300 font-medium mt-1.5 pt-2 border-t border-slate-800/80">
                   <span>Comissões Pendentes: <strong className="text-emerald-400 font-bold">R$ {stats.toReceiveCommissions.toFixed(2)}</strong></span>
                   {stats.pendingAdvances > 0 && (
                     <span>Vales A Abater: <strong className="text-rose-400 font-bold">- R$ {stats.pendingAdvances.toFixed(2)}</strong></span>
                   )}
-                  <span>= Saldo Líquido: <strong className="text-indigo-300 font-bold">R$ {stats.toReceive.toFixed(2)}</strong></span>
+                  <span>= Saldo Atual: <strong className={stats.toReceive < 0 ? 'text-rose-400 font-bold' : 'text-indigo-300 font-bold'}>
+                    {stats.toReceive < 0 ? `- R$ ${Math.abs(stats.toReceive).toFixed(2)} (A Compensar)` : `R$ ${stats.toReceive.toFixed(2)}`}
+                  </strong></span>
                 </div>
               </div>
             </div>
@@ -1215,17 +1233,33 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Adiantamentos pendentes</p>
               </div>
 
-              <div className="bg-indigo-50/80 border border-indigo-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between col-span-2 sm:col-span-1">
+              <div className={`p-3 rounded-2xl shadow-sm flex flex-col justify-between col-span-2 sm:col-span-1 border transition-colors ${
+                periodStats.saldoLiquidoPeriodo < 0 
+                  ? 'bg-rose-50/90 border-rose-200/90' 
+                  : 'bg-indigo-50/80 border-indigo-200/80'
+              }`}>
                 <div>
-                  <p className="text-[9px] font-black text-indigo-700 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
-                    A Receber (Líquido)
+                  <p className={`text-[9px] font-black uppercase tracking-wider mb-1 flex items-center gap-1 ${
+                    periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-700' : 'text-indigo-700'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      periodStats.saldoLiquidoPeriodo < 0 ? 'bg-rose-600' : 'bg-indigo-600'
+                    }`} />
+                    {periodStats.saldoLiquidoPeriodo < 0 ? 'Saldo Devedor (Período)' : 'A Receber (Líquido)'}
                   </p>
-                  <p className="text-sm font-black text-indigo-900">
-                    R$ {periodStats.saldoLiquidoPeriodo.toFixed(2)}
+                  <p className={`text-sm font-black ${
+                    periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-900' : 'text-indigo-900'
+                  }`}>
+                    {periodStats.saldoLiquidoPeriodo < 0 
+                      ? `- R$ ${Math.abs(periodStats.saldoLiquidoPeriodo).toFixed(2)}` 
+                      : `R$ ${periodStats.saldoLiquidoPeriodo.toFixed(2)}`}
                   </p>
                 </div>
-                <p className="text-[8px] text-indigo-600/80 font-bold mt-1.5">Pendente bruto menos vales</p>
+                <p className={`text-[8px] font-bold mt-1.5 ${
+                  periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-600/90' : 'text-indigo-600/80'
+                }`}>
+                  {periodStats.saldoLiquidoPeriodo < 0 ? 'Vales superam os ganhos do período' : 'Pendente bruto menos vales'}
+                </p>
               </div>
             </div>
 

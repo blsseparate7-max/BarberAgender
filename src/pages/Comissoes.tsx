@@ -536,6 +536,7 @@ export function Comissoes() {
               >
                 {teamRoster.map((barber, index) => {
                   const avatarColorClass = getAvatarBg(barber.nome);
+                  const isNegative = barber.pending < 0;
                   const isPending = barber.pending > 0;
                   
                   return (
@@ -552,9 +553,13 @@ export function Comissoes() {
                           <h3 className="font-black text-slate-900 group-hover:text-blue-600 transition-colors truncate">{barber.nome}</h3>
                           <p className="text-[10px] text-slate-400 font-bold truncate uppercase tracking-wider">{barber.email}</p>
                           <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase mt-1.5 border ${
-                            isPending ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            isNegative 
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : isPending 
+                              ? 'bg-amber-50 text-amber-700 border-amber-200' 
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           }`}>
-                            {isPending ? 'Repasse Pendente' : 'Balanço Zerado'}
+                            {isNegative ? 'Saldo Devedor (Vales)' : isPending ? 'Repasse Pendente' : 'Balanço Zerado'}
                           </span>
                         </div>
                       </div>
@@ -571,12 +576,24 @@ export function Comissoes() {
                           </span>
                         </div>
                         <div className="pl-3">
-                          <span className="text-[8px] font-black text-emerald-600 uppercase tracking-wider block">Saldo a Pagar</span>
-                          <span className="text-base font-extrabold text-emerald-600 block mt-0.5">
-                            R$ {barber.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          <span className={`text-[8px] font-black uppercase tracking-wider block ${
+                            isNegative ? 'text-rose-600' : 'text-emerald-600'
+                          }`}>
+                            {isNegative ? 'Saldo Devedor' : 'Saldo a Pagar'}
                           </span>
-                          <span className="text-[8px] text-emerald-700/80 font-bold block mt-0.5 truncate">
-                            {barber.pendingAdvances > 0 ? `-R$ ${barber.pendingAdvances.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} vales` : 'Pendente líquido'}
+                          <span className={`text-base font-extrabold block mt-0.5 ${
+                            isNegative ? 'text-rose-600' : 'text-emerald-600'
+                          }`}>
+                            {isNegative 
+                              ? `- R$ ${Math.abs(barber.pending).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` 
+                              : `R$ ${barber.pending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                          </span>
+                          <span className={`text-[8px] font-bold block mt-0.5 truncate ${
+                            isNegative ? 'text-rose-700/80' : 'text-emerald-700/80'
+                          }`}>
+                            {barber.pendingAdvances > 0 
+                              ? (isNegative ? `Devendo R$ ${Math.abs(barber.pending).toFixed(2)}` : `-R$ ${barber.pendingAdvances.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} vales`)
+                              : 'Pendente líquido'}
                           </span>
                         </div>
                       </div>

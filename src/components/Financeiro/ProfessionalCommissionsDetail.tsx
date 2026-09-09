@@ -2818,30 +2818,42 @@ Assinatura: _______________________________
 }
 
 function SummaryCard({ title, value, icon, color, highlight, negative, subtitle }: any) {
+  const isValNegative = value < 0;
+  const isHighlight = highlight && !isValNegative;
+
   const colors: any = {
     slate: 'bg-slate-50 text-slate-400 border-slate-100',
     emerald: 'bg-emerald-50 text-emerald-400 border-emerald-100',
     amber: 'bg-amber-50 text-amber-400 border-amber-100',
     blue: 'bg-blue-50 text-blue-400 border-blue-100',
-    primary: highlight ? 'bg-primary text-white border-primary shadow-lg shadow-primary/10' : 'bg-slate-50 text-primary border-slate-100'
+    rose: 'bg-rose-50 text-rose-500 border-rose-200',
+    primary: isHighlight ? 'bg-primary text-white border-primary shadow-lg shadow-primary/10' : 'bg-slate-50 text-primary border-slate-100'
   };
 
+  const cardColorClass = isValNegative && highlight ? colors.rose : (colors[color] || colors.slate);
+
   return (
-    <div className={`p-6 rounded-3xl border shadow-sm ${colors[color] || colors.slate} transition-all hover:scale-[1.02]`}>
+    <div className={`p-6 rounded-3xl border shadow-sm ${cardColorClass} transition-all hover:scale-[1.02]`}>
       <div className="flex items-center justify-between mb-4">
-        <span className={`text-[10px] font-black uppercase tracking-widest ${highlight ? 'text-white/60' : 'text-slate-500'}`}>{title}</span>
-        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${highlight ? 'bg-white/10' : 'bg-white shadow-sm text-primary'}`}>
+        <span className={`text-[10px] font-black uppercase tracking-widest ${isHighlight ? 'text-white/60' : (isValNegative ? 'text-rose-600 font-extrabold' : 'text-slate-500')}`}>
+          {isValNegative && (title.includes('Receber') || title.includes('Pagar')) ? 'Saldo Devedor' : title}
+        </span>
+        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${isHighlight ? 'bg-white/10' : (isValNegative ? 'bg-rose-100 text-rose-600' : 'bg-white shadow-sm text-primary')}`}>
           {icon}
         </div>
       </div>
-      <p className={`text-xl font-black ${highlight ? 'text-white' : (negative ? 'text-red-500' : 'text-primary')}`}>
-        {negative && '-'}R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+      <p className={`text-xl font-black ${isHighlight ? 'text-white' : (isValNegative || negative ? 'text-rose-600' : 'text-primary')}`}>
+        {isValNegative ? `- R$ ${Math.abs(value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : (negative ? `- R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`)}
       </p>
-      {subtitle && (
-        <p className={`text-[10px] font-bold mt-1.5 ${highlight ? 'text-white/70' : 'text-slate-400'}`}>
+      {subtitle ? (
+        <p className={`text-[10px] font-bold mt-1.5 ${isHighlight ? 'text-white/70' : (isValNegative ? 'text-rose-600/90' : 'text-slate-400')}`}>
           {subtitle}
         </p>
-      )}
+      ) : isValNegative ? (
+        <p className="text-[10px] font-bold mt-1.5 text-rose-600/90">
+          Vales excedem a comissão
+        </p>
+      ) : null}
     </div>
   );
 }

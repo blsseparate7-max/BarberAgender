@@ -2336,7 +2336,14 @@ export const comandaService = {
 
       // Appointment
       linkedAppointments.docs.forEach((docSnap) => {
-        if (docSnap.data().status !== 'em_atendimento') {
+        const apptData = docSnap.data();
+        // Shield: Only update appointment to 'em_atendimento' if its date matches the comanda date or is today, 
+        // to avoid accidentally reverting old appointments when a comanda is reopened
+        const apptDate = apptData.date;
+        const todayStr = new Date().toISOString().split('T')[0];
+        const isCurrentOrToday = !apptDate || apptDate === dateStr || apptDate === todayStr;
+
+        if (isCurrentOrToday && docSnap.data().status !== 'em_atendimento') {
           transaction.update(docSnap.ref, {
             status: 'em_atendimento',
             updatedAt: serverTimestamp()

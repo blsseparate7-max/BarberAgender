@@ -51,25 +51,75 @@ function removeUndefinedFields<T>(obj: T): T {
 }
 
 async function resolveProfessionalSchedule(profissional_id: string): Promise<any> {
+  // If virtual barber 'any' or missing, return standard commercial hours
+  if (!profissional_id || profissional_id === 'any' || profissional_id === 'casa') {
+    return {
+      profissional_id,
+      workingHours: [
+        { dayOfWeek: 1, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+        { dayOfWeek: 2, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+        { dayOfWeek: 3, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+        { dayOfWeek: 4, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+        { dayOfWeek: 5, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
+        { dayOfWeek: 6, isOpen: true, startTime: '09:00', endTime: '17:00', lunchStart: '12:00', lunchEnd: '13:00' },
+        { dayOfWeek: 0, isOpen: false, startTime: '09:00', endTime: '19:00' },
+      ],
+      exceptions: [],
+      vacations: []
+    };
+  }
+
+  // 1. Direct fetch from 'usuarios' document by UID to bypass any tenant scope mismatch on guest portal
   try {
-    const barberProfile = await userService.getUserProfile(profissional_id);
-    if (barberProfile && barberProfile.horario_de_trabalho && barberProfile.horario_de_trabalho.length > 0) {
+    const userDocSnap = await getDoc(doc(db, 'usuarios', profissional_id));
+    if (userDocSnap.exists()) {
+      const userData = userDocSnap.data();
+      const rawWH = userData.horario_de_trabalho || userData.workingHours;
+      if (Array.isArray(rawWH) && rawWH.length > 0) {
+        const normalizedWH = rawWH.map((h: any) => ({
+          dayOfWeek: h.dayOfWeek !== undefined ? Number(h.dayOfWeek) : (h.dia_semana !== undefined ? Number(h.dia_semana) : 0),
+          isOpen: h.isOpen !== undefined ? Boolean(h.isOpen) : (h.is_open !== undefined ? Boolean(h.is_open) : (h.ativo !== undefined ? Boolean(h.ativo) : true)),
+          startTime: h.startTime || h.inicio || h.hora_inicio || '09:00',
+          endTime: h.endTime || h.fim || h.hora_fim || '19:00',
+          lunchStart: h.lunchStart || h.almoco_inicio || h.intervalo_inicio,
+          lunchEnd: h.lunchEnd || h.almoco_fim || h.intervalo_fim,
+        }));
+
+        return {
+          profissional_id,
+          workingHours: normalizedWH,
+          exceptions: userData.exceptions || [],
+          vacations: userData.vacations || []
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("Could not load direct user doc working hours:", err);
+  }
+
+  // 2. Try professional_schedules collection
+  try {
+    const schedule = await professionalScheduleService.getSchedule(profissional_id);
+    if (schedule && schedule.workingHours && schedule.workingHours.length > 0) {
+      const normalizedWH = schedule.workingHours.map((h: any) => ({
+        dayOfWeek: h.dayOfWeek !== undefined ? Number(h.dayOfWeek) : (h.dia_semana !== undefined ? Number(h.dia_semana) : 0),
+        isOpen: h.isOpen !== undefined ? Boolean(h.isOpen) : (h.is_open !== undefined ? Boolean(h.is_open) : (h.ativo !== undefined ? Boolean(h.ativo) : true)),
+        startTime: h.startTime || h.inicio || h.hora_inicio || '09:00',
+        endTime: h.endTime || h.fim || h.hora_fim || '19:00',
+        lunchStart: h.lunchStart || h.almoco_inicio || h.intervalo_inicio,
+        lunchEnd: h.lunchEnd || h.almoco_fim || h.intervalo_fim,
+      }));
+
       return {
-        profissional_id,
-        workingHours: barberProfile.horario_de_trabalho,
-        exceptions: [],
-        vacations: []
+        ...schedule,
+        workingHours: normalizedWH
       };
     }
   } catch (err) {
-    console.warn("Could not load user profile working hours:", err);
+    console.warn("Could not load professional_schedules:", err);
   }
 
-  const schedule = await professionalScheduleService.getSchedule(profissional_id);
-  if (schedule && schedule.workingHours && schedule.workingHours.length > 0) {
-    return schedule;
-  }
-
+  // 3. Fallback default schedule
   return {
     profissional_id,
     workingHours: [

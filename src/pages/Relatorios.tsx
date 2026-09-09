@@ -70,7 +70,11 @@ export function Relatorios({ activeSubTab }: { activeSubTab?: string }) {
         'relatorios-geral': 'geral',
         'relatorios-agendamentos': 'agendamentos',
         'relatorios-clientes': 'clientes',
-        'relatorios-financeiro': 'financeiro'
+        'relatorios-profissionais': 'profissionais',
+        'relatorios-financeiro': 'financeiro',
+        'relatorios-comissoes': 'comissoes',
+        'relatorios-estoque': 'estoque',
+        'relatorios-fechamento': 'fechamento_mes'
       };
       const targetReport = tabMap[activeSubTab];
       if (targetReport && activeReport !== targetReport) {
@@ -269,33 +273,57 @@ export function Relatorios({ activeSubTab }: { activeSubTab?: string }) {
         </div>
       </div>
 
-      {/* Report Tabs */}
-      <div className="flex gap-2 p-1.5 bg-surface border border-border rounded-2.5xl shadow-sm overflow-x-auto no-scrollbar" id="relatorios-tabs-bar">
-        {[
-          { id: 'geral', label: 'Painel Geral', icon: <Trophy size={16} /> },
-          { id: 'agendamentos', label: 'Agendamentos & Horários', icon: <CalendarDays size={16} /> },
-          { id: 'clientes', label: 'Clientes & Ranks', icon: <Users size={16} /> },
-          { id: 'profissionais', label: 'Rank de Profissionais', icon: <Briefcase size={16} /> },
-          { id: 'financeiro', label: 'Finanças & Métodos', icon: <DollarSign size={16} /> },
-          { id: 'comissoes', label: 'Comissões de Equipe', icon: <TrendingUp size={16} /> },
-          { id: 'estoque', label: 'Produtos & Assinaturas', icon: <Package size={16} /> },
-          { id: 'fechamento_mes', label: 'Fechamento do Mês', icon: <CheckCircle2 size={16} /> },
-        ].map((tab) => (
-          <button
-            id={`tab-relatorio-${tab.id}`}
-            key={tab.id}
-            onClick={() => setActiveReport(tab.id as ReportType)}
-            className={`flex items-center gap-2 px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-              activeReport === tab.id 
-                ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]' 
-                : 'text-muted hover:bg-slate-50 hover:text-primary'
-            }`}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {/* Layout Master-Detail: Menu Vertical de Sub-Abas + Conteúdo Principal */}
+      <div className="flex flex-col lg:flex-row items-start gap-6 w-full">
+        {/* Menu Lateral Vertical de Relatórios */}
+        <div className="w-full lg:w-72 shrink-0 bg-white border border-slate-100 rounded-3xl p-3 shadow-xs sticky top-4 self-start" id="relatorios-tabs-bar">
+          <div className="px-3 py-2 border-b border-slate-100 mb-2">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Módulos de Relatório</span>
+          </div>
+          <nav className="flex flex-col gap-1 w-full">
+            {[
+              { id: 'geral', label: 'Painel Geral', desc: 'Visão executiva & KPIs', icon: <Trophy size={18} /> },
+              { id: 'agendamentos', label: 'Agendamentos & Horários', desc: 'Fluxo de horários e taxa de faltas', icon: <CalendarDays size={18} /> },
+              { id: 'clientes', label: 'Clientes & Ranks', desc: 'Recorrência, novos e fiado', icon: <Users size={18} /> },
+              { id: 'profissionais', label: 'Rank de Profissionais', desc: 'Faturamento por barbeiro', icon: <Briefcase size={18} /> },
+              { id: 'financeiro', label: 'Finanças & Métodos', desc: 'Formas de pagamento e DRE', icon: <DollarSign size={18} /> },
+              { id: 'comissoes', label: 'Comissões de Equipe', desc: 'Valores devidos e pagos', icon: <TrendingUp size={18} /> },
+              { id: 'estoque', label: 'Produtos & Assinaturas', desc: 'Saídas, estoque e clubes', icon: <Package size={18} /> },
+              { id: 'fechamento_mes', label: 'Fechamento do Mês', desc: 'DRE e auditoria mensal', icon: <CheckCircle2 size={18} /> },
+            ].map((tab) => {
+              const isActive = activeReport === tab.id;
+              return (
+                <button
+                  id={`tab-relatorio-${tab.id}`}
+                  key={tab.id}
+                  onClick={() => setActiveReport(tab.id as ReportType)}
+                  className={`flex items-center gap-3.5 w-full px-3.5 py-3 rounded-2xl text-left transition-all cursor-pointer ${
+                    isActive 
+                      ? 'bg-primary text-white shadow-md shadow-primary/20 font-bold scale-[1.01]' 
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-primary font-medium'
+                  }`}
+                >
+                  <div className={`p-2 rounded-xl shrink-0 transition-colors ${
+                    isActive ? 'bg-white/10 text-white' : 'bg-slate-100 text-slate-500 group-hover:text-primary'
+                  }`}>
+                    {tab.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-xs font-black tracking-tight leading-snug truncate ${isActive ? 'text-white' : 'text-slate-800'}`}>
+                      {tab.label}
+                    </p>
+                    <p className={`text-[10px] leading-tight truncate mt-0.5 ${isActive ? 'text-white/70' : 'text-slate-400'}`}>
+                      {tab.desc}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Área Principal de Exibição do Relatório */}
+        <div className="flex-1 min-w-0 w-full">
 
       <AnimatePresence mode="wait">
         {loading ? (
@@ -369,6 +397,8 @@ export function Relatorios({ activeSubTab }: { activeSubTab?: string }) {
           </motion.div>
         )}
       </AnimatePresence>
+        </div>
+      </div>
     </div>
   );
 }

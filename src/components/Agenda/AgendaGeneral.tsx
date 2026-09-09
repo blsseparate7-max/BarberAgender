@@ -505,9 +505,6 @@ export function AgendaGeneral({
                   <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[9px] font-black border border-emerald-200">
                     {concluidosCount} Concluídos
                   </span>
-                  <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[9px] font-black border border-amber-200 animate-pulse">
-                    {emAtendimentoCount} Na Cadeira
-                  </span>
                   <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[9px] font-black border border-blue-200">
                     {agendadosCount} Agendados
                   </span>
@@ -626,10 +623,7 @@ export function AgendaGeneral({
                 <Crown size={12} className="text-yellow-200 fill-yellow-200" /> {customSubscriptionLabel || 'Clube VIP'}
               </span>
               <span className="flex items-center gap-1.5 text-white bg-blue-600 px-2.5 py-1 rounded-lg border border-blue-700 shadow-xs text-[11px]">
-                <span className="w-2 h-2 rounded-full bg-white" /> Confirmado
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-950 bg-amber-400 px-2.5 py-1 rounded-lg border border-amber-500 font-black shadow-xs ring-2 ring-amber-300/40 text-[11px]">
-                <span className="w-2 h-2 rounded-full bg-amber-900 animate-ping" /> Na Cadeira
+                <span className="w-2 h-2 rounded-full bg-white" /> Confirmado / Agendado
               </span>
               <span className="flex items-center gap-1.5 text-white bg-emerald-600 px-2.5 py-1 rounded-lg border border-emerald-700 shadow-xs text-[11px]">
                 <span className="w-2 h-2 rounded-full bg-white" /> Concluído
@@ -906,7 +900,7 @@ export function AgendaGeneral({
                                       <p className={`text-xs font-black uppercase leading-tight truncate tracking-tight ${isYellowCard ? 'text-slate-950 font-black' : 'text-white'}`}>{app.cliente_name}</p>
                                       {app.status === 'em_atendimento' && (
                                         <span className="px-1.5 py-0.5 bg-slate-950 text-amber-400 rounded font-black text-[8px] uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0 border border-amber-400/40">
-                                          <Scissors size={10} /> {appPos.totalCols === 1 && 'NA CADEIRA'}
+                                          <Scissors size={10} /> {appPos.totalCols === 1 && 'ATENDENDO'}
                                         </span>
                                       )}
                                     </div>
@@ -962,30 +956,18 @@ export function AgendaGeneral({
                                         </a>
                                       )}
 
-                                      {/* Start Service Action */}
-                                      {(app.status === 'agendado' || app.status === 'confirmado') && (
-                                        <button
-                                          onClick={(e) => handleStartService(app, e)}
-                                          title="Iniciar Atendimento (Colocar na Cadeira)"
-                                          className="px-1.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs border border-amber-300"
-                                        >
-                                          <Play size={10} fill="currentColor" />
-                                          {appPos.totalCols === 1 && <span>Iniciar</span>}
-                                        </button>
-                                      )}
-
-                                      {/* Receipt / Comanda Action */}
+                                      {/* Atendimento & Comanda Action */}
                                       {['agendado', 'confirmado', 'em_atendimento'].includes(app.status) && (
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             onOpenComanda(app);
                                           }}
-                                          title="Finalizar e Abrir Comanda"
-                                          className="px-1.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs border border-emerald-600"
+                                          title="Atender & Abrir Comanda"
+                                          className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg transition-all font-black text-[9px] flex items-center gap-1 shadow-xs border border-emerald-600 cursor-pointer"
                                         >
-                                          <Receipt size={10} />
-                                          {appPos.totalCols === 1 && <span>Caixa</span>}
+                                          <Receipt size={11} />
+                                          <span>Atender & Comanda</span>
                                         </button>
                                       )}
 

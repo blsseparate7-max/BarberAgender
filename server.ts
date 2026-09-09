@@ -1189,9 +1189,12 @@ function encodeFirestoreFields(data: any): any {
         }
 
         // b) Create Payment Charge or Recurring Subscription in Asaas
-        const today = new Date();
-        today.setDate(today.getDate() + 3); // 3 days due date
-        const dueDateStr = today.toISOString().split('T')[0];
+        // Use custom dueDate if provided in req.body, or default to today (no 3-day offset)
+        let dueDateStr = req.body?.dueDate || req.body?.nextDueDate;
+        if (!dueDateStr) {
+          const today = new Date();
+          dueDateStr = today.toISOString().split('T')[0];
+        }
 
         let payData: any = null;
 

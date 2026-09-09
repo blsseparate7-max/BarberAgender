@@ -455,7 +455,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           await comandaService.closeLinkedAppointments(app.comanda_id, app.id);
         } catch (_) {}
       }
-      toast.success(`Atendimento de ${app.cliente_name} concluído! Cadeira liberada.`);
+      toast.success(`Atendimento de ${app.cliente_name} concluído com sucesso!`);
     } catch (err) {
       console.error("Erro ao concluir agendamento:", err);
       toast.error("Erro ao concluir atendimento.");
@@ -864,80 +864,8 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 </button>
               </div>
 
-              {/* 2. SMART FOCUS HERO CARD (Cliente Atual ou Próximo na Cadeira) */}
-              {activeServingApp ? (
-                /* ⚡ CLIENTE EM ATENDIMENTO NA CADEIRA */
-                <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 border border-indigo-500/30 text-white p-5 rounded-3xl shadow-lg relative overflow-hidden">
-                  <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
-                  
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black uppercase tracking-wider animate-pulse">
-                      <Scissors size={12} className="text-amber-400" />
-                      Na Cadeira Agora
-                    </span>
-                    <span className="text-xs font-mono font-bold text-slate-300">
-                      Iniciado às {activeServingApp.startTime}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
-                        {activeServingApp.cliente_name}
-                        {activeServingApp.isSubscription && (
-                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-black border border-emerald-500/30">
-                            Assinante
-                          </span>
-                        )}
-                      </h3>
-                      <p className="text-xs font-bold text-indigo-200 mt-0.5">
-                        {activeServingApp.servico_name}
-                        {activeServingApp.price ? ` • R$ ${Number(activeServingApp.price).toFixed(2)}` : ''}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {activeServingApp.cliente_telefone && (
-                        <a
-                          href={getWhatsAppUrl(activeServingApp.cliente_telefone, activeServingApp.cliente_name, activeServingApp.startTime) || '#'}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl shadow-sm transition active:scale-95 flex items-center justify-center"
-                          title="Chamar no WhatsApp"
-                        >
-                          <MessageCircle size={16} />
-                        </a>
-                      )}
-                      
-                      <button
-                        onClick={() => handleOpenAppointment(activeServingApp)}
-                        className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-2xl transition active:scale-95 flex items-center justify-center text-xs font-bold"
-                        title="Ver Detalhes"
-                      >
-                        <Edit3 size={16} />
-                      </button>
-
-                      <button
-                        onClick={() => handleDirectCompleteAppointment(activeServingApp)}
-                        className="px-3 py-2.5 bg-emerald-600/90 hover:bg-emerald-500 text-white font-black rounded-2xl text-xs shadow-md transition active:scale-95 flex items-center gap-1.5"
-                        title="Liberar cadeira e marcar como concluído"
-                      >
-                        <Check size={14} />
-                        <span className="hidden sm:inline">Liberar Cadeira</span>
-                        <span className="sm:hidden">Liberar</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleOpenComanda(activeServingApp)}
-                        className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-2xl text-xs shadow-md transition active:scale-95 flex items-center gap-1.5"
-                      >
-                        <Scissors size={14} />
-                        Finalizar / Comanda
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : nextUpcomingApp ? (
+              {/* 2. SMART FOCUS HERO CARD (Próximo Atendimento) */}
+              {nextUpcomingApp ? (
                 /* ⏱️ PRÓXIMO CLIENTE NA FILA */
                 <div className="bg-white border border-indigo-100 p-5 rounded-3xl shadow-sm relative overflow-hidden">
                   <div className="flex items-center justify-between gap-2 mb-3">
@@ -990,11 +918,11 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                       </button>
 
                       <button
-                        onClick={() => handleUpdateStatus(nextUpcomingApp.id, 'em_atendimento')}
+                        onClick={() => handleOpenComanda(nextUpcomingApp)}
                         className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl text-xs shadow-md shadow-indigo-200 transition active:scale-95 flex items-center gap-1.5"
                       >
-                        <Play size={14} className="fill-current" />
-                        Iniciar Atendimento
+                        <Scissors size={14} />
+                        Atender & Comanda
                       </button>
                     </div>
                   </div>

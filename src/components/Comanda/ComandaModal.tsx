@@ -150,6 +150,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [entersCashChoice, setEntersCashChoice] = useState<boolean>(true);
   const [excessMode, setExcessMode] = useState<'abater_fiado' | 'credito_haver' | 'troco'>('abater_fiado');
 
+  // Estado para 2ª forma de pagamento (botão +)
+  const [showSecondPayment, setShowSecondPayment] = useState<boolean>(false);
+  const [secondPaymentMethodId, setSecondPaymentMethodId] = useState<string>('');
+  const [secondPaymentInputAmount, setSecondPaymentInputAmount] = useState<string>('');
+
   const [amountToPay, setAmountToPay] = useState<string>('');
   const [customTipValue, setCustomTipValue] = useState<string>('');
   const [showCustomTipInput, setShowCustomTipInput] = useState(false);
@@ -2818,15 +2823,46 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {/* Select de Forma de Pagamento */}
+                          {/* Select de Forma de Pagamento 1 */}
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Forma de Pagamento</label>
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                                {showSecondPayment ? '1ª Forma de Pagamento' : 'Forma de Pagamento'}
+                              </label>
+                              {!showSecondPayment && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowSecondPayment(true);
+                                    const total = comanda.pendingAmount;
+                                    const half = Math.round((total / 2) * 100) / 100;
+                                    const rem = Math.round((total - half) * 100) / 100;
+                                    setPaymentInputAmount(half.toFixed(2));
+                                    setSecondPaymentInputAmount(rem.toFixed(2));
+                                    const validMethods = paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount);
+                                    if (!selectedPaymentMethodId && validMethods[0]) {
+                                      setSelectedPaymentMethodId(validMethods[0].id);
+                                    }
+                                    if (validMethods.length > 1) {
+                                      setSecondPaymentMethodId(validMethods[1].id);
+                                    } else if (validMethods[0]) {
+                                      setSecondPaymentMethodId(validMethods[0].id);
+                                    }
+                                  }}
+                                  className="text-[11px] text-emerald-700 font-black hover:text-emerald-800 flex items-center gap-1.5 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-lg border border-emerald-300 transition-all cursor-pointer shadow-xs"
+                                  title="Clique no + para adicionar 2ª forma de pagamento"
+                                >
+                                  <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-black leading-none">+</span>
+                                  <span>Adicionar 2ª Forma</span>
+                                </button>
+                              )}
+                            </div>
                             <select
                               value={selectedPaymentMethodId}
                               onChange={(e) => setSelectedPaymentMethodId(e.target.value)}
                               className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
                             >
-                              <option value="">-- Selecione o Meio de Pagamento --</option>
+                              <option value="">-- Selecione o 1º Meio --</option>
                               {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
                                 <option key={m.id} value={m.id}>
                                   {m.name} {m.type === 'dinheiro' ? '(Dinheiro)' : m.type === 'pix' ? '(PIX)' : ''}
@@ -2835,9 +2871,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             </select>
                           </div>
 
-                          {/* Valor Pago */}
+                          {/* Valor Pago 1 */}
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor Pago (R$)</label>
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                              {showSecondPayment ? 'Valor 1ª Forma (R$)' : 'Valor Pago (R$)'}
+                            </label>
                             <div className="relative">
                               <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
                               <input
@@ -2845,13 +2883,88 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                 step="0.01"
                                 min="0.01"
                                 value={paymentInputAmount}
-                                onChange={(e) => setPaymentInputAmount(e.target.value)}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setPaymentInputAmount(val);
+                                  if (showSecondPayment) {
+                                    const num1 = Number(val) || 0;
+                                    const rest = Math.max(0, Math.round((comanda.pendingAmount - num1) * 100) / 100);
+                                    setSecondPaymentInputAmount(rest > 0 ? rest.toFixed(2) : '');
+                                  }
+                                }}
                                 placeholder={comanda.pendingAmount.toFixed(2)}
                                 className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-9 pr-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
                               />
                             </div>
                           </div>
                         </div>
+
+                        {/* SEGUNDA FORMA DE PAGAMENTO (ADICIONADA PELO +) */}
+                        {showSecondPayment && (
+                          <div className="bg-emerald-50/50 border border-emerald-200/80 p-3.5 rounded-2xl space-y-3 animate-fade-in">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-black text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                                <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-black">+</span>
+                                <span>2ª Forma de Pagamento</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowSecondPayment(false);
+                                  setSecondPaymentMethodId('');
+                                  setSecondPaymentInputAmount('');
+                                  setPaymentInputAmount(comanda.pendingAmount.toFixed(2));
+                                }}
+                                className="text-[10px] text-rose-600 hover:text-rose-700 font-bold px-2 py-0.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 transition-all cursor-pointer"
+                              >
+                                Remover 2ª Forma
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {/* Select de Forma de Pagamento 2 */}
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">2ª Forma de Pagamento</label>
+                                <select
+                                  value={secondPaymentMethodId}
+                                  onChange={(e) => setSecondPaymentMethodId(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                                >
+                                  <option value="">-- Selecione o 2º Meio --</option>
+                                  {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
+                                    <option key={`m2_${m.id}`} value={m.id}>
+                                      {m.name} {m.type === 'dinheiro' ? '(Dinheiro)' : m.type === 'pix' ? '(PIX)' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {/* Valor Pago 2 */}
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor 2ª Forma (R$)</label>
+                                <div className="relative">
+                                  <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    value={secondPaymentInputAmount}
+                                    onChange={(e) => setSecondPaymentInputAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-9 pr-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs font-bold pt-1 px-1">
+                              <span className="text-slate-500 text-[11px]">Soma das 2 Formas:</span>
+                              <span className={(Number(paymentInputAmount || 0) + Number(secondPaymentInputAmount || 0)) === comanda.pendingAmount ? 'text-emerald-700 font-black' : 'text-amber-600 font-black'}>
+                                R$ {(Number(paymentInputAmount || 0) + Number(secondPaymentInputAmount || 0)).toFixed(2)} / R$ {comanda.pendingAmount.toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Detect Overpayment / Surplus logic */}
                         {Number(paymentInputAmount) > comanda.pendingAmount && comanda.pendingAmount > 0 && (
@@ -2929,23 +3042,58 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
                           <button
                             type="button"
-                            disabled={loading || !selectedPaymentMethodId || Number(paymentInputAmount || comanda.pendingAmount) <= 0}
-                            onClick={() => {
-                              const methodObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
-                              const amountToSubmit = Number(paymentInputAmount) || comanda.pendingAmount;
-                              if (!methodObj) {
-                                toast.error("Selecione um meio de pagamento válido!");
+                            disabled={
+                              loading || 
+                              !selectedPaymentMethodId || 
+                              Number(paymentInputAmount || 0) <= 0 ||
+                              (showSecondPayment && (!secondPaymentMethodId || Number(secondPaymentInputAmount || 0) <= 0))
+                            }
+                            onClick={async () => {
+                              const methodObj1 = paymentMethods.find(m => m.id === selectedPaymentMethodId);
+                              const amount1 = Number(paymentInputAmount) || 0;
+                              if (!methodObj1 || amount1 <= 0) {
+                                toast.error("Selecione a 1ª forma de pagamento e informe o valor!");
                                 return;
                               }
-                              handleAddPayment(methodObj.type as any, amountToSubmit, methodObj.id, {
-                                entersCash: entersCashChoice,
-                                excessMode
-                              });
+
+                              if (showSecondPayment) {
+                                const methodObj2 = paymentMethods.find(m => m.id === secondPaymentMethodId);
+                                const amount2 = Number(secondPaymentInputAmount) || 0;
+                                if (!methodObj2 || amount2 <= 0) {
+                                  toast.error("Selecione a 2ª forma de pagamento e informe o valor!");
+                                  return;
+                                }
+
+                                // Lança a 1ª forma
+                                await handleAddPayment(methodObj1.type as any, amount1, methodObj1.id, {
+                                  entersCash: entersCashChoice,
+                                  excessMode: 'troco'
+                                });
+
+                                // Lança a 2ª forma
+                                await handleAddPayment(methodObj2.type as any, amount2, methodObj2.id, {
+                                  entersCash: entersCashChoice,
+                                  excessMode
+                                });
+
+                                // Reset do formulário de 2 formas
+                                setShowSecondPayment(false);
+                                setSecondPaymentMethodId('');
+                                setSecondPaymentInputAmount('');
+                                setPaymentInputAmount('');
+                                setSelectedPaymentMethodId('');
+                                toast.success("As 2 formas de pagamento foram lançadas com sucesso!");
+                              } else {
+                                handleAddPayment(methodObj1.type as any, amount1, methodObj1.id, {
+                                  entersCash: entersCashChoice,
+                                  excessMode
+                                });
+                              }
                             }}
                             className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md transition-all active:scale-95 disabled:opacity-40 flex items-center gap-2 cursor-pointer"
                           >
                             {loading ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-                            <span>Lançar Pagamento</span>
+                            <span>{showSecondPayment ? 'Lançar as 2 Formas' : 'Lançar Pagamento'}</span>
                           </button>
                         </div>
                       </div>

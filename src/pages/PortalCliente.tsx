@@ -1309,6 +1309,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
           const results = await Promise.all(allSlotsPromises);
           // Get the union of all available slots and sort them
           slots = Array.from(new Set(results.flat() as string[])).sort();
+        } else {
+          // If no real barbers were found, fetch available slots for general schedule
+          slots = await appointmentService.getAvailableSlots('any', selectedDate, duration, selectedService.id);
         }
       } else {
         slots = await appointmentService.getAvailableSlots(

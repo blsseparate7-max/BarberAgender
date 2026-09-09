@@ -638,38 +638,43 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const activationType = formData.get('activationType') as 'manual' | 'asaas';
     const autoRenew = formData.get('autoRenew') === 'on';
 
-    // Para qualquer tipo de assinatura (manual ou asaas), CPF e E-mail válidos são obrigatórios
+    // CPF e E-mail são obrigatórios apenas se selecionado o fluxo via Asaas (cobrança online recorrente)
     const rawEmail = assignClientEmail.trim() || client.email || '';
-    if (!rawEmail || !rawEmail.includes('@')) {
-      toast.error("O E-mail do cliente é obrigatório para registrar uma assinatura. Por favor, informe um e-mail válido.");
-      return;
-    }
-
     const rawCpf = assignClientCpf || (formData.get('clientCpf') as string) || client.cpf || (client as any).cpfCnpj || '';
     const cleanCpf = rawCpf.replace(/\D/g, '');
 
-    if (!cleanCpf || cleanCpf.length !== 11) {
-      toast.error("Por favor, informe o CPF completo (11 dígitos) do cliente.");
-      return;
+    if (activationType === 'asaas') {
+      if (!rawEmail || !rawEmail.includes('@')) {
+        toast.error("O E-mail do cliente é obrigatório para assinaturas via Asaas. Por favor, informe um e-mail válido.");
+        return;
+      }
+
+      if (!cleanCpf || cleanCpf.length !== 11) {
+        toast.error("Para assinaturas via Asaas, o CPF completo (11 dígitos) é obrigatório.");
+        return;
+      }
+
+      if (!isValidCPF(cleanCpf)) {
+        toast.error("O CPF informado para o cliente é inválido no Asaas. Verifique os números digitados.");
+        return;
+      }
     }
 
-    if (!isValidCPF(cleanCpf)) {
-      toast.error("O CPF informado para o cliente é inválido. Verifique os números digitados.");
-      return;
-    }
-
-    // Salva CPF e E-mail no documento do cliente no Firestore se ainda não estiver salvo ou se tiver mudado
-    if (client.uid) {
+    // Salva CPF e E-mail no documento do cliente no Firestore caso tenham sido informados
+    if (client.uid && (rawEmail || cleanCpf)) {
       try {
-        await updateDoc(doc(db, 'usuarios', client.uid), {
-          email: rawEmail,
-          cpf: cleanCpf,
-          cpfCnpj: cleanCpf,
-          updatedAt: serverTimestamp()
-        });
-        client.email = rawEmail;
-        client.cpf = cleanCpf;
-        (client as any).cpfCnpj = cleanCpf;
+        const clientUpdate: any = { updatedAt: serverTimestamp() };
+        if (rawEmail) clientUpdate.email = rawEmail;
+        if (cleanCpf) {
+          clientUpdate.cpf = cleanCpf;
+          clientUpdate.cpfCnpj = cleanCpf;
+        }
+        await updateDoc(doc(db, 'usuarios', client.uid), clientUpdate);
+        if (rawEmail) client.email = rawEmail;
+        if (cleanCpf) {
+          client.cpf = cleanCpf;
+          (client as any).cpfCnpj = cleanCpf;
+        }
       } catch (e) {
         console.warn("Aviso ao atualizar dados do cliente em Assinaturas:", e);
       }
@@ -4270,26 +4275,37 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
                   {assignSelectedClientId && (
                     <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-4">
-                      <p className="font-extrabold uppercase tracking-wide text-[10px] text-slate-500">Dados Cadastrais do Cliente (Obrigatórios):</p>
+                      <div className="flex items-center justify-between">
+                        <p className="font-extrabold uppercase tracking-wide text-[10px] text-slate-500">
+                          Dados Cadastrais do Cliente {assignActivationType === 'asaas' ? '(Obrigatórios p/ Asaas)' : '(Opcionais no Balcão)'}:
+                        </p>
+                        {assignActivationType === 'manual' && (
+                          <span className="text-[9px] font-bold text-slate-400 bg-slate-200/60 px-2 py-0.5 rounded">
+                            Opcional
+                          </span>
+                        )}
+                      </div>
                       
                       <div className="space-y-1 text-left">
                         <label className="text-[10px] font-black uppercase tracking-wider text-slate-700 block">
-                          E-mail do Cliente
+                          E-mail do Cliente {assignActivationType === 'asaas' && <span className="text-red-500">*</span>}
                         </label>
                         <input 
                           type="email" 
                           name="clientEmail" 
                           value={assignClientEmail}
                           onChange={(e) => setAssignClientEmail(e.target.value)}
-                          placeholder="cliente@email.com" 
+                          placeholder={assignActivationType === 'asaas' ? "cliente@email.com (obrigatório)" : "cliente@email.com (opcional)"} 
                           className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-accent"
-                          required
+                          required={assignActivationType === 'asaas'}
                         />
                       </div>
 
                       <div className="space-y-1 text-left">
                         <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black uppercase tracking-wider text-slate-700 block">CPF do Cliente</label>
+                          <label className="text-[10px] font-black uppercase tracking-wider text-slate-700 block">
+                            CPF do Cliente {assignActivationType === 'asaas' && <span className="text-red-500">*</span>}
+                          </label>
                           {assignClientCpf && isValidCPF(assignClientCpf.replace(/\D/g, '')) ? (
                             <span className="text-[9px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1">
                               <ShieldCheck size={12} />
@@ -4306,10 +4322,10 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           name="clientCpf" 
                           value={assignClientCpf}
                           onChange={(e) => setAssignClientCpf(formatCpfMask(e.target.value))}
-                          placeholder="000.000.000-00" 
+                          placeholder={assignActivationType === 'asaas' ? "000.000.000-00 (obrigatório)" : "000.000.000-00 (opcional)"} 
                           maxLength={14}
                           className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-accent font-mono"
-                          required
+                          required={assignActivationType === 'asaas'}
                         />
                       </div>
                     </div>

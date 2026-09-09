@@ -919,8 +919,15 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
       {isComandaModalOpen && selectedAppointment && comandaInitialData && (
         <ComandaModal 
           comanda_id={selectedAppointment.comanda_id}
-          onClose={() => setIsComandaModalOpen(false)}
-          onSave={loadAppointments}
+          onClose={() => {
+            setIsComandaModalOpen(false);
+            setSelectedAppointment(null);
+          }}
+          onSave={() => {
+            setIsComandaModalOpen(false);
+            setSelectedAppointment(null);
+            loadAppointments();
+          }}
           initialData={comandaInitialData}
         />
       )}

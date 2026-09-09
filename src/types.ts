@@ -6,7 +6,7 @@ export type TabId =
   | 'comandas' | 'comandas-nova' | 'comandas-abertas' | 'comandas-historico' | 'comandas-fiadas' | 'comandas-checkout'
   | 'financeiro' | 'financeiro-conta-digital' | 'financeiro-caixa' | 'financeiro-historico' | 'financeiro-entradas' | 'financeiro-saidas' | 'financeiro-contas-pagar' | 'financeiro-contas-receber' | 'financeiro-fluxo' | 'financeiro-assinaturas' | 'financeiro-comissoes' | 'financeiro-dre' | 'financeiro-fiados' | 'financeiro-movimentacoes' | 'financeiro-inconsistencias' | 'financeiro-estoque' | 'financeiro-cartoes'
   | 'estoque' | 'estoque-produtos' | 'estoque-movimentacoes' | 'estoque-inventario'
-  | 'relatorios' | 'relatorios-geral' | 'relatorios-agendamentos' | 'relatorios-clientes' | 'relatorios-financeiro'
+  | 'relatorios' | 'relatorios-geral' | 'relatorios-agendamentos' | 'relatorios-clientes' | 'relatorios-profissionais' | 'relatorios-financeiro' | 'relatorios-comissoes' | 'relatorios-estoque' | 'relatorios-fechamento'
   | 'fidelidade' | 'fidelidade-programa' | 'fidelidade-cashback' | 'fidelidade-vip' | 'fidelidade-campanhas'
   | 'configuracoes' | 'configuracoes-parametros' | 'configuracoes-rodizio' | 'configuracoes-funcionamento' | 'configuracoes-permissoes'
   | 'admin' | 'admin-usuarios' | 'admin-logs' | 'admin-auditoria'

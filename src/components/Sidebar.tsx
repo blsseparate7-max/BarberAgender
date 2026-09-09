@@ -217,10 +217,14 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       icon: <BarChart3 size={20} />,
       roles: ['admin', 'gerente'],
       subItems: [
-        { id: 'relatorios-geral', label: 'Desempenho Geral', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-agendamentos', label: 'Análise de Agendas', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-clientes', label: 'Análise de Clientes', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-financeiro', label: 'Análise Financeira', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-geral', label: 'Painel Geral & KPIs', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-agendamentos', label: 'Agendamentos & Horários', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-clientes', label: 'Clientes & Ranks', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-profissionais', label: 'Rank de Profissionais', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-financeiro', label: 'Finanças & Métodos', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-comissoes', label: 'Comissões de Equipe', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-estoque', label: 'Produtos & Assinaturas', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-fechamento', label: 'Fechamento do Mês', roles: ['admin', 'gerente'] },
       ]
     },
     {

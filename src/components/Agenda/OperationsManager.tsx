@@ -650,9 +650,9 @@ export function OperationsManager() {
 
                   <button
                     onClick={() => { setSelectedFlowItem(item); setAssignModalOpen(true); }}
-                    className="w-full bg-white hover:bg-primary hover:text-white border border-slate-200 hover:border-transparent text-primary text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
                   >
-                    <Play size={10} /> Chamar para Cadeira
+                    <Scissors size={12} /> Atender & Comanda
                   </button>
                 </div>
               ))}
@@ -665,7 +665,7 @@ export function OperationsManager() {
             </div>
           </div>
 
-          {/* Column 2: Na Cadeira (Em Atendimento) */}
+          {/* Column 2: Em Atendimento */}
           <div className="bg-white border border-slate-100 rounded-[32px] p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-50 pb-3">
               <div>
@@ -673,7 +673,7 @@ export function OperationsManager() {
                   <Scissors size={16} className="text-blue-500 animate-spin-slow" />
                   Atendendo
                 </h3>
-                <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider mt-0.5">Na cadeira ({servingList.length})</p>
+                <p className="text-[9px] text-slate-400 font-black uppercase tracking-wider mt-0.5">Em atendimento ({servingList.length})</p>
               </div>
               <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-2.5 py-1 rounded-full">{servingList.length}</span>
             </div>

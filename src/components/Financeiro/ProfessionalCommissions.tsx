@@ -141,9 +141,10 @@ export function ProfessionalCommissions({
       rawPayables.forEach(p => {
         const category = (p.category || '').toLowerCase();
         const desc = (p.description || '').toLowerCase();
-        const isVale = category.includes('adiantamento') || category.includes('vale') || category.includes('comissão') || category.includes('comissoes') || desc.includes('adiantamento') || desc.includes('vale');
+        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
+        const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
 
-        if (isVale || p.profissional_id) {
+        if (isVale) {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
           const pAmount = p.amount || 0;
           const isDup = merged.some(m => m.id === p.id || (m.amount === pAmount && m.date === pDate && m.description === p.description));
@@ -156,7 +157,7 @@ export function ProfessionalCommissions({
               amount: pAmount,
               date: pDate || new Date().toISOString().split('T')[0],
               description: p.description || 'Adiantamento / Vale',
-              status: p.status === 'paid' ? 'pago' : 'pendente',
+              status: (p.status === 'paid' || p.status === 'deduzido' || p.status === 'pago') ? 'pago' : 'pendente',
               createdAt: p.createdAt,
               updatedAt: p.updatedAt
             });
@@ -168,7 +169,8 @@ export function ProfessionalCommissions({
       rawCashMovs.forEach(c => {
         const category = (c.category || '').toLowerCase();
         const desc = (c.description || '').toLowerCase();
-        const isVale = c.type === 'sangria' || category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento');
+        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
+        const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
 
         if (isVale) {
           const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
@@ -182,8 +184,8 @@ export function ProfessionalCommissions({
               profissional_name: c.profissional_name || 'Profissional',
               amount: cAmount,
               date: cDate || new Date().toISOString().split('T')[0],
-              description: c.description || 'Vale / Sangria',
-              status: 'pendente',
+              description: c.description || 'Vale / Adiantamento',
+              status: (c.status === 'paid' || c.status === 'deduzido' || c.status === 'pago') ? 'pago' : 'pendente',
               createdAt: c.createdAt,
               updatedAt: c.updatedAt
             });

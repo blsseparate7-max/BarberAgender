@@ -26,7 +26,7 @@ const VOUCHERS_COLLECTION = 'loyalty_vouchers';
 
 export const loyaltyService = {
   async getConfig() {
-    const tenantId = getActiveTenantId() || 'gbcortes7';
+    const tenantId = getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
     const docRef = doc(db, CONFIG_COLLECTION, tenantId);
     const docSnap = await getDoc(docRef);
 
@@ -67,7 +67,7 @@ export const loyaltyService = {
   },
 
   async updateConfig(id: string, data: Partial<LoyaltyConfig>) {
-    const tenantId = getActiveTenantId() || 'gbcortes7';
+    const tenantId = getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
     const targetId = (id && id !== 'temp-loyalty-config') ? id : tenantId;
     const docRef = doc(db, CONFIG_COLLECTION, targetId);
     await setDoc(docRef, {
@@ -77,17 +77,35 @@ export const loyaltyService = {
     }, { merge: true });
   },
 
-  async getClientPoints(cliente_id: string) {
-    const docId = `${getActiveTenantId()}_${cliente_id}`;
+  async getClientPoints(cliente_id: string, tenantId?: string) {
+    const activeTenant = tenantId || getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
+    const docId = `${activeTenant}_${cliente_id}`;
     const docRef = doc(db, POINTS_COLLECTION, docId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return docSnap.data() as LoyaltyPoints;
     }
+    // Check if user doc has points/cashback
+    try {
+      const userDoc = await getDoc(doc(db, 'usuarios', cliente_id));
+      if (userDoc.exists()) {
+        const u = userDoc.data();
+        return {
+          cliente_id,
+          tenantId: activeTenant,
+          points: u.pontos ?? u.points ?? 0,
+          cashback: u.cashback ?? 0,
+          isVip: false,
+          updatedAt: new Date()
+        } as unknown as LoyaltyPoints;
+      }
+    } catch (uErr) {
+      // ignore
+    }
     // Return default if not exists
     return {
       cliente_id,
-      tenantId: getActiveTenantId(),
+      tenantId: activeTenant,
       points: 0,
       cashback: 0,
       isVip: false,
@@ -97,7 +115,7 @@ export const loyaltyService = {
 
   async addPoints(cliente_id: string, amount: number, value: number, description: string, source: LoyaltyHistory['source']) {
     const config = await this.getConfig();
-    const activeTenantId = getActiveTenantId();
+    const activeTenantId = getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
 
     // Check if points for this description were already credited to prevent duplicate credit
     if (description && description.includes('Comanda')) {
@@ -133,8 +151,12 @@ export const loyaltyService = {
       
       if (pointsSnap.exists()) {
         const data = pointsSnap.data() as LoyaltyPoints;
-        currentPoints = data.points;
-        currentCashback = data.cashback;
+        currentPoints = data.points || 0;
+        currentCashback = data.cashback || 0;
+      } else if (userSnap.exists()) {
+        const uData = userSnap.data();
+        currentPoints = uData.pontos ?? uData.points ?? 0;
+        currentCashback = uData.cashback ?? 0;
       }
 
       let pointsToAdd = 0;
@@ -145,30 +167,25 @@ export const loyaltyService = {
       if (isEnabled) {
         if (mode === 'pontos') {
           // Calculation for Points mode
-          const pointsPerReal = Number(config.pointsPerReal) || 1;
+          const pointsPerReal = Number(config.pointsPerReal) > 0 ? Number(config.pointsPerReal) : 1;
           const pointsPerApp = Number(config.pointsPerAppointment) || 0;
           pointsToAdd = Math.floor(value * pointsPerReal) + (source === 'appointment' ? pointsPerApp : 0);
           if (amount > 0 && pointsToAdd === 0) pointsToAdd = amount; // fallback if direct points passed
+          cashbackToAdd = 0;
         } else {
           // Calculation for Saldo / Cashback mode
           if (config.cashbackType === 'fixo') {
-            cashbackToAdd = Number(config.cashbackFixedValue) || 0;
+            cashbackToAdd = Number(config.cashbackFixedValue) > 0 ? Number(config.cashbackFixedValue) : 5;
           } else {
             const pct = Number(config.cashbackPercentage) > 0 ? Number(config.cashbackPercentage) : 5;
             cashbackToAdd = (value * pct) / 100;
           }
-          // Also credit points per appointment if configured
-          const pointsPerApp = Number(config.pointsPerAppointment) || 0;
-          if (source === 'appointment' && pointsPerApp > 0) {
-            pointsToAdd = pointsPerApp;
-          } else if (amount > 0) {
-            pointsToAdd = amount;
-          }
+          pointsToAdd = 0;
         }
       }
 
       const newPoints = currentPoints + pointsToAdd;
-      const newCashback = currentCashback + cashbackToAdd;
+      const newCashback = Number((currentCashback + cashbackToAdd).toFixed(2));
       const isVip = (config.vipThreshold && newPoints >= config.vipThreshold) || false;
 
       // Perform all writes after reads
@@ -179,7 +196,7 @@ export const loyaltyService = {
         cashback: newCashback,
         isVip,
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
 
       if (userSnap.exists()) {
         transaction.update(userRef, {
@@ -188,6 +205,13 @@ export const loyaltyService = {
           cashback: newCashback,
           updatedAt: serverTimestamp()
         });
+      } else {
+        transaction.set(userRef, {
+          pontos: newPoints,
+          points: newPoints,
+          cashback: newCashback,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
       }
 
       const historyRef = doc(collection(db, HISTORY_COLLECTION));
@@ -510,30 +534,13 @@ export const loyaltyService = {
   },
 
   async syncRetroactiveLoyalty(tenantId: string) {
-    // 1. Force config to Pontos mode
-    const configRef = doc(db, CONFIG_COLLECTION, tenantId);
-    let configSnap = await getDoc(configRef);
-    if (!configSnap.exists() || configSnap.data()?.loyaltyMode !== 'pontos') {
-      await setDoc(configRef, {
-        tenantId,
-        loyaltyMode: 'pontos',
-        pointsPerReal: 1,
-        pointsPerAppointment: 10,
-        cashbackEnabled: true,
-        cashbackType: 'percentual',
-        cashbackPercentage: 5,
-        cashbackFixedValue: 5,
-        minRedemptionValue: 10,
-        minRedemptionPoints: 100,
-        vipThreshold: 1000,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      configSnap = await getDoc(configRef);
-    }
-
-    const config = (configSnap.data() || {}) as LoyaltyConfig;
-    const pointsPerReal = Number(config.pointsPerReal) || 1;
-    const pointsPerApp = Number(config.pointsPerAppointment) || 10;
+    const config = await this.getConfig();
+    const mode = config.loyaltyMode || 'saldo';
+    const isEnabled = config.cashbackEnabled !== false;
+    const pointsPerReal = Number(config.pointsPerReal) > 0 ? Number(config.pointsPerReal) : 1;
+    const pointsPerApp = Number(config.pointsPerAppointment) || 0;
+    const cashbackPct = Number(config.cashbackPercentage) > 0 ? Number(config.cashbackPercentage) : 5;
+    const cashbackFixed = Number(config.cashbackFixedValue) > 0 ? Number(config.cashbackFixedValue) : 5;
 
     // 2. Fetch all existing loyalty_history records for this tenant
     const historyQuery = query(
@@ -593,7 +600,7 @@ export const loyaltyService = {
     const comandasSnap = await getDocs(comandasQuery);
     const comandas = comandasSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
 
-    // Group points by client from clean unique comandas
+    // Group points and cashback by client from clean unique comandas
     const clientPointsMap: Record<string, number> = {};
     const clientCashbackMap: Record<string, number> = {};
 
@@ -601,7 +608,7 @@ export const loyaltyService = {
     for (const m of manualDocs) {
       if (!m.cliente_id) continue;
       clientPointsMap[m.cliente_id] = (clientPointsMap[m.cliente_id] || 0) + m.points;
-      clientCashbackMap[m.cliente_id] = (clientCashbackMap[m.cliente_id] || 0) + m.cashback;
+      clientCashbackMap[m.cliente_id] = Number(((clientCashbackMap[m.cliente_id] || 0) + m.cashback).toFixed(2));
     }
 
     let createdAutoCount = 0;
@@ -623,16 +630,34 @@ export const loyaltyService = {
 
       if (paidAmount <= 0) continue;
 
-      const pointsForComanda = Math.floor(paidAmount * pointsPerReal) + pointsPerApp;
-      if (pointsForComanda <= 0) continue;
+      let pointsForComanda = 0;
+      let cashbackForComanda = 0;
+
+      if (isEnabled) {
+        if (mode === 'pontos') {
+          pointsForComanda = Math.floor(paidAmount * pointsPerReal) + pointsPerApp;
+          cashbackForComanda = 0;
+        } else {
+          pointsForComanda = 0;
+          if (config.cashbackType === 'fixo') {
+            cashbackForComanda = cashbackFixed;
+          } else {
+            cashbackForComanda = Number(((paidAmount * cashbackPct) / 100).toFixed(2));
+          }
+        }
+      }
+
+      if (pointsForComanda <= 0 && cashbackForComanda <= 0) continue;
 
       let dateStr = comanda.date || comanda.data_fechamento || '';
       if (!dateStr && comanda.createdAt) {
         dateStr = (typeof comanda.createdAt === 'string') ? comanda.createdAt.slice(0, 10) : new Date(comanda.createdAt.seconds * 1000).toISOString().slice(0, 10);
       }
-      if (!dateStr) dateStr = '2026-09-04';
+      if (!dateStr) dateStr = format(new Date(), 'yyyy-MM-dd');
 
-      const desc = `Pontos Comanda #${comanda.number || comanda.id}`;
+      const desc = mode === 'saldo' 
+        ? `Cashback Comanda #${comanda.number || comanda.id}`
+        : `Pontos Comanda #${comanda.number || comanda.id}`;
 
       // Create new clean history entry
       const hRef = doc(collection(db, HISTORY_COLLECTION));
@@ -642,7 +667,7 @@ export const loyaltyService = {
         type: 'earn',
         source: 'appointment',
         points: pointsForComanda,
-        cashback: 0,
+        cashback: cashbackForComanda,
         description: desc,
         date: dateStr,
         createdAt: serverTimestamp()
@@ -652,13 +677,17 @@ export const loyaltyService = {
       await commitBatchIfNeeded();
 
       clientPointsMap[clientId] = (clientPointsMap[clientId] || 0) + pointsForComanda;
+      clientCashbackMap[clientId] = Number(((clientCashbackMap[clientId] || 0) + cashbackForComanda).toFixed(2));
     }
 
     await commitBatchIfNeeded(true);
 
     // 4. Overwrite (SET) exact total balances in loyalty_points and usuarios
-    for (const [clientId, totalPts] of Object.entries(clientPointsMap)) {
-      const totalCb = clientCashbackMap[clientId] || 0;
+    const allClientIds = Array.from(new Set([...Object.keys(clientPointsMap), ...Object.keys(clientCashbackMap)]));
+
+    for (const clientId of allClientIds) {
+      const totalPts = clientPointsMap[clientId] || 0;
+      const totalCb = Number((clientCashbackMap[clientId] || 0).toFixed(2));
 
       const pointsRef = doc(db, POINTS_COLLECTION, `${tenantId}_${clientId}`);
       batch.set(pointsRef, {
@@ -685,11 +714,12 @@ export const loyaltyService = {
     await commitBatchIfNeeded(true);
 
     const totalPointsAwarded = Object.values(clientPointsMap).reduce((a, b) => a + Math.max(0, b), 0);
+    const totalCashbackAwarded = Object.values(clientCashbackMap).reduce((a, b) => a + Math.max(0, b), 0);
 
     return {
       countSynced: createdAutoCount,
       totalPointsAwarded,
-      totalCashbackAwarded: 0
+      totalCashbackAwarded: Number(totalCashbackAwarded.toFixed(2))
     };
   }
 };

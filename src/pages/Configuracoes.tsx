@@ -362,7 +362,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
 
   useEffect(() => {
     if (activeSubTab) {
-      if (activeSubTab === 'configuracoes-parametros') setActiveSection('business');
+      if (activeSubTab === 'configuracoes-parametros' || activeSubTab === 'configuracoes-fidelidade') setActiveSection('business');
       else if (activeSubTab === 'configuracoes-rodizio') setActiveSection('rules');
       else if (activeSubTab === 'configuracoes-funcionamento') setActiveSection('hours');
       else if (activeSubTab === 'configuracoes-permissoes') setActiveSection('security');

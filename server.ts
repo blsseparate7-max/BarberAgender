@@ -640,6 +640,155 @@ app.use((req, res, next) => {
     }
   });
 
+  // API Route to safely merge a duplicate client profile (transfers history, appointments, comandas, debts, loyalty)
+  app.post(["/api/clients/merge-duplicate", "/clients/merge-duplicate"], async (req, res) => {
+    try {
+      const { primaryUid, duplicateUid, tenantId } = req.body;
+      if (!primaryUid || !duplicateUid || primaryUid === duplicateUid) {
+        return res.status(400).json({ error: "IDs dos clientes inválidos para mesclagem." });
+      }
+
+      const dbAdmin = getAdminDb();
+      if (!dbAdmin) {
+        return res.json({ success: true, message: "Modo cliente ativo. Mesclagem tratada via Firestore client SDK." });
+      }
+
+      const primDoc = await dbAdmin.collection('usuarios').doc(primaryUid).get();
+      const dupDoc = await dbAdmin.collection('usuarios').doc(duplicateUid).get();
+
+      if (!dupDoc.exists) {
+        return res.json({ success: true, message: "Registro duplicado já foi removido." });
+      }
+
+      const dupData = dupDoc.data() || {};
+      const primData = primDoc.exists ? primDoc.data() || {} : {};
+
+      // 1. Merge missing profile fields
+      const mergedUpdates: any = {
+        updatedAt: FieldValue.serverTimestamp(),
+        isLinked: true,
+        hasLogin: true,
+        ativo: true
+      };
+      if (!primData.telefone && dupData.telefone) mergedUpdates.telefone = dupData.telefone;
+      if (!primData.phone && dupData.phone) mergedUpdates.phone = dupData.phone;
+      if (!primData.data_nascimento && (dupData.data_nascimento || dupData.birthDate || dupData.dataNascimento)) {
+        mergedUpdates.data_nascimento = dupData.data_nascimento || dupData.birthDate || dupData.dataNascimento;
+      }
+      if (!primData.preferencias && (dupData.preferencias || dupData.preferences)) {
+        mergedUpdates.preferencias = dupData.preferencias || dupData.preferences;
+      }
+      if (!primData.cpf && dupData.cpf) mergedUpdates.cpf = dupData.cpf;
+
+      if (primDoc.exists) {
+        await dbAdmin.collection('usuarios').doc(primaryUid).update(mergedUpdates);
+      }
+
+      // 2. Migrate appointments
+      const apptSnaps = await dbAdmin.collection('appointments').where('cliente_id', '==', duplicateUid).get();
+      for (const docSnap of apptSnaps.docs) {
+        await docSnap.ref.update({
+          cliente_id: primaryUid,
+          cliente_name: primData.nome || dupData.nome || 'Cliente',
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      // 3. Migrate comandas
+      const comandaSnaps = await dbAdmin.collection('comandas').where('cliente_id', '==', duplicateUid).get();
+      for (const docSnap of comandaSnaps.docs) {
+        await docSnap.ref.update({
+          cliente_id: primaryUid,
+          cliente_nome: primData.nome || dupData.nome || 'Cliente',
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      // 4. Migrate debts & payments
+      const debtSnaps = await dbAdmin.collection('client_debts').where('cliente_id', '==', duplicateUid).get();
+      for (const docSnap of debtSnaps.docs) {
+        await docSnap.ref.update({
+          cliente_id: primaryUid,
+          cliente_name: primData.nome || dupData.nome || 'Cliente',
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+      const paySnaps = await dbAdmin.collection('debt_payments').where('cliente_id', '==', duplicateUid).get();
+      for (const docSnap of paySnaps.docs) {
+        await docSnap.ref.update({
+          cliente_id: primaryUid,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      // 5. Migrate package sales & subscriptions
+      const pkgSnaps = await dbAdmin.collection('pacotes_vendas').where('clientId', '==', duplicateUid).get();
+      for (const docSnap of pkgSnaps.docs) {
+        await docSnap.ref.update({
+          clientId: primaryUid,
+          clientName: primData.nome || dupData.nome || 'Cliente',
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+      const subSnaps = await dbAdmin.collection('assinaturas').where('clientId', '==', duplicateUid).get();
+      for (const docSnap of subSnaps.docs) {
+        await docSnap.ref.update({
+          clientId: primaryUid,
+          clientName: primData.nome || dupData.nome || 'Cliente',
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      // 6. Migrate loyalty
+      const activeTid = tenantId || primData.tenantId || dupData.tenantId || 'gbcortes7';
+      const oldLoyaltyRef = dbAdmin.collection('loyalty_points').doc(`${activeTid}_${duplicateUid}`);
+      const oldLoyaltySnap = await oldLoyaltyRef.get();
+      if (oldLoyaltySnap.exists) {
+        const newLoyaltyRef = dbAdmin.collection('loyalty_points').doc(`${activeTid}_${primaryUid}`);
+        const newLoyaltySnap = await newLoyaltyRef.get();
+        if (newLoyaltySnap.exists) {
+          const oldPoints = (oldLoyaltySnap.data()?.pontos || oldLoyaltySnap.data()?.points || 0);
+          await newLoyaltyRef.update({
+            pontos: FieldValue.increment(oldPoints),
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        } else {
+          await newLoyaltyRef.set({
+            ...oldLoyaltySnap.data(),
+            cliente_id: primaryUid,
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        }
+        await oldLoyaltyRef.delete();
+      }
+
+      const loyaltyHistSnaps = await dbAdmin.collection('loyalty_history').where('cliente_id', '==', duplicateUid).get();
+      for (const docSnap of loyaltyHistSnaps.docs) {
+        await docSnap.ref.update({
+          cliente_id: primaryUid,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      // 7. Mark merged and delete the duplicate document
+      try {
+        await dupDoc.ref.delete();
+      } catch (delErr) {
+        await dupDoc.ref.update({
+          ativo: false,
+          isLinked: true,
+          mergedInto: primaryUid,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      return res.json({ success: true, message: "Contas unificadas com sucesso!" });
+    } catch (error: any) {
+      console.error("Erro ao mesclar contas de clientes:", error);
+      res.status(500).json({ error: error.message || "Erro ao mesclar contas." });
+    }
+  });
+
   // API Route para o SaaS AI Co-Pilot Insights
   app.post(["/api/saas/insights", "/saas/insights"], async (req, res) => {
     try {

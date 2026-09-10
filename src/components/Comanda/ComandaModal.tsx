@@ -113,6 +113,13 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [activeSubTab, setActiveSubTab] = useState<'itens' | 'logs'>('itens');
   
   const [confirmFiado, setConfirmFiado] = useState<{ amount: number; method: string; methodId: string } | null>(null);
+  const [confirmExcessPayment, setConfirmExcessPayment] = useState<{
+    method: PaymentMethod;
+    amount: number;
+    metodo_pagamento_id?: string;
+    excess: number;
+    pendingDebts: number;
+  } | null>(null);
   
   const [selectedClientProfile, setSelectedClientProfile] = useState<UserProfile | null>(null);
   const [clientLoyalty, setClientLoyalty] = useState<{ points: number; cashback: number } | null>(null);
@@ -1424,6 +1431,18 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       // Check if user is overpaying comanda
       const totalPendingComanda = comanda.pendingAmount || 0;
       const totalPendingDebts = clientDebts.reduce((sum, d) => sum + (d.remainingAmount || 0), 0);
+
+      if (amount > totalPendingComanda && comanda.cliente_id && comanda.cliente_id !== 'avulso' && !options?.excessMode) {
+        setConfirmExcessPayment({
+          method,
+          amount,
+          metodo_pagamento_id,
+          excess: amount - totalPendingComanda,
+          pendingDebts: totalPendingDebts
+        });
+        setLoading(false);
+        return;
+      }
       
       let comandaPaymentAmount = amount;
       let debtPaymentAmount = 0;
@@ -1437,8 +1456,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           creditHaverAmount = excess;
         } else if (options?.excessMode === 'troco') {
           toast.info(`Troco a devolver ao cliente: R$ ${excess.toFixed(2)}`);
-        } else {
-          // Default or 'abater_fiado'
+        } else if (options?.excessMode === 'abater_fiado') {
           debtPaymentAmount = Math.min(excess, totalPendingDebts);
           if (excess > totalPendingDebts) {
             creditHaverAmount = excess - totalPendingDebts;
@@ -4231,6 +4249,105 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         description={`Deseja lançar R$ ${(confirmFiado?.amount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} como FIADO na conta do cliente?`}
         confirmLabel="Confirmar"
       />
+
+      <AnimatePresence>
+        {confirmExcessPayment && (
+          <div key="excess-payment-modal-overlay" className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
+            <motion.div
+              key="excess-payment-modal-content"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-100"
+            >
+              <div className="flex items-center gap-3 text-amber-600 mb-4">
+                <div className="p-3 bg-amber-50 rounded-2xl border border-amber-100">
+                  <AlertCircle size={28} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Pagamento com Excesso</h3>
+                  <p className="text-xs text-slate-500 font-medium">O valor informado é maior que o saldo da comanda</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 mb-5 space-y-2 text-sm">
+                <div className="flex justify-between text-slate-600">
+                  <span>Valor da comanda:</span>
+                  <span className="font-bold text-slate-800">R$ {(comanda.pendingAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Valor informado:</span>
+                  <span className="font-bold text-slate-800">R$ {confirmExcessPayment.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between text-emerald-600 pt-2 border-t border-slate-200/60 font-bold">
+                  <span>Excesso:</span>
+                  <span>R$ {confirmExcessPayment.excess.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              {confirmExcessPayment.pendingDebts > 0 ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6">
+                  <p className="text-xs font-bold text-amber-900 mb-1">
+                    Este cliente possui R$ {confirmExcessPayment.pendingDebts.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em fiado pendente!
+                  </p>
+                  <p className="text-[11px] text-amber-700">
+                    Deseja usar o valor excedente (R$ {confirmExcessPayment.excess.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) para abater no fiado do cliente?
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-600 mb-6">
+                  O cliente não possui fiados pendentes. Como deseja registrar o excesso de R$ {confirmExcessPayment.excess.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?
+                </p>
+              )}
+
+              <div className="flex flex-col gap-2.5">
+                {confirmExcessPayment.pendingDebts > 0 && (
+                  <button
+                    onClick={() => {
+                      const data = confirmExcessPayment;
+                      setConfirmExcessPayment(null);
+                      handleAddPayment(data.method, data.amount, data.metodo_pagamento_id, { excessMode: 'abater_fiado' });
+                    }}
+                    className="w-full py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-2xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <DollarSign size={18} />
+                    Abater do Fiado (Recomendado)
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    const data = confirmExcessPayment;
+                    setConfirmExcessPayment(null);
+                    handleAddPayment(data.method, data.amount, data.metodo_pagamento_id, { excessMode: 'troco' });
+                  }}
+                  className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-2xl text-sm transition-colors"
+                >
+                  Devolver Troco ao Cliente
+                </button>
+
+                <button
+                  onClick={() => {
+                    const data = confirmExcessPayment;
+                    setConfirmExcessPayment(null);
+                    handleAddPayment(data.method, data.amount, data.metodo_pagamento_id, { excessMode: 'credito_haver' });
+                  }}
+                  className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition-colors"
+                >
+                  Lançar como Crédito em Haver
+                </button>
+
+                <button
+                  onClick={() => setConfirmExcessPayment(null)}
+                  className="w-full py-2 text-slate-400 hover:text-slate-600 font-medium text-xs text-center"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showFiadoConfirmationModal && (

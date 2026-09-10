@@ -145,7 +145,8 @@ export const commissionService = {
         const desc = (p.description || '').toLowerCase();
         const supplier = (p.supplier || '').toLowerCase();
         const proName = (p.profissional_name || '').toLowerCase();
-        const isVale = category.includes('adiantamento') || category.includes('vale') || category.includes('comissão') || category.includes('comissoes') || desc.includes('adiantamento') || desc.includes('vale');
+        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
+        const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
 
         let matchesPro = true;
         if (filters.profissional_id) {
@@ -154,7 +155,7 @@ export const commissionService = {
           matchesPro = !!p.profissional_id;
         }
 
-        if ((isVale || p.profissional_id) && matchesPro) {
+        if (isVale && matchesPro) {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
           const pAmount = p.amount || 0;
 
@@ -220,7 +221,8 @@ export const commissionService = {
         const category = (c.category || '').toLowerCase();
         const desc = (c.description || '').toLowerCase();
         const cProName = (c.profissional_name || '').toLowerCase();
-        const isVale = c.type === 'sangria' || category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento');
+        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
+        const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
 
         let matchesPro = true;
         if (filters.profissional_id) {

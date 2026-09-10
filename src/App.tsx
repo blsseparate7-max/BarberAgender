@@ -361,7 +361,7 @@ function MainApp() {
 
     // Fidelidade
     if (activeTab === 'fidelidade' || activeTab.startsWith('fidelidade-')) {
-      return <Fidelidade activeSubTab={activeTab} />;
+      return <Fidelidade activeSubTab={activeTab} setActiveTab={setActiveTab} />;
     }
 
     // Configuracoes / Admin
@@ -382,6 +382,7 @@ function MainApp() {
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div 
+            key="sidebar-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -393,11 +394,13 @@ function MainApp() {
 
       <AnimatePresence>
         {showOnboarding && (
-          <OnboardingWelcome 
-            profile={profile!} 
-            onClose={() => setShowOnboarding(false)} 
-            onNavigate={(tabId) => setActiveTab(tabId as any)} 
-          />
+          <div key="onboarding-welcome-modal">
+            <OnboardingWelcome 
+              profile={profile!} 
+              onClose={() => setShowOnboarding(false)} 
+              onNavigate={(tabId) => setActiveTab(tabId as any)} 
+            />
+          </div>
         )}
       </AnimatePresence>
 

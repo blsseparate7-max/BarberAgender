@@ -272,14 +272,15 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         const desc = (p.description || '').toLowerCase();
         const supplier = (p.supplier || '').toLowerCase();
         const pProName = (p.profissional_name || '').toLowerCase();
-        const isVale = category.includes('adiantamento') || category.includes('vale') || category.includes('comissão') || category.includes('comissoes') || desc.includes('adiantamento') || desc.includes('vale');
+        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
+        const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
 
         let matchesPro = p.profissional_id === professionalId;
         if (!matchesPro && proNameLower) {
           matchesPro = matchesProText(supplier) || matchesProText(pProName) || matchesProText(desc);
         }
 
-        if ((isVale || p.profissional_id) && matchesPro) {
+        if (isVale && matchesPro) {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
           const pAmount = p.amount || 0;
           const isDup = merged.some(m => m.id === p.id || (Math.abs(m.amount - pAmount) < 0.01 && m.date === pDate));
@@ -292,7 +293,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
               amount: pAmount,
               date: pDate || new Date().toISOString().split('T')[0],
               description: p.description || 'Adiantamento / Vale',
-              status: p.status === 'paid' ? 'pago' : 'pendente',
+              status: (p.status === 'paid' || p.status === 'deduzido' || p.status === 'pago') ? 'pago' : 'pendente',
               responsible_id: p.responsible_id || '',
               responsible_name: p.responsible_name || '',
               createdAt: p.createdAt,
@@ -306,7 +307,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       rawCashMovs.forEach(c => {
         const category = (c.category || '').toLowerCase();
         const desc = (c.description || '').toLowerCase();
-        const isVale = c.type === 'sangria' || category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento');
+        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
+        const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
 
         let matchesPro = c.profissional_id === professionalId || c.barber_id === professionalId;
         if (!matchesPro && proNameLower) {
@@ -325,8 +327,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
               profissional_name: c.profissional_name || professionalName,
               amount: cAmount,
               date: cDate || new Date().toISOString().split('T')[0],
-              description: c.description || 'Vale / Sangria de Caixa',
-              status: 'pendente',
+              description: c.description || 'Vale / Adiantamento',
+              status: (c.status === 'paid' || c.status === 'deduzido' || c.status === 'pago') ? 'pago' : 'pendente',
               responsible_id: c.usuario_id || '',
               responsible_name: c.usuario_name || '',
               createdAt: c.createdAt,

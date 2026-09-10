@@ -37,7 +37,7 @@ import {
   FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc } from 'firebase/firestore';
+import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc, deleteField } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Comanda, ComandaItem, ComandaPayment, Service, Product, UserProfile, PaymentMethod, PaymentMethodConfig, ComandaLog, ClientDebt, SubscriptionPlan, SubscriptionDiscount, LoyaltyConfig } from '../../types';
 import { getActiveTenantId } from '../../services/tenantService';
@@ -142,13 +142,34 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [showFiadoConfirmationModal, setShowFiadoConfirmationModal] = useState(false);
   const [fiadoDueDate, setFiadoDueDate] = useState('');
   const [scheduleFiadoReminder, setScheduleFiadoReminder] = useState(true);
-  const [closureChoice, setClosureChoice] = useState<'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago'>('fiado');
+  const [closureChoice, setClosureChoice] = useState<'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago'>('total_pago');
   const [closureNote, setClosureNote] = useState('');
 
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string>('');
   const [paymentInputAmount, setPaymentInputAmount] = useState<string>('');
   const [entersCashChoice, setEntersCashChoice] = useState<boolean>(true);
   const [excessMode, setExcessMode] = useState<'abater_fiado' | 'credito_haver' | 'troco'>('abater_fiado');
+
+  // Auto pre-load pending amount into payment input whenever comanda is loaded or pending amount changes
+  useEffect(() => {
+    if (comanda && comanda.pendingAmount > 0) {
+      setPaymentInputAmount(comanda.pendingAmount.toFixed(2));
+    }
+  }, [comanda?.id, comanda?.pendingAmount]);
+
+  // Pre-select default payment method (Pix, Dinheiro, or first available active method) if none selected
+  useEffect(() => {
+    if (paymentMethods.length > 0 && !selectedPaymentMethodId) {
+      const defaultMethod = 
+        paymentMethods.find(m => m.type === 'pix' && !m.goesToClientAccount) ||
+        paymentMethods.find(m => m.type === 'dinheiro' && !m.goesToClientAccount) ||
+        paymentMethods.find(m => m.type !== 'fiado' && !m.goesToClientAccount) ||
+        paymentMethods[0];
+      if (defaultMethod) {
+        setSelectedPaymentMethodId(defaultMethod.id);
+      }
+    }
+  }, [paymentMethods, selectedPaymentMethodId]);
 
   // Estado para 2ª forma de pagamento (botão +)
   const [showSecondPayment, setShowSecondPayment] = useState<boolean>(false);
@@ -653,9 +674,34 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     const idToListen = activeComandaId || comanda_id;
 
     if (idToListen) {
-      unsubscribe = onSnapshot(doc(db, 'comandas', idToListen), (doc) => {
-        if (doc.exists()) {
-          const data = { id: doc.id, ...doc.data() } as Comanda;
+      unsubscribe = onSnapshot(doc(db, 'comandas', idToListen), async (docSnap) => {
+        if (docSnap.exists()) {
+          const data = { id: docSnap.id, ...docSnap.data() } as Comanda;
+
+          if (initialData) {
+            const normInitClient = (initialData.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            const normComClient = (data.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            const isMismatched = normInitClient && normComClient && normInitClient !== normComClient && normInitClient !== 'consumidor final' && normComClient !== 'consumidor final';
+            
+            if (data.status === 'fechada' || isMismatched) {
+              console.warn(`ComandaModal: comanda ${idToListen} is closed/mismatched (${data.cliente_name}), generating fresh comanda for ${initialData.cliente_name}`);
+              if (initialData.agendamento_id) {
+                try {
+                  await updateDoc(doc(db, 'appointments', initialData.agendamento_id), {
+                    comanda_id: deleteField(),
+                    comanda_number: deleteField()
+                  });
+                } catch (_) {}
+              }
+              setActiveComandaId(null);
+              setComanda(null);
+              if (!hasOpenedComanda.current && user) {
+                handleOpenComanda();
+              }
+              return;
+            }
+          }
+
           setComanda(data);
           setFormData({
             cliente_id: data.cliente_id,
@@ -1469,30 +1515,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     }
   };
 
-  const handleCloseComandaWithChoice = async (
-    typeOverride?: 'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago',
-    noteOverride?: string
-  ) => {
-    if (!comanda || !user || loading) return;
-    const finalType = typeOverride || closureChoice || (comanda.pendingAmount > 0 ? 'fiado' : 'total_pago');
-    const finalNote = noteOverride !== undefined ? noteOverride : closureNote;
-
-    if (finalType === 'fiado' && comanda.pendingAmount > 0) {
-      if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
-        toast.error("Para lançar o saldo restante como Fiado, selecione um cliente cadastrado.");
-        return;
-      }
-    }
-
-    setLoading(true);
-    try {
-      // 1. Process package/subscription deductions before closing
-      for (const item of comanda.items) {
-        if (item.deductType === 'pacote' && item.packageSaleId) {
-          const isVirtual = comanda.items.find(i => i.id === item.packageSaleId && i.type === 'pacote');
-          if (isVirtual) {
-            console.log(`Skipping DB update for virtual package deduction ${item.packageSaleId}`);
-          } else {
+  const processPackageAndSubscriptionDeductions = async (com: Comanda) => {
+    for (const item of com.items) {
+      if (item.deductType === 'pacote' && item.packageSaleId) {
+        const isVirtual = com.items.find(i => i.id === item.packageSaleId && i.type === 'pacote');
+        if (!isVirtual) {
+          try {
             const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
             const pkgSnap = await getDoc(pkgRef);
             if (pkgSnap.exists()) {
@@ -1501,32 +1529,40 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               const newIndex = currentUsages.length + 1;
               const newUsage = {
                 usedAt: new Date().toISOString(),
-                notes: `Consumo automático na Comanda #${comanda.number}`,
+                notes: `Consumo automático na Comanda #${com.number}`,
                 index: newIndex,
-                comanda_id: comanda.id
+                comanda_id: com.id
               };
               await updateDoc(pkgRef, {
                 remainingCuts: Math.max(0, (pkgData.remainingCuts || 0) - 1),
                 usages: [...currentUsages, newUsage]
               });
             }
+          } catch (e) {
+            console.error("Erro ao deduzir pacote:", e);
           }
-        } else if (item.deductType === 'assinatura' && item.subscriptionId) {
+        }
+      } else if (item.deductType === 'assinatura' && item.subscriptionId) {
+        try {
           const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
           const typeLabel: 'haircut' | 'beard' = isCut ? 'haircut' : 'beard';
           
           await subscriptionService.registerUsage(
             item.subscriptionId, 
             typeLabel, 
-            comanda.agendamento_id,
-            item.profissional_id || comanda.profissional_id || null,
-            item.profissional_name || comanda.profissional_name || null,
+            com.agendamento_id,
+            item.profissional_id || com.profissional_id || null,
+            item.profissional_name || com.profissional_name || null,
             item.unitPrice || item.totalPrice || 0,
             item.referencia_id || item.id,
             item.name
           );
-        } else if (item.type === 'pacote') {
-          const deductedServicesInComanda = comanda.items.filter(i => i.deductType === 'pacote' && i.packageSaleId === item.id);
+        } catch (e) {
+          console.error("Erro ao deduzir assinatura:", e);
+        }
+      } else if (item.type === 'pacote') {
+        try {
+          const deductedServicesInComanda = com.items.filter(i => i.deductType === 'pacote' && i.packageSaleId === item.id);
           const cutsUsedCount = deductedServicesInComanda.length;
           
           const totalCuts = item.metadata?.cutsCount || 1;
@@ -1534,15 +1570,15 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           
           const initialUsages = deductedServicesInComanda.map((ds, idx) => ({
             usedAt: new Date().toISOString(),
-            notes: `Consumo automático na venda do Pacote (Comanda #${comanda.number})`,
+            notes: `Consumo automático na venda do Pacote (Comanda #${com.number})`,
             index: idx + 1,
-            comanda_id: comanda.id
+            comanda_id: com.id
           }));
 
           await addDoc(collection(db, 'pacotes_vendas'), {
-            tenantId: comanda.tenantId || getActiveTenantId(),
-            clientId: comanda.cliente_id,
-            clientName: comanda.cliente_name,
+            tenantId: com.tenantId || getActiveTenantId(),
+            clientId: com.cliente_id,
+            clientName: com.cliente_name,
             packageId: item.referencia_id,
             packageName: item.name.replace('Venda Pacote: ', ''),
             totalCuts,
@@ -1556,8 +1592,31 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             serviceId: item.metadata?.serviceId || '',
             serviceName: item.metadata?.serviceName || ''
           });
+        } catch (e) {
+          console.error("Erro ao registrar venda de pacote:", e);
         }
       }
+    }
+  };
+
+  const handleCloseComandaWithChoice = async (
+    typeOverride?: 'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago',
+    noteOverride?: string
+  ) => {
+    if (!comanda || !user || loading) return;
+    const finalType = typeOverride || (comanda.pendingAmount <= 0 ? 'total_pago' : (closureChoice || 'fiado'));
+    const finalNote = noteOverride !== undefined ? noteOverride : closureNote;
+
+    if (finalType === 'fiado' && comanda.pendingAmount > 0) {
+      if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
+        toast.error("Para lançar o saldo restante como Fiado, selecione um cliente cadastrado.");
+        return;
+      }
+    }
+
+    setLoading(true);
+    try {
+      await processPackageAndSubscriptionDeductions(comanda);
 
       // 2. Actually close the comanda
       await comandaService.closeComanda(
@@ -1602,6 +1661,121 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     } catch (error) {
       console.error("Erro ao fechar comanda:", error);
       toast.error("Erro ao fechar comanda: " + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickPayAndClose = async () => {
+    if (!comanda || !user || loading) return;
+
+    // 1. Se saldo pendente já é zero ou menor, finaliza direto como total_pago
+    if (comanda.pendingAmount <= 0) {
+      await handleCloseComandaWithChoice('total_pago');
+      return;
+    }
+
+    // 2. Se estiver com divisão em 2 formas de pagamento
+    if (showSecondPayment) {
+      const methodObj1 = paymentMethods.find(m => m.id === selectedPaymentMethodId);
+      const amount1 = Number(paymentInputAmount) || 0;
+      const methodObj2 = paymentMethods.find(m => m.id === secondPaymentMethodId);
+      const amount2 = Number(secondPaymentInputAmount) || 0;
+
+      if (!methodObj1 || amount1 <= 0) {
+        toast.error("Selecione a 1ª forma de pagamento e informe o valor!");
+        return;
+      }
+      if (!methodObj2 || amount2 <= 0) {
+        toast.error("Selecione a 2ª forma de pagamento e informe o valor!");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await processPackageAndSubscriptionDeductions(comanda);
+
+        // Lança a 1ª forma
+        await handleAddPayment(methodObj1.type as any, amount1, methodObj1.id, {
+          entersCash: entersCashChoice,
+          excessMode: 'troco'
+        });
+
+        // Lança a 2ª forma
+        await handleAddPayment(methodObj2.type as any, amount2, methodObj2.id, {
+          entersCash: entersCashChoice,
+          excessMode
+        });
+
+        // Se quitou o saldo restante, finaliza
+        if ((amount1 + amount2) >= comanda.pendingAmount) {
+          setShowSecondPayment(false);
+          setShowPaymentModal(false);
+          setPaymentInputAmount('');
+          toast.success("Comanda finalizada com sucesso nas 2 formas de pagamento!");
+          onSave();
+        } else {
+          toast.success("Pagamentos registrados com sucesso!");
+        }
+      } catch (err: any) {
+        console.error("Erro ao registrar 2 formas:", err);
+        toast.error("Erro ao registrar pagamentos: " + formatErrorMessage(err));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // 3. Apenas 1 forma de pagamento
+    const methodObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
+    if (!methodObj) {
+      // Se nenhuma forma foi escolhida, abre o modal de saldo pendente
+      const nextMonth = new Date();
+      nextMonth.setDate(nextMonth.getDate() + 30);
+      setFiadoDueDate(nextMonth.toISOString().split('T')[0]);
+      setClosureChoice('fiado');
+      setClosureNote('');
+      setShowFiadoConfirmationModal(true);
+      return;
+    }
+
+    // Se o método for Fiado
+    if (methodObj.type === 'fiado' || methodObj.goesToClientAccount) {
+      if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
+        toast.error("Para lançar o saldo restante como Fiado, selecione um cliente cadastrado acima.");
+        return;
+      }
+      const nextMonth = new Date();
+      nextMonth.setDate(nextMonth.getDate() + 30);
+      setFiadoDueDate(nextMonth.toISOString().split('T')[0]);
+      setClosureChoice('fiado');
+      setClosureNote('');
+      setShowFiadoConfirmationModal(true);
+      return;
+    }
+
+    const amount = Number(paymentInputAmount) > 0 ? Number(paymentInputAmount) : comanda.pendingAmount;
+
+    setLoading(true);
+    try {
+      await processPackageAndSubscriptionDeductions(comanda);
+
+      await handleAddPayment(methodObj.type as any, amount, methodObj.id, {
+        entersCash: entersCashChoice,
+        excessMode
+      });
+
+      if (amount >= comanda.pendingAmount) {
+        toast.success(`🎉 Comanda finalizada com sucesso no ${methodObj.name}!`);
+        setShowPaymentModal(false);
+        setPaymentInputAmount('');
+        onSave();
+      } else {
+        toast.success(`Pagamento parcial de R$ ${amount.toFixed(2)} no ${methodObj.name} registrado!`);
+      }
+    } catch (err: any) {
+      console.error("Erro ao processar pagamento rápido:", err);
+      toast.error("Erro ao processar pagamento: " + formatErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -2822,12 +2996,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           )}
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {/* Select de Forma de Pagamento 1 */}
+                        <div className="space-y-3">
+                          {/* Botões de Seleção Rápida de Forma de Pagamento */}
                           <div className="space-y-1.5">
                             <div className="flex items-center justify-between">
                               <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
-                                {showSecondPayment ? '1ª Forma de Pagamento' : 'Forma de Pagamento'}
+                                {showSecondPayment ? '1ª Forma de Pagamento' : 'Forma de Pagamento Rápida'}
                               </label>
                               {!showSecondPayment && (
                                 <button
@@ -2850,51 +3024,98 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                     }
                                   }}
                                   className="text-[11px] text-emerald-700 font-black hover:text-emerald-800 flex items-center gap-1.5 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-lg border border-emerald-300 transition-all cursor-pointer shadow-xs"
-                                  title="Clique no + para adicionar 2ª forma de pagamento"
+                                  title="Dividir comanda em 2 formas de pagamento"
                                 >
                                   <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-black leading-none">+</span>
-                                  <span>Adicionar 2ª Forma</span>
+                                  <span>Dividir em 2 Formas</span>
                                 </button>
                               )}
                             </div>
-                            <select
-                              value={selectedPaymentMethodId}
-                              onChange={(e) => setSelectedPaymentMethodId(e.target.value)}
-                              className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
-                            >
-                              <option value="">-- Selecione o 1º Meio --</option>
-                              {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.name} {m.type === 'dinheiro' ? '(Dinheiro)' : m.type === 'pix' ? '(PIX)' : ''}
-                                </option>
-                              ))}
-                            </select>
+
+                            {/* Botões táteis das principais formas */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {paymentMethods
+                                .filter(m => m.type !== 'fiado' && !m.goesToClientAccount)
+                                .slice(0, 4)
+                                .map((m) => {
+                                  const isSelected = selectedPaymentMethodId === m.id;
+                                  return (
+                                    <button
+                                      key={`quick-btn-${m.id}`}
+                                      type="button"
+                                      onClick={() => setSelectedPaymentMethodId(m.id)}
+                                      className={`py-2.5 px-3 rounded-xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95 ${
+                                        isSelected
+                                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20 ring-2 ring-emerald-500/20'
+                                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                                      }`}
+                                    >
+                                      {m.type === 'pix' ? <Smartphone size={15} /> :
+                                       m.type === 'dinheiro' ? <DollarSign size={15} /> :
+                                       <CreditCard size={15} />}
+                                      <span className="truncate">{m.name}</span>
+                                    </button>
+                                  );
+                                })}
+                            </div>
                           </div>
 
-                          {/* Valor Pago 1 */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
-                              {showSecondPayment ? 'Valor 1ª Forma (R$)' : 'Valor Pago (R$)'}
-                            </label>
-                            <div className="relative">
-                              <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0.01"
-                                value={paymentInputAmount}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setPaymentInputAmount(val);
-                                  if (showSecondPayment) {
-                                    const num1 = Number(val) || 0;
-                                    const rest = Math.max(0, Math.round((comanda.pendingAmount - num1) * 100) / 100);
-                                    setSecondPaymentInputAmount(rest > 0 ? rest.toFixed(2) : '');
-                                  }
-                                }}
-                                placeholder={comanda.pendingAmount.toFixed(2)}
-                                className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-9 pr-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
-                              />
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                            {/* Select de Formas Completas */}
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                                {showSecondPayment ? 'Outra 1ª Forma' : 'Todas as Formas'}
+                              </label>
+                              <select
+                                value={selectedPaymentMethodId}
+                                onChange={(e) => setSelectedPaymentMethodId(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                              >
+                                <option value="">-- Selecione a Forma --</option>
+                                {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.name} {m.type === 'dinheiro' ? '(Dinheiro)' : m.type === 'pix' ? '(PIX)' : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Valor Pago 1 */}
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
+                                  {showSecondPayment ? 'Valor 1ª Forma (R$)' : 'Valor Pago (R$)'}
+                                </label>
+                                {comanda.pendingAmount > 0 && !showSecondPayment && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPaymentInputAmount(comanda.pendingAmount.toFixed(2))}
+                                    className="text-[10px] text-emerald-700 hover:text-emerald-800 font-bold underline cursor-pointer"
+                                  >
+                                    Total (R$ {comanda.pendingAmount.toFixed(2)})
+                                  </button>
+                                )}
+                              </div>
+                              <div className="relative">
+                                <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0.01"
+                                  value={paymentInputAmount}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setPaymentInputAmount(val);
+                                    if (showSecondPayment) {
+                                      const num1 = Number(val) || 0;
+                                      const rest = Math.max(0, Math.round((comanda.pendingAmount - num1) * 100) / 100);
+                                      setSecondPaymentInputAmount(rest > 0 ? rest.toFixed(2) : '');
+                                    }
+                                  }}
+                                  placeholder={comanda.pendingAmount.toFixed(2)}
+                                  className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-9 pr-3.5 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                                />
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3155,27 +3376,44 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? (
                   <>
                     <button 
-                      onClick={async () => {
-                        if (comanda.pendingAmount > 0) {
-                          const nextMonth = new Date();
-                          nextMonth.setDate(nextMonth.getDate() + 30);
-                          setFiadoDueDate(nextMonth.toISOString().split('T')[0]);
-                          setClosureChoice('fiado');
-                          setClosureNote('');
-                          setShowFiadoConfirmationModal(true);
-                        } else {
-                          await handleCloseComandaWithChoice('total_pago');
-                        }
-                      }}
+                      id="btn-main-finalize-comanda"
+                      onClick={handleQuickPayAndClose}
                       disabled={loading}
-                      className={`w-full py-4 text-white rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all cursor-pointer ${
+                      className={`w-full py-4 text-white rounded-2xl font-black text-sm sm:text-base shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all cursor-pointer ${
                         comanda.pendingAmount === 0 
-                          ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/10' 
-                          : 'bg-primary hover:bg-slate-800 shadow-primary/10'
+                          ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20' 
+                          : (() => {
+                              const mObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
+                              if (mObj?.type === 'fiado' || mObj?.goesToClientAccount) {
+                                return 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20';
+                              }
+                              return 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20';
+                            })()
                       }`}
                     >
                       {loading ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
-                      <span>Finalizar Conta</span>
+                      <span>
+                        {(() => {
+                          if (comanda.pendingAmount === 0) {
+                            return 'Finalizar Conta (Já Paga)';
+                          }
+                          if (showSecondPayment) {
+                            return `Receber as 2 Formas (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) e Finalizar`;
+                          }
+                          const mObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
+                          if (!mObj) {
+                            return 'Finalizar Conta';
+                          }
+                          if (mObj.type === 'fiado' || mObj.goesToClientAccount) {
+                            return `Lançar no FIADO (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) e Finalizar`;
+                          }
+                          const amt = Number(paymentInputAmount) > 0 ? Number(paymentInputAmount) : comanda.pendingAmount;
+                          if (amt < comanda.pendingAmount) {
+                            return `Lançar Pagamento Parcial (R$ ${amt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`;
+                          }
+                          return `Receber R$ ${amt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ${mObj.name} e Finalizar`;
+                        })()}
+                      </span>
                     </button>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -4089,15 +4327,26 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   </div>
                 )}
 
-                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+                  <button 
+                    id="back-to-payment-btn"
+                    type="button"
+                    onClick={() => setShowFiadoConfirmationModal(false)}
+                    disabled={loading}
+                    className="py-3.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                  >
+                    <span>Voltar para Receber</span>
+                  </button>
+
                   <button 
                     id="confirm-cancel-fiado-btn"
                     type="button"
-                    onClick={() => handleCloseComandaWithChoice('desconto', 'Diferença não cobrada')}
+                    onClick={() => handleCloseComandaWithChoice('desconto', 'Diferença não cobrada (Desconto)')}
                     disabled={loading}
-                    className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                    className="flex-1 py-3.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                    title="Fecha a comanda aplicando desconto no saldo restante. NENHUM débito ou fiado será lançado para o cliente."
                   >
-                    <span>Não Lançar Débito</span>
+                    <span>Não Lançar Débito (Desconto)</span>
                   </button>
 
                   <button 
@@ -4110,11 +4359,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       comanda.cliente_id === 'avulso' || 
                       !fiadoDueDate
                     }
-                    className="flex-1 py-3.5 text-white bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-600/20 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
+                    className="flex-1 py-3.5 px-4 text-white bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-600/20 rounded-2xl font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
                   >
-                    {loading ? <Loader2 className="animate-spin" size={18} /> : (
+                    {loading ? <Loader2 className="animate-spin" size={16} /> : (
                       <>
-                        <CheckCircle2 size={18} />
+                        <CheckCircle2 size={16} />
                         <span>Sim, Lançar Fiado</span>
                       </>
                     )}

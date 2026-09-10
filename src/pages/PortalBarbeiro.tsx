@@ -39,7 +39,7 @@ import {
   CalendarPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, deleteField } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
@@ -273,7 +273,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     const unsubscribe = userService.subscribeToAllClients(true, (data) => {
       setClientes(data);
     });
-    subscriptionService.getAllSubscriptionsSystem().then(setSubscriptions).catch(() => {});
+    subscriptionService.getSubscriptions().then(setSubscriptions).catch(() => {});
     
     return () => unsubscribe();
   }, [profile?.tenantId]);
@@ -463,20 +463,65 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   };
 
   const handleOpenComanda = async (app: Appointment) => {
-    setSelectedAppointment(app);
     if (app.comanda_id) {
       try {
         const cSnap = await getDoc(doc(db, 'comandas', app.comanda_id));
-        if (cSnap.exists() && cSnap.data().status === 'fechada') {
+        if (cSnap.exists()) {
+          const cData = cSnap.data();
+          const normAppClient = (app.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const normComClient = (cData.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const isMismatched = normAppClient && normComClient && normAppClient !== normComClient && normAppClient !== 'consumidor final' && normComClient !== 'consumidor final';
+
+          if (cData.status === 'fechada') {
+            if (!isMismatched && (cData.agendamento_id === app.id || cData.date === app.date)) {
+              await updateDoc(doc(db, 'appointments', app.id), {
+                status: 'concluído',
+                updatedAt: serverTimestamp()
+              });
+              toast.success(`Atendimento de ${app.cliente_name} já constava como pago e foi finalizado!`);
+              return;
+            } else {
+              await updateDoc(doc(db, 'appointments', app.id), {
+                comanda_id: deleteField(),
+                comanda_number: deleteField(),
+                updatedAt: serverTimestamp()
+              });
+              const updatedApp = { ...app };
+              delete updatedApp.comanda_id;
+              delete updatedApp.comanda_number;
+              setSelectedAppointment(updatedApp);
+              setIsComandaModalOpen(true);
+              return;
+            }
+          } else if (isMismatched) {
+            await updateDoc(doc(db, 'appointments', app.id), {
+              comanda_id: deleteField(),
+              comanda_number: deleteField(),
+              updatedAt: serverTimestamp()
+            });
+            const updatedApp = { ...app };
+            delete updatedApp.comanda_id;
+            delete updatedApp.comanda_number;
+            setSelectedAppointment(updatedApp);
+            setIsComandaModalOpen(true);
+            return;
+          }
+        } else {
           await updateDoc(doc(db, 'appointments', app.id), {
-            status: 'concluído',
+            comanda_id: deleteField(),
+            comanda_number: deleteField(),
             updatedAt: serverTimestamp()
           });
-          toast.success(`Atendimento de ${app.cliente_name} já constava como pago e foi finalizado!`);
+          const updatedApp = { ...app };
+          delete updatedApp.comanda_id;
+          delete updatedApp.comanda_number;
+          setSelectedAppointment(updatedApp);
+          setIsComandaModalOpen(true);
           return;
         }
       } catch (_) {}
     }
+    setSelectedAppointment(app);
     setIsComandaModalOpen(true);
   };
 

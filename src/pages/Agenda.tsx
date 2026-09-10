@@ -40,6 +40,8 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { doc, getDoc, updateDoc, deleteField, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebase';
 import { Appointment, AppointmentStatus, UserProfile, TabId, AgendaBlock } from '../types';
 import { appointmentService } from '../services/appointmentService';
 import { userService } from '../services/userService';
@@ -105,7 +107,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
   
   const loadSubscriptions = async () => {
     try {
-      const data = await subscriptionService.getAllSubscriptionsSystem();
+      const data = await subscriptionService.getSubscriptions();
       setSubscriptions(data);
     } catch (err) {
       console.error("Error loading subscriptions for Agenda:", err);
@@ -114,7 +116,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
   useEffect(() => {
     loadSubscriptions();
-  }, [appointments]);
+  }, []);
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [searchTerm, setSearchTerm] = useState('');
@@ -442,7 +444,47 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
     setIsModalOpen(true);
   };
 
-  const handleOpenComanda = (appointment: Appointment) => {
+  const handleOpenComanda = async (appointment: Appointment) => {
+    if (appointment.comanda_id) {
+      try {
+        const cSnap = await getDoc(doc(db, 'comandas', appointment.comanda_id));
+        if (cSnap.exists()) {
+          const cData = cSnap.data();
+          const normAppClient = (appointment.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const normComClient = (cData.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const isMismatched = normAppClient && normComClient && normAppClient !== normComClient && normAppClient !== 'consumidor final' && normComClient !== 'consumidor final';
+
+          if (cData.status === 'fechada' || isMismatched) {
+            console.log(`Unlinking invalid/closed comanda ${appointment.comanda_id} from appointment ${appointment.id}`);
+            await updateDoc(doc(db, 'appointments', appointment.id), {
+              comanda_id: deleteField(),
+              comanda_number: deleteField(),
+              updatedAt: serverTimestamp()
+            });
+            const updatedApp = { ...appointment };
+            delete updatedApp.comanda_id;
+            delete updatedApp.comanda_number;
+            setSelectedAppointment(updatedApp);
+            setIsComandaModalOpen(true);
+            return;
+          }
+        } else {
+          await updateDoc(doc(db, 'appointments', appointment.id), {
+            comanda_id: deleteField(),
+            comanda_number: deleteField(),
+            updatedAt: serverTimestamp()
+          });
+          const updatedApp = { ...appointment };
+          delete updatedApp.comanda_id;
+          delete updatedApp.comanda_number;
+          setSelectedAppointment(updatedApp);
+          setIsComandaModalOpen(true);
+          return;
+        }
+      } catch (err) {
+        console.error("Error verifying comanda on appointment open:", err);
+      }
+    }
     setSelectedAppointment(appointment);
     setIsComandaModalOpen(true);
   };

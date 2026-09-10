@@ -150,21 +150,11 @@ service cloud.firestore {
 
     // Rules for Usuarios collection - BLINDADA CONTRA ESCALAÇÃO DE PRIVILÉGIOS E VAZAMENTO DE PII
     match /usuarios/{userId} {
-      // Leitura de perfil individual:
-      // - O próprio usuário acessando seu perfil via get ou snapshot direto
-      // - Equipe da barbearia (Staff, SaaS Admin, Barbeiros)
-      // - Qualquer pessoa lendo perfis de profissionais (barbeiros/gestores) para agendamento
       allow read: if isAuthenticated() && request.auth.uid == userId;
       allow get: if isStaff() || 
                     isSaaSAdmin() || 
                     isBarbeiro() ||
                     (resource != null && resource.data.tipo in ['barbeiro', 'gerente', 'admin'] && resource.data.ativo == true);
-
-      // Listagem da coleção de usuários:
-      // - ESTRITAMENTE PROIBIDO para clientes comuns listarem a base inteira (fecha listagem em massa de PII)
-      // - Permitido para Staff, SaaS Admin e Barbeiros
-      // - Permitido para listagem exclusiva de profissionais (para catálogo de agendamento online)
-      // - Permitido para consulta estrita pelo próprio e-mail autenticado (auto-healing de login)
       allow list: if isStaff() || 
                      isSaaSAdmin() || 
                      isBarbeiro() ||
@@ -553,7 +543,7 @@ service cloud.firestore {
     }
 
     match /team_goals/{goalId} {
-      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
+      allow read: if isAuthenticated();
       allow write: if isAuthenticated() && (isStaff() || isBarbeiro());
     }
 
@@ -572,8 +562,8 @@ service cloud.firestore {
 
     // --- Avaliações / Reviews ---
     match /avaliacoes/{id} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow read: if true;
+      allow create: if isAuthenticated() || true;
       allow update, delete: if isAuthenticated() && (isStaff() || (resource != null && resource.data.cliente_id == request.auth.uid));
     }
 
@@ -627,16 +617,9 @@ service cloud.firestore {
 
     // --- In-App Notifications ---
     match /notifications/{notificationId} {
-      allow read, list: if isAuthenticated() && (
-        isStaff() ||
-        isBarbeiro() ||
-        (resource != null && (resource.data.recipientId == request.auth.uid || resource.data.recipientId == 'admin'))
-      );
+      allow read, list: if isAuthenticated();
       allow create: if true;
-      allow update: if isAuthenticated() && (
-        isStaff() ||
-        (resource != null && (resource.data.recipientId == request.auth.uid || resource.data.recipientId == 'admin'))
-      );
+      allow update: if isAuthenticated();
       allow delete: if isAuthenticated() && isStaff();
     }
 

@@ -410,7 +410,11 @@ export const subscriptionService = {
   },
 
   async getAllSubscriptionsSystem() {
-    const q = query(collection(db, SUBSCRIPTIONS_COLLECTION));
+    const tenantId = getActiveTenantId();
+    let q = query(collection(db, SUBSCRIPTIONS_COLLECTION));
+    if (tenantId) {
+      q = query(collection(db, SUBSCRIPTIONS_COLLECTION), where('tenantId', '==', tenantId));
+    }
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
   },

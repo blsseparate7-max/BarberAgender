@@ -15,6 +15,7 @@ import {
   writeBatch,
   onSnapshot,
   deleteDoc,
+  deleteField,
   limit
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -29,6 +30,11 @@ import { loyaltyService } from './loyaltyService';
 import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'comandas';
+
+const normalizeStr = (s?: string) => {
+  if (!s) return '';
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+};
 
 enum OperationType {
   CREATE = 'create',
@@ -178,13 +184,21 @@ export const comandaService = {
 
         // Check if matching closed comanda exists
         const matchedClosedComanda = closedComandas.find((c: any) => {
-          if (c.id === aData.comanda_id) return true;
+          if (c.id === aData.comanda_id) {
+            const cNormClient = normalizeStr(c.cliente_name);
+            const isMismatched = normClient && cNormClient && normClient !== cNormClient && normClient !== 'consumidor final' && cNormClient !== 'consumidor final';
+            if (!isMismatched) return true;
+          }
           if (c.agendamento_id === aId || c.agendamentoId === aId || c.appointment_id === aId) return true;
           if (aData.daily_flow_id && (c.daily_flow_id === aData.daily_flow_id || c.dailyFlowId === aData.daily_flow_id)) return true;
           
           const cNormClient = normalizeStr(c.cliente_name);
-          if (normClient && normClient !== 'consumidor final' && normClient.length > 2 && cNormClient) {
-            if (cNormClient === normClient || cNormClient.includes(normClient) || normClient.includes(cNormClient)) {
+          const cDate = c.date || (c.createdAt?.seconds ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          const aDate = aData.date;
+          if (aDate && cDate && aDate !== cDate) return false;
+
+          if (normClient && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient.length > 2 && cNormClient) {
+            if (cNormClient === normClient) {
               return true;
             }
           }
@@ -194,10 +208,18 @@ export const comandaService = {
         // Check if matching commission exists
         const matchedCommission = commissionsList.find((comm: any) => {
           if (comm.agendamento_id === aId) return true;
-          if (aData.comanda_id && comm.comanda_id === aData.comanda_id) return true;
+          if (aData.comanda_id && comm.comanda_id === aData.comanda_id) {
+            const commNormClient = normalizeStr(comm.cliente_name);
+            const isMismatched = normClient && commNormClient && normClient !== commNormClient && normClient !== 'consumidor final' && commNormClient !== 'consumidor final';
+            if (!isMismatched) return true;
+          }
           const commNormClient = normalizeStr(comm.cliente_name);
-          if (normClient && normClient !== 'consumidor final' && normClient.length > 2 && commNormClient) {
-            if (commNormClient === normClient || commNormClient.includes(normClient) || normClient.includes(commNormClient)) {
+          const commDate = comm.date || (comm.createdAt?.seconds ? new Date(comm.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          const aDate = aData.date;
+          if (aDate && commDate && aDate !== commDate) return false;
+
+          if (normClient && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient.length > 2 && commNormClient) {
+            if (commNormClient === normClient) {
               return true;
             }
           }
@@ -280,37 +302,35 @@ export const comandaService = {
         const oId = openDoc.id;
         const normOpenClient = normalizeStr(openData.cliente_name);
 
-        if (!normOpenClient || normOpenClient === 'consumidor final') continue;
+        const isGeneric = !normOpenClient || 
+          normOpenClient === 'consumidor final' || 
+          normOpenClient === 'avulso' || 
+          normOpenClient === 'cliente avulso' ||
+          normOpenClient === 'balcao' ||
+          normOpenClient === 'balcao' ||
+          normOpenClient.length < 3;
 
-        // Check if there is a CLOSED comanda for the same client
+        if (isGeneric) continue;
+
+        const openDate = openData.date || (openData.createdAt?.seconds ? new Date(openData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+
+        // Check if there is a CLOSED comanda for the exact same client on the exact same date
         const hasMatchingClosed = closedComandas.some((c: any) => {
           const normClosedClient = normalizeStr(c.cliente_name);
-          return normOpenClient && normClosedClient && (
-            normOpenClient === normClosedClient || 
-            normOpenClient.includes(normClosedClient) || 
-            normClosedClient.includes(normOpenClient)
-          );
+          const closedDate = c.date || (c.createdAt?.seconds ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          if (openDate && closedDate && openDate !== closedDate) return false;
+          return normOpenClient && normClosedClient && normOpenClient === normClosedClient;
         });
 
-        // Check if there is a commission for this same client name
+        // Check if there is a commission for this same client name on the exact same date
         const hasMatchingCommission = commissionsList.some((comm: any) => {
           const normCommClient = normalizeStr(comm.cliente_name);
-          return normOpenClient && normCommClient && (
-            normOpenClient === normCommClient || 
-            normOpenClient.includes(normCommClient) || 
-            normCommClient.includes(normOpenClient)
-          );
+          const commDate = comm.date || (comm.createdAt?.seconds ? new Date(comm.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          if (openDate && commDate && openDate !== commDate) return false;
+          return normOpenClient && normCommClient && normOpenClient === normCommClient;
         });
 
-        // Specific manual overrides/scenarios (e.g., target tenant "gbcortes7" with specific names)
-        const isTargetClientOverride = targetTenantId === 'gbcortes7' && (
-          normOpenClient.includes('pedro henrique') || 
-          normOpenClient.includes('reinaldo patricio') ||
-          normOpenClient.includes('pedro') ||
-          normOpenClient.includes('reinaldo')
-        );
-
-        if (hasMatchingClosed || hasMatchingCommission || isTargetClientOverride) {
+        if (hasMatchingClosed || hasMatchingCommission) {
           console.log(`Self-healing: Deleting duplicate open comanda ${oId} for client ${openData.cliente_name}`);
           
           const batch = writeBatch(db);
@@ -330,6 +350,51 @@ export const comandaService = {
           await batch.commit();
           healedComandas++;
         }
+      }
+
+      // 7. CLEAN UP MISMATCHED COMANDA_ID FROM APPOINTMENTS IN THIS TENANT
+      try {
+        const allAppsSnap = await getDocs(query(
+          collection(db, 'appointments'),
+          where('tenantId', '==', targetTenantId),
+          limit(100)
+        ));
+
+        for (const aDoc of allAppsSnap.docs) {
+          const aData = aDoc.data();
+          if (!aData.comanda_id) continue;
+
+          try {
+            const cSnap = await getDoc(doc(db, 'comandas', aData.comanda_id));
+            if (!cSnap.exists()) {
+              await updateDoc(aDoc.ref, {
+                comanda_id: deleteField(),
+                comanda_number: deleteField()
+              });
+              continue;
+            }
+            const cData = cSnap.data();
+            const normAppClient = normalizeStr(aData.cliente_name);
+            const normComClient = normalizeStr(cData.cliente_name);
+            const appDate = aData.date;
+            const comDate = cData.date || (cData.createdAt?.seconds ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+
+            const isMismatchedClient = normAppClient && normComClient && normAppClient !== normComClient && normAppClient !== 'consumidor final' && normComClient !== 'consumidor final';
+            const isMismatchedDate = appDate && comDate && appDate !== comDate && cData.status === 'fechada';
+
+            if (isMismatchedClient || isMismatchedDate) {
+              console.log(`Self-healing: Unlinking mismatched comanda ${aData.comanda_id} (${cData.cliente_name}) from appointment ${aDoc.id} (${aData.cliente_name})`);
+              await updateDoc(aDoc.ref, {
+                comanda_id: deleteField(),
+                comanda_number: deleteField(),
+                updatedAt: serverTimestamp()
+              });
+              syncedAppointments++;
+            }
+          } catch (_) {}
+        }
+      } catch (errClean) {
+        console.warn("Error in step 7 of healAndSyncOrphanedComandas:", errClean);
       }
 
       return { healedComandas, syncedAppointments };
@@ -1174,7 +1239,18 @@ export const comandaService = {
       const apptsSnap = await getDocs(apptsQuery);
       if (!apptsSnap.empty) {
         apptsSnap.forEach((docSnap) => {
-          if (!touchedAppIds.has(docSnap.id) && docSnap.data().status !== 'concluído') {
+          const apptData = docSnap.data();
+          const normAppClient = normalizeStr(apptData.cliente_name);
+          const normComClient = normalizeStr(cData?.cliente_name);
+          const isMismatched = normAppClient && normComClient && normAppClient !== normComClient && normAppClient !== 'consumidor final' && normComClient !== 'consumidor final';
+
+          if (isMismatched) {
+            batch.update(docSnap.ref, {
+              comanda_id: deleteField(),
+              comanda_number: deleteField(),
+              updatedAt: serverTimestamp()
+            });
+          } else if (!touchedAppIds.has(docSnap.id) && apptData.status !== 'concluído') {
             batch.update(docSnap.ref, {
               status: 'concluído',
               comanda_id: comandaId,
@@ -1301,11 +1377,14 @@ export const comandaService = {
       let updatedCount = 0;
 
       if (agendamentoId) {
-        batch.update(doc(db, 'appointments', agendamentoId), {
-          status: 'cancelado',
-          updatedAt: serverTimestamp()
-        });
-        updatedCount++;
+        const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
+        if (aSnap.exists()) {
+          batch.update(aSnap.ref, {
+            status: 'cancelado',
+            updatedAt: serverTimestamp()
+          });
+          updatedCount++;
+        }
       }
 
       const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
@@ -1313,11 +1392,14 @@ export const comandaService = {
         const cData = comandaSnap.data();
         const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
         if (linkedId && linkedId !== agendamentoId) {
-          batch.update(doc(db, 'appointments', linkedId), {
-            status: 'cancelado',
-            updatedAt: serverTimestamp()
-          });
-          updatedCount++;
+          const lSnap = await getDoc(doc(db, 'appointments', linkedId));
+          if (lSnap.exists()) {
+            batch.update(lSnap.ref, {
+              status: 'cancelado',
+              updatedAt: serverTimestamp()
+            });
+            updatedCount++;
+          }
         }
       }
 
@@ -1353,8 +1435,11 @@ export const comandaService = {
       let deletedCount = 0;
 
       if (agendamentoId) {
-        batch.delete(doc(db, 'appointments', agendamentoId));
-        deletedCount++;
+        const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
+        if (aSnap.exists()) {
+          batch.delete(aSnap.ref);
+          deletedCount++;
+        }
       }
 
       const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
@@ -1362,8 +1447,11 @@ export const comandaService = {
         const cData = comandaSnap.data();
         const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
         if (linkedId && linkedId !== agendamentoId) {
-          batch.delete(doc(db, 'appointments', linkedId));
-          deletedCount++;
+          const lSnap = await getDoc(doc(db, 'appointments', linkedId));
+          if (lSnap.exists()) {
+            batch.delete(lSnap.ref);
+            deletedCount++;
+          }
         }
       }
 
@@ -1394,11 +1482,14 @@ export const comandaService = {
       let updatedCount = 0;
 
       if (agendamentoId) {
-        batch.update(doc(db, 'appointments', agendamentoId), {
-          status: 'faltou',
-          updatedAt: serverTimestamp()
-        });
-        updatedCount++;
+        const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
+        if (aSnap.exists()) {
+          batch.update(aSnap.ref, {
+            status: 'faltou',
+            updatedAt: serverTimestamp()
+          });
+          updatedCount++;
+        }
       }
 
       const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
@@ -1406,11 +1497,14 @@ export const comandaService = {
         const cData = comandaSnap.data();
         const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
         if (linkedId && linkedId !== agendamentoId) {
-          batch.update(doc(db, 'appointments', linkedId), {
-            status: 'faltou',
-            updatedAt: serverTimestamp()
-          });
-          updatedCount++;
+          const lSnap = await getDoc(doc(db, 'appointments', linkedId));
+          if (lSnap.exists()) {
+            batch.update(lSnap.ref, {
+              status: 'faltou',
+              updatedAt: serverTimestamp()
+            });
+            updatedCount++;
+          }
         }
       }
 
@@ -1468,14 +1562,17 @@ export const comandaService = {
     // 2. Update Client Statistics and History (Total Spent & Total Em Aberto)
     if (comanda.cliente_id && clientExists) {
       const clientRef = doc(db, 'usuarios', comanda.cliente_id);
-      transaction.update(clientRef, {
+      const updates: Record<string, any> = {
         total_gasto: increment(comanda.totalAmount),
         totalSpent: increment(comanda.totalAmount), // Legacy
-        total_em_aberto: increment(finalPendingAmountLeft > 0 ? finalPendingAmountLeft : 0),
         appointmentsCount: increment(1),
         lastServiceAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      });
+      };
+      if (finalPendingAmountLeft > 0) {
+        updates.total_em_aberto = increment(finalPendingAmountLeft);
+      }
+      transaction.update(clientRef, updates);
     }
 
     // 3. Generate Commissions and Update Inventory
@@ -1743,7 +1840,7 @@ export const comandaService = {
       }
 
       // Determine closure type & status
-      const effectiveClosureType = closureOptions?.closureType || (comanda.pendingAmount > 0 ? 'fiado' : 'total_pago');
+      const effectiveClosureType = comanda.pendingAmount <= 0 ? 'total_pago' : (closureOptions?.closureType || 'fiado');
       const closureNote = closureOptions?.note || '';
 
       // 5. Read barber snaps if status will be closed or nao_paga
@@ -1859,7 +1956,7 @@ export const comandaService = {
           userId, 
           userName, 
           clientSnap?.exists() || false, 
-          comanda.pendingAmount,
+          effectiveClosureType === 'fiado' ? Math.max(0, comanda.pendingAmount) : 0,
           appSnap?.exists() || false,
           productExistsMap,
           servicesMap,

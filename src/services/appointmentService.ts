@@ -469,7 +469,9 @@ export const appointmentService = {
       const msg = err?.message || String(err);
       if (msg.includes('requires an index') || msg.includes('failed-precondition')) {
         console.warn("[appointmentService] Composite index missing. Executing tenant fallback query.");
-        const fallbackQuery = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+        const fallbackConstraints: any[] = [where('tenantId', '==', activeTenantId)];
+        if (filters.date) fallbackConstraints.push(where('date', '==', filters.date));
+        const fallbackQuery = query(collection(db, COLLECTION), ...fallbackConstraints);
         querySnapshot = await getDocs(fallbackQuery);
       } else {
         throw err;
@@ -560,7 +562,9 @@ export const appointmentService = {
         const msg = error?.message || String(error);
         if (msg.includes('requires an index') || msg.includes('failed-precondition')) {
           console.warn("[appointmentService] subscribeToAppointments index missing. Falling back to tenant query listener.");
-          const fallbackQ = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+          const fallbackConstraints: any[] = [where('tenantId', '==', activeTenantId)];
+          if (filters.date) fallbackConstraints.push(where('date', '==', filters.date));
+          const fallbackQ = query(collection(db, COLLECTION), ...fallbackConstraints);
           unsubscribe = onSnapshot(fallbackQ, filterAndCallback, (fallbackErr) => {
             console.error("Error in fallback subscribeToAppointments:", fallbackErr);
             callback([]);
@@ -571,7 +575,9 @@ export const appointmentService = {
         }
       });
     } catch (e) {
-      const fallbackQ = query(collection(db, COLLECTION), where('tenantId', '==', activeTenantId));
+      const fallbackConstraints: any[] = [where('tenantId', '==', activeTenantId)];
+      if (filters.date) fallbackConstraints.push(where('date', '==', filters.date));
+      const fallbackQ = query(collection(db, COLLECTION), ...fallbackConstraints);
       unsubscribe = onSnapshot(fallbackQ, filterAndCallback, () => callback([]));
     }
 

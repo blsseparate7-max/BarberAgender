@@ -35,6 +35,10 @@ export const commissionService = {
       queryConstraints.push(where('tenantId', '==', activeTenant));
     }
 
+    if (filters.profissional_id) {
+      queryConstraints.push(where('profissional_id', '==', filters.profissional_id));
+    }
+
     let querySnapshot = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
     let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
 
@@ -134,9 +138,6 @@ export const commissionService = {
       }
 
       let payablesSnap = await getDocs(payablesQuery);
-      if (payablesSnap.empty && activeTenant && !filters.profissional_id) {
-        payablesSnap = await getDocs(query(collection(db, 'accounts_payable')));
-      }
 
       payablesSnap.docs.forEach(docSnap => {
         const p = docSnap.data() as any;
@@ -213,9 +214,6 @@ export const commissionService = {
       }
 
       let cashSnap = await getDocs(cashQuery);
-      if (cashSnap.empty && activeTenant) {
-        cashSnap = await getDocs(query(collection(db, 'cash_movements')));
-      }
 
       cashSnap.docs.forEach(docSnap => {
         const c = docSnap.data() as any;

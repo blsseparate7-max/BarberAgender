@@ -19,7 +19,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Appointment, AppointmentStatus, UserProfile, PaymentMethod, ProfessionalSchedule, AgendaBlock, RecurringAppointment } from '../types';
-import { addMinutes, format, parse, isBefore, isAfter, isEqual, getDay, addDays, startOfDay, endOfDay } from 'date-fns';
+import { addMinutes, format, parse, isBefore, isAfter, isEqual, getDay, addDays, startOfDay, endOfDay, isValid } from 'date-fns';
 import { financialService } from './financialService';
 import { commissionService } from './commissionService';
 import { userService } from './userService';
@@ -50,7 +50,7 @@ function removeUndefinedFields<T>(obj: T): T {
   return cleaned;
 }
 
-async function resolveProfessionalSchedule(profissional_id: string): Promise<any> {
+async function resolveProfessionalSchedule(profissional_id: string, cachedProfile?: any): Promise<any> {
   // If virtual barber 'any' or missing, return standard commercial hours
   if (!profissional_id || profissional_id === 'any' || profissional_id === 'casa') {
     return {
@@ -69,7 +69,29 @@ async function resolveProfessionalSchedule(profissional_id: string): Promise<any
     };
   }
 
-  // 1. Direct fetch from 'usuarios' document by UID to bypass any tenant scope mismatch on guest portal
+  // 1. Direct check in cached profile if passed
+  if (cachedProfile) {
+    const rawWH = cachedProfile.horario_de_trabalho || cachedProfile.workingHours;
+    if (Array.isArray(rawWH) && rawWH.length > 0) {
+      const normalizedWH = rawWH.map((h: any) => ({
+        dayOfWeek: h.dayOfWeek !== undefined ? Number(h.dayOfWeek) : (h.dia_semana !== undefined ? Number(h.dia_semana) : 0),
+        isOpen: h.isOpen !== undefined ? Boolean(h.isOpen) : (h.is_open !== undefined ? Boolean(h.is_open) : (h.ativo !== undefined ? Boolean(h.ativo) : true)),
+        startTime: h.startTime || h.inicio || h.hora_inicio || '09:00',
+        endTime: h.endTime || h.fim || h.hora_fim || '19:00',
+        lunchStart: (h.lunchStart || h.almoco_inicio || h.intervalo_inicio || '').trim(),
+        lunchEnd: (h.lunchEnd || h.almoco_fim || h.intervalo_fim || '').trim(),
+      }));
+
+      return {
+        profissional_id,
+        workingHours: normalizedWH,
+        exceptions: cachedProfile.exceptions || [],
+        vacations: cachedProfile.vacations || []
+      };
+    }
+  }
+
+  // 2. Direct fetch from 'usuarios' document by UID to bypass any tenant scope mismatch on guest portal
   try {
     const userDocSnap = await getDoc(doc(db, 'usuarios', profissional_id));
     if (userDocSnap.exists()) {
@@ -81,8 +103,8 @@ async function resolveProfessionalSchedule(profissional_id: string): Promise<any
           isOpen: h.isOpen !== undefined ? Boolean(h.isOpen) : (h.is_open !== undefined ? Boolean(h.is_open) : (h.ativo !== undefined ? Boolean(h.ativo) : true)),
           startTime: h.startTime || h.inicio || h.hora_inicio || '09:00',
           endTime: h.endTime || h.fim || h.hora_fim || '19:00',
-          lunchStart: h.lunchStart || h.almoco_inicio || h.intervalo_inicio,
-          lunchEnd: h.lunchEnd || h.almoco_fim || h.intervalo_fim,
+          lunchStart: (h.lunchStart || h.almoco_inicio || h.intervalo_inicio || '').trim(),
+          lunchEnd: (h.lunchEnd || h.almoco_fim || h.intervalo_fim || '').trim(),
         }));
 
         return {
@@ -97,7 +119,7 @@ async function resolveProfessionalSchedule(profissional_id: string): Promise<any
     console.warn("Could not load direct user doc working hours:", err);
   }
 
-  // 2. Try professional_schedules collection
+  // 3. Try professional_schedules collection
   try {
     const schedule = await professionalScheduleService.getSchedule(profissional_id);
     if (schedule && schedule.workingHours && schedule.workingHours.length > 0) {
@@ -106,8 +128,8 @@ async function resolveProfessionalSchedule(profissional_id: string): Promise<any
         isOpen: h.isOpen !== undefined ? Boolean(h.isOpen) : (h.is_open !== undefined ? Boolean(h.is_open) : (h.ativo !== undefined ? Boolean(h.ativo) : true)),
         startTime: h.startTime || h.inicio || h.hora_inicio || '09:00',
         endTime: h.endTime || h.fim || h.hora_fim || '19:00',
-        lunchStart: h.lunchStart || h.almoco_inicio || h.intervalo_inicio,
-        lunchEnd: h.lunchEnd || h.almoco_fim || h.intervalo_fim,
+        lunchStart: (h.lunchStart || h.almoco_inicio || h.intervalo_inicio || '').trim(),
+        lunchEnd: (h.lunchEnd || h.almoco_fim || h.intervalo_fim || '').trim(),
       }));
 
       return {
@@ -119,7 +141,7 @@ async function resolveProfessionalSchedule(profissional_id: string): Promise<any
     console.warn("Could not load professional_schedules:", err);
   }
 
-  // 3. Fallback default schedule
+  // 4. Fallback default schedule
   return {
     profissional_id,
     workingHours: [
@@ -916,13 +938,13 @@ export const appointmentService = {
     }
   },
 
-  async getAvailableSlots(profissional_id: string, date: string, duration: number, servico_id?: string) {
+  async getAvailableSlots(profissional_id: string, date: string, duration: number, servico_id?: string, cachedProfile?: any) {
     let finalDuration = duration;
 
     // 1. Resolve custom service duration for the professional
     if (servico_id && profissional_id) {
       try {
-        const barberProfile = await userService.getUserProfile(profissional_id);
+        const barberProfile = cachedProfile || await userService.getUserProfile(profissional_id);
         if (barberProfile && barberProfile.servicos_duracoes && barberProfile.servicos_duracoes[servico_id]) {
           const overrideVal = barberProfile.servicos_duracoes[servico_id];
           if (overrideVal && overrideVal > 0) {
@@ -934,7 +956,7 @@ export const appointmentService = {
       }
     }
 
-    let schedule = await resolveProfessionalSchedule(profissional_id);
+    let schedule = await resolveProfessionalSchedule(profissional_id, cachedProfile);
 
     const dateObj = parse(date, 'yyyy-MM-dd', new Date());
     const dayOfWeek = getDay(dateObj);
@@ -945,14 +967,14 @@ export const appointmentService = {
     let lunchEnd: string | undefined;
     let isOpen = false;
 
-    const exception = schedule.exceptions.find(e => e.date === date);
+    const exception = Array.isArray(schedule?.exceptions) ? schedule.exceptions.find((e: any) => e.date === date) : undefined;
     if (exception) {
       if (!exception.isOpen) return [];
       startTime = exception.startTime || startTime;
       endTime = exception.endTime || endTime;
       isOpen = true;
     } else {
-      let workingDay = schedule.workingHours ? schedule.workingHours.find(wh => wh.dayOfWeek === dayOfWeek) : null;
+      let workingDay = Array.isArray(schedule?.workingHours) ? schedule.workingHours.find((wh: any) => wh.dayOfWeek === dayOfWeek) : null;
       if (!workingDay) {
         // Fallback default open hours if this day was missing from the custom configuration
         workingDay = { 
@@ -973,10 +995,11 @@ export const appointmentService = {
     }
 
     // Check vacations
-    const isOnVacation = schedule.vacations.some(v => 
+    const isOnVacation = Array.isArray(schedule?.vacations) ? schedule.vacations.some((v: any) => 
+      v?.startDate && v?.endDate &&
       (isAfter(dateObj, parse(v.startDate, 'yyyy-MM-dd', new Date())) || isEqual(dateObj, parse(v.startDate, 'yyyy-MM-dd', new Date()))) &&
       (isBefore(dateObj, parse(v.endDate, 'yyyy-MM-dd', new Date())) || isEqual(dateObj, parse(v.endDate, 'yyyy-MM-dd', new Date())))
-    );
+    ) : false;
     if (isOnVacation) return [];
 
     // Fetch appointments and blocks
@@ -1024,10 +1047,16 @@ export const appointmentService = {
 
       // Check lunch
       let hasLunchConflict = false;
-      if (lunchStart && lunchEnd) {
-        const lStart = parse(lunchStart, 'HH:mm', new Date());
-        const lEnd = parse(lunchEnd, 'HH:mm', new Date());
-        if (isBefore(slotStart, lEnd) && isAfter(slotEnd, lStart)) hasLunchConflict = true;
+      if (lunchStart && lunchEnd && lunchStart.trim() !== '' && lunchEnd.trim() !== '') {
+        try {
+          const lStart = parse(lunchStart, 'HH:mm', new Date());
+          const lEnd = parse(lunchEnd, 'HH:mm', new Date());
+          if (isValid(lStart) && isValid(lEnd) && isBefore(slotStart, lEnd) && isAfter(slotEnd, lStart)) {
+            hasLunchConflict = true;
+          }
+        } catch {
+          // Ignore invalid lunch format
+        }
       }
 
       if (!hasLunchConflict) {

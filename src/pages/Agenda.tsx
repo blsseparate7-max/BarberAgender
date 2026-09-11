@@ -54,7 +54,6 @@ import { AppointmentModal } from '../components/Agenda/AppointmentModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
 import { AgendaProfessional } from '../components/Agenda/AgendaProfessional';
-import { ProfessionalSchedules as AvailabilityManager } from '../components/Agenda/ProfessionalSchedules';
 import { AgendaBlocks as BlocksManager } from '../components/Agenda/AgendaBlocks';
 import { AppointmentList } from '../components/Agenda/AppointmentList';
 import { RecurringAppointments } from '../components/Agenda/RecurringAppointments';
@@ -68,7 +67,7 @@ interface AgendaProps {
   activeTab: TabId;
 }
 
-type AgendaTab = 'main' | 'appointments' | 'recurring' | 'availability' | 'blocks' | 'operations' | 'resources';
+type AgendaTab = 'main' | 'appointments' | 'recurring' | 'blocks' | 'operations' | 'resources';
 type ViewType = 'day' | 'week' | 'month';
 
 export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps) {
@@ -83,7 +82,6 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
         'main': 'main',
         'appointments': 'appointments',
         'recurring': 'recurring',
-        'availability': 'availability',
         'blocks': 'blocks',
         'operations': 'operations',
         'resources': 'resources'
@@ -501,7 +499,6 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
     },
     { id: 'appointments', label: 'Agendamentos', icon: <History size={16} /> },
     { id: 'recurring', label: 'Recorrência', icon: <Repeat size={16} /> },
-    { id: 'availability', label: 'Disponibilidade', icon: <Clock size={16} /> },
     { id: 'blocks', label: 'Bloqueios', icon: <Lock size={16} /> },
     { id: 'resources', label: 'Recursos', icon: <Armchair size={16} /> },
   ];
@@ -932,7 +929,6 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
               />
             )}
             {activeTab === 'recurring' && <RecurringAppointments />}
-            {activeTab === 'availability' && <AvailabilityManager />}
             {activeTab === 'blocks' && <BlocksManager selectedDate={selectedDate} />}
             {activeTab === 'operations' && <OperationsManager />}
             {activeTab === 'resources' && (

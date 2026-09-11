@@ -175,9 +175,8 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       icon: <UserCheck size={20} />,
       roles: ['admin', 'gerente', 'barbeiro'],
       subItems: [
-        { id: 'cadastros-profissionais', label: 'Cadastro de Barbeiros', roles: ['admin', 'gerente'] },
+        { id: 'cadastros-profissionais', label: 'Cadastro & Escala da Equipe', roles: ['admin', 'gerente'] },
         { id: 'comissoes', label: 'Apuração de Comissões', roles: ['admin', 'gerente'] },
-        { id: 'agenda-availability', label: 'Escalas & Horários', roles: ['admin', 'gerente'] },
       ]
     },
     {

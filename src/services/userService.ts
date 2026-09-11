@@ -71,19 +71,23 @@ export const userService = {
 
   subscribeToAllBarbers(onlyActive = true, callback: (barbers: UserProfile[]) => void, tenantId?: string) {
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
-    if (tid === 'gbcortes7') {
-      constraints.push(where('tenantId', 'in', [tid, '']));
-    } else {
-      constraints.push(where('tenantId', '==', tid));
-    }
     const q = query(
       collection(db, COLLECTION), 
-      ...constraints
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
     );
 
     return onSnapshot(q, (snapshot) => {
       let users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+      
+      // Filter case-insensitively by tenant ID
+      users = users.filter(u => {
+        const uTenant = (u.tenantId || '').trim().toLowerCase();
+        if (!tid || tid === 'gbcortes7') {
+          return uTenant === tid || uTenant === '' || uTenant === 'gbcortes7' || uTenant === 'gbcortes7' || uTenant === 'gbcortes7';
+        }
+        return uTenant === tid || uTenant === '';
+      });
+
       if (onlyActive) {
         users = users.filter(u => u.ativo !== false);
       }
@@ -98,18 +102,22 @@ export const userService = {
 
   async getAllBarbers(onlyActive = true, tenantId?: string) {
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
-    if (tid === 'gbcortes7') {
-      constraints.push(where('tenantId', 'in', [tid, '']));
-    } else {
-      constraints.push(where('tenantId', '==', tid));
-    }
     const q = query(
       collection(db, COLLECTION),
-      ...constraints
+      where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
     );
     const querySnapshot = await getDocs(q);
     let users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+
+    // Filter case-insensitively by tenant ID
+    users = users.filter(u => {
+      const uTenant = (u.tenantId || '').trim().toLowerCase();
+      if (!tid || tid === 'gbcortes7') {
+        return uTenant === tid || uTenant === '' || uTenant === 'gbcortes7';
+      }
+      return uTenant === tid || uTenant === '';
+    });
+
     if (onlyActive) {
       users = users.filter(u => u.ativo !== false);
     }

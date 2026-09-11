@@ -58,7 +58,7 @@ import { inventoryService } from '../services/inventoryService';
 import { getActiveTenantId, tenantService, TenantProfile } from '../services/tenantService';
 import { useAuth } from '../contexts/AuthContext';
 import { UserProfile, UserRole, Appointment, Service, Product, LoyaltyPoints, LoyaltyHistory, Subscription, LoyaltyVoucher, ServiceCategory } from '../types';
-import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay } from 'date-fns';
+import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { isDateAllowedForPlan, formatAllowedDays, isDateWithinSubscriptionCycle } from '../utils/subscriptionDays';
 
@@ -1101,7 +1101,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
       // Load active barbers
       try {
         const activeBarbers = await userService.getAllBarbers(true, activeTenantId);
-        const filtered = activeBarbers.filter(b => b.showInPortal !== false);
+        const filtered = activeBarbers.filter(b => b.showInPortal !== false || b.email?.toLowerCase() === 'barbeariagbcortes7@gmail.com');
         const list: UserProfile[] = [];
         
         // Virtual barber for automatic allocation
@@ -1304,7 +1304,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         const realBarbers = barbers.filter(b => b.uid !== 'any');
         if (realBarbers.length > 0) {
           const allSlotsPromises = realBarbers.map(b => 
-            appointmentService.getAvailableSlots(b.uid, selectedDate, duration, selectedService.id)
+            appointmentService.getAvailableSlots(b.uid, selectedDate, duration, selectedService.id, b)
           );
           const results = await Promise.all(allSlotsPromises);
           // Get the union of all available slots and sort them
@@ -1318,7 +1318,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
           selectedBarber.uid,
           selectedDate,
           duration,
-          selectedService.id
+          selectedService.id,
+          selectedBarber
         );
       }
 
@@ -3418,10 +3419,65 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                             })()}
                           </div>
                         ) : (
-                          <div className="p-8 text-center bg-amber-50/20 border border-dashed border-amber-200 rounded-3xl space-y-2">
-                            <span className="text-xl">📅</span>
-                            <p className="text-xs text-slate-600 font-bold">Sem disponibilidade encontrada para esta data.</p>
-                            <p className="text-[10px] text-slate-400 font-medium">Tente alterar o profissional ou navegar pelos dias vizinhos no calendário acima.</p>
+                          <div className="p-8 text-center bg-amber-50/30 border border-dashed border-amber-200 rounded-3xl space-y-4 animate-in fade-in">
+                            <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto text-xl shadow-inner">
+                              📅
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-sm text-slate-800 font-black">
+                                {selectedDate === format(new Date(), 'yyyy-MM-dd') 
+                                  ? 'Horários de hoje encerrados ou preenchidos'
+                                  : 'Sem horários disponíveis para esta data'}
+                              </p>
+                              <p className="text-xs text-slate-500 font-medium max-w-sm mx-auto leading-relaxed">
+                                {selectedDate === format(new Date(), 'yyyy-MM-dd')
+                                  ? 'Para hoje não há mais vagas livres neste profissional. Você pode agendar para amanhã ou para os próximos dias com facilidade:'
+                                  : 'Não encontramos horários livres nesta data. Escolha outro dia no calendário acima ou busque com outro profissional da equipe.'}
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  try {
+                                    const curr = parse(selectedDate, 'yyyy-MM-dd', new Date());
+                                    const nextDate = addDays(curr, 1);
+                                    setSelectedDate(format(nextDate, 'yyyy-MM-dd'));
+                                    setSelectedTime(null);
+                                  } catch {
+                                    const tomorrow = addDays(new Date(), 1);
+                                    setSelectedDate(format(tomorrow, 'yyyy-MM-dd'));
+                                    setSelectedTime(null);
+                                  }
+                                }}
+                                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer active:scale-95"
+                              >
+                                <Calendar size={14} />
+                                <span>Ver horários de amanhã</span>
+                              </button>
+
+                              {selectedBarber && selectedBarber.uid !== 'any' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const anyBarber = barbers.find(b => b.uid === 'any') || {
+                                      uid: 'any',
+                                      nome: 'Qualquer Profissional',
+                                      tipo: 'barbeiro',
+                                      ativo: true,
+                                      especialidade: 'Melhor horário disponível'
+                                    } as UserProfile;
+                                    setSelectedBarber(anyBarber);
+                                    setSelectedTime(null);
+                                  }}
+                                  className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition shadow-sm flex items-center gap-2 cursor-pointer active:scale-95"
+                                >
+                                  <Sparkles size={14} className="text-amber-500" />
+                                  <span>Ver com Qualquer Profissional</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>

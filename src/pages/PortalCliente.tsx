@@ -1024,11 +1024,11 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
   useEffect(() => {
     if (activeTab === 'schedule') {
-      setBookingStep(1);
-      setSelectedBarber(null);
-      setSelectedService(null);
-      setSelectedServices([]);
-      setSelectedTime(null);
+      // Preserve any barber or service pre-selected via showcase or quick actions
+      if (!selectedBarber && !selectedService && selectedServices.length === 0) {
+        setBookingStep(1);
+        setSelectedTime(null);
+      }
     }
   }, [activeTab]);
 
@@ -2167,6 +2167,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                     <button 
                                       onClick={() => {
                                         setSelectedService(service);
+                                        setSelectedServices([service]);
                                         setBookingStep(1); // Go choose professional
                                         setActiveTab('schedule');
                                       }}

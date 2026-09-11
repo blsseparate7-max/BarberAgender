@@ -7,6 +7,7 @@ import {
   updateDoc, 
   doc, 
   getDoc, 
+  deleteDoc,
   increment,
   runTransaction,
   serverTimestamp,
@@ -113,7 +114,7 @@ export const loyaltyService = {
     } as unknown as LoyaltyPoints;
   },
 
-  async addPoints(cliente_id: string, amount: number, value: number, description: string, source: LoyaltyHistory['source']) {
+  async addPoints(cliente_id: string, amount: number, value: number, description: string, source: LoyaltyHistory['source'], comanda_id?: string) {
     const config = await this.getConfig();
     const activeTenantId = getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
 
@@ -223,12 +224,76 @@ export const loyaltyService = {
         points: pointsToAdd,
         cashback: cashbackToAdd,
         description,
+        comanda_id: comanda_id || null,
         date: format(new Date(), 'yyyy-MM-dd'),
         createdAt: serverTimestamp()
       });
 
       return { points: pointsToAdd, cashback: cashbackToAdd };
     });
+  },
+
+  async revertComandaLoyalty(comandaId: string, clienteId?: string) {
+    const activeTenantId = getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
+    try {
+      const q = query(
+        collection(db, HISTORY_COLLECTION),
+        where('tenantId', '==', activeTenantId)
+      );
+      const snap = await getDocs(q);
+      
+      const matchingDocs = snap.docs.filter(d => {
+        const data = d.data();
+        if (data.type !== 'earn') return false;
+        if (data.comanda_id === comandaId) return true;
+        if (data.description && (data.description.includes(`#${comandaId}`) || data.description.includes(comandaId))) return true;
+        return false;
+      });
+
+      if (matchingDocs.length === 0) return;
+
+      for (const hDoc of matchingDocs) {
+        const hData = hDoc.data();
+        const targetClient = clienteId || hData.cliente_id;
+        if (!targetClient) continue;
+
+        const ptsToDeduct = Number(hData.points) || 0;
+        const cbToDeduct = Number(hData.cashback) || 0;
+
+        if (ptsToDeduct > 0 || cbToDeduct > 0) {
+          await runTransaction(db, async (tx) => {
+            const docId = `${activeTenantId}_${targetClient}`;
+            const pointsRef = doc(db, POINTS_COLLECTION, docId);
+            const userRef = doc(db, 'usuarios', targetClient);
+
+            const pointsSnap = await tx.get(pointsRef);
+            if (pointsSnap.exists()) {
+              const currentPts = pointsSnap.data().points || 0;
+              const currentCb = pointsSnap.data().cashback || 0;
+              const newPts = Math.max(0, currentPts - ptsToDeduct);
+              const newCb = Math.max(0, Number((currentCb - cbToDeduct).toFixed(2)));
+
+              tx.update(pointsRef, {
+                points: newPts,
+                cashback: newCb,
+                updatedAt: serverTimestamp()
+              });
+
+              tx.update(userRef, {
+                pontos: newPts,
+                points: newPts,
+                cashback: newCb,
+                updatedAt: serverTimestamp()
+              });
+            }
+          });
+        }
+
+        await deleteDoc(doc(db, HISTORY_COLLECTION, hDoc.id));
+      }
+    } catch (err) {
+      console.warn("Error reverting comanda loyalty:", err);
+    }
   },
 
   async redeemPoints(cliente_id: string, points: number, cashback: number, description: string) {

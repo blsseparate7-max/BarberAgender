@@ -36,7 +36,11 @@ import {
   Camera,
   MessageCircle,
   Sparkles,
-  CalendarPlus
+  CalendarPlus,
+  FileText,
+  Printer,
+  Eye,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, deleteField } from 'firebase/firestore';
@@ -207,6 +211,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [statusFilter, setStatusFilter] = useState<'todos' | 'pendente' | 'pago'>('todos');
   const [typeFilter, setTypeFilter] = useState<'todos' | 'comissao' | 'vale'>('todos');
   const [loadingCommissions, setLoadingCommissions] = useState(true);
+  const [showGrossDetailsModal, setShowGrossDetailsModal] = useState(false);
   const [isEditingGoal, setIsEditingGoal] = useState(false);
   const [personalDailyGoal, setPersonalDailyGoal] = useState<number>(() => {
     const saved = localStorage.getItem(`barber_daily_goal_${profile.uid}`);
@@ -303,12 +308,12 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
       refreshAllFinancial();
 
-      // Lightweight Realtime listener ONLY for this barber's commissions
-      const qComms = query(collection(db, 'commissions'), where('profissional_id', '==', profile.uid));
+      // Lightweight Realtime listener for tenant commissions
+      const qComms = proTenant ? query(collection(db, 'commissions'), where('tenantId', '==', proTenant)) : collection(db, 'commissions');
       const unsubComms = onSnapshot(qComms, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
-      // Lightweight Realtime listener ONLY for this barber's advances
-      const qAdvs = query(collection(db, 'professional_advances'), where('profissional_id', '==', profile.uid));
+      // Lightweight Realtime listener for tenant advances
+      const qAdvs = proTenant ? query(collection(db, 'professional_advances'), where('tenantId', '==', proTenant)) : collection(db, 'professional_advances');
       const unsubAdvs = onSnapshot(qAdvs, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
       return () => {
@@ -727,7 +732,8 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
     const totalValesPagos = filteredAdvances.filter(a => a.status === 'pago').reduce((sum, a) => sum + (a.amount || 0), 0);
     const totalValesPendentes = filteredAdvances.filter(a => a.status !== 'pago').reduce((sum, a) => sum + (a.amount || 0), 0);
 
-    const saldoLiquidoPeriodo = totalComissoesGeradas - totalVales;
+    // Saldo Líquido do Período = Comissões Pendentes menos Vales Pendentes
+    const saldoLiquidoPeriodo = totalComissoesPendentes - totalValesPendentes;
 
     return {
       totalComissoesGeradas,
@@ -1226,59 +1232,80 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
             {/* Resumo Financeiro do Período */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="bg-white border border-indigo-200/90 p-3 rounded-2xl shadow-xs flex flex-col justify-between hover:shadow-md transition-all">
                 <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                    Gerado (Bruto)
-                  </p>
-                  <p className="text-sm font-black text-slate-800">
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <p className="text-[9px] font-black text-indigo-600 uppercase tracking-wider flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                      Gerado (Bruto)
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowGrossDetailsModal(true)}
+                      className="text-[9px] font-black text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-2xs"
+                      title="Ver todos os atendimentos e comissões geradas no período"
+                    >
+                      <Eye size={10} />
+                      <span>Ver detalhes</span>
+                    </button>
+                  </div>
+                  <p className="text-base font-black text-slate-900">
                     R$ {periodStats.totalComissoesGeradas.toFixed(2)}
                   </p>
                 </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Comissões produzidas</p>
+                <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-100">
+                  <p className="text-[8px] text-slate-400 font-semibold">Comissões produzidas</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowGrossDetailsModal(true)}
+                    className="text-[8px] font-bold text-indigo-600 hover:underline flex items-center gap-0.5"
+                  >
+                    <FileText size={9} />
+                    <span>Recibo PDF</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-2xs flex flex-col justify-between">
                 <div>
                   <p className="text-[9px] font-black text-emerald-600 uppercase tracking-wider mb-1 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                     Já Recebido
                   </p>
-                  <p className="text-sm font-black text-emerald-600">
+                  <p className="text-base font-black text-emerald-600">
                     R$ {periodStats.totalComissoesPagas.toFixed(2)}
                   </p>
                 </div>
                 <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Repasses efetuados</p>
               </div>
 
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-2xs flex flex-col justify-between">
                 <div>
                   <p className="text-[9px] font-black text-amber-600 uppercase tracking-wider mb-1 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                     Pendente (Bruto)
                   </p>
-                  <p className="text-sm font-black text-amber-600">
+                  <p className="text-base font-black text-amber-600">
                     R$ {periodStats.totalComissoesPendentes.toFixed(2)}
                   </p>
                 </div>
                 <p className="text-[8px] text-slate-400 font-semibold mt-1.5">A repassar no período</p>
               </div>
 
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-2xs flex flex-col justify-between">
                 <div>
                   <p className="text-[9px] font-black text-rose-600 uppercase tracking-wider mb-1 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
                     Vales A Abater
                   </p>
-                  <p className="text-sm font-black text-rose-600">
+                  <p className="text-base font-black text-rose-600">
                     - R$ {periodStats.totalValesPendentes.toFixed(2)}
                   </p>
                 </div>
                 <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Adiantamentos pendentes</p>
               </div>
 
-              <div className={`p-3 rounded-2xl shadow-sm flex flex-col justify-between col-span-2 sm:col-span-1 border transition-colors ${
+              <div className={`p-3 rounded-2xl shadow-2xs flex flex-col justify-between col-span-2 sm:col-span-1 border transition-colors ${
                 periodStats.saldoLiquidoPeriodo < 0 
                   ? 'bg-rose-50/90 border-rose-200/90' 
                   : 'bg-indigo-50/80 border-indigo-200/80'
@@ -1292,7 +1319,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                     }`} />
                     {periodStats.saldoLiquidoPeriodo < 0 ? 'Saldo Devedor (Período)' : 'A Receber (Líquido)'}
                   </p>
-                  <p className={`text-sm font-black ${
+                  <p className={`text-base font-black ${
                     periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-900' : 'text-indigo-900'
                   }`}>
                     {periodStats.saldoLiquidoPeriodo < 0 
@@ -1303,7 +1330,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 <p className={`text-[8px] font-bold mt-1.5 ${
                   periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-600/90' : 'text-indigo-600/80'
                 }`}>
-                  {periodStats.saldoLiquidoPeriodo < 0 ? 'Vales superam os ganhos do período' : 'Pendente bruto menos vales'}
+                  {periodStats.saldoLiquidoPeriodo < 0 ? 'Vales superam comissões pendentes' : 'Pendente bruto menos vales'}
                 </p>
               </div>
             </div>
@@ -2183,6 +2210,152 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
           <Plus size={28} strokeWidth={3} />
         </button>
       </div>
+
+      {/* Modal de Detalhamento da Produção Bruta / Recibo PDF */}
+      <AnimatePresence>
+        {showGrossDetailsModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="p-5 md:p-6 bg-slate-900 text-white flex items-center justify-between gap-4 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-extrabold tracking-tight">Extrato de Produção Bruta</h2>
+                    <p className="text-xs text-slate-300 font-medium mt-0.5">
+                      {profile.nome} • {startDate} até {endDate}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm"
+                    title="Imprimir ou salvar este extrato como PDF"
+                  >
+                    <Printer size={14} />
+                    <span className="hidden sm:inline">Imprimir / PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowGrossDetailsModal(false)}
+                    className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Area Header / Summary */}
+              <div className="p-6 overflow-y-auto space-y-6 custom-scrollbar flex-1 print:p-0 print:overflow-visible">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 border border-slate-200/80 p-4 rounded-2xl">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">Produção Bruta</span>
+                    <span className="text-lg font-black text-slate-900">
+                      R$ {periodStats.totalComissoesGeradas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 block mb-0.5">Já Repassado</span>
+                    <span className="text-lg font-black text-emerald-600">
+                      R$ {periodStats.totalComissoesPagas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 block mb-0.5">Pendente de Repasse</span>
+                    <span className="text-lg font-black text-amber-600">
+                      R$ {periodStats.totalComissoesPendentes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Table of items */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
+                      Lançamentos do Período ({filteredCommissions.length} registro{filteredCommissions.length !== 1 ? 's' : ''})
+                    </h3>
+                  </div>
+
+                  {filteredCommissions.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 border border-slate-200/60 rounded-2xl">
+                      <p className="text-xs font-bold text-slate-400">Nenhuma comissão registrada para este intervalo de datas.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-2xs">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100/80 text-slate-600 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                            <th className="py-2.5 px-3">Data</th>
+                            <th className="py-2.5 px-3">Comanda</th>
+                            <th className="py-2.5 px-3">Serviço / Produto</th>
+                            <th className="py-2.5 px-3">Cliente</th>
+                            <th className="py-2.5 px-3 text-right">Valor Venda</th>
+                            <th className="py-2.5 px-3 text-center">% Com.</th>
+                            <th className="py-2.5 px-3 text-right">Valor Cota</th>
+                            <th className="py-2.5 px-3 text-center">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
+                          {filteredCommissions.map((c, idx) => {
+                            const dateFormatted = c.date ? (c.date.includes('T') ? c.date.split('T')[0] : c.date) : 'N/D';
+                            const baseVal = c.base_value || c.amount || 0;
+                            const commVal = c.commission_value || 0;
+                            const pct = c.commission_percentage || (baseVal > 0 ? ((commVal * 100) / baseVal).toFixed(0) : 0);
+
+                            return (
+                              <tr key={`comm-det-${c.id || idx}`} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-2.5 px-3 font-semibold text-slate-900">{dateFormatted}</td>
+                                <td className="py-2.5 px-3 font-extrabold text-indigo-600">#{c.comanda_number || c.comanda_id?.slice(-4) || '-'}</td>
+                                <td className="py-2.5 px-3 font-bold text-slate-900">{c.servico_name || 'Serviço'}</td>
+                                <td className="py-2.5 px-3 text-slate-600">{c.cliente_name || 'Cliente Avulso'}</td>
+                                <td className="py-2.5 px-3 text-right text-slate-600">R$ {Number(baseVal).toFixed(2)}</td>
+                                <td className="py-2.5 px-3 text-center text-slate-500 font-bold">{pct}%</td>
+                                <td className="py-2.5 px-3 text-right font-extrabold text-slate-900">R$ {Number(commVal).toFixed(2)}</td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                                    c.status === 'pago' 
+                                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                                      : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  }`}>
+                                    {c.status === 'pago' ? 'Pago' : 'Pendente'}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
+                <span className="text-[11px] font-semibold text-slate-500">
+                  Total acumulado no período selecionado: <strong className="text-slate-900 font-bold">R$ {periodStats.totalComissoesGeradas.toFixed(2)}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowGrossDetailsModal(false)}
+                  className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold text-xs transition-all active:scale-95 cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

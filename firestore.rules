@@ -246,9 +246,9 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isAuthenticated() || true;
       allow update: if isAuthenticated() && (
+        (resource != null && resource.data.cliente_id == request.auth.uid) ||
         isStaff() || 
-        isBarbeiro() || 
-        (resource != null && resource.data.cliente_id == request.auth.uid)
+        isBarbeiro()
       );
       allow delete: if isStaff();
     }

@@ -99,7 +99,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     });
     return Array.from(cats).sort();
   }, [services]);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -107,8 +106,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   const [confirmAusente, setConfirmAusente] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const [reopenReasonType, setReopenReasonType] = useState<'erro_lancamento' | 'ajuste_pagamento' | 'cortesia' | 'outro'>('erro_lancamento');
-  
-  const [partialAmount, setPartialAmount] = useState<string>('');
   
   const [activeSubTab, setActiveSubTab] = useState<'itens' | 'logs'>('itens');
   
@@ -915,7 +912,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       let packageUnitPriceVal: number | undefined = undefined;
       let isCortesiaVal = isCortesia;
       let totalPriceVal = isCortesia ? 0 : unitPrice;
-      let generateCommVal = (type === 'servico' || type === 'product') && !isCortesia;
+      let generateCommVal = (type === 'servico' || type === 'product');
 
       const activeSub = clientSubscriptions?.find(s => s.status === 'active');
       if (type === 'servico' && activeSub && !isCortesia) {
@@ -1254,7 +1251,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             ...i,
             isCortesia,
             totalPrice: isCortesia ? 0 : i.unitPrice * i.quantity,
-            generateCommission: (i.type === 'servico' || i.type === 'produto') && !isCortesia
+            generateCommission: (i.type === 'servico' || i.type === 'produto' || i.type === 'product')
           };
         }
         return i;
@@ -1475,7 +1472,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             date: new Date().toISOString().split('T')[0]
           },
           user.uid,
-          profile?.nome || user.email || 'Usuário'
+          profile?.nome || user.email || 'Usuário',
+          { addToCashSession: entersCash }
         );
       }
 
@@ -1522,8 +1520,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         toast.success("Pagamento registrado com sucesso.");
       }
 
-      setShowPaymentModal(false);
-      setPartialAmount('');
       setPaymentInputAmount('');
     } catch (error) {
       console.error("Erro ao processar pagamento:", error);
@@ -1728,7 +1724,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         // Se quitou o saldo restante, finaliza
         if ((amount1 + amount2) >= comanda.pendingAmount) {
           setShowSecondPayment(false);
-          setShowPaymentModal(false);
           setPaymentInputAmount('');
           toast.success("Comanda finalizada com sucesso nas 2 formas de pagamento!");
           onSave();
@@ -1785,7 +1780,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
       if (amount >= comanda.pendingAmount) {
         toast.success(`🎉 Comanda finalizada com sucesso no ${methodObj.name}!`);
-        setShowPaymentModal(false);
         setPaymentInputAmount('');
         onSave();
       } else {
@@ -1933,6 +1927,60 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       toast.success("Profissional atualizado e comissões recalculadas.");
     } catch (error) {
       toast.error("Erro ao atualizar profissional.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleItemBarberChange = async (itemId: string, newProfId: string) => {
+    if (!comanda || loading) return;
+    const targetBarber = barbers.find(b => b.uid === newProfId || b.id === newProfId);
+    const newProfName = targetBarber?.nome || targetBarber?.displayName || targetBarber?.name || 'Profissional';
+    
+    const updatedItems = comanda.items.map(item => {
+      if (item.id === itemId) {
+        return {
+          ...item,
+          profissional_id: newProfId,
+          profissional_name: newProfName
+        };
+      }
+      return item;
+    });
+
+    // Atualização otimista imediata para resposta instantânea
+    setComanda(prev => prev ? ({ ...prev, items: updatedItems }) : null);
+
+    setLoading(true);
+    try {
+      await comandaService.updateComandaItems(
+        comanda.id,
+        updatedItems,
+        comanda.discount || 0,
+        comanda.tip || 0,
+        user?.uid || '',
+        profile?.nome || user?.email || 'Sistema'
+      );
+
+      // Sincronizar com o agendamento vinculado caso exista
+      if (comanda.agendamento_id) {
+        try {
+          await updateDoc(doc(db, 'appointments', comanda.agendamento_id), {
+            profissional_id: newProfId,
+            profissional_name: newProfName,
+            barbeiro_id: newProfId,
+            barbeiro_name: newProfName,
+            updatedAt: serverTimestamp()
+          });
+        } catch (appErr) {
+          console.warn("Não foi possível sincronizar o agendamento:", appErr);
+        }
+      }
+
+      toast.success(`Profissional do serviço alterado para ${newProfName}`);
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao alterar profissional do item.");
     } finally {
       setLoading(false);
     }
@@ -2111,76 +2159,290 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   return (
     <div 
-      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
       onClick={onClose}
     >
       <motion.div 
         onClick={(e) => e.stopPropagation()}
-        initial={{ opacity: 0, scale: 0.95 }}
+        initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-surface border border-border w-full max-w-5xl max-h-[95vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto"
+        className="bg-surface border border-border w-full max-w-6xl max-h-[94vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto"
       >
-        {/* Header */}
-        <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary shadow-sm border border-primary/5">
-              <Receipt size={24} />
+        {/* Header Compacto */}
+        <div className="py-3 px-5 sm:px-6 border-b border-border flex items-center justify-between bg-slate-50/80">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary shadow-xs border border-primary/5">
+              <Receipt size={20} />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-primary">Comanda #{comanda.number}</h2>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${
-                  comanda.status === 'aberta' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                  comanda.status === 'fechada' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                  comanda.status === 'cancelada' ? 'bg-red-50 text-red-600 border-red-100' :
-                  'bg-amber-50 text-amber-600 border-amber-100'
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-black text-primary leading-none">Comanda #{comanda.number}</h2>
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                  comanda.status === 'aberta' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                  comanda.status === 'fechada' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                  comanda.status === 'cancelada' ? 'bg-red-50 text-red-700 border-red-200' :
+                  'bg-amber-50 text-amber-700 border-amber-200'
                 }`}>
                   {comanda.status.replace('_', ' ')}
                 </span>
-                <span className="text-[10px] text-muted font-bold uppercase tracking-widest">Iniciada em {format(parseDate(comanda.createdAt), 'HH:mm')}</span>
               </div>
+              <p className="text-[10px] text-muted font-bold uppercase tracking-wider mt-0.5">
+                Iniciada em {format(parseDate(comanda.createdAt), 'HH:mm')} • {comanda.items.length} {comanda.items.length === 1 ? 'item' : 'itens'}
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-             <button 
+          <div className="flex items-center gap-2">
+            <button 
               onClick={() => setIsPDVMode(!isPDVMode)}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-sm active:scale-95 border ${
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-xs active:scale-95 border cursor-pointer ${
                 isPDVMode 
                   ? 'bg-accent text-white border-accent' 
                   : 'bg-white text-primary border-slate-200 hover:bg-slate-50'
               }`}
             >
-              <Zap size={16} fill={isPDVMode ? 'currentColor' : 'none'} />
+              <Zap size={14} fill={isPDVMode ? 'currentColor' : 'none'} />
               <span>{isPDVMode ? 'Modo Normal' : 'Modo PDV'}</span>
             </button>
-            <div className="w-px h-8 bg-slate-200 mx-1" />
+            <div className="w-px h-6 bg-slate-200 mx-0.5" />
             <button 
               onClick={onClose} 
-              className="p-3 text-muted hover:text-primary hover:bg-slate-100 transition-colors bg-white rounded-xl border border-slate-100 shadow-sm min-w-[44px] min-h-[44px] flex items-center justify-center"
+              className="p-2 text-muted hover:text-primary hover:bg-slate-100 transition-colors bg-white rounded-xl border border-slate-200 shadow-xs flex items-center justify-center cursor-pointer"
               title="Fechar"
             >
-              <X size={24} />
+              <X size={20} />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8 grid grid-cols-1 lg:grid-cols-3 gap-10 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 custom-scrollbar">
+          {comanda.status === 'fechada' ? (
+            /* VISÃO DEDICADA DE COMANDA FECHADA - LIMPA, INTUITIVA E COM REABERTURA EM DESTAQUE */
+            <div className="space-y-6 animate-in fade-in duration-300">
+              {/* Banner Superior de Sucesso com Botão de Reabrir em Destaque */}
+              <div className="bg-emerald-600 text-white rounded-3xl p-6 shadow-xl shadow-emerald-600/15 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 border border-emerald-500">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center text-white backdrop-blur-md shrink-0 shadow-inner">
+                    <CheckCircle2 size={32} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <h3 className="font-black text-xl tracking-tight text-white">Comanda #{comanda.number} Fechada</h3>
+                      <span className="text-[10px] font-black uppercase tracking-widest bg-white text-emerald-800 px-2.5 py-0.5 rounded-full shadow-xs">
+                        Concluída & Paga
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-100 font-medium mt-1">
+                      Cliente: <strong className="text-white">{comanda.cliente_name}</strong>
+                      {comanda.closedAt && (
+                        <span className="ml-2 opacity-90">
+                          • Finalizada em {format(parseDate(comanda.closedAt), 'dd/MM/yyyy HH:mm')}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Botão Reabrir Comanda com Destaque Visual */}
+                <button
+                  type="button"
+                  onClick={() => setShowReopenModal(true)}
+                  disabled={loading}
+                  className="w-full sm:w-auto px-6 py-3.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/25 transition-all flex items-center justify-center gap-2.5 active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
+                  title="Reabrir comanda para ajustes ou correções"
+                >
+                  <RefreshCcw size={16} />
+                  <span>Reabrir Comanda</span>
+                </button>
+              </div>
+
+              {/* Grid de 2 Colunas: Itens à Esquerda, Resumo Financeiro à Direita */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Coluna Esquerda: Itens Realizados (Serviços e Produtos) */}
+                <div className="lg:col-span-2 space-y-6">
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                          <Scissors size={18} />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-sm text-slate-800">Serviços e Produtos Realizados</h4>
+                          <p className="text-[11px] text-slate-400 font-medium">{comanda.items.length} itens no atendimento</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-black text-slate-700 bg-slate-100 px-3 py-1 rounded-xl">
+                        Total: R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-slate-100">
+                      {comanda.items.map((item, idx) => {
+                        const isService = item.type === 'servico' || item.type === 'assinatura';
+                        return (
+                          <div key={`closed-item-${idx}`} className="py-3.5 flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${
+                                isService ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'
+                              }`}>
+                                {isService ? <Scissors size={16} /> : <Package size={16} />}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-bold text-sm text-slate-800">{item.name}</span>
+                                  {item.quantity > 1 && (
+                                    <span className="text-xs font-bold text-slate-400">({item.quantity}x)</span>
+                                  )}
+                                  {item.isCortesia && (
+                                    <span className="text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-100">Cortesia</span>
+                                  )}
+                                  {item.deductType === 'pacote' && (
+                                    <span className="text-[9px] font-black uppercase tracking-widest bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded border border-amber-100">Pacote</span>
+                                  )}
+                                  {item.deductType === 'assinatura' && (
+                                    <span className="text-[9px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100">Clube</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-1">
+                                  <span>💈 Atendido por:</span>
+                                  <strong className="text-slate-800">{item.profissional_name || comanda.profissional_name || 'Profissional'}</strong>
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className="font-black text-sm text-slate-800">
+                                R$ {(item.totalPrice ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Observações da comanda se houver */}
+                  {comanda.notes && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Observações</span>
+                      <p className="text-xs text-slate-700 font-medium">{comanda.notes}</p>
+                    </div>
+                  )}
+
+                  {/* Histórico de Reabertura se houver */}
+                  {comanda.reopenHistory && comanda.reopenHistory.length > 0 && (
+                    <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 space-y-2">
+                      <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                        <History size={15} />
+                        <span>Histórico de Reabertura</span>
+                      </div>
+                      {comanda.reopenHistory.map((rh, rhIdx) => (
+                        <p key={`rh-${rhIdx}`} className="text-xs text-amber-900 leading-relaxed">
+                          • {rh.userName} reabriu em {format(new Date(rh.date), 'dd/MM/yyyy HH:mm')}: <em>"{rh.reason}"</em>
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Coluna Direita: Resumo Financeiro e Pagamentos Efetuados */}
+                <div className="space-y-6">
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-5">
+                    <h4 className="font-black text-xs uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-3">
+                      Resumo Financeiro
+                    </h4>
+
+                    <div className="space-y-2.5 text-xs">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Subtotal Serviços</span>
+                        <span className="font-bold text-slate-800">R$ {(comanda.subtotalServices ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      {comanda.subtotalProducts > 0 && (
+                        <div className="flex justify-between text-slate-600">
+                          <span>Subtotal Produtos</span>
+                          <span className="font-bold text-slate-800">R$ {(comanda.subtotalProducts ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      {comanda.discount > 0 && (
+                        <div className="flex justify-between text-rose-600">
+                          <span>Desconto</span>
+                          <span className="font-bold">- R$ {comanda.discount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      {comanda.tip > 0 && (
+                        <div className="flex justify-between text-emerald-600">
+                          <span>Gorjeta</span>
+                          <span className="font-bold">+ R$ {comanda.tip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
+                        <span className="font-black text-sm text-slate-900 uppercase tracking-wider">Total Geral Pago</span>
+                        <span className="font-black text-2xl text-emerald-600 tracking-tight">
+                          R$ {(comanda.paidAmount || comanda.totalAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Formas de Pagamento Utilizadas */}
+                    <div className="pt-4 border-t border-slate-100 space-y-3">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">
+                        Formas de Pagamento Recebidas
+                      </span>
+                      <div className="space-y-2">
+                        {comanda.payments && comanda.payments.length > 0 ? (
+                          comanda.payments.map((pmt, pIdx) => (
+                            <div key={`closed-pmt-${pIdx}`} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <CreditCard size={15} className="text-emerald-600" />
+                                <span className="text-xs font-bold text-slate-800 capitalize">
+                                  {pmt.method === 'cartao' ? 'Cartão' : pmt.method}
+                                </span>
+                              </div>
+                              <span className="text-xs font-black text-emerald-700">
+                                R$ {(pmt.amount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-bold">
+                            Totalmente Quitada
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Botão Secundário de Reabrir no Rodapé */}
+                    <div className="pt-4 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setShowReopenModal(true)}
+                        disabled={loading}
+                        className="w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-2.5 cursor-pointer active:scale-95"
+                      >
+                        <RefreshCcw size={15} />
+                        <span>Reabrir Comanda</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Left Side: Items and Info */}
-          <div className={`lg:col-span-2 space-y-10 ${isPDVMode ? 'animate-in slide-in-from-left duration-500' : ''}`}>
+          <div className={`lg:col-span-7 space-y-4 ${isPDVMode ? 'animate-in slide-in-from-left duration-500' : ''}`}>
             {!isPDVMode && (
-              <div className="flex border-b border-slate-100 gap-6">
+              <div className="flex border-b border-slate-200/80 gap-6">
                 <button 
                   onClick={() => setActiveSubTab('itens')}
-                  className={`pb-4 text-xs font-black uppercase tracking-widest relative transition-all ${
+                  className={`pb-2.5 text-xs font-black uppercase tracking-wider relative transition-all cursor-pointer ${
                     activeSubTab === 'itens' ? 'text-primary' : 'text-muted hover:text-primary'
                   }`}
                 >
-                  Itens e Atendimento
+                  Itens e Atendimento ({comanda.items.length})
                   {activeSubTab === 'itens' && <motion.div layoutId="modalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
                 </button>
                 <button 
                   onClick={() => setActiveSubTab('logs')}
-                  className={`pb-4 text-xs font-black uppercase tracking-widest relative transition-all flex items-center gap-2 ${
+                  className={`pb-2.5 text-xs font-black uppercase tracking-wider relative transition-all flex items-center gap-1.5 cursor-pointer ${
                     activeSubTab === 'logs' ? 'text-primary' : 'text-muted hover:text-primary'
                   }`}
                 >
@@ -2196,49 +2458,45 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             )}
 
             {activeSubTab === 'itens' || isPDVMode ? (
-              <div className="space-y-10 animate-in fade-in duration-300">
-                {/* Client & Barber Info */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="space-y-4 animate-in fade-in duration-300">
+                {/* Client & Barber Info - Compact Card Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="relative">
                     <div 
                       onClick={() => !loading && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && setShowQuickClient(!showQuickClient)}
-                      className={`bg-slate-50 border p-5 rounded-2xl flex justify-between items-center shadow-sm transition-all ${
+                      className={`bg-slate-50 border p-3 rounded-2xl flex justify-between items-center shadow-2xs transition-all ${
                         ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? 'cursor-pointer hover:border-accent/40' : 'cursor-default'
-                      } ${showQuickClient ? 'border-accent ring-2 ring-accent/5' : 'border-slate-100'}`}
+                      } ${showQuickClient ? 'border-accent ring-2 ring-accent/5' : 'border-slate-200/80'}`}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-accent border border-slate-100 shadow-sm group-hover:scale-110 transition-transform">
-                          <User size={20} />
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center text-accent border border-slate-200/60 shadow-2xs">
+                          <User size={16} />
                         </div>
                         <div>
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-[10px] text-muted uppercase tracking-widest font-bold">Cliente</p>
-                            {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && <ArrowRightLeft size={8} className="text-slate-300" />}
+                          <div className="flex items-center gap-1">
+                            <p className="text-[9px] text-muted uppercase tracking-wider font-bold">Cliente</p>
+                            {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && <ArrowRightLeft size={8} className="text-slate-400" />}
                           </div>
-                          <div className="flex flex-col items-start gap-1">
-                            <p className="text-primary font-bold">{comanda.cliente_name || 'Cliente Avulso'}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-xs font-bold text-primary">{comanda.cliente_name || 'Cliente Avulso'}</p>
                             {comanda.cliente_id && comanda.cliente_id !== 'avulso' && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleQuickClientSelect({ id: 'avulso', name: 'Cliente Avulso' });
                                 }}
-                                className="px-2 py-0.5 text-[8px] font-bold text-red-600 bg-red-50 hover:bg-red-100/80 border border-red-100 rounded-md transition-all uppercase tracking-wider mt-1"
+                                className="px-1.5 py-0.2 text-[8px] font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition-all uppercase"
+                                title="Desvincular cliente"
                               >
-                                Desvincular Cliente
+                                Desvincular
                               </button>
-                            )}
-                            {(!comanda.cliente_id || comanda.cliente_id === 'avulso') && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                              <span className="px-2 py-0.5 text-[8px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-md uppercase tracking-wider mt-1">
-                                Sem Cadastro
-                              </span>
                             )}
                           </div>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-[10px] text-muted uppercase tracking-widest font-bold mb-0.5">Saldo</p>
-                        <p className={`text-xs font-bold ${
+                        <p className="text-[9px] text-muted uppercase tracking-wider font-bold">Saldo</p>
+                        <p className={`text-xs font-black ${
                           (clients.find(c => c.uid === comanda.cliente_id)?.balance || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'
                         }`}>
                           R$ {((clients.find(c => c.uid === comanda.cliente_id)?.balance || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -2259,20 +2517,20 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   <div className="relative">
                     <div 
                       onClick={() => !loading && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && setShowQuickProf(!showQuickProf)}
-                      className={`bg-slate-50 border p-5 rounded-2xl flex items-center justify-between shadow-sm transition-all ${
+                      className={`bg-slate-50 border p-3 rounded-2xl flex items-center justify-between shadow-2xs transition-all ${
                         ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 ? 'cursor-pointer hover:border-accent/40' : 'cursor-default'
-                      } ${showQuickProf ? 'border-accent ring-2 ring-accent/5' : 'border-slate-100'}`}
+                      } ${showQuickProf ? 'border-accent ring-2 ring-accent/5' : 'border-slate-200/80'}`}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-blue-500 border border-slate-100 shadow-sm group-hover:scale-110 transition-transform">
-                          <Scissors size={20} />
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-white rounded-xl flex items-center justify-center text-blue-600 border border-slate-200/60 shadow-2xs">
+                          <Scissors size={16} />
                         </div>
                         <div>
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-[10px] text-muted uppercase tracking-widest font-bold">Profissional</p>
-                            {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && <ArrowRightLeft size={8} className="text-slate-300" />}
+                          <div className="flex items-center gap-1">
+                            <p className="text-[9px] text-muted uppercase tracking-wider font-bold">Profissional Padrão</p>
+                            {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && <ArrowRightLeft size={8} className="text-slate-400" />}
                           </div>
-                          <p className="text-primary font-bold">{comanda.profissional_name}</p>
+                          <p className="text-xs font-bold text-primary">{comanda.profissional_name}</p>
                         </div>
                       </div>
                     </div>
@@ -2293,15 +2551,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   const totalEmAberto = clientObj?.total_em_aberto || 0;
                   if (totalEmAberto <= 0) return null;
                   return (
-                    <div id="alert-debtor" className="p-5 bg-rose-50 border border-rose-100 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center border border-rose-200/50 shrink-0">
-                          <AlertCircle size={24} />
-                        </div>
+                    <div id="alert-debtor" className="p-3 bg-rose-50 border border-rose-200 rounded-2xl flex items-center justify-between gap-3 animate-in fade-in duration-300">
+                      <div className="flex items-center gap-2.5">
+                        <AlertCircle size={18} className="text-rose-600 shrink-0" />
                         <div>
-                          <h4 className="text-sm font-black text-rose-900 uppercase tracking-widest">Saldo Devedor Ativo</h4>
-                          <p className="text-xs font-bold text-rose-700 mt-0.5">
-                            Este cliente possui <span className="underline font-extrabold">R$ {(totalEmAberto ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> em aberto (FIADO).
+                          <p className="text-xs font-black text-rose-900 leading-none">
+                            Fiado Ativo: <span className="underline">R$ {(totalEmAberto ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                           </p>
                         </div>
                       </div>
@@ -2314,7 +2569,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           setPayingDebtMethod(paymentMethods[0]?.id || 'dinheiro');
                           setIsPayingDebt(true);
                         }}
-                        className="px-5 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap self-end sm:sm:self-auto"
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                       >
                         Pagar Fiado
                       </button>
@@ -2322,49 +2577,45 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   );
                 })()}
 
-                {isPDVMode && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-in slide-in-from-top duration-500">
+                {/* Quick Add Buttons Bar */}
+                {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button 
                       onClick={() => handleOpenItemSelector('service')}
-                      className="p-6 bg-emerald-50 border border-emerald-100 rounded-3xl flex flex-col items-center gap-3 hover:bg-emerald-100 hover:border-emerald-200 transition-all text-emerald-700 shadow-sm group active:scale-95"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 rounded-xl text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer"
                     >
-                      <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                        <Zap size={24} fill="currentColor" />
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-widest">+ Serviço</span>
+                      <Plus size={14} />
+                      <span>Serviço</span>
                     </button>
                     <button 
                       onClick={() => handleOpenItemSelector('product')}
-                      className="p-6 bg-blue-50 border border-blue-100 rounded-3xl flex flex-col items-center gap-3 hover:bg-blue-100 hover:border-blue-200 transition-all text-blue-700 shadow-sm group active:scale-95"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 rounded-xl text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer"
                     >
-                      <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                        <ShoppingBag size={24} fill="currentColor" />
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-widest">+ Produto</span>
+                      <Plus size={14} />
+                      <span>Produto</span>
                     </button>
                     <button 
-                       onClick={() => updateFinancials({ discount: (comanda.discount || 0) + 5 })}
-                      className="p-6 bg-rose-50 border border-rose-100 rounded-3xl flex flex-col items-center gap-3 hover:bg-rose-100 hover:border-rose-200 transition-all text-rose-700 shadow-sm group active:scale-95"
+                      onClick={() => handleOpenItemSelector('pacote')}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 rounded-xl text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer"
                     >
-                      <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                        <Trash2 size={24} />
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-widest">Desconto</span>
+                      <Plus size={14} />
+                      <span>Pacote</span>
                     </button>
                     <button 
-                      onClick={() => setShowPaymentModal(true)}
-                      className="p-6 bg-primary text-white rounded-3xl flex flex-col items-center gap-3 hover:bg-slate-800 transition-all shadow-lg shadow-primary/20 group active:scale-95"
+                      onClick={() => {
+                        setTempDiscountValue(comanda.discount ? comanda.discount.toString() : '');
+                        setFinancialModal('discount');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 rounded-xl text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer"
                     >
-                      <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <DollarSign size={24} />
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-widest">Pagar</span>
+                      <Tag size={14} />
+                      <span>Desconto</span>
                     </button>
                   </div>
                 )}
 
                 {/* Items List */}
-                <div className="space-y-6">
+                <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-bold text-primary flex items-center gap-2">
                       <ShoppingBag size={20} className="text-accent" />
@@ -2503,6 +2754,32 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                       )}
                                     </div>
 
+                                    <div className="flex items-center gap-2 mt-2">
+                                      <div className="inline-flex items-center gap-2 bg-slate-50 hover:bg-slate-100/90 border border-slate-200/90 rounded-xl px-2.5 py-1 transition-all shadow-2xs">
+                                        <Scissors size={13} className="text-emerald-600 shrink-0" />
+                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Atendido por:</span>
+                                        {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && barbers.length > 0 ? (
+                                          <select
+                                            value={item.profissional_id || comanda.profissional_id || ''}
+                                            onChange={(e) => handleItemBarberChange(item.id, e.target.value)}
+                                            disabled={loading}
+                                            title="Alterar barbeiro deste serviço"
+                                            className="bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-lg py-1 px-2.5 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all cursor-pointer font-sans shadow-2xs"
+                                          >
+                                            {barbers.map(b => (
+                                              <option key={b.uid || b.id} value={b.uid || b.id}>
+                                                💈 {b.nome || b.displayName || b.name}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : (
+                                          <span className="text-xs font-extrabold text-slate-800">
+                                            💈 {item.profissional_name || comanda.profissional_name || 'Profissional'}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
                                     {/* Action buttons to toggle deduction */}
                                     {isService && (allAvailablePackages.some(p => p.remainingCuts > 0) || hasSub) && ['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
                                       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
@@ -2603,23 +2880,29 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                 )}
                               </td>
                               <td className="px-6 py-5 text-sm font-bold text-primary text-right">R$ {(item.totalPrice ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                              <td className="px-6 py-5 text-right">
+                              <td className="px-4 py-3 text-right">
                                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                                  <div className="flex items-center justify-end gap-2">
+                                  <div className="flex items-center justify-end gap-1.5">
                                     <button 
+                                      type="button"
                                       onClick={() => toggleCortesia(item.id)}
-                                      title={item.isCortesia ? "Remover Cortesia" : "Marcar como Cortesia"}
-                                      className={`p-2 rounded-lg transition-all ${
-                                        item.isCortesia ? 'text-emerald-600 bg-emerald-50' : 'text-slate-300 hover:text-emerald-500 hover:bg-emerald-50'
+                                      title={item.isCortesia ? "Remover Cortesia" : "Marcar como Cortesia (gera comissão normal para o barbeiro)"}
+                                      className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95 shadow-2xs ${
+                                        item.isCortesia 
+                                          ? 'bg-emerald-600 text-white font-black ring-1 ring-emerald-500' 
+                                          : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200'
                                       }`}
                                     >
-                                      <CheckCircle2 size={16} />
+                                      <Gift size={13} className={item.isCortesia ? 'fill-current' : ''} />
+                                      <span>Cortesia</span>
                                     </button>
                                     <button 
+                                      type="button"
                                       onClick={() => removeItem(item.id)}
-                                      className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+                                      title="Remover Item"
                                     >
-                                      <Trash2 size={16} />
+                                      <Trash2 size={15} />
                                     </button>
                                   </div>
                                 )}
@@ -2770,41 +3053,41 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           </div>
 
           {/* Right Side: Summary & Actions */}
-          <div className="space-y-8 lg:col-span-1">
-            <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 sm:p-8 space-y-8 shadow-sm">
+          <div className="space-y-4 lg:col-span-5">
+            <div className="bg-slate-50/90 border border-slate-200/90 rounded-2xl p-4 sm:p-5 space-y-4 shadow-2xs">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-black text-primary tracking-tight">Resumo do Checkout</h3>
+                <h3 className="text-base font-black text-primary tracking-tight">Resumo do Checkout</h3>
                 {comanda.status === 'aberta' && (
-                  <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Ajustável</span>
+                  <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">Ajustável</span>
                 )}
               </div>
               
-              <div className="space-y-4">
-                <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
+              <div className="space-y-2.5 text-xs font-bold">
+                <div className="flex justify-between uppercase tracking-wider">
                   <span className="text-muted">Serviços</span>
-                  <span className="text-primary">R$ {(comanda.subtotalServices ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  <span className="text-primary font-black">R$ {(comanda.subtotalServices ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
-                <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
+                <div className="flex justify-between uppercase tracking-wider">
                   <span className="text-muted">Produtos</span>
-                  <span className="text-primary">R$ {(comanda.subtotalProducts ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  <span className="text-primary font-black">R$ {(comanda.subtotalProducts ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
                 
                 {/* Financial Adjustments (+ Action Buttons) */}
                 {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                  <div className="space-y-2 pt-2 border-t border-slate-100">
-                    <p className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Ajustes & Extras na Comanda</p>
-                    <div className="flex flex-wrap items-center gap-2">
+                  <div className="space-y-1.5 pt-2 border-t border-slate-200/80">
+                    <p className="text-[9px] font-black text-muted uppercase tracking-wider">Ajustes & Extras</p>
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => {
                           setTempTipValue(comanda.tip ? comanda.tip.toString() : '');
                           setFinancialModal('tip');
                         }}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer ${
-                          comanda.tip ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        className={`px-2.5 py-1 rounded-lg text-xs font-black border transition-all flex items-center gap-1 cursor-pointer ${
+                          comanda.tip ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-2xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                         }`}
                       >
-                        <Sparkles size={12} className={comanda.tip ? 'text-emerald-600' : 'text-amber-500'} />
+                        <Sparkles size={11} className={comanda.tip ? 'text-emerald-600' : 'text-amber-500'} />
                         <span>{comanda.tip ? `Gorjeta: R$ ${comanda.tip.toFixed(2)}` : '+ Gorjeta'}</span>
                       </button>
 
@@ -2814,11 +3097,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           setTempDiscountValue(comanda.discount ? comanda.discount.toString() : '');
                           setFinancialModal('discount');
                         }}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all flex items-center gap-1.5 cursor-pointer ${
-                          comanda.discount ? 'bg-rose-50 text-rose-700 border-rose-200 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        className={`px-2.5 py-1 rounded-lg text-xs font-black border transition-all flex items-center gap-1 cursor-pointer ${
+                          comanda.discount ? 'bg-rose-50 text-rose-700 border-rose-200 shadow-2xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                         }`}
                       >
-                        <Tag size={12} className={comanda.discount ? 'text-rose-600' : 'text-red-500'} />
+                        <Tag size={11} className={comanda.discount ? 'text-rose-600' : 'text-red-500'} />
                         <span>{comanda.discount ? `Desconto: R$ ${comanda.discount.toFixed(2)}` : '+ Desconto'}</span>
                       </button>
 
@@ -2828,10 +3111,10 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           setVoucherTokenInput('');
                           setFinancialModal('voucher');
                         }}
-                        className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                        className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-black transition-all flex items-center gap-1 shadow-2xs cursor-pointer"
                       >
-                        <Award size={12} className="text-indigo-600" />
-                        <span>+ Voucher Fidelidade</span>
+                        <Award size={11} className="text-indigo-600" />
+                        <span>+ Voucher</span>
                       </button>
 
                       <button
@@ -2840,43 +3123,43 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           setCouponInput('');
                           setFinancialModal('coupon');
                         }}
-                        className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                        className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-black transition-all flex items-center gap-1 shadow-2xs cursor-pointer"
                       >
-                        <Tag size={12} className="text-amber-600" />
+                        <Tag size={11} className="text-amber-600" />
                         <span>+ Cupom</span>
                       </button>
                     </div>
                   </div>
                 )}
 
-                <div className="pt-6 border-t border-slate-200 space-y-4">
+                <div className="pt-3 border-t border-slate-200/80 space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-primary font-bold text-sm uppercase tracking-wider">Total Geral</span>
-                    <span className="text-3xl font-black text-primary tracking-tighter">R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-primary font-black text-xs uppercase tracking-wider">Total Geral</span>
+                    <span className="text-2xl font-black text-primary tracking-tight">R$ {(comanda.totalAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
 
                   {selectedClientProfile && (
-                    <div className="p-4 bg-slate-100 rounded-2xl flex items-center justify-between border border-slate-200">
+                    <div className="p-2.5 bg-slate-100/90 rounded-xl flex items-center justify-between border border-slate-200/80">
                       <div>
-                        <p className="text-[10px] text-muted font-bold uppercase tracking-widest leading-none mb-1">Saldo do Cliente</p>
-                        <p className={`text-sm font-black ${(selectedClientProfile.balance || 0) < 0 ? 'text-red-600' : (selectedClientProfile.balance || 0) > 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
+                        <p className="text-[9px] text-muted font-bold uppercase tracking-wider leading-none mb-0.5">Saldo Cliente</p>
+                        <p className={`text-xs font-black ${(selectedClientProfile.balance || 0) < 0 ? 'text-red-600' : (selectedClientProfile.balance || 0) > 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
                           {(selectedClientProfile.balance || 0) < 0 ? 'DÉBITO' : (selectedClientProfile.balance || 0) > 0 ? 'CRÉDITO' : 'SEM PENDÊNCIA'}
                         </p>
                       </div>
-                      <span className={`text-lg font-black ${(selectedClientProfile.balance || 0) < 0 ? 'text-red-700' : (selectedClientProfile.balance || 0) > 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
+                      <span className={`text-sm font-black ${(selectedClientProfile.balance || 0) < 0 ? 'text-red-700' : (selectedClientProfile.balance || 0) > 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
                         R$ {Math.abs(selectedClientProfile.balance || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
                   )}
 
                   {clientDebts.length > 0 && (
-                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs space-y-2">
-                      <div className="flex items-center gap-2 text-amber-800 font-bold">
-                        <AlertCircle size={14} />
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs space-y-1">
+                      <div className="flex items-center gap-1.5 text-amber-800 font-bold text-[11px]">
+                        <AlertCircle size={13} />
                         <span>Contas pendentes anteriores</span>
                       </div>
-                      <p className="text-amber-700 leading-tight">
-                        Este cliente tem R$ {clientDebts.reduce((acc, d) => acc + (d.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em contas em aberto.
+                      <p className="text-amber-700 text-[11px] leading-tight">
+                        Cliente tem R$ {clientDebts.reduce((acc, d) => acc + (d.amount || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em aberto.
                       </p>
                     </div>
                   )}
@@ -2884,7 +3167,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
               </div>
 
               {/* Payments and Split Registry */}
-              <div className="pt-6 border-t border-slate-200 space-y-4">
+              <div className="pt-3 border-t border-slate-200/80 space-y-2">
                 <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
                   <span className="text-muted">Total Pago</span>
                   <span className="text-emerald-600 font-extrabold">R$ {(comanda.paidAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
@@ -2922,44 +3205,25 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                 )}
               </div>
 
-              {/* Direct Split Payment Gateways */}
+              {/* Unified Payment & Checkout Card */}
               {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && (
-                <div className="pt-6 border-t border-slate-200 space-y-5">
+                <div className="pt-6 border-t border-slate-200 space-y-4">
                   {comanda.pendingAmount > 0 ? (
                     <>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Lançar Recebimento</label>
-                        <div className="relative">
-                          <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                          <input 
-                            type="number"
-                            value={amountToPay}
-                            disabled={loading}
-                            onChange={(e) => setAmountToPay(e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-3.5 pl-8 pr-16 text-sm text-primary font-black focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary/50 transition-all shadow-inner"
-                            placeholder="Valor"
-                          />
-                          <button 
-                            onClick={() => setAmountToPay(comanda.pendingAmount.toFixed(2))}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
-                          >
-                            Restante
-                          </button>
-                        </div>
-                      </div>
-
+                      {/* Resgate de Fidelidade / Cashback se disponível */}
                       {clientLoyalty && clientLoyalty.cashback > 0 && (
                         (() => {
                           const minVal = loyaltyConfig?.minRedemptionValue || 0;
                           const hasMin = minVal <= 0 || clientLoyalty.cashback >= minVal;
                           return (
                             <button
+                              type="button"
                               onClick={() => {
                                 if (!hasMin) {
                                   toast.error(`Mínimo para resgate: R$ ${minVal.toFixed(2)}. Saldo atual: R$ ${clientLoyalty.cashback.toFixed(2)}`);
                                   return;
                                 }
-                                const valToUse = Math.min(Number(amountToPay) || comanda.pendingAmount, clientLoyalty.cashback);
+                                const valToUse = Math.min(Number(paymentInputAmount) || comanda.pendingAmount, clientLoyalty.cashback);
                                 handleAddPayment('resgate', valToUse);
                               }}
                               disabled={loading || comanda.pendingAmount <= 0}
@@ -3001,196 +3265,198 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         })()
                       )}
 
-                      <div className="bg-slate-50/70 border border-slate-200/80 p-5 rounded-2xl space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-1.5">
-                            <CreditCard size={15} className="text-emerald-600" />
-                            <span>Registrar Pagamento</span>
+                      {/* Card Unificado de Pagamento */}
+                      <div className="bg-slate-50/80 border border-slate-200/90 p-5 rounded-3xl space-y-4 shadow-sm">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                            <CreditCard size={16} className="text-emerald-600" />
+                            <span>Forma de Pagamento</span>
                           </span>
-                          {comanda.pendingAmount > 0 && (
-                            <span className="text-xs font-black text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl">
-                              Pendente: R$ {comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </span>
-                          )}
+
+                          {/* Seletor de Modo: Único vs Dividir em 2 */}
+                          <div className="inline-flex bg-slate-200/70 p-1 rounded-xl text-[11px] font-bold">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (showSecondPayment) {
+                                  setShowSecondPayment(false);
+                                  setSecondPaymentMethodId('');
+                                  setSecondPaymentInputAmount('');
+                                  setPaymentInputAmount(comanda.pendingAmount.toFixed(2));
+                                }
+                              }}
+                              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                                !showSecondPayment 
+                                  ? 'bg-white text-slate-900 shadow-xs font-black' 
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              ⚡ Pagamento Único
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!showSecondPayment) {
+                                  setShowSecondPayment(true);
+                                  const total = comanda.pendingAmount;
+                                  const half = Math.round((total / 2) * 100) / 100;
+                                  const rem = Math.round((total - half) * 100) / 100;
+                                  setPaymentInputAmount(half.toFixed(2));
+                                  setSecondPaymentInputAmount(rem.toFixed(2));
+                                  const validMethods = paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount);
+                                  if (!selectedPaymentMethodId && validMethods[0]) {
+                                    setSelectedPaymentMethodId(validMethods[0].id);
+                                  }
+                                  if (validMethods.length > 1) {
+                                    setSecondPaymentMethodId(validMethods[1].id);
+                                  } else if (validMethods[0]) {
+                                    setSecondPaymentMethodId(validMethods[0].id);
+                                  }
+                                }
+                              }}
+                              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                                showSecondPayment 
+                                  ? 'bg-white text-emerald-700 shadow-xs font-black' 
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              ✂️ Dividir em 2 Formas
+                            </button>
+                          </div>
                         </div>
 
-                        <div className="space-y-3">
-                          {/* Botões de Seleção Rápida de Forma de Pagamento */}
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
-                                {showSecondPayment ? '1ª Forma de Pagamento' : 'Forma de Pagamento Rápida'}
-                              </label>
-                              {!showSecondPayment && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowSecondPayment(true);
-                                    const total = comanda.pendingAmount;
-                                    const half = Math.round((total / 2) * 100) / 100;
-                                    const rem = Math.round((total - half) * 100) / 100;
-                                    setPaymentInputAmount(half.toFixed(2));
-                                    setSecondPaymentInputAmount(rem.toFixed(2));
-                                    const validMethods = paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount);
-                                    if (!selectedPaymentMethodId && validMethods[0]) {
-                                      setSelectedPaymentMethodId(validMethods[0].id);
-                                    }
-                                    if (validMethods.length > 1) {
-                                      setSecondPaymentMethodId(validMethods[1].id);
-                                    } else if (validMethods[0]) {
-                                      setSecondPaymentMethodId(validMethods[0].id);
-                                    }
-                                  }}
-                                  className="text-[11px] text-emerald-700 font-black hover:text-emerald-800 flex items-center gap-1.5 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-lg border border-emerald-300 transition-all cursor-pointer shadow-xs"
-                                  title="Dividir comanda em 2 formas de pagamento"
-                                >
-                                  <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-black leading-none">+</span>
-                                  <span>Dividir em 2 Formas</span>
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Botões táteis das principais formas */}
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                              {paymentMethods
-                                .filter(m => m.type !== 'fiado' && !m.goesToClientAccount)
-                                .slice(0, 4)
-                                .map((m) => {
-                                  const isSelected = selectedPaymentMethodId === m.id;
-                                  return (
-                                    <button
-                                      key={`quick-btn-${m.id}`}
-                                      type="button"
-                                      onClick={() => setSelectedPaymentMethodId(m.id)}
-                                      className={`py-2.5 px-3 rounded-xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95 ${
-                                        isSelected
-                                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20 ring-2 ring-emerald-500/20'
-                                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-                                      }`}
-                                    >
-                                      {m.type === 'pix' ? <Smartphone size={15} /> :
-                                       m.type === 'dinheiro' ? <DollarSign size={15} /> :
-                                       <CreditCard size={15} />}
-                                      <span className="truncate">{m.name}</span>
-                                    </button>
-                                  );
-                                })}
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                            {/* Select de Formas Completas */}
+                        {!showSecondPayment ? (
+                          /* MODO PAGAMENTO ÚNICO */
+                          <div className="space-y-4">
+                            {/* Botões Táteis das Formas */}
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
-                                {showSecondPayment ? 'Outra 1ª Forma' : 'Todas as Formas'}
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                                Selecione a Forma
                               </label>
-                              <select
-                                value={selectedPaymentMethodId}
-                                onChange={(e) => setSelectedPaymentMethodId(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
-                              >
-                                <option value="">-- Selecione a Forma --</option>
-                                {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
-                                  <option key={m.id} value={m.id}>
-                                    {m.name} {m.type === 'dinheiro' ? '(Dinheiro)' : m.type === 'pix' ? '(PIX)' : ''}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                {paymentMethods
+                                  .filter(m => m.type !== 'fiado' && !m.goesToClientAccount)
+                                  .map((m) => {
+                                    const isSelected = selectedPaymentMethodId === m.id;
+                                    return (
+                                      <button
+                                        key={`quick-btn-${m.id}`}
+                                        type="button"
+                                        onClick={() => setSelectedPaymentMethodId(m.id)}
+                                        className={`py-3 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95 ${
+                                          isSelected
+                                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20 ring-2 ring-emerald-500/20'
+                                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                                        }`}
+                                      >
+                                        {m.type === 'pix' ? <Smartphone size={15} /> :
+                                         m.type === 'dinheiro' ? <DollarSign size={15} /> :
+                                         <CreditCard size={15} />}
+                                        <span className="truncate">{m.name}</span>
+                                      </button>
+                                    );
+                                  })}
+                              </div>
                             </div>
 
-                            {/* Valor Pago 1 */}
+                            {/* Campo Único de Valor a Pagar */}
                             <div className="space-y-1.5">
                               <div className="flex items-center justify-between">
-                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">
-                                  {showSecondPayment ? 'Valor 1ª Forma (R$)' : 'Valor Pago (R$)'}
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                                  Valor a Pagar (R$)
                                 </label>
-                                {comanda.pendingAmount > 0 && !showSecondPayment && (
+                                {comanda.pendingAmount > 0 && (
                                   <button
                                     type="button"
                                     onClick={() => setPaymentInputAmount(comanda.pendingAmount.toFixed(2))}
                                     className="text-[10px] text-emerald-700 hover:text-emerald-800 font-bold underline cursor-pointer"
                                   >
-                                    Total (R$ {comanda.pendingAmount.toFixed(2)})
+                                    Restante Total (R$ {comanda.pendingAmount.toFixed(2)})
                                   </button>
                                 )}
                               </div>
                               <div className="relative">
-                                <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                                <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                                 <input
                                   type="number"
                                   step="0.01"
                                   min="0.01"
                                   value={paymentInputAmount}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setPaymentInputAmount(val);
-                                    if (showSecondPayment) {
-                                      const num1 = Number(val) || 0;
-                                      const rest = Math.max(0, Math.round((comanda.pendingAmount - num1) * 100) / 100);
-                                      setSecondPaymentInputAmount(rest > 0 ? rest.toFixed(2) : '');
-                                    }
-                                  }}
+                                  onChange={(e) => setPaymentInputAmount(e.target.value)}
                                   placeholder={comanda.pendingAmount.toFixed(2)}
-                                  className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-9 pr-3.5 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                                  className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 pl-9 pr-3.5 text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs"
                                 />
                               </div>
                             </div>
                           </div>
-                        </div>
-
-                        {/* SEGUNDA FORMA DE PAGAMENTO (ADICIONADA PELO +) */}
-                        {showSecondPayment && (
-                          <div className="bg-emerald-50/50 border border-emerald-200/80 p-3.5 rounded-2xl space-y-3 animate-fade-in">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-black text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                                <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-black">+</span>
-                                <span>2ª Forma de Pagamento</span>
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setShowSecondPayment(false);
-                                  setSecondPaymentMethodId('');
-                                  setSecondPaymentInputAmount('');
-                                  setPaymentInputAmount(comanda.pendingAmount.toFixed(2));
-                                }}
-                                className="text-[10px] text-rose-600 hover:text-rose-700 font-bold px-2 py-0.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 transition-all cursor-pointer"
-                              >
-                                Remover 2ª Forma
-                              </button>
-                            </div>
+                        ) : (
+                          /* MODO DIVIDIR EM 2 FORMAS */
+                          <div className="bg-emerald-50/60 border border-emerald-200/90 p-4 rounded-2xl space-y-3.5 animate-fade-in">
+                            <span className="text-xs font-black text-emerald-800 uppercase tracking-wider block">
+                              Configurar as 2 Formas de Pagamento
+                            </span>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {/* Select de Forma de Pagamento 2 */}
+                              {/* 1ª Forma */}
                               <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">2ª Forma de Pagamento</label>
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">1ª Forma de Pagamento</label>
                                 <select
-                                  value={secondPaymentMethodId}
-                                  onChange={(e) => setSecondPaymentMethodId(e.target.value)}
-                                  className="w-full bg-white border border-slate-200 rounded-xl py-3 px-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                                  value={selectedPaymentMethodId}
+                                  onChange={(e) => setSelectedPaymentMethodId(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer"
                                 >
-                                  <option value="">-- Selecione o 2º Meio --</option>
+                                  <option value="">Selecione a 1ª Forma</option>
                                   {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
-                                    <option key={`m2_${m.id}`} value={m.id}>
-                                      {m.name} {m.type === 'dinheiro' ? '(Dinheiro)' : m.type === 'pix' ? '(PIX)' : ''}
+                                    <option key={m.id} value={m.id}>
+                                      {m.name}
                                     </option>
                                   ))}
                                 </select>
+                                <div className="relative">
+                                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    value={paymentInputAmount}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setPaymentInputAmount(val);
+                                      const num1 = Number(val) || 0;
+                                      const rest = Math.max(0, Math.round((comanda.pendingAmount - num1) * 100) / 100);
+                                      setSecondPaymentInputAmount(rest > 0 ? rest.toFixed(2) : '');
+                                    }}
+                                    placeholder="Valor 1"
+                                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs"
+                                  />
+                                </div>
                               </div>
 
-                              {/* Valor Pago 2 */}
+                              {/* 2ª Forma */}
                               <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Valor 2ª Forma (R$)</label>
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">2ª Forma de Pagamento</label>
+                                <select
+                                  value={secondPaymentMethodId}
+                                  onChange={(e) => setSecondPaymentMethodId(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer"
+                                >
+                                  <option value="">Selecione a 2ª Forma</option>
+                                  {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
+                                    <option key={`m2_${m.id}`} value={m.id}>
+                                      {m.name}
+                                    </option>
+                                  ))}
+                                </select>
                                 <div className="relative">
-                                  <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                   <input
                                     type="number"
                                     step="0.01"
                                     min="0.01"
                                     value={secondPaymentInputAmount}
                                     onChange={(e) => setSecondPaymentInputAmount(e.target.value)}
-                                    placeholder="0.00"
-                                    className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-9 pr-3.5 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                                    placeholder="Valor 2"
+                                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs"
                                   />
                                 </div>
                               </div>
@@ -3205,13 +3471,13 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           </div>
                         )}
 
-                        {/* Detect Overpayment / Surplus logic */}
+                        {/* Detecção de Excedente / Troco */}
                         {Number(paymentInputAmount) > comanda.pendingAmount && comanda.pendingAmount > 0 && (
-                          <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl space-y-3 animate-fade-in">
+                          <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-3 animate-fade-in">
                             <div className="flex items-center justify-between text-xs font-bold text-amber-900">
                               <span className="flex items-center gap-1.5">
                                 <AlertCircle size={15} className="text-amber-600 shrink-0" />
-                                <span>Valor pago (R$ {Number(paymentInputAmount).toFixed(2)}) maior que a Comanda (R$ {comanda.pendingAmount.toFixed(2)}). Excedente: <strong>R$ {(Number(paymentInputAmount) - comanda.pendingAmount).toFixed(2)}</strong></span>
+                                <span>Valor pago maior que a Comanda. Excedente: <strong>R$ {(Number(paymentInputAmount) - comanda.pendingAmount).toFixed(2)}</strong></span>
                               </span>
                             </div>
 
@@ -3267,8 +3533,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                           </div>
                         )}
 
-                        {/* Confirm entry into Cash Register */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
+                        {/* Checkbox de entrada no Caixa do Dia */}
+                        <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between">
                           <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700 select-none">
                             <input
                               type="checkbox"
@@ -3278,62 +3544,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             />
                             <span>Registrar entrada no Caixa do Dia?</span>
                           </label>
-
-                          <button
-                            type="button"
-                            disabled={
-                              loading || 
-                              !selectedPaymentMethodId || 
-                              Number(paymentInputAmount || 0) <= 0 ||
-                              (showSecondPayment && (!secondPaymentMethodId || Number(secondPaymentInputAmount || 0) <= 0))
-                            }
-                            onClick={async () => {
-                              const methodObj1 = paymentMethods.find(m => m.id === selectedPaymentMethodId);
-                              const amount1 = Number(paymentInputAmount) || 0;
-                              if (!methodObj1 || amount1 <= 0) {
-                                toast.error("Selecione a 1ª forma de pagamento e informe o valor!");
-                                return;
-                              }
-
-                              if (showSecondPayment) {
-                                const methodObj2 = paymentMethods.find(m => m.id === secondPaymentMethodId);
-                                const amount2 = Number(secondPaymentInputAmount) || 0;
-                                if (!methodObj2 || amount2 <= 0) {
-                                  toast.error("Selecione a 2ª forma de pagamento e informe o valor!");
-                                  return;
-                                }
-
-                                // Lança a 1ª forma
-                                await handleAddPayment(methodObj1.type as any, amount1, methodObj1.id, {
-                                  entersCash: entersCashChoice,
-                                  excessMode: 'troco'
-                                });
-
-                                // Lança a 2ª forma
-                                await handleAddPayment(methodObj2.type as any, amount2, methodObj2.id, {
-                                  entersCash: entersCashChoice,
-                                  excessMode
-                                });
-
-                                // Reset do formulário de 2 formas
-                                setShowSecondPayment(false);
-                                setSecondPaymentMethodId('');
-                                setSecondPaymentInputAmount('');
-                                setPaymentInputAmount('');
-                                setSelectedPaymentMethodId('');
-                                toast.success("As 2 formas de pagamento foram lançadas com sucesso!");
-                              } else {
-                                handleAddPayment(methodObj1.type as any, amount1, methodObj1.id, {
-                                  entersCash: entersCashChoice,
-                                  excessMode
-                                });
-                              }
-                            }}
-                            className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md transition-all active:scale-95 disabled:opacity-40 flex items-center gap-2 cursor-pointer"
-                          >
-                            {loading ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-                            <span>{showSecondPayment ? 'Lançar as 2 Formas' : 'Lançar Pagamento'}</span>
-                          </button>
                         </div>
                       </div>
                     </>
@@ -3526,7 +3736,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             )}
           </div>
         </div>
-      </motion.div>
+        )}
+      </div>
+    </motion.div>
 
       {/* Item Selector Modal */}
       <AnimatePresence>
@@ -3889,220 +4101,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         )}
       </AnimatePresence>
 
-      {/* Payment Modal */}
-      <AnimatePresence>
-        {showPaymentModal && (
-          <div 
-            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
-            onClick={() => setShowPaymentModal(false)}
-          >
-            <motion.div 
-              onClick={(e) => e.stopPropagation()}
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-surface border border-border w-full max-w-xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto"
-            >
-              <div className="p-6 border-b border-border flex items-center justify-between bg-slate-50/50 shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-600 shadow-sm border border-emerald-100">
-                    <DollarSign size={20} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-primary">Registrar Pagamento</h3>
-                    <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Selecione a forma de recebimento</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShowPaymentModal(false)} 
-                  className="p-3 text-muted hover:text-primary hover:bg-slate-100 transition-colors bg-white rounded-xl border border-slate-100 shadow-sm min-w-[44px] min-h-[44px] flex items-center justify-center"
-                  title="Fechar"
-                >
-                  <X size={22} />
-                </button>
-              </div>
-              
-              <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar flex-1">
-                <div className="bg-emerald-50 border border-emerald-100 p-8 rounded-3xl text-center relative overflow-hidden shadow-sm">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500/20" />
-                  <p className="text-[10px] text-emerald-600 uppercase tracking-widest font-black mb-1">Valor Pendente</p>
-                  <p className="text-5xl font-black text-emerald-700 tracking-tighter">R$ {(comanda.pendingAmount ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                </div>
 
-                {/* Notice banner for active client debts abatement */}
-                {(() => {
-                  const totalPendingDebts = clientDebts.reduce((sum, d) => sum + (d.remainingAmount || 0), 0);
-                  if (totalPendingDebts <= 0 || !comanda.cliente_id || comanda.cliente_id === 'avulso') return null;
-                  const enteredAmt = Number(partialAmount) || 0;
-                  const excessAmt = Math.max(0, enteredAmt - (comanda.pendingAmount || 0));
-                  const abateAmt = Math.min(excessAmt, totalPendingDebts);
-
-                  return (
-                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
-                      <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={18} />
-                      <div className="text-xs text-amber-900 space-y-1">
-                        <p className="font-bold">
-                          O cliente <span className="underline">{comanda.cliente_name}</span> possui <strong className="text-amber-700">R$ {totalPendingDebts.toFixed(2)}</strong> em fiado pendente.
-                        </p>
-                        <p className="text-[11px] text-amber-700 leading-relaxed font-medium">
-                          Ao informar um valor maior que R$ {comanda.pendingAmount.toFixed(2)}, o valor excedente será abatido automaticamente das dívidas antigas do cliente.
-                        </p>
-                        {abateAmt > 0 && (
-                          <div className="mt-2 pt-2 border-t border-amber-200/80 font-black text-amber-800 flex items-center justify-between">
-                            <span>Abatimento de Fiado Previsto:</span>
-                            <span className="text-sm bg-amber-200/80 px-2.5 py-0.5 rounded-lg">R$ {abateAmt.toFixed(2)}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor a Pagar Agora</label>
-                  <div className="relative">
-                    <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                    <input 
-                      type="number"
-                      value={partialAmount}
-                      onChange={(e) => setPartialAmount(e.target.value)}
-                      placeholder={comanda.pendingAmount.toString()}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-5 pl-12 pr-24 text-2xl text-primary font-black focus:outline-none focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500/50 transition-all shadow-inner"
-                    />
-                    <button 
-                      onClick={() => setPartialAmount(comanda.pendingAmount.toString())}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-sm active:scale-95"
-                    >
-                      TOTAL
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  {clientLoyalty && clientLoyalty.cashback > 0 && (
-                    (() => {
-                      const minVal = loyaltyConfig?.minRedemptionValue || 0;
-                      const hasMin = minVal <= 0 || clientLoyalty.cashback >= minVal;
-                      return (
-                        <button
-                          onClick={() => {
-                            if (!hasMin) {
-                              toast.error(`Mínimo para resgate: R$ ${minVal.toFixed(2)}. Saldo atual: R$ ${clientLoyalty.cashback.toFixed(2)}`);
-                              return;
-                            }
-                            const amount = Math.min(Number(partialAmount) || comanda.pendingAmount, clientLoyalty.cashback);
-                            handleAddPayment('resgate', amount);
-                          }}
-                          disabled={loading || comanda.pendingAmount <= 0}
-                          className={`col-span-2 p-6 border-2 rounded-3xl flex items-center justify-between transition-all shadow-sm active:scale-95 group ${
-                            hasMin 
-                              ? 'bg-amber-50 border-amber-200 hover:bg-amber-100' 
-                              : 'bg-slate-50 border-slate-200 opacity-75'
-                          }`}
-                        >
-                          <div className="flex items-center gap-4">
-                            <div className={`w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border group-hover:scale-110 transition-transform ${
-                              hasMin ? 'text-amber-600 border-amber-100' : 'text-slate-400 border-slate-200'
-                            }`}>
-                              <Zap size={24} fill="currentColor" />
-                            </div>
-                            <div className="text-left">
-                              <p className={`text-[10px] font-black uppercase tracking-widest leading-none mb-1 ${
-                                hasMin ? 'text-amber-700' : 'text-slate-500'
-                              }`}>
-                                Usar Saldo / Cashback
-                              </p>
-                              <p className={`text-sm font-bold ${hasMin ? 'text-amber-900' : 'text-slate-700'}`}>
-                                Você tem R$ {(clientLoyalty?.cashback ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} disponíveis
-                              </p>
-                              {!hasMin && (
-                                <p className="text-[11px] text-amber-600 font-semibold mt-0.5">
-                                  Valor mínimo necessário para resgate: R$ {minVal.toFixed(2)}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl shadow-sm transition-colors ${
-                              hasMin ? 'bg-amber-600 text-white group-hover:bg-amber-700' : 'bg-slate-200 text-slate-600'
-                            }`}>
-                              {hasMin ? 'Resgatar Agora' : `Mín. R$ ${minVal}`}
-                            </span>
-                            <ChevronRight size={16} className={hasMin ? 'text-amber-400' : 'text-slate-400'} />
-                          </div>
-                        </button>
-                      );
-                    })()
-                  )}
-                  {paymentMethods.filter(method => method.type !== 'fiado' && !method.goesToClientAccount).map((method, index) => {
-                    const amount = partialAmount ? Number(partialAmount) : comanda.pendingAmount;
-                    const isFiado = method.type === 'fiado' || method.goesToClientAccount;
-                    
-                    return (
-                      <button
-                        key={`pm-sel-${method.id || index}-${index}`}
-                        disabled={amount <= 0 || (amount < comanda.pendingAmount && !method.allowsPartial)}
-                        onClick={() => {
-                          if (amount <= 0) return;
-                          if (isFiado) {
-                            setConfirmFiado({ amount, method: method.type, methodId: method.id });
-                            return;
-                          }
-                          handleAddPayment(method.type, amount, method.id);
-                          setPartialAmount('');
-                        }}
-                        className={`flex flex-col items-center justify-center gap-4 p-6 border-2 rounded-2xl transition-all group relative overflow-hidden ${
-                          amount <= 0 || (amount < comanda.pendingAmount && !method.allowsPartial)
-                            ? 'bg-slate-50 border-slate-100 opacity-40 cursor-not-allowed'
-                            : isFiado 
-                              ? 'bg-white border-slate-100 hover:border-amber-500/50 hover:bg-amber-50 shadow-sm'
-                              : 'bg-white border-slate-100 hover:border-emerald-500/50 hover:bg-emerald-50 shadow-sm'
-                        }`}
-                      >
-                        <div className={`p-4 rounded-2xl transition-all group-hover:scale-110 ${
-                          isFiado ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                        }`}>
-                          {method.type === 'pix' ? <Smartphone size={24} /> : 
-                           method.type === 'dinheiro' ? <DollarSign size={24} /> : 
-                           method.type === 'fiado' ? <AlertCircle size={24} /> : 
-                           method.type === 'assinatura' ? <Wallet size={24} /> : <CreditCard size={24} />}
-                        </div>
-                        <div className="text-center">
-                          <span className="text-sm font-bold text-primary block">{method.name}</span>
-                          <div className="flex flex-col items-center gap-1 mt-1.5">
-                            {method.feePercentage > 0 && (
-                              <span className="text-[9px] text-muted font-bold uppercase tracking-widest">Taxa: {method.feePercentage}%</span>
-                            )}
-                            {method.entersCashImmediately || method.type === 'dinheiro' || method.type === 'pix' ? (
-                              <span className="text-[8px] bg-emerald-50 text-emerald-600 border border-emerald-100 font-bold uppercase px-1.5 py-0.5 rounded-md tracking-wider">Disponível Hoje</span>
-                            ) : method.goesToReceivables || method.type === 'credito' || method.type === 'debito' ? (
-                              <span className="text-[8px] bg-blue-50 text-blue-600 border border-blue-100 font-bold uppercase px-1.5 py-0.5 rounded-md tracking-wider">D+{method.settlementDays || 1} amanhã/futuro</span>
-                            ) : method.type === 'fiado' || method.goesToClientAccount ? (
-                              <span className="text-[8px] bg-amber-50 text-amber-600 border border-amber-100 font-bold uppercase px-1.5 py-0.5 rounded-md tracking-wider">Conta Fiado</span>
-                            ) : null}
-                          </div>
-                        </div>
-                        {!method.allowsPartial && amount < comanda.pendingAmount && (
-                          <div className="absolute inset-0 bg-white/90 flex items-center justify-center rounded-2xl">
-                            <span className="text-[9px] font-black text-red-600 uppercase tracking-widest text-center px-4 leading-tight">Apenas Pagamento Total</span>
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {paymentMethods.length === 0 && (
-                  <div className="text-center py-16 bg-slate-50 border border-dashed border-slate-200 rounded-3xl">
-                    <AlertCircle className="mx-auto text-slate-300 mb-3" size={40} />
-                    <p className="text-muted text-sm font-medium italic">Nenhum método de pagamento ativo.</p>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
       {/* Reopen Modal */}
         <AnimatePresence>
           {showReopenModal && (
@@ -4242,7 +4241,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         onConfirm={() => {
           if (confirmFiado) {
             handleAddPayment(confirmFiado.method as any, confirmFiado.amount, confirmFiado.methodId);
-            setPartialAmount('');
           }
         }}
         title="Confirmar Fiado"

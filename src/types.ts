@@ -340,8 +340,10 @@ export interface DailyCash {
   updatedAt?: any;
   // Legacy mappings used in UI
   openingBalance?: number;
+  closingBalance?: number;
   totalIncome?: number;
   totalExpense?: number;
+  totalSangria?: number;
   openedByName?: string;
   closedByName?: string;
 }

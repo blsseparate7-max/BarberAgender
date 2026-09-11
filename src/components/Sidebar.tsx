@@ -23,6 +23,7 @@ import {
   Receipt,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   ShieldCheck,
   Box,
   PieChart,
@@ -79,6 +80,21 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
   const { tenant } = useTenant();
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapse = () => {
+    const next = !isCollapsed;
+    setIsCollapsed(next);
+    try {
+      localStorage.setItem('sidebar_collapsed', next ? 'true' : 'false');
+    } catch {}
+  };
 
   useEffect(() => {
     if (profile?.tipo === 'admin' || profile?.tipo === 'gerente') {
@@ -260,38 +276,102 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
 
   return (
     <aside className={`
-      fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-slate-100 flex flex-col 
-      transition-transform duration-300 ease-in-out transform
+      fixed inset-y-0 left-0 z-50 bg-white border-r border-slate-100 flex flex-col 
+      transition-all duration-300 ease-in-out transform
       ${isOpen ? 'translate-x-0' : '-translate-x-full'}
-      md:translate-x-0 md:static md:w-64 lg:w-72
+      md:translate-x-0 md:static ${isCollapsed ? 'md:w-20 lg:w-20' : 'md:w-64 lg:w-72'} w-72
     `}>
-      <div className="p-8 flex flex-col h-full">
-        <div className="flex items-center justify-between mb-12">
-          <div className="flex items-center gap-4">
+      <div className={`flex flex-col h-full ${isCollapsed ? 'p-3 py-6' : 'p-8'} transition-all duration-300`}>
+        {/* Header */}
+        <div className={`flex items-center ${isCollapsed ? 'justify-center flex-col gap-3' : 'justify-between'} mb-8 transition-all`}>
+          <div className="flex items-center gap-3">
             {tenant?.logoUrl ? (
-              <img src={tenant.logoUrl} alt={tenant.name} className="w-12 h-12 rounded-2xl object-cover shadow-xl shadow-primary/10" referrerPolicy="no-referrer" />
+              <img src={tenant.logoUrl} alt={tenant.name} className={`${isCollapsed ? 'w-10 h-10' : 'w-12 h-12'} rounded-2xl object-cover shadow-xl shadow-primary/10 transition-all`} referrerPolicy="no-referrer" />
             ) : (
-              <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/20">
-                {tenant?.niche === 'petshop' ? <Dog className="text-white w-6 h-6" /> :
-                 tenant?.niche === 'clinica' ? <Stethoscope className="text-white w-6 h-6" /> :
-                 tenant?.niche === 'manicure' ? <Sparkles className="text-white w-6 h-6" /> :
-                 <Scissors className="text-white w-6 h-6" />}
+              <div className={`${isCollapsed ? 'w-10 h-10' : 'w-12 h-12'} bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/20 transition-all`}>
+                {tenant?.niche === 'petshop' ? <Dog className="text-white w-5 h-5" /> :
+                 tenant?.niche === 'clinica' ? <Stethoscope className="text-white w-5 h-5" /> :
+                 tenant?.niche === 'manicure' ? <Sparkles className="text-white w-5 h-5" /> :
+                 <Scissors className="text-white w-5 h-5" />}
               </div>
             )}
-            <h1 className="text-2xl font-black tracking-tight text-primary leading-tight truncate max-w-[140px]" title={tenant?.name || "Rull"}>
-              {tenant?.name || "Rull"}
-            </h1>
+            {!isCollapsed && (
+              <h1 className="text-2xl font-black tracking-tight text-primary leading-tight truncate max-w-[140px]" title={tenant?.name || "Rull"}>
+                {tenant?.name || "Rull"}
+              </h1>
+            )}
           </div>
+
+          {/* Mobile Close Button */}
           <button onClick={() => setIsOpen(false)} className="md:hidden p-2.5 text-slate-400 hover:text-primary bg-slate-50 rounded-xl border border-slate-100">
             <X size={24} />
           </button>
+
+          {/* Desktop Collapse/Expand Toggle Button */}
+          <button 
+            onClick={toggleCollapse} 
+            title={isCollapsed ? "Expandir menu lateral (>)" : "Ocultar menu lateral (<)"}
+            className={`hidden md:flex items-center justify-center p-2 text-slate-400 hover:text-primary hover:bg-slate-100 bg-slate-50 rounded-xl border border-slate-200/80 shadow-sm transition-all active:scale-95 ${isCollapsed ? 'w-10 h-10' : ''}`}
+          >
+            {isCollapsed ? <ChevronRight size={18} className="text-accent" /> : <ChevronLeft size={18} />}
+          </button>
         </div>
 
-        <nav className="space-y-2 flex-1 overflow-y-auto pr-2 custom-scrollbar">
+        {/* Navigation */}
+        <nav className="space-y-2 flex-1 overflow-y-auto pr-1 custom-scrollbar">
           {filteredMenu.map((item) => {
             const isExpanded = expandedMenus[item.id];
             const hasSubItems = item.subItems && item.subItems.length > 0;
             const isActive = activeTab === item.id || item.subItems?.some(sub => sub.id === activeTab);
+
+            if (isCollapsed) {
+              return (
+                <div key={item.id} className="relative group">
+                  <button
+                    onClick={() => {
+                      if (hasSubItems) {
+                        const activeSub = item.subItems?.find(sub => sub.id === activeTab) || item.subItems?.[0];
+                        if (activeSub) handleNavItemClick(activeSub.id);
+                      } else {
+                        handleNavItemClick(item.id);
+                      }
+                    }}
+                    title={item.label}
+                    className={`w-full flex items-center justify-center p-3.5 rounded-2xl transition-all group active:scale-[0.98] ${
+                      isActive 
+                        ? 'bg-primary text-white shadow-lg shadow-primary/10' 
+                        : 'text-slate-400 hover:text-primary hover:bg-slate-50 border border-transparent hover:border-slate-100'
+                    }`}
+                  >
+                    <span className={`${isActive ? 'text-white' : 'text-slate-400 group-hover:text-accent'} transition-colors`}>
+                      {item.icon}
+                    </span>
+                  </button>
+
+                  {/* Flyout Submenu on Hover in Collapsed Mode */}
+                  {hasSubItems && (
+                    <div className="absolute left-full top-0 ml-2 hidden group-hover:flex flex-col bg-white border border-slate-100 shadow-xl rounded-2xl p-2 z-50 min-w-[200px] animate-in fade-in slide-in-from-left-2">
+                      <div className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-primary/70 border-b border-slate-100 mb-1">
+                        {item.label}
+                      </div>
+                      {item.subItems?.filter(sub => profile && sub.roles.includes(profile.tipo)).map((sub, sIdx) => (
+                        <button
+                          key={`flyout-sub-${sub.id || sIdx}-${sIdx}`}
+                          onClick={() => handleNavItemClick(sub.id)}
+                          className={`w-full text-left px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                            activeTab === sub.id
+                              ? 'text-accent bg-accent/5 font-bold'
+                              : 'text-slate-600 hover:text-primary hover:bg-slate-50'
+                          }`}
+                        >
+                          {sub.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
 
             return (
               <div key={item.id} className="space-y-1.5">
@@ -352,8 +432,9 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
           })}
         </nav>
 
-        <div className="pt-6 border-t border-slate-100 space-y-4">
-          {isSaaSAdminUser && (
+        {/* Footer */}
+        <div className="pt-4 border-t border-slate-100 space-y-3">
+          {isSaaSAdminUser && !isCollapsed && (
             <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 shadow-inner">
               <span className="block text-[9px] font-black uppercase tracking-widest text-[#94a3b8] mb-2.5 text-center">
                 ⚙️ Simulador de Perfil
@@ -379,12 +460,13 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
 
           <button 
             onClick={handleLogout}
-            className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted hover:text-red-600 hover:bg-red-50 transition-all group active:scale-[0.98]"
+            title={isCollapsed ? "Sair" : undefined}
+            className={`w-full flex items-center ${isCollapsed ? 'justify-center p-3.5' : 'gap-4 px-5 py-4'} rounded-2xl text-[11px] font-black uppercase tracking-widest text-muted hover:text-red-600 hover:bg-red-50 transition-all group active:scale-[0.98]`}
           >
             <span className="text-slate-400 group-hover:text-red-600 transition-colors">
               <LogOut size={20} />
             </span>
-            Sair
+            {!isCollapsed && "Sair"}
           </button>
         </div>
       </div>

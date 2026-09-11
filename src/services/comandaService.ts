@@ -800,7 +800,14 @@ export const comandaService = {
     });
   },
 
-  async addPayment(id: string, payment: Omit<ComandaPayment, 'id' | 'netAmount' | 'feeAmount' | 'settlementDate'>, userId: string, userName: string) {
+  async addPayment(
+    id: string, 
+    payment: Omit<ComandaPayment, 'id' | 'netAmount' | 'feeAmount' | 'settlementDate'>, 
+    userId: string, 
+    userName: string,
+    options?: { addToCashSession?: boolean }
+  ) {
+    const addToCashSession = options?.addToCashSession !== false;
     const docRef = doc(db, COLLECTION, id);
     
     // 1. Pre-fetch non-transactional data
@@ -1051,11 +1058,12 @@ export const comandaService = {
         };
         transaction.set(financialRef, financialTx);
 
-        if (!cashDoc && ['fiado', 'resgate'].indexOf(payment.method) === -1) {
-          throw new Error("O caixa do dia está fechado. Por favor, abra o caixa antes de registrar este pagamento.");
-        }
+        if (addToCashSession) {
+          if (!cashDoc && ['fiado', 'resgate'].indexOf(payment.method) === -1) {
+            throw new Error("O caixa do dia está fechado. Por favor, abra o caixa antes de registrar este pagamento.");
+          }
 
-        if (cashDoc) {
+          if (cashDoc) {
           const caixa_id = cashDoc.id;
           const movementRef = doc(collection(db, 'cash_movements'));
           const movement: CashMovement = {
@@ -1095,6 +1103,7 @@ export const comandaService = {
           }
         }
       }
+    }
 
       if (methodConfig.goesToClientAccount) {
         const debtRef = doc(collection(db, 'client_debts'));
@@ -2014,7 +2023,8 @@ export const comandaService = {
                 0,
                 actualPaidAmount,
                 `Pontos Comanda #${postData.number || id}`,
-                'appointment'
+                'appointment',
+                id
               );
             }
           } catch (loyaltyErr) {
@@ -2023,10 +2033,10 @@ export const comandaService = {
         }
       } else if (status === 'cancelada' || postData?.status === 'cancelada') {
         await this.cancelLinkedAppointments(id, linkedAppIdPost);
-        await commissionService.cancelCommissionsByComanda(id);
+        await this.revertComandaFinancials(id, postData?.cliente_id);
       } else if (status === 'ausente' || postData?.status === 'ausente') {
         await this.markAbsentLinkedAppointments(id, linkedAppIdPost);
-        await commissionService.cancelCommissionsByComanda(id);
+        await this.revertComandaFinancials(id, postData?.cliente_id);
       }
     } catch (e) {
       console.error("Error updating linked appointments inside closeComanda:", e);
@@ -2483,5 +2493,147 @@ export const comandaService = {
         updatedAt: serverTimestamp()
       });
     });
+
+    try {
+      await loyaltyService.revertComandaLoyalty(id, initialComanda.cliente_id);
+    } catch (lErr) {
+      console.warn("Could not revert loyalty in reopenComanda:", lErr);
+    }
+  },
+
+  async revertComandaFinancials(id: string, clienteId?: string) {
+    try {
+      const docRef = doc(db, COLLECTION, id);
+      const initialSnap = await getDoc(docRef);
+      if (!initialSnap.exists()) return;
+      const comanda = initialSnap.data() as Comanda;
+
+      const clientDebtDocs = await getDocs(query(collection(db, 'client_debts'), where('comanda_id', '==', id)));
+      const debtIds = clientDebtDocs.docs.map(d => d.id);
+
+      const relatedQueries: Promise<any>[] = [
+        getDocs(query(collection(db, 'financial_transactions'), where('comanda_id', '==', id))),
+        getDocs(query(collection(db, 'cash_movements'), where('referencia_id', '==', id))),
+        getDocs(query(collection(db, 'commissions'), where('comanda_id', '==', id))),
+        getDocs(query(collection(db, 'inventory_movements'), where('referencia_id', '==', id))),
+      ];
+
+      if (debtIds.length > 0) {
+        relatedQueries.push(getDocs(query(collection(db, 'debt_payments'), where('divida_id', 'in', debtIds))));
+        relatedQueries.push(getDocs(query(collection(db, 'cash_movements'), where('referencia_id', 'in', debtIds))));
+      } else {
+        relatedQueries.push(Promise.resolve({ docs: [] }));
+        relatedQueries.push(Promise.resolve({ docs: [] }));
+      }
+
+      const [financialTxs, cashMovements, commissions, inventoryMovements, debtPayments, debtCashMovements] = await Promise.all(relatedQueries);
+
+      const allCashMovements = [...cashMovements.docs, ...debtCashMovements.docs];
+      const cashIds = Array.from(new Set(allCashMovements.map(d => d.data().caixa_id))).filter(Boolean) as string[];
+      const cashSnaps = await Promise.all(cashIds.map(cid => getDoc(doc(db, 'cash_sessions', cid))));
+      const cashMap = Object.fromEntries(cashSnaps.filter(s => s.exists()).map(s => [s.id, s.data()]));
+
+      const productIds = Array.from(new Set(inventoryMovements.docs.map(d => d.data().produto_id))).filter(Boolean) as string[];
+      const productSnaps = await Promise.all(productIds.map(pid => getDoc(doc(db, 'products', pid))));
+      const productsMap = Object.fromEntries(productSnaps.filter(s => s.exists()).map(s => [s.id, s.data()]));
+
+      await runTransaction(db, async (transaction) => {
+        // Commissions
+        commissions.docs.forEach(d => {
+          const comm = d.data();
+          if (comm.status === 'pago') {
+            const logRef = doc(collection(db, 'inconsistency_logs'));
+            transaction.set(logRef, {
+              id: logRef.id,
+              type: 'commission_cancel_paid',
+              comanda_id: id,
+              comanda_number: comanda.number,
+              profissional_id: comm.profissional_id,
+              profissional_name: comm.profissional_name,
+              amount: comm.commission_value,
+              date: new Date().toISOString(),
+              createdAt: serverTimestamp()
+            });
+          } else {
+            transaction.delete(d.ref);
+          }
+        });
+
+        // Inventory
+        inventoryMovements.docs.forEach(d => {
+          const movement = d.data();
+          if (productsMap[movement.produto_id]) {
+            const pRef = doc(db, 'products', movement.produto_id);
+            transaction.update(pRef, {
+              currentStock: increment(movement.quantity),
+              updatedAt: serverTimestamp()
+            });
+          }
+          transaction.delete(d.ref);
+        });
+
+        // Financial Txs
+        financialTxs.docs.forEach(d => transaction.delete(d.ref));
+
+        // Cash Movements
+        allCashMovements.forEach(d => {
+          const movement = d.data() as CashMovement;
+          const cashData = cashMap[movement.caixa_id];
+          if (cashData) {
+            const cashRef = doc(db, 'cash_sessions', movement.caixa_id);
+            if (movement.is_receivable) {
+              transaction.update(cashRef, {
+                total_receivables: increment(-movement.amount),
+                totalReceivables: increment(-movement.amount),
+                updatedAt: serverTimestamp()
+              });
+            } else {
+              transaction.update(cashRef, {
+                total_income: increment(-movement.amount),
+                totalIncome: increment(-movement.amount),
+                expected_balance: increment(-movement.amount),
+                expectedBalance: increment(-movement.amount),
+                updatedAt: serverTimestamp()
+              });
+            }
+          }
+          transaction.delete(d.ref);
+        });
+
+        // Client Debts
+        clientDebtDocs.docs.forEach(d => transaction.delete(d.ref));
+        debtPayments.docs.forEach(d => transaction.delete(d.ref));
+
+        // Client Stats
+        const targetClientId = clienteId || comanda.cliente_id;
+        if (targetClientId && targetClientId !== 'avulso') {
+          const clientRef = doc(db, 'usuarios', targetClientId);
+          const cSnap = await transaction.get(clientRef);
+          if (cSnap.exists()) {
+            const cashPaidOnComanda = (comanda.payments || [])
+              .filter(p => p.method !== 'fiado')
+              .reduce((acc, p) => acc + p.amount, 0);
+
+            const currentOpenAmountFromThisComanda = clientDebtDocs.docs.reduce((acc, d) => acc + d.data().remainingAmount, 0);
+
+            transaction.update(clientRef, {
+              total_gasto: increment(-comanda.totalAmount),
+              totalSpent: increment(-comanda.totalAmount),
+              total_pago: increment(-cashPaidOnComanda),
+              totalPaid: increment(-cashPaidOnComanda),
+              total_em_aberto: increment(-currentOpenAmountFromThisComanda),
+              updatedAt: serverTimestamp()
+            });
+          }
+        }
+      });
+
+      // Loyalty Reversal
+      await loyaltyService.revertComandaLoyalty(id, clienteId || comanda.cliente_id);
+      // Cancel Commissions
+      await commissionService.cancelCommissionsByComanda(id);
+    } catch (err) {
+      console.warn("Error in revertComandaFinancials:", err);
+    }
   }
 };

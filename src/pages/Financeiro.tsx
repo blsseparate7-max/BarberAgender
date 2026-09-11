@@ -49,7 +49,8 @@ import {
   Activity,
   Trash2,
   Landmark,
-  Globe
+  Globe,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -472,56 +473,55 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       const cat = (t.category || '').toLowerCase();
       const desc = (t.description || '').toLowerCase();
 
-      // If transaction has explicit breakdown amounts, allocate proportionally
-      if (t.service_amount !== undefined || t.product_amount !== undefined || t.package_amount !== undefined || t.subscription_amount !== undefined) {
-        const sAmt = t.service_amount || 0;
-        const pAmt = t.product_amount || 0;
-        const pacAmt = t.package_amount || 0;
-        const subAmt = t.subscription_amount || 0;
-        const sumParts = sAmt + pAmt + pacAmt + subAmt;
+      // If paid, calculate item type grouping & revenue distribution
+      if (isPaid) {
+        if (t.service_amount !== undefined || t.product_amount !== undefined || t.package_amount !== undefined || t.subscription_amount !== undefined) {
+          const sAmt = t.service_amount || 0;
+          const pAmt = t.product_amount || 0;
+          const pacAmt = t.package_amount || 0;
+          const subAmt = t.subscription_amount || 0;
+          const sumParts = sAmt + pAmt + pacAmt + subAmt;
 
-        if (sumParts > 0) {
-          const ratio = amount / sumParts;
-          if (sAmt > 0) {
-            itemMap.servicos.total += sAmt * ratio;
-            if (isPaid) itemMap.servicos.pgto += sAmt * ratio;
-          }
-          if (pAmt > 0) {
-            itemMap.produtos.total += pAmt * ratio;
-            if (isPaid) itemMap.produtos.pgto += pAmt * ratio;
-          }
-          if (pacAmt > 0) {
-            itemMap.pacotes.total += pacAmt * ratio;
-            if (isPaid) itemMap.pacotes.pgto += pacAmt * ratio;
-          }
-          if (subAmt > 0) {
-            itemMap.assinaturas.total += subAmt * ratio;
-            if (isPaid) itemMap.assinaturas.pgto += subAmt * ratio;
+          if (sumParts > 0) {
+            const ratio = amount / sumParts;
+            if (sAmt > 0) {
+              itemMap.servicos.total += sAmt * ratio;
+              itemMap.servicos.pgto += sAmt * ratio;
+            }
+            if (pAmt > 0) {
+              itemMap.produtos.total += pAmt * ratio;
+              itemMap.produtos.pgto += pAmt * ratio;
+            }
+            if (pacAmt > 0) {
+              itemMap.pacotes.total += pacAmt * ratio;
+              itemMap.pacotes.pgto += pacAmt * ratio;
+            }
+            if (subAmt > 0) {
+              itemMap.assinaturas.total += subAmt * ratio;
+              itemMap.assinaturas.pgto += subAmt * ratio;
+            }
+          } else {
+            itemMap.servicos.total += amount;
+            itemMap.servicos.pgto += amount;
           }
         } else {
-          itemMap.servicos.total += amount;
-          if (isPaid) itemMap.servicos.pgto += amount;
-        }
-      } else {
-        // Fallback for legacy transactions
-        let itemKey: 'servicos' | 'pacotes' | 'assinaturas' | 'produtos' = 'servicos';
+          // Fallback for legacy transactions
+          let itemKey: 'servicos' | 'pacotes' | 'assinaturas' | 'produtos' = 'servicos';
 
-        if (cat.includes('assinat') || desc.includes('assinat') || desc.includes('plano') || pmKey === 'assinatura') {
-          itemKey = 'assinaturas';
-        } else if (cat.includes('pacote') || desc.includes('pacote')) {
-          itemKey = 'pacotes';
-        } else if (
-          (cat === 'produtos' || cat === 'produto' || cat.includes('estoque') || desc.includes('venda de produto') || desc.includes('venda produto')) &&
-          !cat.includes('serviço') && !cat.includes('servico')
-        ) {
-          itemKey = 'produtos';
-        } else {
-          // Default to services (including 'Serviços/Produtos' without specific product tag)
-          itemKey = 'servicos';
-        }
+          if (cat.includes('assinat') || desc.includes('assinat') || desc.includes('plano') || pmKey === 'assinatura') {
+            itemKey = 'assinaturas';
+          } else if (cat.includes('pacote') || desc.includes('pacote')) {
+            itemKey = 'pacotes';
+          } else if (
+            (cat === 'produtos' || cat === 'produto' || cat.includes('estoque') || desc.includes('venda de produto') || desc.includes('venda produto')) &&
+            !cat.includes('serviço') && !cat.includes('servico')
+          ) {
+            itemKey = 'produtos';
+          } else {
+            itemKey = 'servicos';
+          }
 
-        itemMap[itemKey].total += amount;
-        if (isPaid) {
+          itemMap[itemKey].total += amount;
           itemMap[itemKey].pgto += amount;
         }
       }
@@ -559,6 +559,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   // Modal states
   const [isCashModalOpen, setIsCashModalOpen] = useState(false);
   const [cashToReopen, setCashToReopen] = useState<DailyCash | null>(null);
+  const [selectedCashForView, setSelectedCashForView] = useState<DailyCash | null>(null);
   const [reopenReason, setReopenReason] = useState('');
   const [selectedMovementForDetails, setSelectedMovementForDetails] = useState<any | null>(null);
 
@@ -1352,9 +1353,9 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                                 despesas: 0
                               };
                             }
-                            if (t.type === 'income') {
+                            if (t.type === 'income' && t.status === 'pago') {
                               dailyMap[dateStr].receitas += t.amount;
-                            } else if (t.type === 'expense' || t.type === 'sangria') {
+                            } else if ((t.type === 'expense' || t.type === 'sangria') && t.status === 'pago') {
                               dailyMap[dateStr].despesas += t.amount;
                             }
                           });
@@ -1777,7 +1778,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                         <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Saldo Final</th>
                         <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Diferença</th>
                         <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Status</th>
-                        {(isAdmin || isGerente) && <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Ações</th>}
+                        <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
@@ -1785,7 +1786,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                         .slice((cashHistoryCurrentPage - 1) * cashHistoryPageSize, cashHistoryCurrentPage * cashHistoryPageSize)
                         .map((cash, index) => (
                         <tr key={`cash-hist-${cash.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-8 py-6 text-sm font-bold text-primary">{format(new Date(cash.date), 'dd/MM/yyyy')}</td>
+                          <td className="px-8 py-6 text-sm font-bold text-primary">{format(new Date(cash.date + 'T00:00:00'), 'dd/MM/yyyy')}</td>
                           <td className="px-8 py-6">
                             <p className="text-sm font-bold text-primary">{cash.openedByName}</p>
                             {cash.closedByName && <p className="text-[10px] text-muted font-bold">Fechado por: {cash.closedByName}</p>}
@@ -1806,24 +1807,31 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                               {cash.status === 'open' ? 'Aberto' : 'Fechado'}
                             </span>
                           </td>
-                          {(isAdmin || isGerente) && (
-                            <td className="px-8 py-6 text-center">
-                              {cash.status === 'closed' && (
+                          <td className="px-8 py-6 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => setSelectedCashForView(cash)}
+                                className="p-2 text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-xl transition-all cursor-pointer"
+                                title="Visualizar Detalhes e Extrato do Caixa"
+                              >
+                                <Eye size={16} />
+                              </button>
+                              {(isAdmin || isGerente) && cash.status === 'closed' && (
                                 <button
                                   onClick={() => handleReopenCash(cash)}
-                                  className="p-2 text-slate-400 hover:text-accent hover:bg-accent/10 rounded-xl transition-all"
+                                  className="p-2 text-slate-400 hover:text-accent hover:bg-accent/10 rounded-xl transition-all cursor-pointer"
                                   title="Reabrir Caixa"
                                 >
                                   <RefreshCcw size={16} />
                                 </button>
                               )}
-                            </td>
-                          )}
+                            </div>
+                          </td>
                         </tr>
                       ))}
                       {cashHistory.length === 0 && (
                         <tr>
-                          <td colSpan={(isAdmin || isGerente) ? 9 : 8} className="text-center py-16 text-muted italic text-sm">
+                          <td colSpan={9} className="text-center py-16 text-muted italic text-sm">
                             Nenhum histórico de caixa encontrado.
                           </td>
                         </tr>
@@ -3128,6 +3136,15 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
             onClose={() => setSelectedMovementForDetails(null)} 
           />
         )}
+
+        {selectedCashForView && (
+          <ClosedCashDetailsModal
+            cash={selectedCashForView}
+            onClose={() => setSelectedCashForView(null)}
+            onReopen={handleReopenCash}
+            isAdminOrGerente={isAdmin || isGerente}
+          />
+        )}
       </AnimatePresence>
     </div>
   );
@@ -4022,6 +4039,179 @@ function MovementDetailsModal({ movement, onClose }: { movement: any, onClose: (
                 </div>
               )}
             </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function ClosedCashDetailsModal({ 
+  cash, 
+  onClose, 
+  onReopen,
+  isAdminOrGerente 
+}: { 
+  cash: DailyCash; 
+  onClose: () => void; 
+  onReopen?: (cash: DailyCash) => void;
+  isAdminOrGerente?: boolean;
+}) {
+  const diff = cash.difference ?? 0;
+  const formattedDate = cash.date ? format(new Date(cash.date + 'T00:00:00'), 'dd/MM/yyyy') : 'Data não informada';
+  const openingBal = cash.openingBalance ?? cash.opening_balance ?? 0;
+  const totalInc = cash.totalIncome ?? cash.total_income ?? 0;
+  const totalExp = cash.totalExpense ?? cash.total_expense ?? 0;
+  const totalSang = cash.totalSangria ?? cash.total_sangria ?? 0;
+  const closingBal = cash.closingBalance ?? cash.closing_balance;
+  const openedName = cash.openedByName || cash.aberto_por_name || 'Não informado';
+  const closedName = cash.closedByName || cash.fechado_por_name;
+  const totalExpenses = totalExp + totalSang;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+      />
+
+      {/* Modal Box */}
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 15 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 15 }}
+        transition={{ type: "spring", duration: 0.4 }}
+        className="relative bg-white w-full max-w-3xl rounded-[2.5rem] border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 sm:p-8 border-b border-slate-100 bg-slate-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center shrink-0">
+              <Eye size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xl font-black text-primary tracking-tight">Conferência de Caixa Passado</h3>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
+                  cash.status === 'open' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}>
+                  {cash.status === 'open' ? 'Aberto' : 'Fechado'}
+                </span>
+              </div>
+              <p className="text-xs text-muted font-bold mt-0.5">
+                Data: <span className="text-primary font-black">{formattedDate}</span> • Aberto por: <span className="text-primary font-bold">{openedName}</span>
+                {closedName && ` • Fechado por: ${closedName}`}
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={onClose}
+            className="w-10 h-10 bg-white border border-slate-200 hover:bg-slate-100 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors shadow-sm cursor-pointer"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6">
+          {/* Key Metrics Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Saldo Inicial (Troco)</span>
+              <p className="text-base font-black text-slate-700">R$ {openingBal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100/60">
+              <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest block mb-1">Total Entradas</span>
+              <p className="text-base font-black text-emerald-600">+ R$ {totalInc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="p-4 bg-red-50/50 rounded-2xl border border-red-100/60">
+              <span className="text-[10px] font-black text-red-700 uppercase tracking-widest block mb-1">Total Saídas / Sangrias</span>
+              <p className="text-base font-black text-red-600">- R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="p-4 bg-primary/5 rounded-2xl border border-primary/10">
+              <span className="text-[10px] font-black text-primary uppercase tracking-widest block mb-1">Saldo Final Caixa</span>
+              <p className="text-base font-black text-primary">R$ {closingBal !== undefined && closingBal !== null ? closingBal.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '---'}</p>
+            </div>
+          </div>
+
+          {/* Difference / Sobra / Falta alert */}
+          <div className={`p-4 rounded-2xl border flex items-center justify-between ${
+            diff > 0 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              : diff < 0 
+              ? 'bg-red-50 border-red-200 text-red-800' 
+              : 'bg-slate-50 border-slate-200 text-slate-700'
+          }`}>
+            <div className="flex items-center gap-3">
+              {diff > 0 ? (
+                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl font-bold">
+                  <TrendingUp size={18} />
+                </div>
+              ) : diff < 0 ? (
+                <div className="p-2 bg-red-100 text-red-700 rounded-xl font-bold">
+                  <TrendingDown size={18} />
+                </div>
+              ) : (
+                <div className="p-2 bg-slate-200 text-slate-700 rounded-xl font-bold">
+                  <CheckCircle2 size={18} />
+                </div>
+              )}
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider">
+                  {diff > 0 ? 'Sobra de Caixa Registrada no Fechamento' : diff < 0 ? 'Falta no Caixa Registrada no Fechamento' : 'Caixa Fechado com Saldo Exato'}
+                </p>
+                <p className="text-[11px] font-medium opacity-80">
+                  {diff !== 0 ? `Diferença entre o saldo esperado e o valor conferido na gaveta.` : 'Nenhuma divergência apurada.'}
+                </p>
+              </div>
+            </div>
+            <span className="text-base font-black">
+              {diff > 0 ? `+ R$ ${diff.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : diff < 0 ? `- R$ ${Math.abs(diff).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'R$ 0,00'}
+            </span>
+          </div>
+
+          {/* Observações se houver */}
+          {cash.observations && (
+            <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl">
+              <p className="text-[10px] font-black text-amber-800 uppercase tracking-widest mb-1">Observações do Fechamento</p>
+              <p className="text-xs text-amber-950 font-medium">{cash.observations}</p>
+            </div>
+          )}
+
+          {/* Extrato de Movimentações deste Caixa */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-black text-primary uppercase tracking-wider">Extrato de Lançamentos do Caixa</h4>
+              <span className="text-xs text-muted font-bold">ID: {cash.id}</span>
+            </div>
+            <CashMovementList caixaId={cash.id} />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+          <button 
+            onClick={onClose}
+            className="px-6 py-3 border border-slate-200 rounded-xl font-bold text-xs text-slate-600 hover:bg-slate-100 transition-all cursor-pointer"
+          >
+            Fechar Visualização
+          </button>
+
+          {isAdminOrGerente && cash.status === 'closed' && onReopen && (
+            <button 
+              onClick={() => {
+                onClose();
+                onReopen(cash);
+              }}
+              className="flex items-center gap-2 px-6 py-3 bg-accent text-white rounded-xl font-bold text-xs hover:bg-accent/90 transition-all shadow-sm cursor-pointer"
+            >
+              <RefreshCcw size={14} />
+              <span>Reabrir este Caixa</span>
+            </button>
           )}
         </div>
       </motion.div>

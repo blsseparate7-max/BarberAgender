@@ -35,28 +35,53 @@ export const commissionService = {
       queryConstraints.push(where('tenantId', '==', activeTenant));
     }
 
-    if (filters.profissional_id) {
-      queryConstraints.push(where('profissional_id', '==', filters.profissional_id));
-    }
-
     let querySnapshot = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
     let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
 
-    // Tolerant professional filter in memory (matches UID, barbeiro_id, and name variations like Gabriel / Gabriel Alexandre)
+    // Tolerant professional filter in memory (matches UID, barbeiro_id, email, and name variations)
     if (filters.profissional_id || filters.profissional_name) {
       const targetId = filters.profissional_id || '';
-      const targetName = (filters.profissional_name || '').toLowerCase().trim();
+      let targetName = (filters.profissional_name || '').toLowerCase().trim();
+      let targetEmail = '';
+
+      if (targetId) {
+        try {
+          const userDoc = await getDoc(doc(db, 'usuarios', targetId));
+          if (userDoc.exists()) {
+            const uData = userDoc.data();
+            if (!targetName) targetName = (uData.nome || '').toLowerCase().trim();
+            targetEmail = (uData.email || '').toLowerCase().trim();
+          } else {
+            const uSnap = await getDocs(query(collection(db, 'usuarios'), where('uid', '==', targetId)));
+            if (!uSnap.empty) {
+              const uData = uSnap.docs[0].data();
+              if (!targetName) targetName = (uData.nome || '').toLowerCase().trim();
+              targetEmail = (uData.email || '').toLowerCase().trim();
+            }
+          }
+        } catch (e) {
+          console.warn("Could not fetch user details for commission matching:", e);
+        }
+      }
+
       const targetFirstName = targetName.split(' ')[0] || '';
 
       results = results.filter(c => {
         if (targetId && (c.profissional_id === targetId || (c as any).barbeiro_id === targetId)) {
           return true;
         }
-        const cName = (c.profissional_name || '').toLowerCase().trim();
+        const cName = (c.profissional_name || (c as any).barbeiro_nome || '').toLowerCase().trim();
         if (targetName && cName) {
           if (cName === targetName || cName.includes(targetName) || targetName.includes(cName)) return true;
           if (targetFirstName === 'gabriel' && cName.includes('gabriel')) return true;
+          if ((targetFirstName === 'mateus' || targetFirstName === 'matheus') && (cName.includes('mateus') || cName.includes('matheus'))) return true;
+          if (targetName.startsWith('luiz miguel') && cName.startsWith('luiz miguel')) return true;
+          if (targetName.startsWith('luiz henrique') && cName.startsWith('luiz henrique')) return true;
+          if (targetFirstName === 'moises' && cName.includes('moises')) return true;
         }
+        const cEmail = ((c as any).profissional_email || c.profissional_id || '').toLowerCase().trim();
+        if (targetEmail && cEmail && cEmail === targetEmail) return true;
+
         return false;
       });
     }
@@ -90,27 +115,28 @@ export const commissionService = {
     if (activeTenant) {
       queryConstraints.push(where('tenantId', '==', activeTenant));
     }
-    if (filters.profissional_id) {
-      queryConstraints.push(where('profissional_id', '==', filters.profissional_id));
-    }
 
     let snap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
     let results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
 
-    // Try to get target professional name if filters.profissional_id is set
+    // Target details for matching
+    let targetId = filters.profissional_id || '';
     let targetProName = (filters.profissional_name || '').toLowerCase().trim();
-    let targetProFirstName = targetProName.split(' ')[0] || '';
-    if (filters.profissional_id) {
+    let targetProEmail = '';
+
+    if (targetId) {
       try {
-        const userDoc = await getDoc(doc(db, 'usuarios', filters.profissional_id));
+        const userDoc = await getDoc(doc(db, 'usuarios', targetId));
         if (userDoc.exists()) {
-          targetProName = (userDoc.data().nome || '').toLowerCase().trim();
-          targetProFirstName = targetProName.split(' ')[0] || '';
+          const uData = userDoc.data();
+          if (!targetProName) targetProName = (uData.nome || '').toLowerCase().trim();
+          targetProEmail = (uData.email || '').toLowerCase().trim();
         } else {
-          const uSnap = await getDocs(query(collection(db, 'usuarios'), where('uid', '==', filters.profissional_id)));
+          const uSnap = await getDocs(query(collection(db, 'usuarios'), where('uid', '==', targetId)));
           if (!uSnap.empty) {
-            targetProName = (uSnap.docs[0].data().nome || '').toLowerCase().trim();
-            targetProFirstName = targetProName.split(' ')[0] || '';
+            const uData = uSnap.docs[0].data();
+            if (!targetProName) targetProName = (uData.nome || '').toLowerCase().trim();
+            targetProEmail = (uData.email || '').toLowerCase().trim();
           }
         }
       } catch (e) {
@@ -118,25 +144,35 @@ export const commissionService = {
       }
     }
 
-    const nameParts = targetProName.split(' ').filter(p => p.length >= 3);
+    const targetProFirstName = targetProName.split(' ')[0] || '';
+
+    const matchesProText = (txt: string) => {
+      if (!txt) return false;
+      const t = txt.toLowerCase();
+      if (targetProName && t.includes(targetProName)) return true;
+      if (targetProFirstName === 'gabriel' && t.includes('gabriel')) return true;
+      if ((targetProFirstName === 'mateus' || targetProFirstName === 'matheus') && (t.includes('mateus') || t.includes('matheus'))) return true;
+      if (targetProName.startsWith('luiz miguel') && t.includes('luiz miguel')) return true;
+      if (targetProName.startsWith('luiz henrique') && (t.includes('luiz henrique') || t.includes('rick'))) return true;
+      if (targetProFirstName === 'moises' && t.includes('moises')) return true;
+      if (targetProEmail && t.includes(targetProEmail)) return true;
+      return false;
+    };
+
+    // Filter advances in memory if filters are provided
+    if (targetId || targetProName || targetProEmail) {
+      results = results.filter(a => {
+        if (targetId && (a.profissional_id === targetId || (a as any).barber_id === targetId)) return true;
+        if (matchesProText(a.profissional_name) || matchesProText(a.description)) return true;
+        const aEmail = ((a as any).profissional_email || a.profissional_id || '').toLowerCase().trim();
+        if (targetProEmail && aEmail === targetProEmail) return true;
+        return false;
+      });
+    }
 
     // Merge vales/adiantamentos registered in accounts_payable
     try {
-      let payablesQuery;
-      if (filters.profissional_id) {
-        payablesQuery = query(
-          collection(db, 'accounts_payable'),
-          where('profissional_id', '==', filters.profissional_id)
-        );
-      } else if (activeTenant) {
-        payablesQuery = query(
-          collection(db, 'accounts_payable'),
-          where('tenantId', '==', activeTenant)
-        );
-      } else {
-        payablesQuery = query(collection(db, 'accounts_payable'));
-      }
-
+      let payablesQuery = activeTenant ? query(collection(db, 'accounts_payable'), where('tenantId', '==', activeTenant)) : query(collection(db, 'accounts_payable'));
       let payablesSnap = await getDocs(payablesQuery);
 
       payablesSnap.docs.forEach(docSnap => {
@@ -148,18 +184,19 @@ export const commissionService = {
         const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
         const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
 
-        let matchesPro = true;
-        if (filters.profissional_id) {
-          matchesPro = p.profissional_id === filters.profissional_id;
+        let matchesPro = false;
+        if (targetId && (p.profissional_id === targetId || p.barber_id === targetId)) {
+          matchesPro = true;
+        } else if (targetProName || targetProEmail) {
+          matchesPro = matchesProText(supplier) || matchesProText(proName) || matchesProText(desc);
         } else {
-          matchesPro = !!p.profissional_id;
+          matchesPro = true;
         }
 
         if (isVale && matchesPro) {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
           const pAmount = p.amount || 0;
 
-          // Check if already in results (by ID or matching advance description / amount)
           const isDuplicate = results.some(r => 
             r.id === docSnap.id || 
             p.advanceId === r.id ||
@@ -168,7 +205,6 @@ export const commissionService = {
           );
 
           if (isDuplicate) {
-            // Only synchronize status if accounts_payable explicitly indicates a repasse/deduction
             if (p.status === 'deduzido' || p.repasse_id || p.payout_id) {
               const match = results.find(r => 
                 r.id === docSnap.id || 
@@ -184,8 +220,8 @@ export const commissionService = {
             results.push({
               id: docSnap.id,
               tenantId: p.tenantId || activeTenant,
-              profissional_id: p.profissional_id || filters.profissional_id || '',
-              profissional_name: p.profissional_name || p.supplier || 'Profissional',
+              profissional_id: p.profissional_id || targetId || '',
+              profissional_name: p.profissional_name || p.supplier || targetProName || 'Profissional',
               amount: pAmount,
               date: pDate || new Date().toISOString().split('T')[0],
               description: p.description || 'Adiantamento / Vale',
@@ -198,8 +234,8 @@ export const commissionService = {
           }
         }
       });
-    } catch (err) {
-      console.warn("Could not fetch payables as advances:", err);
+    } catch (e) {
+      console.warn("Could not merge accounts_payable into advances:", e);
     }
 
     // Merge vales/adiantamentos registered in cash_movements
@@ -224,11 +260,13 @@ export const commissionService = {
         const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
         const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
 
-        let matchesPro = true;
-        if (filters.profissional_id) {
-          matchesPro = c.profissional_id === filters.profissional_id || c.barber_id === filters.profissional_id;
+        let matchesPro = false;
+        if (targetId && (c.profissional_id === targetId || c.barber_id === targetId)) {
+          matchesPro = true;
+        } else if (targetProName || targetProEmail) {
+          matchesPro = matchesProText(cProName) || matchesProText(desc);
         } else {
-          matchesPro = !!c.profissional_id || !!c.barber_id;
+          matchesPro = true;
         }
 
         if (isVale && matchesPro) {
@@ -612,22 +650,31 @@ export const commissionService = {
     if (activeTenant) {
       queryConstraints.push(where('tenantId', '==', activeTenant));
     }
-    if (profissional_id) {
-      queryConstraints.push(where('profissional_id', '==', profissional_id));
-    }
 
     let querySnapshot = await getDocs(query(collection(db, PAYOUTS_COLLECTION), ...queryConstraints));
     let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
 
-    if (results.length === 0 && profissional_id && activeTenant) {
+    if (profissional_id) {
+      let targetName = '';
+      let targetEmail = '';
       try {
-        const fallbackSnap = await getDocs(query(collection(db, PAYOUTS_COLLECTION), where('profissional_id', '==', profissional_id)));
-        if (!fallbackSnap.empty) {
-          results = fallbackSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
+        const uDoc = await getDoc(doc(db, 'usuarios', profissional_id));
+        if (uDoc.exists()) {
+          targetName = (uDoc.data().nome || '').toLowerCase().trim();
+          targetEmail = (uDoc.data().email || '').toLowerCase().trim();
         }
       } catch (e) {
-        console.warn("Fallback query for payouts failed:", e);
+        // ignore
       }
+
+      results = results.filter(p => {
+        if (p.profissional_id === profissional_id) return true;
+        const pName = (p.profissional_name || '').toLowerCase().trim();
+        if (targetName && pName && (pName.includes(targetName) || targetName.includes(pName))) return true;
+        const pEmail = ((p as any).profissional_email || p.profissional_id || '').toLowerCase().trim();
+        if (targetEmail && pEmail === targetEmail) return true;
+        return false;
+      });
     }
 
     results.sort((a, b) => {

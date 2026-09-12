@@ -190,7 +190,7 @@ export function PesquisaSatisfacao() {
             <p className="text-4xl font-black text-slate-800">{averageRating.toFixed(1)} / 5.0</p>
             <div className="flex text-amber-500 gap-1 mt-1">
               {[1, 2, 3, 4, 5].map((s) => (
-                <Star key={s} size={14} fill={s <= Math.round(averageRating) ? 'currentColor' : 'none'} />
+                <Star key={`avg-star-${s}`} size={14} fill={s <= Math.round(averageRating) ? 'currentColor' : 'none'} />
               ))}
             </div>
           </div>

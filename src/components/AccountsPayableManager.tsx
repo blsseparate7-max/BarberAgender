@@ -625,7 +625,7 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filteredPayables.map((payable, index) => (
-                  <tr key={`payable-row-${payable.id || index}`} className="hover:bg-slate-50/30 transition-colors">
+                  <tr key={`payable-row-${payable.id || 'p'}-${index}`} className="hover:bg-slate-50/30 transition-colors">
                     <td className="px-8 py-6">
                       <p className="text-sm font-bold text-primary">{payable.description}</p>
                       {payable.status === 'paid' && payable.paymentMethod && (

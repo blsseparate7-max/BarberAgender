@@ -473,7 +473,7 @@ export const AccountsReceivableManager: React.FC<AccountsReceivableManagerProps>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filteredReceivables.map((receivable, index) => (
-                  <tr key={`receivable-row-${receivable.id || index}`} className="hover:bg-slate-50/30 transition-colors">
+                  <tr key={`receivable-row-${receivable.id || 'r'}-${index}`} className="hover:bg-slate-50/30 transition-colors">
                     <td className="px-8 py-6">
                       <p className="text-sm font-bold text-primary">{receivable.description}</p>
                       {receivable.status === 'paid' && receivable.paymentMethod && (

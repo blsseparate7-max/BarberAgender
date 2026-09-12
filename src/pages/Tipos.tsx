@@ -481,7 +481,7 @@ export function Tipos({ defaultTab = 'categorias' }: { defaultTab?: SubTypeId })
                     {categoryColors.map(preset => (
                       <button
                         type="button"
-                        key={preset.hex}
+                        key={`cat-color-${preset.hex}`}
                         onClick={() => setColor(preset.hex)}
                         title={preset.label}
                         className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-transform active:scale-90 ${

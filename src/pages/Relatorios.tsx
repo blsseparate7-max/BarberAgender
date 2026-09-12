@@ -809,7 +809,7 @@ function ReportGeneral({ data, filters, plans, subscriptions }: { data: any, fil
               <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1">Análise volumétrica e faturamento por categoria principal</p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-8">
-                {Object.entries(generalStats.catStats || {}).map(([key, cat]: [string, any]) => {
+                {Object.entries(generalStats.catStats || {}).map(([key, cat]: [string, any], idx: number) => {
                   const part = generalStats.totalServiceRevenue > 0 
                     ? Math.round((cat.revenue / generalStats.totalServiceRevenue) * 100)
                     : 0;
@@ -823,7 +823,7 @@ function ReportGeneral({ data, filters, plans, subscriptions }: { data: any, fil
 
                   return (
                     <div 
-                      key={key} 
+                      key={`cat-stat-${key}-${idx}`} 
                       className={`border-l-4 p-4 rounded-r-2xl border border-slate-100 flex flex-col justify-between ${colors[key] || 'border-l-slate-400 bg-slate-50'}`}
                     >
                       <div className="flex justify-between items-start">
@@ -1362,7 +1362,7 @@ function ReportClients({ data, filters }: { data: any, filters: ReportFilter }) 
                     {clientRankings.map((c: any, index: number) => {
                       const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
                       return (
-                        <tr key={`client-rank-${c.id || index}`} className="hover:bg-slate-50 transition-colors">
+                        <tr key={`client-rank-${c.id || 'c'}-${index}`} className="hover:bg-slate-50 transition-colors">
                           <td className="px-8 py-4 font-mono font-black text-xs text-center">
                             {medal ? <span className="text-xl">{medal}</span> : `${index + 1}º`}
                           </td>
@@ -1657,7 +1657,7 @@ function ReportProfessionals({ data, filters }: { data: any, filters: ReportFilt
                   const pct = Math.round((p.producao / maxBilling) * 100);
                   const ticket = p.atendimentos ? (p.producao / p.atendimentos) : 0;
                   return (
-                    <tr key={`prof-${p.id || index}`} className="hover:bg-slate-50 transition-colors">
+                    <tr key={`prof-rank-${p.id || 'p'}-${index}`} className="hover:bg-slate-50 transition-colors">
                       <td className="px-8 py-5 font-mono font-black text-xs text-center">
                         {medal ? <span className="text-xl">{medal}</span> : `${index + 1}º`}
                       </td>

@@ -1667,7 +1667,7 @@ export function PortalSaaSAdmin() {
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recursos Inclusos</p>
                           <ul className="space-y-1.5">
                             {(p.features || []).map((feat, idx) => (
-                              <li key={idx} className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                              <li key={`saas-feat-${p.id || 'p'}-${idx}`} className="flex items-center gap-2 text-xs font-semibold text-slate-600">
                                 <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={14} />
                                 <span>{feat}</span>
                               </li>

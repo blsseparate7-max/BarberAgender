@@ -389,7 +389,7 @@ export function Fidelidade({
                   </thead>
                   <tbody className="divide-y divide-border">
                     {vouchers.map((v, index) => (
-                      <tr key={`voucher-row-${v.id || index}`} className="hover:bg-slate-50 transition-colors">
+                      <tr key={`voucher-row-${v.id || 'v'}-${index}`} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4 font-mono font-bold text-xs text-indigo-600 tracking-wider">
                           {v.token}
                         </td>

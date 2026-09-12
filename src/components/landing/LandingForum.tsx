@@ -278,7 +278,7 @@ export function LandingForum() {
 
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
                     {topic.tags.map((tag, idx) => (
-                      <span key={idx} className="text-[10px] text-zinc-400 bg-zinc-800/60 px-2 py-0.5 rounded-md">
+                      <span key={`tag-${topic.id}-${tag}-${idx}`} className="text-[10px] text-zinc-400 bg-zinc-800/60 px-2 py-0.5 rounded-md">
                         #{tag}
                       </span>
                     ))}

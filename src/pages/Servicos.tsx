@@ -208,7 +208,7 @@ export function Servicos() {
           { label: 'Cortesias / Especiais', value: services.filter(s => s.permite_cortesia).length, icon: Award, color: 'text-amber-600 bg-amber-50 border-amber-100/50' },
           { label: 'Categorias Ativas', value: totalCategoriesCount, icon: Layers, color: 'text-rose-600 bg-rose-50 border-rose-100/50' }
         ].map((stat, i) => (
-          <div key={i} className={`bg-white border rounded-3xl p-4 flex items-center gap-4 shadow-sm`}>
+          <div key={`svc-stat-${stat.label}-${i}`} className={`bg-white border rounded-3xl p-4 flex items-center gap-4 shadow-sm`}>
             <div className={`w-11 h-11 rounded-2xl flex items-center justify-center border ${stat.color} shrink-0`}>
               <stat.icon size={20} />
             </div>

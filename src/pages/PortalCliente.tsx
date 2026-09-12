@@ -3906,7 +3906,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                 <div className="flex text-amber-500 gap-0.5 mt-1" title={existingReview.comentario}>
                                   {Array.from({ length: 5 }).map((_, i) => (
                                     <Star 
-                                      key={i} 
+                                      key={`star-rev-${app.id || 'app'}-${i}`} 
                                       size={10} 
                                       fill={i < existingReview.rating ? 'currentColor' : 'none'} 
                                       className="text-amber-500" 
@@ -4547,7 +4547,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                 </div>
 
                                 {plan.extraBenefits && plan.extraBenefits.map((benefit: string, idx: number) => (
-                                  <div key={idx} className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                  <div key={`plan-ben-${plan.id || planIdx}-${idx}`} className="flex items-center gap-2 text-xs font-bold text-slate-600">
                                     <Check size={14} className="text-emerald-500 flex-shrink-0" />
                                     <span>{benefit}</span>
                                   </div>

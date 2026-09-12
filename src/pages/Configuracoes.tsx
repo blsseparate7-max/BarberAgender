@@ -1177,7 +1177,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                         const isSelected = accentColor.toUpperCase() === preset.value.toUpperCase();
                         return (
                           <button
-                            key={preset.value}
+                            key={`accent-color-${preset.value}`}
                             type="button"
                             onClick={() => setAccentColor(preset.value)}
                             title={preset.name}

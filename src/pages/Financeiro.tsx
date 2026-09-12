@@ -50,6 +50,7 @@ import {
   Trash2,
   Landmark,
   Globe,
+  Database,
   Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -105,6 +106,7 @@ import { InputModal } from '../components/InputModal';
 import { ContaDigitalAsaas } from '../components/Financeiro/ContaDigitalAsaas';
 import { EntriesExitsManager } from '../components/Financeiro/EntriesExitsManager';
 import { ClientAccountDetailsModal } from '../components/Financeiro/ClientAccountDetailsModal';
+import { dataAuditService, AuditReportResult } from '../services/dataAuditService';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -246,6 +248,26 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
   const [editingPaymentMethod, setEditingPaymentMethod] = useState<PaymentMethodConfig | null>(null);
+
+  // Estados de Auditoria e Limpeza de Dados Órfãos
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [auditResult, setAuditResult] = useState<AuditReportResult | null>(null);
+
+  const handleRunDataAudit = async () => {
+    if (!user) return;
+    try {
+      setIsAuditing(true);
+      const res = await dataAuditService.cleanOrphanAndGhostData(user.uid, profile?.nome || 'Administrador');
+      setAuditResult(res);
+      toast.success("Auditoria e limpeza de dados concluída com sucesso!");
+      await loadData();
+    } catch (err: any) {
+      console.error("Erro ao executar auditoria de dados:", err);
+      toast.error(err.message || "Erro ao executar auditoria e limpeza de dados.");
+    } finally {
+      setIsAuditing(false);
+    }
+  };
 
   // Estados para Gestão de Assinantes e Transações
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
@@ -2054,52 +2076,163 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
               </motion.div>
             )}
             {activeTab === 'inconsistencies' && (
-              <motion.div 
-                key="inconsistencies"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm"
-              >
-                <div className="p-8 border-b border-slate-100 bg-slate-50/30">
-                  <h3 className="font-bold text-xl text-primary flex items-center gap-2">
-                    <AlertTriangle className="text-red-500" size={24} />
-                    Alertas de Inconsistência Financeira
-                  </h3>
-                  <p className="text-sm text-muted mt-1 font-medium">Situações que exigem revisão manual (ex: comanda reaberta com comissão já paga).</p>
-                </div>
-                <div className="p-8 space-y-4">
-                  {inconsistencyLogs.map((log, index) => (
-                    <div key={`log-incons-${log.id || index}-${index}`} className="bg-red-50 border border-red-100 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-red-600 shadow-sm border border-red-100">
-                          <AlertCircle size={24} />
+              <div className="space-y-6">
+                {/* Painel de Auditoria e Limpeza de Dados Órfãos / Fantasmas */}
+                <motion.div 
+                  key="audit-cleaner-panel"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm"
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-100">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse"></span>
+                        <h3 className="font-black text-xl text-primary flex items-center gap-2">
+                          <Database className="text-indigo-600" size={24} />
+                          Auditoria e Higienização de Dados Órfãos & Fantasmas
+                        </h3>
+                      </div>
+                      <p className="text-xs text-muted font-medium mt-1">
+                        Varre o banco de dados para detectar e remover registros fantasmas, duplicidades de agendamentos legados e comissões/transações sem comanda válida.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isAuditing}
+                      onClick={handleRunDataAudit}
+                      className="flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 text-white rounded-2xl text-xs font-black hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 disabled:opacity-50"
+                    >
+                      {isAuditing ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          <span>Auditando e Limpando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={16} />
+                          <span>Executar Limpeza de Dados Órfãos</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {auditResult && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }} 
+                      animate={{ opacity: 1, y: 0 }} 
+                      className="mt-6 space-y-6"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="bg-rose-50 border border-rose-100 rounded-2xl p-5">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-rose-600 mb-1">Valor Fantasma Removido</p>
+                          <p className="text-2xl font-black text-rose-700">R$ {auditResult.totalRemovedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                          <p className="text-[11px] text-rose-600/80 font-semibold mt-1">{auditResult.removedTransactionsCount} lançamentos financeiros excluídos</p>
                         </div>
-                        <div>
-                          <p className="text-sm font-bold text-red-900">Comissão Já Paga - Reabertura</p>
-                          <p className="text-xs text-red-700/70 font-medium">
-                            Profissional: <span className="font-bold">{log.profissional_name}</span> • 
-                            Comanda: <span className="font-bold">#{log.comanda_number}</span>
-                          </p>
-                          <p className="text-[10px] text-red-600 font-bold uppercase tracking-widest mt-1">
-                            {format(parseDate(log.date), "dd/MM/yyyy 'às' HH:mm")}
-                          </p>
+                        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-5">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-amber-600 mb-1">Comissões Órfãs Limpas</p>
+                          <p className="text-2xl font-black text-amber-700">R$ {auditResult.removedCommissionsAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                          <p className="text-[11px] text-amber-600/80 font-semibold mt-1">{auditResult.removedCommissionsCount} comissões corrigidas</p>
+                        </div>
+                        <div className="bg-sky-50 border border-sky-100 rounded-2xl p-5">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-sky-600 mb-1">Movimentos de Caixa Ajustados</p>
+                          <p className="text-2xl font-black text-sky-700">{auditResult.removedCashMovementsCount}</p>
+                          <p className="text-[11px] text-sky-600/80 font-semibold mt-1">Registros de caixa órfãos removidos</p>
+                        </div>
+                        <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-5">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-1">Comandas Auditadas</p>
+                          <p className="text-2xl font-black text-emerald-700">{auditResult.affectedComandasCount}</p>
+                          <p className="text-[11px] text-emerald-600/80 font-semibold mt-1">{auditResult.removedEmptyComandasCount} comandas vazias excluídas</p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[10px] text-red-600 font-black uppercase tracking-widest mb-1">Valor a Ajustar</p>
-                        <p className="text-2xl font-black text-red-700">R$ {log.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                      </div>
-                    </div>
-                  ))}
-                  {inconsistencyLogs.length === 0 && (
-                    <div className="text-center py-20 bg-slate-50 border border-dashed border-slate-200 rounded-3xl">
-                      <CheckCircle2 size={48} className="text-emerald-300 mx-auto mb-4" />
-                      <p className="text-muted text-sm font-bold">Nenhuma inconsistência encontrada. Tudo em dia!</p>
-                    </div>
+
+                      {/* Lista detalhada do que foi removido */}
+                      {(auditResult.details.orphanTransactions.length > 0 || auditResult.details.duplicateTransactions.length > 0 || auditResult.details.cancelledComandaTransactions.length > 0) && (
+                        <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                          <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 text-xs font-black text-primary">
+                            Detalhamento dos Lançamentos Financeiros Removidos
+                          </div>
+                          <div className="divide-y divide-slate-100 max-h-60 overflow-y-auto">
+                            {[
+                              ...auditResult.details.orphanTransactions,
+                              ...auditResult.details.duplicateTransactions,
+                              ...auditResult.details.cancelledComandaTransactions
+                            ].map((item: any, idx: number) => (
+                              <div key={`rem-tx-${idx}`} className="p-4 flex items-center justify-between text-xs hover:bg-slate-50">
+                                <div>
+                                  <span className="font-bold text-slate-800">{item.description}</span>
+                                  <p className="text-[11px] text-muted">{item.reason || `Comanda #${item.comandaNumber} cancelada`} • Data: {item.date}</p>
+                                </div>
+                                <span className="font-black text-rose-600">- R$ {item.amount?.toFixed(2)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
                   )}
-                </div>
-              </motion.div>
+                </motion.div>
+
+                {/* Alertas de Inconsistência Operacional (Comissão já paga etc.) */}
+                <motion.div 
+                  key="inconsistencies-logs-panel"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm"
+                >
+                  <div className="p-8 border-b border-slate-100 bg-slate-50/30">
+                    <h3 className="font-bold text-xl text-primary flex items-center gap-2">
+                      <AlertTriangle className="text-red-500" size={24} />
+                      Alertas de Inconsistência Operacional
+                    </h3>
+                    <p className="text-sm text-muted mt-1 font-medium">Situações que exigem revisão manual (ex: comanda reaberta com comissão já paga).</p>
+                  </div>
+                  <div className="p-8 space-y-4">
+                    {inconsistencyLogs.map((log, index) => {
+                      const logAmount = Number(log?.amount || log?.value || 0);
+                      const logDateStr = log?.date || log?.createdAt;
+                      let formattedDate = 'Data N/A';
+                      if (logDateStr) {
+                        try {
+                          formattedDate = format(parseDate(logDateStr), "dd/MM/yyyy 'às' HH:mm");
+                        } catch {
+                          formattedDate = String(logDateStr);
+                        }
+                      }
+                      return (
+                        <div key={`log-incons-${log?.id || 'incons'}-${index}`} className="bg-red-50 border border-red-100 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-red-600 shadow-sm border border-red-100">
+                              <AlertCircle size={24} />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-red-900">Comissão Já Paga - Reabertura</p>
+                              <p className="text-xs text-red-700/70 font-medium">
+                                Profissional: <span className="font-bold">{log?.profissional_name || 'Profissional'}</span> • 
+                                Comanda: <span className="font-bold">#{log?.comanda_number || 'N/A'}</span>
+                              </p>
+                              <p className="text-[10px] text-red-600 font-bold uppercase tracking-widest mt-1">
+                                {formattedDate}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] text-red-600 font-black uppercase tracking-widest mb-1">Valor a Ajustar</p>
+                            <p className="text-2xl font-black text-red-700">R$ {logAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {inconsistencyLogs.length === 0 && (
+                      <div className="text-center py-16 bg-slate-50 border border-dashed border-slate-200 rounded-3xl">
+                        <CheckCircle2 size={40} className="text-emerald-400 mx-auto mb-3" />
+                        <p className="text-muted text-sm font-bold">Nenhuma inconsistência de reabertura encontrada.</p>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
             )}
             {activeTab === 'client-accounts' && (
               <motion.div 

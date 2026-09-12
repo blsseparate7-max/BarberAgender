@@ -226,7 +226,7 @@ export function NotificationBell() {
                   </div>
                 </div>
               ) : (
-                notifications.map((notif) => {
+                notifications.map((notif, idx) => {
                   const notifDate = notif.createdAt instanceof Date ? notif.createdAt : new Date(notif.createdAt);
                   const formattedTime = isNaN(notifDate.getTime()) 
                     ? '' 
@@ -237,7 +237,7 @@ export function NotificationBell() {
 
                   return (
                     <div 
-                      key={notif.id} 
+                      key={`notif-${notif.id || idx}-${idx}`} 
                       className={`p-4 flex gap-3.5 hover:bg-slate-50/70 transition-colors ${!notif.read ? 'bg-indigo-50/20' : ''}`}
                     >
                       {/* Ícone de Tipo */}

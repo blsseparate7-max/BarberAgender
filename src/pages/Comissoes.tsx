@@ -905,7 +905,7 @@ function PayoutModal({ barbers, onClose, onConfirm, isRegistering }: { barbers: 
             >
               <option value="">Selecione um profissional...</option>
               {barbers.map((b, index) => (
-                <option key={`barber-modal-opt-${b.uid || index}`} value={b.uid}>{b.nome}</option>
+                <option key={`barber-modal-opt-${b.uid || index}-${index}`} value={b.uid}>{b.nome}</option>
               ))}
             </select>
           </div>

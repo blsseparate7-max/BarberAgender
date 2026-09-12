@@ -803,11 +803,9 @@ export const appointmentService = {
       }
     }
 
-    // Se concluído, atualiza estatísticas do cliente e gera registro financeiro
+    // Se concluído, sincroniza comanda vinculada para aguardar pagamento
     if (status === 'concluído') {
-      // Se houver uma comanda vinculada, o faturamento, caixas e comissões 
-      // serão processados exclusivamente pelo fluxo de fechamento/checkout da comanda.
-      // Aqui apenas atualizamos o status da comanda para aguardando pagamento para sinalizar ao caixa.
+      // Toda a entrada financeira, caixas e comissões são gerenciadas exclusivamente pelo checkout da Comanda
       if (appointment.comanda_id) {
         try {
           const comRef = doc(db, 'comandas', appointment.comanda_id);
@@ -825,114 +823,55 @@ export const appointmentService = {
           console.error("Erro ao atualizar status da comanda vinculada para aguardando pagamento:", err);
         }
       } else {
-        // Fluxo legado / direto (sem comandas): cria lançamentos diretamente para manter retrocompatibilidade
-        // 1. Atualiza Cliente
-        if (appointment.cliente_id) {
-          const clientRef = doc(db, 'usuarios', appointment.cliente_id);
-          const clientSnap = await getDoc(clientRef);
+        // Auto-cria a comanda para este atendimento concluído para que o checkout seja feito por ela
+        try {
+          const sServices = (appointment as any).selectedServices || [];
+          const items = sServices.length > 0 
+            ? sServices.map((s: any, idx: number) => ({
+                id: `item-${appointment.id}-${idx}-${Date.now()}`,
+                type: 'servico' as const,
+                referencia_id: s.id || '',
+                name: s.nome || s.name || '',
+                quantity: 1,
+                unitPrice: s.preco || s.price || 0,
+                totalPrice: s.preco || s.price || 0,
+                profissional_id: appointment.profissional_id,
+                profissional_name: appointment.profissional_name,
+                isCortesia: false,
+                generateCommission: true
+              }))
+            : [{
+                id: `item-${appointment.id}-${Date.now()}`,
+                type: 'servico' as const,
+                referencia_id: appointment.servico_id || '',
+                name: appointment.servico_name || '',
+                quantity: 1,
+                unitPrice: appointment.price || 0,
+                totalPrice: appointment.price || 0,
+                profissional_id: appointment.profissional_id,
+                profissional_name: appointment.profissional_name,
+                isCortesia: false,
+                generateCommission: true
+              }];
           
-          if (clientSnap.exists()) {
-            await updateDoc(clientRef, {
-              totalSpent: increment(appointment.price),
-              appointmentsCount: increment(1),
-              lastServiceAt: serverTimestamp(),
-              preferred_profissional_id: appointment.profissional_id,
-              preferred_profissional_name: appointment.profissional_name,
-              updatedAt: serverTimestamp()
-            }).catch(err => console.error("Erro ao atualizar estatísticas do cliente:", err));
-          }
-        }
-
-        // 2. Gera Lançamento Financeiro
-        const pagamento_id = await financialService.createTransaction({
-          type: 'income',
-          category: 'Serviço',
-          description: `Atendimento: ${appointment.servico_name} - ${appointment.cliente_name}`,
-          amount: appointment.price,
-          paymentMethod: paymentMethod,
-          date: appointment.date,
-          status: paymentMethod === 'fiado' ? 'pendente' : 'pago',
-          agendamento_id: appointment.id,
-          cliente_id: appointment.cliente_id,
-          cliente_name: appointment.cliente_name,
-          profissional_id: appointment.profissional_id,
-          profissional_name: appointment.profissional_name,
-          responsavel_id: appointment.profissional_id, 
-          responsavel_name: appointment.profissional_name,
-          net_amount: appointment.price,
-          fee_amount: 0,
-          settlement_date: appointment.date,
-          is_settled: paymentMethod !== 'fiado'
-        }).catch(err => {
-          console.error("Erro ao gerar lançamento financeiro:", err);
-          return null;
-        });
-
-        // 2.1. Registra no Caixa do Dia se houver caixa aberto
-        try {
-          const cashDoc = await cashService.getCurrentCash();
-          if (cashDoc && paymentMethod !== 'fiado') {
-            await cashService.addMovement({
-              caixa_id: cashDoc.id,
-              type: 'income',
-              category: 'Venda',
-              description: `Atendimento: ${appointment.servico_name} - ${appointment.cliente_name}`,
-              amount: appointment.price,
-              paymentMethod: paymentMethod,
-              is_receivable: paymentMethod === 'credito' || paymentMethod === 'debito',
-              settlement_date: appointment.date,
-              referencia_id: appointment.id,
-              usuario_id: appointment.profissional_id,
-              usuario_name: appointment.profissional_name,
-              date: appointment.date
-            });
-          }
-        } catch (err) {
-          console.error("Erro ao registrar movimento de caixa para agendamento concluído:", err);
-        }
-
-        // 3. Gera Comissão para o Barbeiro
-        try {
-          const barberProfile = await userService.getUserProfile(appointment.profissional_id);
-          const defaultPercentage = barberProfile?.commission_percentage || 50; 
-
-          // Fetch custom commission settings from the service
-          const sDoc = appointment.servico_id ? await serviceService.getServiceById(appointment.servico_id) : null;
-          const tipoComissao = sDoc?.tipo_comissao || 'padrao';
-          const valorComissao = sDoc?.valor_comissao !== undefined ? sDoc?.valor_comissao : 0;
-
-          let commission_percentage = defaultPercentage;
-          let commission_value = 0;
-
-          // Check if there's a specific professional-level override for this service
-          const proOverride = sDoc?.comissoes_por_profissional?.[appointment.profissional_id];
-          const effectiveRule = proOverride || { tipo: tipoComissao, valor: valorComissao };
-
-          if (effectiveRule.tipo === 'percentual') {
-            commission_percentage = effectiveRule.valor;
-            commission_value = (appointment.price * commission_percentage) / 100;
-          } else if (effectiveRule.tipo === 'fixo') {
-            commission_percentage = 0;
-            commission_value = effectiveRule.valor;
-          } else {
-            // 'padrao'
-            commission_percentage = defaultPercentage;
-            commission_value = (appointment.price * commission_percentage) / 100;
-          }
-
-          await commissionService.createCommission({
+          const newComanda = await comandaService.openComanda({
+            cliente_id: appointment.cliente_id || 'avulso',
+            cliente_name: appointment.cliente_name || 'Cliente Avulso',
             profissional_id: appointment.profissional_id,
             profissional_name: appointment.profissional_name,
             agendamento_id: appointment.id,
-            servico_name: appointment.servico_name,
-            base_value: appointment.price,
-            commission_percentage,
-            commission_value,
-            status: 'pendente',
-            date: appointment.date
+            status: 'aguardando_pagamento',
+            origin: 'agenda',
+            items
+          }, appointment.profissional_id, appointment.profissional_name);
+          
+          await updateDoc(docRef, {
+            comanda_id: newComanda.id,
+            comanda_number: newComanda.number,
+            updatedAt: serverTimestamp()
           });
-        } catch (err) {
-          console.error("Erro ao gerar comissão:", err);
+        } catch (comErr) {
+          console.error("Erro ao auto-criar comanda para agendamento concluído:", comErr);
         }
       }
     }

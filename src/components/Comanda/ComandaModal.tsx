@@ -34,7 +34,8 @@ import {
   Handshake,
   Gift,
   Crown,
-  FileText
+  FileText,
+  ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot, serverTimestamp, getDoc, updateDoc, collection, query, where, getDocs, writeBatch, increment, addDoc, deleteField } from 'firebase/firestore';
@@ -1389,9 +1390,10 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     options?: {
       entersCash?: boolean;
       excessMode?: 'abater_fiado' | 'credito_haver' | 'troco';
+      bypassLoadingCheck?: boolean;
     }
   ) => {
-    if (!comanda || !user || loading) return;
+    if (!comanda || !user || (loading && !options?.bypassLoadingCheck)) return;
     setLoading(true);
     try {
       const currentCash = await cashService.getCurrentCash();
@@ -1712,13 +1714,15 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         // Lança a 1ª forma
         await handleAddPayment(methodObj1.type as any, amount1, methodObj1.id, {
           entersCash: entersCashChoice,
-          excessMode: 'troco'
+          excessMode: 'troco',
+          bypassLoadingCheck: true
         });
 
         // Lança a 2ª forma
         await handleAddPayment(methodObj2.type as any, amount2, methodObj2.id, {
           entersCash: entersCashChoice,
-          excessMode
+          excessMode,
+          bypassLoadingCheck: true
         });
 
         // Se quitou o saldo restante, finaliza
@@ -1775,7 +1779,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
       await handleAddPayment(methodObj.type as any, amount, methodObj.id, {
         entersCash: entersCashChoice,
-        excessMode
+        excessMode,
+        bypassLoadingCheck: true
       });
 
       if (amount >= comanda.pendingAmount) {
@@ -2755,25 +2760,25 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                     </div>
 
                                     <div className="flex items-center gap-2 mt-2">
-                                      <div className="inline-flex items-center gap-2 bg-slate-50 hover:bg-slate-100/90 border border-slate-200/90 rounded-xl px-2.5 py-1 transition-all shadow-2xs">
-                                        <Scissors size={13} className="text-emerald-600 shrink-0" />
-                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Atendido por:</span>
+                                      <div className="inline-flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100/90 border border-slate-200/90 rounded-xl px-2 py-0.5 md:py-1 md:px-2.5 transition-all shadow-2xs">
+                                        <Scissors size={11} className="text-emerald-600 shrink-0" />
+                                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider hidden sm:inline">Atendido por:</span>
                                         {['fechada', 'cancelada', 'nao_paga'].indexOf(comanda.status) === -1 && barbers.length > 0 ? (
                                           <select
                                             value={item.profissional_id || comanda.profissional_id || ''}
                                             onChange={(e) => handleItemBarberChange(item.id, e.target.value)}
                                             disabled={loading}
                                             title="Alterar barbeiro deste serviço"
-                                            className="bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-lg py-1 px-2.5 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all cursor-pointer font-sans shadow-2xs"
+                                            className="bg-white border border-slate-300 text-slate-900 text-[10px] md:text-xs font-bold rounded-lg py-0.5 px-1.5 max-w-[110px] md:max-w-[165px] truncate focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all cursor-pointer font-sans shadow-2xs"
                                           >
-                                            {barbers.map(b => (
-                                              <option key={b.uid || b.id} value={b.uid || b.id}>
+                                            {barbers.map((b, idx) => (
+                                              <option key={`barber-opt-${b.uid || b.id || idx}-${idx}`} value={b.uid || b.id}>
                                                 💈 {b.nome || b.displayName || b.name}
                                               </option>
                                             ))}
                                           </select>
                                         ) : (
-                                          <span className="text-xs font-extrabold text-slate-800">
+                                          <span className="text-[10px] md:text-xs font-extrabold text-slate-800 truncate max-w-[100px] md:max-w-[150px]">
                                             💈 {item.profissional_name || comanda.profissional_name || 'Profissional'}
                                           </span>
                                         )}
@@ -3328,34 +3333,30 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         {!showSecondPayment ? (
                           /* MODO PAGAMENTO ÚNICO */
                           <div className="space-y-4">
-                            {/* Botões Táteis das Formas */}
+                            {/* Seletor Dropdown de Forma de Pagamento */}
                             <div className="space-y-1.5">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                                Selecione a Forma
+                                Forma de Pagamento
                               </label>
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                {paymentMethods
-                                  .filter(m => m.type !== 'fiado' && !m.goesToClientAccount)
-                                  .map((m) => {
-                                    const isSelected = selectedPaymentMethodId === m.id;
-                                    return (
-                                      <button
-                                        key={`quick-btn-${m.id}`}
-                                        type="button"
-                                        onClick={() => setSelectedPaymentMethodId(m.id)}
-                                        className={`py-3 px-3 rounded-2xl border text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95 ${
-                                          isSelected
-                                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20 ring-2 ring-emerald-500/20'
-                                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-                                        }`}
-                                      >
-                                        {m.type === 'pix' ? <Smartphone size={15} /> :
-                                         m.type === 'dinheiro' ? <DollarSign size={15} /> :
-                                         <CreditCard size={15} />}
-                                        <span className="truncate">{m.name}</span>
-                                      </button>
-                                    );
-                                  })}
+                              <div className="relative">
+                                <select
+                                  id="single-payment-method-select"
+                                  value={selectedPaymentMethodId || ''}
+                                  onChange={(e) => setSelectedPaymentMethodId(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 px-4 pr-10 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer appearance-none"
+                                >
+                                  <option value="">Selecione uma forma de pagamento...</option>
+                                  {paymentMethods
+                                    .filter(m => m.type !== 'fiado' && !m.goesToClientAccount)
+                                    .map((m, mIdx) => (
+                                      <option key={`single-pay-opt-${m.id || mIdx}-${mIdx}`} value={m.id}>
+                                        {m.type === 'pix' ? '📱 ' : m.type === 'dinheiro' ? '💵 ' : '💳 '} {m.name}
+                                      </option>
+                                    ))}
+                                </select>
+                                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-500">
+                                  <ChevronDown size={14} />
+                                </div>
                               </div>
                             </div>
 
@@ -3406,8 +3407,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                   className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer"
                                 >
                                   <option value="">Selecione a 1ª Forma</option>
-                                  {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
-                                    <option key={m.id} value={m.id}>
+                                  {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m, idx) => (
+                                    <option key={`m1_${m.id || idx}_${idx}`} value={m.id}>
                                       {m.name}
                                     </option>
                                   ))}
@@ -3441,8 +3442,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                   className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer"
                                 >
                                   <option value="">Selecione a 2ª Forma</option>
-                                  {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m) => (
-                                    <option key={`m2_${m.id}`} value={m.id}>
+                                  {paymentMethods.filter(m => m.type !== 'fiado' && !m.goesToClientAccount).map((m, idx) => (
+                                    <option key={`m2_${m.id || idx}_${idx}`} value={m.id}>
                                       {m.name}
                                     </option>
                                   ))}
@@ -3820,8 +3821,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       onChange={(e) => setSelectedBarberForService(e.target.value)}
                       className="bg-white border border-emerald-300 rounded-xl px-3 py-1.5 text-xs text-primary font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs"
                     >
-                      {barbers.map(b => (
-                        <option key={b.uid || b.id} value={b.uid || b.id}>
+                      {barbers.map((b, idx) => (
+                        <option key={`barber-srv-opt-${b.uid || b.id || idx}-${idx}`} value={b.uid || b.id}>
                           {(b.nome || b.displayName || b.name)} {(b.uid === comanda?.profissional_id || b.id === comanda?.profissional_id) ? '(Principal da Comanda)' : ''}
                         </option>
                       ))}

@@ -346,7 +346,7 @@ export function Combos() {
                       <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Itens inclusos:</p>
                       <ul className="space-y-1">
                         {detailsList.map((itemStr, index) => (
-                          <li key={index} className="text-xs font-bold text-slate-700 truncate">
+                          <li key={`combo-det-${combo.id || 'c'}-${itemStr}-${index}`} className="text-xs font-bold text-slate-700 truncate">
                             {itemStr}
                           </li>
                         ))}

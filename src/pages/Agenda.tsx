@@ -914,7 +914,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
                   <p className="text-muted max-w-md mx-auto text-sm font-medium mb-10 leading-relaxed">Visualize a ocupação estratégica da sua barbearia ao longo do mês e identifique tendências de agendamento.</p>
                   <div className="grid grid-cols-7 gap-3 max-w-2xl mx-auto opacity-40">
                     {Array.from({ length: 31 }).map((_, i) => (
-                      <div key={i} className="aspect-square bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-center text-[10px] font-black text-slate-300 shadow-inner">
+                      <div key={`m-day-${i + 1}`} className="aspect-square bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-center text-[10px] font-black text-slate-300 shadow-inner">
                         {i + 1}
                       </div>
                     ))}

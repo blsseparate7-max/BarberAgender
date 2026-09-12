@@ -362,7 +362,7 @@ export function Lembretes() {
           { label: 'Prioritários (Alta)', value: `${totalUrgentTasks} críticos`, icon: AlertCircle, color: 'text-amber-600 bg-amber-50 border-amber-100/50' },
           { label: 'Aniversariantes do Mês', value: `${currentMonthBirthdays} aniversariantes`, icon: Cake, color: 'text-rose-600 bg-rose-50 border-rose-100/50' }
         ].map((stat, i) => (
-          <div key={i} className="bg-white border rounded-3xl p-4 flex items-center gap-4 shadow-sm">
+          <div key={`stat-rem-${stat.label}-${i}`} className="bg-white border rounded-3xl p-4 flex items-center gap-4 shadow-sm">
             <div className={`w-11 h-11 rounded-2xl flex items-center justify-center border ${stat.color} shrink-0`}>
               <stat.icon size={20} />
             </div>
@@ -823,7 +823,7 @@ export function Lembretes() {
                       { title: 'Socio Fiel', desc: 'Agradecimento puro' }
                     ].map((temp, index) => (
                       <button
-                        key={index}
+                        key={`bday-temp-${temp.title}-${index}`}
                         type="button"
                         onClick={() => setSelectedTemplateIndex(index)}
                         className={`p-3 text-left border rounded-xl flex flex-col justify-between transition-all ${

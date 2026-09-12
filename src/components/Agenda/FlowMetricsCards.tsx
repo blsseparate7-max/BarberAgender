@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, Clock, Scissors, DollarSign, ArrowUpRight, TrendingUp } from 'lucide-react';
 import { DailyFlowItem, UserProfile, Comanda } from '../../types';
+import { extractComandaDate } from './FlowUtils';
 
 interface FlowMetricsCardsProps {
   flowItems: DailyFlowItem[];
@@ -43,15 +44,16 @@ export function FlowMetricsCards({ flowItems, barbers, comandas, selectedDate }:
     ? Math.round(waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length) 
     : 0;
 
-  // Revenue from daily flow comandas
+  // Revenue from daily flow comandas or comandas of selected date
   const linkedComandaIds = new Set(
     flowItems.map(i => (i as any).comanda_id).filter(Boolean)
   );
   
   const revenueTotal = comandas.reduce((acc, c) => {
     const isFromFlow = linkedComandaIds.has(c.id) || 
-      flowItems.some(f => (c as any).daily_flow_id === f.id || c.clientName === f.cliente_name);
-    if (isFromFlow) {
+      flowItems.some(f => (c as any).daily_flow_id === f.id || (c.cliente_name || (c as any).clientName) === f.cliente_name);
+    const cDate = extractComandaDate(c);
+    if (isFromFlow || (cDate && cDate === selectedDate)) {
       return acc + (c.totalAmount || c.paidAmount || 0);
     }
     return acc;

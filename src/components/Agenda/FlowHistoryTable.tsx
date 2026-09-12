@@ -16,7 +16,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { DailyFlowItem, UserProfile, Comanda } from '../../types';
-import { extractFlowItemDate, formatFlowDisplayDate } from './FlowUtils';
+import { extractFlowItemDate, formatFlowDisplayDate, extractComandaDate, isBarberMatch } from './FlowUtils';
 
 interface FlowHistoryTableProps {
   flowItems: DailyFlowItem[];
@@ -87,12 +87,13 @@ export function FlowHistoryTable({
       const topBarberEntry = Object.entries(barberCounts).sort((a, b) => b[1] - a[1])[0];
       const topBarber = topBarberEntry ? `${topBarberEntry[0]} (${topBarberEntry[1]})` : '-';
 
-      // Revenue from linked comandas
+      // Revenue from linked comandas or comandas of this date
       const linkedComandaIds = new Set(items.map(i => (i as any).comanda_id).filter(Boolean));
       const revenue = comandas.reduce((acc, c) => {
         const isFromFlow = linkedComandaIds.has(c.id) || 
-          items.some(f => (c as any).daily_flow_id === f.id || c.clientName === f.cliente_name);
-        if (isFromFlow) {
+          items.some(f => (c as any).daily_flow_id === f.id || (c.cliente_name || (c as any).clientName) === f.cliente_name);
+        const cDate = extractComandaDate(c);
+        if (isFromFlow || (cDate && cDate === date)) {
           return acc + (c.totalAmount || c.paidAmount || 0);
         }
         return acc;

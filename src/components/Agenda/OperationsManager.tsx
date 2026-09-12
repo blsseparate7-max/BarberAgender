@@ -350,9 +350,16 @@ export function OperationsManager() {
         inicio_hora: formatTime
       });
 
-      // Update barber status to atendendo
+      // Update barber status to atendendo & rotate to end of queue
       const barberRef = doc(db, 'usuarios', barber.uid);
-      await updateDoc(barberRef, { rodizioStatus: 'atendendo' });
+      const maxIndex = barbers.reduce((max, b) => {
+        const idx = (b as any).rodizioIndex ?? 0;
+        return idx > max ? idx : max;
+      }, 0);
+      await updateDoc(barberRef, { 
+        rodizioStatus: 'atendendo',
+        rodizioIndex: maxIndex + 1
+      });
 
       // Synchronize with Agenda (Appointments)
       try {
@@ -620,6 +627,7 @@ export function OperationsManager() {
                 barbers={barbers}
                 flowItems={filteredFlowItems}
                 comandas={comandas}
+                selectedDate={selectedDate}
                 onMoveBarber={handleMoveBarber}
                 onChangeBarberStatus={handleChangeBarberStatus}
               />

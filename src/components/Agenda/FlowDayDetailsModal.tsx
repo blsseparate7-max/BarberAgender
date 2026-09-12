@@ -16,7 +16,7 @@ import {
   Award
 } from 'lucide-react';
 import { DailyFlowItem, UserProfile, Comanda } from '../../types';
-import { formatFlowDisplayDate } from './FlowUtils';
+import { formatFlowDisplayDate, extractComandaDate, isBarberMatch } from './FlowUtils';
 
 interface FlowDayDetailsModalProps {
   isOpen: boolean;
@@ -67,12 +67,13 @@ export function FlowDayDetailsModal({
     ? Math.round(waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length) 
     : 0;
 
-  // Calculate revenue from linked comandas
+  // Calculate revenue from linked comandas or comandas of this date
   const linkedComandaIds = new Set(items.map(i => (i as any).comanda_id).filter(Boolean));
   const totalRevenue = comandas.reduce((acc, c) => {
     const isFromFlow = linkedComandaIds.has(c.id) || 
-      items.some(f => (c as any).daily_flow_id === f.id || c.clientName === f.cliente_name);
-    if (isFromFlow) {
+      items.some(f => (c as any).daily_flow_id === f.id || (c.cliente_name || (c as any).clientName) === f.cliente_name);
+    const cDate = extractComandaDate(c);
+    if (isFromFlow || (cDate && cDate === date)) {
       return acc + (c.totalAmount || c.paidAmount || 0);
     }
     return acc;

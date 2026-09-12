@@ -1107,7 +1107,7 @@ export const comandaService = {
 
       if (methodConfig.goesToClientAccount) {
         const debtRef = doc(collection(db, 'client_debts'));
-        const debt: ClientDebt = {
+        const debt: any = {
           id: debtRef.id,
           tenantId: comanda.tenantId || getActiveTenantId(),
           cliente_id: comanda.cliente_id,

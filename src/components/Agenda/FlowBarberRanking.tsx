@@ -1,11 +1,13 @@
 import React from 'react';
 import { Trophy, Medal, Award, Flame, Scissors, Clock, DollarSign, UserCheck, Coffee, ArrowUp, ArrowDown } from 'lucide-react';
 import { DailyFlowItem, UserProfile, Comanda } from '../../types';
+import { extractComandaDate, isBarberMatch } from './FlowUtils';
 
 interface FlowBarberRankingProps {
   barbers: UserProfile[];
   flowItems: DailyFlowItem[];
   comandas: Comanda[];
+  selectedDate?: string;
   onMoveBarber?: (index: number, direction: 'up' | 'down') => void;
   onChangeBarberStatus?: (barberId: string, status: 'disponivel' | 'atendendo' | 'pausa') => void;
 }
@@ -14,36 +16,104 @@ export function FlowBarberRanking({
   barbers,
   flowItems,
   comandas,
+  selectedDate,
   onMoveBarber,
   onChangeBarberStatus
 }: FlowBarberRankingProps) {
-  // Calculate stats for each barber today
+  const [viewMode, setViewMode] = React.useState<'rodizio' | 'ranking'>('rodizio');
+
+  // Pre-filter comandas that belong strictly to the selected day or linked flow items
+  const dailyComandas = React.useMemo(() => {
+    const linkedComandaIds = new Set(flowItems.map(i => (i as any).comanda_id).filter(Boolean));
+    const linkedFlowItemIds = new Set(flowItems.map(i => i.id));
+    
+    return comandas.filter(c => {
+      // Must be closed, paid, or have amount
+      const isPaidOrClosed = c.status === 'fechada' || (c.paidAmount && c.paidAmount > 0) || c.status === 'aberta';
+      if (!isPaidOrClosed) return false;
+
+      // If directly linked to a daily flow item of this date
+      if (linkedComandaIds.has(c.id) || linkedFlowItemIds.has((c as any).daily_flow_id)) {
+        return true;
+      }
+      // If matching selected date
+      if (selectedDate) {
+        const cDate = extractComandaDate(c);
+        if (cDate && cDate === selectedDate) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }, [comandas, flowItems, selectedDate]);
+
+  // Calculate real synchronized stats for each barber today
   const barberStats = barbers.map(barber => {
     const barberId = barber.uid || barber.id || '';
     
-    // Items served by this barber today
-    const myFlowItems = flowItems.filter(item => 
-      item.profissional_id === barberId && item.status === 'completed'
+    // Items completed by this barber in this day's flow
+    const myCompletedFlowItems = flowItems.filter(item => 
+      item.status === 'completed' && isBarberMatch(barber, item.profissional_id, item.profissional_name)
     );
-    const completedCount = myFlowItems.length;
 
-    const myServingCount = flowItems.filter(item => 
-      item.profissional_id === barberId && item.status === 'serving'
-    ).length;
+    // Items currently being served by this barber right now
+    const myServingItems = flowItems.filter(item => 
+      item.status === 'serving' && isBarberMatch(barber, item.profissional_id, item.profissional_name)
+    );
+    const myServingCount = myServingItems.length;
 
-    // Calculate revenue from comandas linked to this barber
+    // Calculate real revenue and services count from today's comandas and flow items linked to this barber
     let totalRevenue = 0;
-    comandas.forEach(comanda => {
-      if (comanda.items && Array.isArray(comanda.items)) {
-        comanda.items.forEach(item => {
-          if (item.profissional_id === barberId) {
-            totalRevenue += item.totalPrice || item.price || 0;
+    let comandaServicesCount = 0;
+    const flowItemIdsInComandas = new Set<string>();
+
+    dailyComandas.forEach(comanda => {
+      if ((comanda as any).daily_flow_id) {
+        flowItemIdsInComandas.add((comanda as any).daily_flow_id);
+      }
+      if (comanda.items && Array.isArray(comanda.items) && comanda.items.length > 0) {
+        comanda.items.forEach(cItem => {
+          const itemMatch = isBarberMatch(
+            barber, 
+            (cItem as any).profissional_id || (cItem as any).barberId, 
+            (cItem as any).barbeiro_nome || (cItem as any).profissional_name || (comanda as any).barbeiro_nome || (comanda as any).profissional_name
+          );
+          if (itemMatch) {
+            const itemPrice = cItem.totalPrice || ((cItem.price || 0) * (cItem.quantity || cItem.quantidade || 1)) || cItem.price || 0;
+            totalRevenue += itemPrice;
+            comandaServicesCount += (cItem.quantity || cItem.quantidade || 1);
           }
         });
-      } else if (comanda.barberId === barberId) {
-        totalRevenue += comanda.totalAmount || comanda.paidAmount || 0;
+      } else {
+        // Comanda header matching
+        const headerMatch = isBarberMatch(
+          barber, 
+          (comanda as any).barberId || (comanda as any).profissional_id, 
+          (comanda as any).barbeiro_nome || (comanda as any).profissional_name
+        );
+        if (headerMatch) {
+          totalRevenue += comanda.totalAmount || comanda.paidAmount || 0;
+          comandaServicesCount += 1;
+        }
       }
     });
+
+    // Flow items completed without a separate comanda record
+    const unlinkedFlowCount = myCompletedFlowItems.filter(i => 
+      !flowItemIdsInComandas.has(i.id) && !(i as any).comanda_id
+    ).length;
+
+    const completedCount = comandaServicesCount > 0 
+      ? (comandaServicesCount + unlinkedFlowCount) 
+      : myCompletedFlowItems.length;
+
+    // Auto-calculate dynamic status: if currently serving a client, show 'atendendo'
+    let effectiveStatus: 'disponivel' | 'atendendo' | 'pausa' = (barber as any).rodizioStatus || 'disponivel';
+    if (myServingCount > 0) {
+      effectiveStatus = 'atendendo';
+    } else if (effectiveStatus === 'atendendo') {
+      effectiveStatus = 'disponivel';
+    }
 
     return {
       barber,
@@ -51,16 +121,19 @@ export function FlowBarberRanking({
       completedCount,
       myServingCount,
       totalRevenue,
-      status: (barber as any).rodizioStatus || 'disponivel',
+      status: effectiveStatus,
       rodizioIndex: (barber as any).rodizioIndex ?? 99
     };
   });
 
-  // Sort by completed cuts for the podium ranking
+  // Sort by completed cuts and revenue for the podium ranking
   const sortedByRanking = [...barberStats].sort((a, b) => {
     if (b.completedCount !== a.completedCount) return b.completedCount - a.completedCount;
     return b.totalRevenue - a.totalRevenue;
   });
+
+  // Choose display list based on viewMode
+  const displayList = viewMode === 'ranking' ? sortedByRanking : barberStats;
 
   const formatMoney = (val: number) => 
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
@@ -69,33 +142,53 @@ export function FlowBarberRanking({
     <div className="bg-slate-900 text-white rounded-[32px] p-6 shadow-xl relative overflow-hidden border border-slate-800 space-y-6">
       <div className="absolute top-0 right-0 w-36 h-36 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Header with Trophy */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+      {/* Header with Toggle */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
         <div>
           <div className="flex items-center gap-2">
             <Trophy size={18} className="text-amber-400" />
-            <h3 className="text-base font-black tracking-tight">Ranking & Rodízio do Dia</h3>
+            <h3 className="text-base font-black tracking-tight">Fila & Desempenho Diário</h3>
           </div>
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
-            Produtividade e Fila de Atendimento
+            {selectedDate ? `Dia: ${selectedDate}` : 'Hoje'} • Produtividade em tempo real
           </p>
         </div>
-        <div className="flex items-center gap-1 text-[10px] font-black text-amber-400 bg-amber-400/10 px-2.5 py-1 rounded-xl border border-amber-400/20">
-          <Flame size={12} />
-          <span>Ao Vivo</span>
+
+        {/* Toggle Mode Buttons */}
+        <div className="flex items-center bg-slate-950 p-1 rounded-2xl border border-slate-800 shrink-0">
+          <button
+            onClick={() => setViewMode('rodizio')}
+            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+              viewMode === 'rodizio'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            🔄 Rodízio (Vez)
+          </button>
+          <button
+            onClick={() => setViewMode('ranking')}
+            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+              viewMode === 'ranking'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            🏆 Ranking (Cortes)
+          </button>
         </div>
       </div>
 
-      {/* Ranking List */}
+      {/* Barbers List */}
       <div className="space-y-3">
-        {barberStats.map((stat, index) => {
+        {displayList.map((stat, index) => {
           const { barber, completedCount, myServingCount, totalRevenue, status, barberId } = stat;
           
           // Find ranking position
           const rankPos = sortedByRanking.findIndex(s => s.barberId === barberId) + 1;
 
-          // Status labels and badge styling
-          const isNextInLine = index === 0 && status === 'disponivel';
+          // Check if first in line in queue mode
+          const isNextInLine = viewMode === 'rodizio' && index === 0 && status === 'disponivel';
 
           return (
             <div
@@ -107,7 +200,7 @@ export function FlowBarberRanking({
               }`}
             >
               <div className="flex items-center justify-between gap-3 mb-2.5">
-                {/* Left: Avatar + Position Medal + Name */}
+                {/* Left: Avatar + Position Badge + Name */}
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="relative shrink-0">
                     <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700/60 flex items-center justify-center font-black text-xs text-slate-300 uppercase overflow-hidden">
@@ -175,7 +268,7 @@ export function FlowBarberRanking({
                     </>
                   )}
 
-                  {onMoveBarber && (
+                  {onMoveBarber && viewMode === 'rodizio' && (
                     <div className="flex flex-col gap-0.5 ml-1">
                       <button
                         disabled={index === 0}
@@ -202,11 +295,12 @@ export function FlowBarberRanking({
               <div className="grid grid-cols-2 gap-2 bg-slate-900/80 p-2.5 rounded-xl border border-slate-800/80 text-[10px]">
                 <div className="flex items-center gap-1.5">
                   <Scissors size={12} className="text-indigo-400 shrink-0" />
-                  <span className="text-slate-400">Hoje:</span>
-                  <strong className="text-white font-black">{completedCount} cortes</strong>
+                  <span className="text-slate-400">Cortes no dia:</span>
+                  <strong className="text-white font-black">{completedCount}</strong>
                 </div>
                 <div className="flex items-center gap-1.5 justify-end">
                   <DollarSign size={12} className="text-emerald-400 shrink-0" />
+                  <span className="text-slate-400">Total:</span>
                   <strong className="text-emerald-400 font-black">{formatMoney(totalRevenue)}</strong>
                 </div>
               </div>

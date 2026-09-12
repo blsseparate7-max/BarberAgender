@@ -202,8 +202,9 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     if (!tenantId) return;
     setLoading(true);
 
-    // Automatically purge orphaned vales in the background
+    // Automatically purge orphaned vales and commissions in the background
     commissionService.purgeOrphanedVales(tenantId);
+    commissionService.purgeOrphanedCommissions(tenantId);
 
     const commConstraints = tenantId === 'gbcortes7' 
       ? [where('tenantId', 'in', [tenantId, ''])] 

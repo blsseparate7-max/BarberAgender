@@ -145,6 +145,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   // States for finalizing comanda with remaining balance (fiado / permuta / cortesia / desconto)
   const [showFiadoConfirmationModal, setShowFiadoConfirmationModal] = useState(false);
+  const [showObservationsModal, setShowObservationsModal] = useState(false);
   const [fiadoDueDate, setFiadoDueDate] = useState('');
   const [scheduleFiadoReminder, setScheduleFiadoReminder] = useState(true);
   const [closureChoice, setClosureChoice] = useState<'fiado' | 'permuta' | 'cortesia' | 'desconto' | 'clube' | 'total_pago'>('total_pago');
@@ -1743,23 +1744,14 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       return;
     }
 
-    // 3. Apenas 1 forma de pagamento
+    // 3. Apenas 1 forma de pagamento ou Fiado direto por zerar o valor
+    const isZeroPayment = paymentInputAmount !== '' && !isNaN(Number(paymentInputAmount)) && Number(paymentInputAmount) === 0;
     const methodObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
-    if (!methodObj) {
-      // Se nenhuma forma foi escolhida, abre o modal de saldo pendente
-      const nextMonth = new Date();
-      nextMonth.setDate(nextMonth.getDate() + 30);
-      setFiadoDueDate(nextMonth.toISOString().split('T')[0]);
-      setClosureChoice('fiado');
-      setClosureNote('');
-      setShowFiadoConfirmationModal(true);
-      return;
-    }
 
-    // Se o método for Fiado
-    if (methodObj.type === 'fiado' || methodObj.goesToClientAccount) {
+    // Se o usuário zerou o valor OU selecionou a forma Fiado OU nenhuma forma foi informada
+    if (isZeroPayment || !methodObj || methodObj.type === 'fiado' || methodObj.goesToClientAccount) {
       if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
-        toast.error("Para lançar o saldo restante como Fiado, selecione um cliente cadastrado acima.");
+        toast.error("Para lançar o saldo restante como Fiado na conta, selecione um cliente cadastrado acima.");
         return;
       }
       const nextMonth = new Date();
@@ -2654,54 +2646,34 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   </div>
 
                   {comanda.cliente_id && (allAvailablePackages.some(p => p.remainingCuts > 0) || clientSubscriptions.some(s => s.status === 'active')) && (
-                    <div className="p-5 bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-100 rounded-3xl space-y-3.5 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200/50">
-                            <Sparkles size={16} fill="currentColor" className="animate-pulse" />
-                          </div>
-                          <div>
-                            <h4 className="text-xs font-black text-emerald-900 uppercase tracking-widest">Planos e Pacotes Ativos</h4>
-                            <p className="text-[10px] text-emerald-750 font-bold">Identificamos haver saldo/benefícios ativos para {comanda.cliente_name}</p>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="py-2 px-3 bg-emerald-50/90 border border-emerald-200 rounded-xl flex items-center justify-between gap-2 text-xs shadow-2xs">
+                      <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
+                        <Sparkles size={14} className="text-emerald-600 shrink-0" />
+                        <span className="font-bold text-emerald-900 text-[11px] whitespace-nowrap">Benefícios Ativos:</span>
                         {allAvailablePackages.filter(p => p.remainingCuts > 0).map((pkg, pIdx) => (
-                          <div key={`avail-pkg-${pkg.id || pIdx}-${pIdx}`} className="p-3 bg-white/80 rounded-2xl border border-emerald-100/50 flex items-center justify-between shadow-sm">
-                            <div>
-                              <p className="text-[10px] font-black text-emerald-950 uppercase tracking-wide truncate max-w-[200px]">{pkg.packageName}</p>
-                              <p className="text-[11px] text-emerald-700 font-bold">{pkg.remainingCuts} de {pkg.totalCuts} cortes restantes</p>
-                            </div>
-                            <span className="text-[9px] font-black uppercase tracking-widest bg-emerald-100/70 text-emerald-800 px-2.5 py-1 rounded-xl border border-emerald-100">Pacote</span>
-                          </div>
+                          <span key={`avail-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-white border border-emerald-200 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-lg whitespace-nowrap">
+                            {pkg.packageName}: {pkg.remainingCuts} rest.
+                          </span>
                         ))}
-                        
                         {clientSubscriptions.filter(s => s.status === 'active').map((sub, sIdx) => (
-                          <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="p-3 bg-white/80 rounded-2xl border border-emerald-100/50 flex items-center justify-between shadow-sm border-s-4 border-s-indigo-400">
-                            <div>
-                              <p className="text-[10px] font-black text-indigo-950 uppercase tracking-wide truncate max-w-[200px]">{sub.planName}</p>
-                              <p className="text-[11px] text-indigo-700 font-bold">
-                                Usado: {sub.haircutsUsed} cortes / {sub.beardsUsed} barbas
-                              </p>
-                            </div>
-                            <span className="text-[9px] font-black uppercase tracking-widest bg-indigo-100/70 text-indigo-800 px-2.5 py-1 rounded-xl border border-indigo-100">Clube</span>
-                          </div>
+                          <span key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-white border border-indigo-200 text-indigo-800 text-[10px] font-black px-2 py-0.5 rounded-lg whitespace-nowrap">
+                            Clube {sub.planName}
+                          </span>
                         ))}
                       </div>
                     </div>
                   )}
 
-                  <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                    <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
                     <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-100 bg-slate-50/50">
-                          <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-wider">Item</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-wider">Qtd</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-wider">Valor Unit.</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-muted uppercase tracking-wider text-right">Total</th>
-                          <th className="px-6 py-4 w-10"></th>
+                      <thead className="sticky top-0 bg-slate-50 border-b border-slate-100 z-10">
+                        <tr>
+                          <th className="px-4 py-2.5 text-[10px] font-bold text-muted uppercase tracking-wider">Item</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold text-muted uppercase tracking-wider">Qtd</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold text-muted uppercase tracking-wider">Valor Unit.</th>
+                          <th className="px-4 py-2.5 text-[10px] font-bold text-muted uppercase tracking-wider text-right">Total</th>
+                          <th className="px-3 py-2.5 w-10"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
@@ -2960,6 +2932,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         )}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 </div>
 
@@ -3609,135 +3582,112 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                       onClick={handleQuickPayAndClose}
                       disabled={loading}
                       className={`w-full py-4 text-white rounded-2xl font-black text-sm sm:text-base shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all cursor-pointer ${
-                        comanda.pendingAmount === 0 
-                          ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20' 
-                          : (() => {
-                              const mObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
-                              if (mObj?.type === 'fiado' || mObj?.goesToClientAccount) {
-                                return 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20';
-                              }
-                              return 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20';
-                            })()
-                      }`}
-                    >
-                      {loading ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
-                      <span>
-                        {(() => {
-                          if (comanda.pendingAmount === 0) {
-                            return 'Finalizar Conta (Já Paga)';
-                          }
-                          if (showSecondPayment) {
-                            return `Receber as 2 Formas (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) e Finalizar`;
-                          }
+                        (() => {
+                          const isZeroPayment = paymentInputAmount !== '' && !isNaN(Number(paymentInputAmount)) && Number(paymentInputAmount) === 0;
                           const mObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
-                          if (!mObj) {
-                            return 'Finalizar Conta';
+                          const isFiado = isZeroPayment || mObj?.type === 'fiado' || mObj?.goesToClientAccount;
+
+                          if (comanda.pendingAmount === 0) {
+                            return 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20';
                           }
-                          if (mObj.type === 'fiado' || mObj.goesToClientAccount) {
-                            return `Lançar no FIADO (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) e Finalizar`;
+                          if (isFiado) {
+                            return 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20';
                           }
-                          const amt = Number(paymentInputAmount) > 0 ? Number(paymentInputAmount) : comanda.pendingAmount;
-                          if (amt < comanda.pendingAmount) {
-                            return `Lançar Pagamento Parcial (R$ ${amt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`;
-                          }
-                          return `Receber R$ ${amt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ${mObj.name} e Finalizar`;
-                        })()}
-                      </span>
+                          return 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20';
+                        })()
+                      }`}
+                  >
+                    {loading ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
+                    <span>
+                      {(() => {
+                        if (comanda.pendingAmount === 0) {
+                          return 'Finalizar Conta (Já Paga)';
+                        }
+                        const isZeroPayment = paymentInputAmount !== '' && !isNaN(Number(paymentInputAmount)) && Number(paymentInputAmount) === 0;
+                        const mObj = paymentMethods.find(m => m.id === selectedPaymentMethodId);
+                        
+                        if (isZeroPayment || mObj?.type === 'fiado' || mObj?.goesToClientAccount) {
+                          return `Lançar no FIADO (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) e Finalizar`;
+                        }
+                        if (showSecondPayment) {
+                          return `Receber as 2 Formas (R$ ${comanda.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) e Finalizar`;
+                        }
+                        if (!mObj) {
+                          return 'Finalizar Conta';
+                        }
+                        const amt = Number(paymentInputAmount) > 0 ? Number(paymentInputAmount) : comanda.pendingAmount;
+                        if (amt < comanda.pendingAmount) {
+                          return `Lançar Pagamento Parcial (R$ ${amt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`;
+                        }
+                        return `Receber R$ ${amt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ${mObj.name} e Finalizar`;
+                      })()}
+                    </span>
+                  </button>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <button 
+                      type="button"
+                      onClick={() => setConfirmCancel(true)}
+                      disabled={loading}
+                      className="py-2.5 bg-white border border-rose-100 text-rose-600 rounded-xl font-bold text-[10px] hover:bg-rose-50 transition-all flex flex-col items-center justify-center gap-1 shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                      title="Cancelar comanda e manter histórico cancelado"
+                    >
+                      {loading ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
+                      <span>Cancelar</span>
                     </button>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <button 
-                        onClick={() => setConfirmCancel(true)}
-                        disabled={loading}
-                        className="py-3 bg-white border border-rose-100 text-rose-600 rounded-xl font-bold text-[10px] hover:bg-rose-50 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
-                        title="Cancelar comanda e manter registro cancelado"
-                      >
-                        {loading ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
-                        <span>Cancelar</span>
-                      </button>
-                      <button 
-                        onClick={() => setConfirmDeleteAppointment(true)}
-                        disabled={loading}
-                        className="py-3 bg-white border border-red-200 text-red-600 rounded-xl font-bold text-[10px] hover:bg-red-50 hover:border-red-300 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
-                        title="Excluir agendamento do banco e desocupar horário na agenda"
-                      >
-                        {loading ? <Loader2 className="animate-spin" size={14} /> : <CalendarX size={14} />}
-                        <span>Excluir da Agenda</span>
-                      </button>
-                      <button 
-                        onClick={() => setConfirmAusente(true)}
-                        disabled={loading}
-                        className="py-3 bg-white border border-amber-100 text-amber-600 rounded-xl font-bold text-[10px] hover:bg-amber-50 transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
-                        title="Marcar cliente como faltou"
-                      >
-                        {loading ? <Loader2 className="animate-spin" size={14} /> : <AlertCircle size={14} />}
-                        <span>Ausente</span>
-                      </button>
-                      <button 
-                        onClick={onClose}
-                        className="py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-[10px] transition-all flex flex-col items-center justify-center gap-1 shadow-sm active:scale-95"
-                        title="Fechar janela sem alterar nada"
-                      >
-                        <EyeOff size={14} className="text-slate-500" />
-                        <span>Ocultar</span>
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  (isAdmin || isGerente) && (
-                    <div className="pt-2">
-                      <button 
-                        onClick={() => setShowReopenModal(true)}
-                        disabled={loading}
-                        className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold text-sm hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/10 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
-                      >
-                        {loading ? <Loader2 className="animate-spin" size={20} /> : <RefreshCcw size={20} />}
-                        <span>Reabrir Comanda</span>
-                      </button>
-                    </div>
-                  )
-                )}
-              </div>
+                    <button 
+                      type="button"
+                      onClick={() => setConfirmDeleteAppointment(true)}
+                      disabled={loading}
+                      className="py-2.5 bg-white border border-red-200 text-red-600 rounded-xl font-bold text-[10px] hover:bg-red-50 hover:border-red-300 transition-all flex flex-col items-center justify-center gap-1 shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                      title="Excluir agendamento do banco e desocupar horário na agenda"
+                    >
+                      {loading ? <Loader2 className="animate-spin" size={14} /> : <CalendarX size={14} />}
+                      <span>Excluir Agenda</span>
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setConfirmAusente(true)}
+                      disabled={loading}
+                      className="py-2.5 bg-white border border-amber-100 text-amber-600 rounded-xl font-bold text-[10px] hover:bg-amber-50 transition-all flex flex-col items-center justify-center gap-1 shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                      title="Marcar cliente como faltou"
+                    >
+                      {loading ? <Loader2 className="animate-spin" size={14} /> : <AlertCircle size={14} />}
+                      <span>Ausente</span>
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setShowObservationsModal(true)}
+                      className="py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-[10px] transition-all flex flex-col items-center justify-center gap-1 shadow-xs active:scale-95 cursor-pointer relative"
+                      title="Ver/Adicionar observações internas"
+                    >
+                      <FileText size={14} className="text-slate-500" />
+                      <span>Observações</span>
+                      {formData.observations?.trim() && (
+                        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent" />
+                      )}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                (isAdmin || isGerente) && (
+                  <div className="pt-2">
+                    <button 
+                      onClick={() => setShowReopenModal(true)}
+                      disabled={loading}
+                      className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold text-sm hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/10 flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50 cursor-pointer"
+                    >
+                      {loading ? <Loader2 className="animate-spin" size={20} /> : <RefreshCcw size={20} />}
+                      <span>Reabrir Comanda</span>
+                    </button>
+                  </div>
+                )
+              )}
             </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Observações Internas</label>
-              <textarea 
-                value={formData.observations}
-                onChange={(e) => setFormData({...formData, observations: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none min-h-[120px] resize-none shadow-inner"
-                placeholder="Notas estratégicas sobre este atendimento..."
-              />
-            </div>
-
-            {/* Reopen History */}
-            {comanda.reopenHistory && comanda.reopenHistory.length > 0 && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 px-1">
-                  <History className="text-orange-500" size={16} />
-                  <h3 className="text-[10px] font-bold text-muted uppercase tracking-widest">Histórico de Reabertura</h3>
-                </div>
-                <div className="space-y-3">
-                  {comanda.reopenHistory.map((log, index) => (
-                    <div key={`reopen-log-${index}-${log.date}`} className="bg-orange-50/50 border border-orange-100/50 rounded-2xl p-4 space-y-2 relative overflow-hidden">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <User size={10} className="text-orange-400" />
-                          <span className="text-[10px] font-bold text-primary">{log.userName}</span>
-                        </div>
-                        <span className="text-[9px] text-muted font-medium">{new Date(log.date).toLocaleString('pt-BR')}</span>
-                      </div>
-                      <p className="text-[11px] text-orange-800 font-medium leading-relaxed italic border-l-2 border-orange-200 pl-3">
-                        {log.reason}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </div>
-        )}
+      </div>
+      )}
       </div>
     </motion.div>
 
@@ -4864,7 +4814,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                         <div className="flex flex-wrap gap-1.5">
                           {availableCoupons.map((c, cIdx) => (
                             <button
-                              key={`cp-mod-${c.id || cIdx}`}
+                              key={`cp-mod-${c.id || c.code || cIdx}-${cIdx}`}
                               type="button"
                               onClick={() => setCouponInput(c.code)}
                               className="px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-bold hover:bg-amber-100 cursor-pointer"
@@ -4899,6 +4849,88 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                   </div>
                 </>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Observações Internas & Histórico Modal */}
+      <AnimatePresence>
+        {showObservationsModal && (
+          <div 
+            className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto"
+            onClick={() => setShowObservationsModal(false)}
+          >
+            <motion.div 
+              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-surface border border-border w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden my-auto flex flex-col max-h-[85vh]"
+            >
+              <div className="p-5 border-b border-border flex items-center justify-between bg-slate-50/80">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-700 border border-slate-200">
+                    <FileText size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-primary">Observações da Comanda #{comanda.number}</h3>
+                    <p className="text-[10px] text-muted uppercase font-bold tracking-wider">Anotações internas da equipe</p>
+                  </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setShowObservationsModal(false)}
+                  className="p-1.5 text-muted hover:text-primary hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest">Notas Internas</label>
+                  <textarea 
+                    value={formData.observations}
+                    onChange={(e) => setFormData({...formData, observations: e.target.value})}
+                    rows={4}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary outline-none resize-none shadow-inner"
+                    placeholder="Escreva detalhes específicos, preferências do cliente ou notas operacionais..."
+                  />
+                </div>
+
+                {comanda.reopenHistory && comanda.reopenHistory.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5">
+                      <History className="text-orange-500" size={14} />
+                      <h4 className="text-[10px] font-black text-muted uppercase tracking-widest">Histórico de Reaberturas</h4>
+                    </div>
+                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                      {comanda.reopenHistory.map((log, index) => (
+                        <div key={`modal-reopen-log-${index}-${log.date}`} className="bg-orange-50/60 border border-orange-100 rounded-xl p-2.5 space-y-1">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="font-bold text-slate-800">{log.userName}</span>
+                            <span className="text-muted">{new Date(log.date).toLocaleString('pt-BR')}</span>
+                          </div>
+                          <p className="text-xs text-orange-950 font-medium italic border-l-2 border-orange-300 pl-2">
+                            {log.reason}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-border bg-slate-50/50 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowObservationsModal(false)}
+                  className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all cursor-pointer shadow-xs"
+                >
+                  Concluir
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

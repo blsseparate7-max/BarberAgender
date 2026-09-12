@@ -179,7 +179,7 @@ function PaginationControl({
           }
           return (
             <button
-              key={pageNum}
+              key={`page-btn-${i}-${pageNum}`}
               onClick={() => onPageChange(pageNum)}
               className={`w-8 h-8 rounded-lg text-xs font-black transition-all cursor-pointer ${
                 currentPage === pageNum
@@ -362,10 +362,26 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
   const [cashHistory, setCashHistory] = useState<DailyCash[]>([]);
 
-  // Subscrição em tempo real do status do caixa e transações
+  // Subscrição em tempo real do status do caixa, transações e fiados pendentes
   useEffect(() => {
     const unsubscribeCash = cashService.subscribeToCurrentCash((cash) => {
       setCurrentCash(cash);
+    });
+
+    // Real-time listener for pending client debts to accurately calculate pendingFiado
+    const debtsQuery = query(
+      collection(db, 'client_debts'),
+      where('tenantId', '==', currentTenantId)
+    );
+    const unsubscribeDebts = onSnapshot(debtsQuery, (snapshot) => {
+      const debtsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
+      const activeDebts = debtsList.filter(d => d.status === 'pendente' || d.status === 'parcial');
+      const totalPending = activeDebts.reduce((acc, d) => acc + (d.remainingAmount ?? d.amount ?? 0), 0);
+      setPendingDebts(activeDebts);
+      setStats(prev => ({
+        ...prev,
+        pendingFiado: totalPending
+      }));
     });
 
     // Real-time transactions for the current period
@@ -400,10 +416,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       const expense = txs
         .filter(t => t.type === 'expense' && t.status === 'pago')
         .reduce((acc, t) => acc + t.amount, 0);
-        
-      const pendingFiado = txs
-        .filter(t => t.paymentMethod === 'fiado' && t.status === 'pendente')
-        .reduce((acc, t) => acc + t.amount, 0);
 
       const aReceberCartoes = txs
         .filter(t => t.type === 'income' && t.status === 'pago' && t.is_settled === false && (t.paymentMethod === 'credito' || t.paymentMethod === 'debito'))
@@ -413,19 +425,20 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         .filter(t => t.type === 'income' && t.status === 'pago' && t.is_settled !== false)
         .reduce((acc, t) => acc + (t.net_amount || t.amount), 0) - expense;
 
-      setStats({
+      setStats(prev => ({
+        ...prev,
         income,
         expense,
         balance: income - expense,
-        pendingFiado,
         disponivel,
         aReceberCartoes
-      });
+      }));
       setLoading(false);
     });
 
     return () => {
       unsubscribeCash();
+      unsubscribeDebts();
       unsubscribeTransactions();
     };
   }, [dateRange.start, dateRange.end, currentTenantId]);
@@ -2242,6 +2255,67 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 exit={{ opacity: 0, x: -20 }}
                 className="space-y-6"
               >
+                {/* Summary Metrics for Fiados / Client Accounts */}
+                {(() => {
+                  const debtorClients = clients.filter(c => {
+                    const debt = (c.total_em_aberto ?? c.saldo_devedor ?? (c.balance && c.balance < 0 ? Math.abs(c.balance) : 0)) || 0;
+                    return debt > 0.001;
+                  });
+                  const totalFiados = clients.reduce((acc, c) => {
+                    const debt = (c.total_em_aberto ?? c.saldo_devedor ?? (c.balance && c.balance < 0 ? Math.abs(c.balance) : 0)) || 0;
+                    return acc + debt;
+                  }, 0);
+                  const totalCredito = clients.reduce((acc, c) => {
+                    const cred = (c.saldo_atual ?? (c.balance && c.balance > 0 ? c.balance : 0)) || 0;
+                    return acc + cred;
+                  }, 0);
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="bg-gradient-to-br from-red-500/10 via-red-500/5 to-transparent border border-red-200/60 p-6 rounded-3xl shadow-sm">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-black text-red-600 uppercase tracking-widest">Total Fiados em Aberto</p>
+                          <div className="p-2 bg-red-100 rounded-xl text-red-600">
+                            <AlertCircle size={18} />
+                          </div>
+                        </div>
+                        <p className="text-3xl font-black text-red-600 tracking-tight">
+                          R$ {totalFiados.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                        <p className="text-xs text-red-700/80 mt-1 font-medium">
+                          {debtorClients.length} {debtorClients.length === 1 ? 'cliente com débito' : 'clientes com débitos pendentes'}
+                        </p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-200/60 p-6 rounded-3xl shadow-sm">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Crédito dos Clientes</p>
+                          <div className="p-2 bg-emerald-100 rounded-xl text-emerald-600">
+                            <Wallet size={18} />
+                          </div>
+                        </div>
+                        <p className="text-3xl font-black text-emerald-600 tracking-tight">
+                          R$ {totalCredito.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                        <p className="text-xs text-emerald-700/80 mt-1 font-medium">Saldo positivo em haver na barbearia</p>
+                      </div>
+
+                      <div className="bg-white border border-slate-200 p-6 rounded-3xl shadow-sm">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total de Clientes</p>
+                          <div className="p-2 bg-slate-100 rounded-xl text-slate-600">
+                            <User size={18} />
+                          </div>
+                        </div>
+                        <p className="text-3xl font-black text-slate-800 tracking-tight">
+                          {clients.length}
+                        </p>
+                        <p className="text-xs text-muted mt-1 font-medium">Base de clientes cadastrados</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
                   <div className="p-8 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-slate-50/30">
                     <div className="flex flex-wrap items-center gap-4">
@@ -2261,7 +2335,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                         className="bg-white border border-slate-200 rounded-2xl py-3 px-6 text-sm focus:outline-none focus:ring-2 focus:ring-accent/10 focus:border-accent transition-all text-primary shadow-sm font-bold"
                       >
                         <option value="all">Todos os Clientes</option>
-                        <option value="debtors">Somente Devedores</option>
+                        <option value="debtors">Somente Devedores (Com Fiado)</option>
                         <option value="creditors">Somente com Crédito</option>
                       </select>
                     </div>
@@ -2272,7 +2346,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                       <thead>
                         <tr className="bg-slate-50/50">
                           <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Cliente</th>
-                          <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Saldo Atual</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Saldo Devedor (Fiado)</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Crédito em Haver</th>
                           <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Total Gasto</th>
                           <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Total Pago</th>
                           <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Ações</th>
@@ -2280,62 +2355,93 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {clients
-                          .filter(c => 
-                            c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) &&
-                            (clientFilter === 'all' || 
-                             (clientFilter === 'debtors' && (c.balance || 0) < 0) || 
-                             (clientFilter === 'creditors' && (c.balance || 0) > 0))
-                          )
+                          .filter(c => {
+                            const nameMatch = c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) || 
+                              (c.phone && c.phone.includes(clientSearchTerm));
+                            const debt = (c.total_em_aberto ?? c.saldo_devedor ?? (c.balance && c.balance < 0 ? Math.abs(c.balance) : 0)) || 0;
+                            const cred = (c.saldo_atual ?? (c.balance && c.balance > 0 ? c.balance : 0)) || 0;
+
+                            if (!nameMatch) return false;
+                            if (clientFilter === 'debtors') return debt > 0.001;
+                            if (clientFilter === 'creditors') return cred > 0.001;
+                            return true;
+                          })
                           .slice((clientCurrentPage - 1) * clientPageSize, clientCurrentPage * clientPageSize)
-                          .map((client, index) => (
-                          <tr key={`client-row-${client.uid || index}-${index}`} className="hover:bg-slate-50/50 transition-colors group">
-                            <td className="px-8 py-6">
-                              <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 group-hover:bg-accent/10 group-hover:text-accent transition-all">
-                                  <User size={20} />
-                                </div>
-                                <div>
-                                  <p className="font-bold text-primary">{client.nome}</p>
-                                  <p className="text-[10px] text-muted font-bold">{client.phone || 'Sem telefone'}</p>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-8 py-6 text-right">
-                              <span className={`text-sm font-black ${(client.balance || 0) < 0 ? 'text-red-600' : (client.balance || 0) > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
-                                R$ {(client.balance || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                              </span>
-                            </td>
-                            <td className="px-8 py-6 text-right text-sm font-medium text-slate-600">
-                              R$ {(client.totalSpent || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="px-8 py-6 text-right text-sm font-medium text-slate-600">
-                              R$ {(client.totalPaid || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="px-8 py-6">
-                              <div className="flex items-center justify-center gap-2">
-                                <button 
-                                  onClick={() => setSelectedClientAccount(client.uid)}
-                                  className="p-2 text-muted hover:text-accent transition-all bg-white rounded-lg border border-slate-100 shadow-sm cursor-pointer"
-                                  title="Ver Detalhes Financeiros"
-                                >
-                                  <Wallet size={16} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                          .map((client, index) => {
+                            const totalDebt = (client.total_em_aberto ?? client.saldo_devedor ?? (client.balance && client.balance < 0 ? Math.abs(client.balance) : 0)) || 0;
+                            const totalCredit = (client.saldo_atual ?? (client.balance && client.balance > 0 ? client.balance : 0)) || 0;
+                            const totalSpent = client.total_gasto || client.totalSpent || 0;
+                            const totalPaid = client.total_pago || client.totalPaid || 0;
+
+                            return (
+                              <tr key={`client-row-${client.uid || index}-${index}`} className="hover:bg-slate-50/50 transition-colors group">
+                                <td className="px-8 py-6">
+                                  <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 group-hover:bg-accent/10 group-hover:text-accent transition-all">
+                                      <User size={20} />
+                                    </div>
+                                    <div>
+                                      <p className="font-bold text-primary">{client.nome}</p>
+                                      <p className="text-[10px] text-muted font-bold">{client.phone || client.telefone || 'Sem telefone'}</p>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-8 py-6 text-right">
+                                  {totalDebt > 0.001 ? (
+                                    <span className="inline-flex items-center px-3 py-1 bg-red-50 text-red-700 rounded-full text-xs font-black border border-red-100">
+                                      R$ {totalDebt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </span>
+                                  ) : (
+                                    <span className="text-sm font-medium text-slate-400">R$ 0,00</span>
+                                  )}
+                                </td>
+                                <td className="px-8 py-6 text-right">
+                                  {totalCredit > 0.001 ? (
+                                    <span className="inline-flex items-center px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-black border border-emerald-100">
+                                      R$ {totalCredit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </span>
+                                  ) : (
+                                    <span className="text-sm font-medium text-slate-400">R$ 0,00</span>
+                                  )}
+                                </td>
+                                <td className="px-8 py-6 text-right text-sm font-medium text-slate-600">
+                                  R$ {totalSpent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-8 py-6 text-right text-sm font-medium text-slate-600">
+                                  R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-8 py-6">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button 
+                                      onClick={() => setSelectedClientAccount(client.uid)}
+                                      className="p-2.5 text-slate-500 hover:text-accent hover:bg-accent/10 transition-all bg-white rounded-xl border border-slate-200 shadow-sm cursor-pointer flex items-center gap-2 text-xs font-bold"
+                                      title="Ver Extrato e Quitar Fiados"
+                                    >
+                                      <Wallet size={16} />
+                                      <span>Extrato / Acerto</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                       </tbody>
                     </table>
                   </div>
 
                   <PaginationControl
                     currentPage={clientCurrentPage}
-                    totalItems={clients.filter(c => 
-                      c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) &&
-                      (clientFilter === 'all' || 
-                       (clientFilter === 'debtors' && (c.balance || 0) < 0) || 
-                       (clientFilter === 'creditors' && (c.balance || 0) > 0))
-                    ).length}
+                    totalItems={clients.filter(c => {
+                      const nameMatch = c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) || 
+                        (c.phone && c.phone.includes(clientSearchTerm));
+                      const debt = (c.total_em_aberto ?? c.saldo_devedor ?? (c.balance && c.balance < 0 ? Math.abs(c.balance) : 0)) || 0;
+                      const cred = (c.saldo_atual ?? (c.balance && c.balance > 0 ? c.balance : 0)) || 0;
+
+                      if (!nameMatch) return false;
+                      if (clientFilter === 'debtors') return debt > 0.001;
+                      if (clientFilter === 'creditors') return cred > 0.001;
+                      return true;
+                    }).length}
                     pageSize={clientPageSize}
                     onPageChange={setClientCurrentPage}
                     onPageSizeChange={(size) => {
@@ -4806,8 +4912,8 @@ function TransactionModal({ type, currentCash, onClose, onSuccess }: { type: Tra
                 className="w-full bg-white border border-amber-200 rounded-xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-amber-500/20 shadow-sm"
               >
                 <option value="">-- Selecione o Profissional --</option>
-                {barbers.map(b => (
-                  <option key={b.uid} value={b.uid}>{b.nome}</option>
+                {barbers.map((b, bIdx) => (
+                  <option key={`vale-barber-${b.uid || b.id || bIdx}-${bIdx}`} value={b.uid || b.id}>{b.nome}</option>
                 ))}
               </select>
               <p className="text-[10px] text-amber-700 font-medium leading-relaxed">

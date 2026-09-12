@@ -15,7 +15,8 @@ import {
   User,
   Scissors,
   History,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { comandaService } from '../services/comandaService';
@@ -135,6 +136,23 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
     }
     return true;
   });
+
+  const handleQuickCancelComanda = async (e: React.MouseEvent, comandaId: string, comandaNumber: string) => {
+    e.stopPropagation();
+    if (!window.confirm(`Deseja realmente cancelar a comanda #${comandaNumber}?`)) return;
+    try {
+      await comandaService.closeComanda(
+        comandaId,
+        profile?.uid || 'user',
+        profile?.nome || 'Usuário',
+        'cancelada'
+      );
+      toast.success(`Comanda #${comandaNumber} cancelada.`);
+    } catch (err: any) {
+      console.error("Erro ao cancelar comanda:", err);
+      toast.error("Erro ao cancelar comanda: " + (err.message || 'Erro desconhecido'));
+    }
+  };
 
   const getStatusColor = (status: ComandaStatus) => {
     switch (status) {
@@ -270,9 +288,21 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
                     <p className="text-[10px] text-muted uppercase tracking-wider font-bold">{comanda.origin}</p>
                   </div>
                 </div>
-                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${getStatusColor(comanda.status)}`}>
-                  {(comanda.status || 'aberta').replace('_', ' ')}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${getStatusColor(comanda.status)}`}>
+                    {(comanda.status || 'aberta').replace('_', ' ')}
+                  </span>
+                  {['aberta', 'em_atendimento', 'aguardando_pagamento'].includes(comanda.status) && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleQuickCancelComanda(e, comanda.id, comanda.number)}
+                      className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                      title="Cancelar comanda"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-4 mb-6">

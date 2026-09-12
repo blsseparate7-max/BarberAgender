@@ -103,22 +103,22 @@ export function calculateProfessionalLedger(
     return '';
   };
 
-  // Conjunto de IDs de comandas canceladas/estornadas para ignorar comissões órfãs
-  const cancelledComandaIds = new Set<string>();
+  // Conjunto de IDs de comandas não fechadas (abertas, aguardando pagamento, canceladas ou estornadas) para ignorar comissões residuais
+  const nonClosedComandaIds = new Set<string>();
   if (Array.isArray(allComandas)) {
     allComandas.forEach(c => {
-      if (c.status === 'cancelada' || c.status === 'cancelado' || c.status === 'estornada') {
-        cancelledComandaIds.add(c.id);
+      if (c.status === 'cancelada' || c.status === 'cancelado' || c.status === 'estornada' || c.status === 'aberta' || c.status === 'aguardando_pagamento') {
+        nonClosedComandaIds.add(c.id);
       }
     });
   }
 
-  // 1. Iniciar com todas as comissões registradas ativas do profissional (ignorando canceladas)
+  // 1. Iniciar com todas as comissões registradas ativas do profissional (ignorando canceladas e de comandas abertas/reabertas)
   const proCommissionsAll = (allCommissions || [])
     .filter(isMatchingBarber)
     .filter(c => {
       if (c.status === 'cancelado' || c.status === 'estornado') return false;
-      if (c.comanda_id && cancelledComandaIds.has(c.comanda_id)) return false;
+      if (c.comanda_id && nonClosedComandaIds.has(c.comanda_id)) return false;
       return true;
     })
     .map(c => ({ ...c }));

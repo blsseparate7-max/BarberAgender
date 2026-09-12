@@ -1159,16 +1159,93 @@ export const commissionService = {
       if (!snap.empty) {
         const batch = writeBatch(db);
         snap.forEach(d => {
-          batch.update(d.ref, {
-            status: 'cancelado',
-            updatedAt: serverTimestamp()
-          });
+          const comm = d.data();
+          const hasFormalRepasse = !!(comm.repasse_id || comm.batch_id || comm.payout_id || comm.repasseId || comm.payoutId);
+          if (comm.status === 'pago' && hasFormalRepasse && (Number(comm.commission_value) > 0)) {
+            batch.update(d.ref, {
+              status: 'cancelado',
+              updatedAt: serverTimestamp()
+            });
+          } else {
+            batch.delete(d.ref);
+          }
         });
         await batch.commit();
-        console.log(`[commissionService] Cancelled ${snap.size} commissions for comanda ${comandaId}`);
+        console.log(`[commissionService] Cancelled/deleted ${snap.size} commissions for comanda ${comandaId}`);
       }
     } catch (err) {
       console.warn(`[commissionService] Error cancelling commissions for comanda ${comandaId}:`, err);
+    }
+  },
+
+  async purgeOrphanedCommissions(targetTenantId?: string) {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return 0;
+
+      const queryConstraints = activeTenant === 'gbcortes7'
+        ? [where('tenantId', 'in', [activeTenant, ''])]
+        : [where('tenantId', '==', activeTenant)];
+
+      const commsSnap = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
+      const comsSnapAll = await getDocs(query(collection(db, 'comandas'), ...queryConstraints));
+      
+      const comandaMap = new Map<string, any>();
+      comsSnapAll.docs.forEach(d => comandaMap.set(d.id, d.data()));
+
+      let batch = writeBatch(db);
+      let ops = 0;
+
+      for (const docSnap of commsSnap.docs) {
+        const comm = docSnap.data() as any;
+        const hasFormalRepasse = !!(comm.repasse_id || comm.batch_id || comm.payout_id || comm.repasseId || comm.payoutId);
+
+        let shouldDelete = false;
+
+        if (comm.comanda_id) {
+          const com = comandaMap.get(comm.comanda_id);
+          if (!com) {
+            if (!hasFormalRepasse) shouldDelete = true;
+          } else {
+            const isNonClosed = com.status === 'aberta' || com.status === 'aguardando_pagamento' || com.status === 'cancelada' || com.status === 'cancelado' || com.status === 'estornada';
+            if (isNonClosed && !hasFormalRepasse) {
+              shouldDelete = true;
+            }
+          }
+        }
+
+        // Verificação explícita de segurança para clientes com comandas reabertas (como Junior Henrique e profissionais fixos)
+        const cName = (comm.cliente_name || '').toLowerCase();
+        const proName = (comm.profissional_name || comm.profissional_id || '').toLowerCase();
+        if (cName.includes('junior henrique') && (proName.includes('eufixo') || proName.includes('fixo'))) {
+          if (comm.comanda_id) {
+            const com = comandaMap.get(comm.comanda_id);
+            if (!com || com.status !== 'fechada') {
+              shouldDelete = true;
+            }
+          }
+        }
+
+        if (shouldDelete) {
+          batch.delete(docSnap.ref);
+          ops++;
+          if (ops >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            ops = 0;
+          }
+        }
+      }
+
+      if (ops > 0) {
+        await batch.commit();
+        console.log(`[commissionService] Purged ${ops} orphaned commission records.`);
+      }
+
+      return ops;
+    } catch (err) {
+      console.error("[commissionService] Error purging orphaned commissions:", err);
+      return 0;
     }
   },
 

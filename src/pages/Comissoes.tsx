@@ -78,6 +78,9 @@ export function Comissoes() {
 
   useEffect(() => {
     loadBarbers();
+    if (tenantId) {
+      commissionService.purgeOrphanedCommissions(tenantId);
+    }
   }, [tenantId]);
 
   // Live Subscription for all commissions, advances, comandas and appointments of the tenant

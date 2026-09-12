@@ -1109,10 +1109,12 @@ export const comandaService = {
         const debtRef = doc(collection(db, 'client_debts'));
         const debt: ClientDebt = {
           id: debtRef.id,
-          tenantId: getActiveTenantId(),
+          tenantId: comanda.tenantId || getActiveTenantId(),
           cliente_id: comanda.cliente_id,
           cliente_name: comanda.cliente_name,
           comanda_id: comanda.id,
+          comanda_number: comanda.number,
+          description: comanda.number ? `Comanda #${comanda.number} - Fiado` : 'Fiado Comanda',
           amount: payment.amount,
           remainingAmount: payment.amount,
           status: 'pendente',
@@ -1127,6 +1129,8 @@ export const comandaService = {
           const clientRef = doc(db, 'usuarios', comanda.cliente_id);
           transaction.update(clientRef, {
             total_em_aberto: increment(payment.amount),
+            saldo_devedor: increment(payment.amount),
+            balance: increment(-payment.amount),
             updatedAt: serverTimestamp()
           });
         }
@@ -1580,6 +1584,8 @@ export const comandaService = {
       };
       if (finalPendingAmountLeft > 0) {
         updates.total_em_aberto = increment(finalPendingAmountLeft);
+        updates.saldo_devedor = increment(finalPendingAmountLeft);
+        updates.balance = increment(-finalPendingAmountLeft);
       }
       transaction.update(clientRef, updates);
     }
@@ -1906,7 +1912,7 @@ export const comandaService = {
       }
       
       // Se fechar com saldo pendente E a escolha for FIADO, lança débito na conta do cliente
-      if (status === 'fechada' && comanda.pendingAmount > 0 && effectiveClosureType === 'fiado') {
+      if ((status === 'fechada' || status === 'nao_paga' || finalStatus === 'fechada' || finalStatus === 'nao_paga') && comanda.pendingAmount > 0 && effectiveClosureType === 'fiado') {
         if (!comanda.cliente_id || comanda.cliente_id === 'avulso') {
           throw new Error("Não é possível fechar comanda com saldo pendente como FIADO para cliente avulso. Por favor, vincule um cliente cadastrado ou selecione a opção de Permuta/Cortesia.");
         }
@@ -1914,10 +1920,12 @@ export const comandaService = {
         const debtRef = doc(collection(db, 'client_debts'));
         transaction.set(debtRef, {
           id: debtRef.id,
-          tenantId: getActiveTenantId(),
+          tenantId: comanda.tenantId || getActiveTenantId(),
           cliente_id: comanda.cliente_id,
           cliente_name: comanda.cliente_name,
           comanda_id: comanda.id,
+          comanda_number: comanda.number,
+          description: comanda.number ? `Comanda #${comanda.number} - Fiado` : 'Fiado Comanda',
           amount: pending,
           remainingAmount: pending,
           status: 'pendente',
@@ -2302,10 +2310,11 @@ export const comandaService = {
 
       // 3. Reversion Logic
       
-      // Commissions
+      // Commissions - deletar todas as comissões da comanda reaberta, exceto se pertencerem a um lote de repasse oficial já concluído
       commissions.docs.forEach(d => {
         const comm = d.data();
-        if (comm.status === 'pago') {
+        const hasFormalRepasse = !!(comm.repasse_id || comm.batch_id || comm.payout_id || comm.repasseId || comm.payoutId);
+        if (comm.status === 'pago' && hasFormalRepasse && (Number(comm.commission_value) > 0)) {
           const logRef = doc(collection(db, 'inconsistency_logs'));
           transaction.set(logRef, {
             id: logRef.id,
@@ -2435,6 +2444,8 @@ export const comandaService = {
             total_pago: increment(-cashPaidOnComanda),
             totalPaid: increment(-cashPaidOnComanda), // Legacy
             total_em_aberto: increment(-currentOpenAmountFromThisComanda),
+            saldo_devedor: increment(-currentOpenAmountFromThisComanda),
+            balance: increment(currentOpenAmountFromThisComanda),
             appointmentsCount: increment(-1),
             updatedAt: serverTimestamp()
           });
@@ -2499,6 +2510,12 @@ export const comandaService = {
     } catch (lErr) {
       console.warn("Could not revert loyalty in reopenComanda:", lErr);
     }
+
+    try {
+      await commissionService.cancelCommissionsByComanda(id);
+    } catch (cErr) {
+      console.warn("Could not cancel lingering commissions in reopenComanda:", cErr);
+    }
   },
 
   async revertComandaFinancials(id: string, clienteId?: string) {
@@ -2538,10 +2555,11 @@ export const comandaService = {
       const productsMap = Object.fromEntries(productSnaps.filter(s => s.exists()).map(s => [s.id, s.data()]));
 
       await runTransaction(db, async (transaction) => {
-        // Commissions
+        // Commissions - deletar todas as comissões da comanda estornada
         commissions.docs.forEach(d => {
           const comm = d.data();
-          if (comm.status === 'pago') {
+          const hasFormalRepasse = !!(comm.repasse_id || comm.batch_id || comm.payout_id || comm.repasseId || comm.payoutId);
+          if (comm.status === 'pago' && hasFormalRepasse && (Number(comm.commission_value) > 0)) {
             const logRef = doc(collection(db, 'inconsistency_logs'));
             transaction.set(logRef, {
               id: logRef.id,
@@ -2622,6 +2640,8 @@ export const comandaService = {
               total_pago: increment(-cashPaidOnComanda),
               totalPaid: increment(-cashPaidOnComanda),
               total_em_aberto: increment(-currentOpenAmountFromThisComanda),
+              saldo_devedor: increment(-currentOpenAmountFromThisComanda),
+              balance: increment(currentOpenAmountFromThisComanda),
               updatedAt: serverTimestamp()
             });
           }

@@ -157,7 +157,16 @@ export function Clientes() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const rawDocs = snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserProfile));
-      const activeDocs = rawDocs.filter(c => c.ativo !== false && !(c as any).mergedInto);
+      // Filter out inactive/merged and deduplicate by unique UID
+      const uniqueDocsMap = new Map<string, UserProfile>();
+      rawDocs.forEach(c => {
+        if (c.ativo !== false && !(c as any).mergedInto && c.uid) {
+          if (!uniqueDocsMap.has(c.uid)) {
+            uniqueDocsMap.set(c.uid, c);
+          }
+        }
+      });
+      const activeDocs = Array.from(uniqueDocsMap.values());
       
       // Automatic cleanup of duplicate profiles (e.g. Gustavo Felipe Alecrim, Gabriel Gasque in gbcortes7)
       const nameGroups: Record<string, UserProfile[]> = {};

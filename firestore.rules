@@ -104,6 +104,25 @@ service cloud.firestore {
       );
     }
 
+    function getUserTenantId() {
+      return (isAuthenticated() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))) ?
+        (get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == null || 
+         get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == "" ? 
+         "gbcortes7" : get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId) : "gbcortes7";
+    }
+
+    function isTenantMember(docData) {
+      return isSaaSAdmin() || (
+        isAuthenticated() && (
+          docData == null || 
+          !('tenantId' in docData) || 
+          docData.tenantId == null || 
+          docData.tenantId == "" || 
+          docData.tenantId == getUserTenantId()
+        )
+      );
+    }
+
     // Rules for Test collection (connection test)
     match /test/{docId} {
       allow read: if isAuthenticated();
@@ -131,9 +150,9 @@ service cloud.firestore {
       allow update: if isStaff() || isSaaSAdmin();
       allow delete: if isSaaSAdmin();
 
-      // Private settings / Asaas credentials subcollection
+      // Private settings / Asaas credentials subcollection - RESTRICTED TO ADMIN ONLY
       match /private_settings/{docId} {
-        allow read, write: if isStaff() || isSaaSAdmin();
+        allow read, write: if isAdmin() || isSaaSAdmin();
       }
     }
 
@@ -213,9 +232,11 @@ service cloud.firestore {
           )
         ) ||
         (
-          (isBarbeiro() || getUserEmail() == "eufixo@gbcortes7.com" || getUserEmail() == "rickbolado@gbcortes7.com" || (getUserEmail() != "" && getUserEmail().matches('.*@gbcortes7[.]com.*'))) && resource != null &&
+          isBarbeiro() && resource != null &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager'
+            'tipo', 'tenantId', 'ativo', 'bloqueado', 'bloqueadoParaAgendar', 'is_gestor', 'is_manager',
+            'saldo_atual', 'total_gasto', 'total_pago', 'total_em_aberto', 'balance', 'totalSpent', 'totalPaid', 'pontos', 'points', 'cashback',
+            'percentual_comissao', 'commission_percentage', 'remuneracao_fixa', 'monthly_goal', 'meta_mensal'
           ])
         );
       
@@ -244,10 +265,13 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
-    // Rules for Appointments (Public read for slot calculation, authenticated create)
+    // Rules for Appointments (Slot calculation, authenticated/validated creation)
     match /appointments/{appointmentId} {
       allow read: if true;
-      allow create: if isAuthenticated() || true;
+      allow create: if isAuthenticated() || (
+        request.resource.data.keys().hasAll(['cliente_name', 'data', 'horario', 'tenantId']) &&
+        request.resource.data.tenantId != 'saas'
+      );
       allow update: if isAuthenticated() && (
         (resource != null && resource.data.cliente_id == request.auth.uid) ||
         isStaff() || 
@@ -257,7 +281,11 @@ service cloud.firestore {
     }
 
     match /recurring_appointments/{appointmentId} {
-      allow read: if true;
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && resource.data.cliente_id == request.auth.uid)
+      );
       allow create: if isAuthenticated();
       allow update: if isAuthenticated() && (
         isStaff() || 
@@ -285,9 +313,9 @@ service cloud.firestore {
 
     // --- Financeiro ---
     match /financial_transactions/{transactionId} {
-      allow read: if true;
-      allow create, update: if true;
-      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow read: if isAuthenticated() && (isStaff() || isBarbeiro() || isSaaSAdmin());
+      allow create, update: if isStaff() || isBarbeiro();
+      allow delete: if isAdmin() || isSaaSAdmin() || hasRolePermission("reopen_comanda");
     }
     
     match /cash_sessions/{sessionId} {
@@ -381,10 +409,10 @@ service cloud.firestore {
     }
     
     match /subscriptions/{subscriptionId} {
-      allow read, get, list: if true;
-      allow create: if true;
-      allow update: if true;
-      allow delete: if isStaff() || isSaaSAdmin();
+      allow read, get, list: if isAuthenticated() && (isStaff() || isBarbeiro() || isSaaSAdmin() || (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid)));
+      allow create: if isStaff() || isSaaSAdmin() || (isAuthenticated() && request.resource.data.clientId == request.auth.uid);
+      allow update: if isStaff() || isSaaSAdmin() || (isAuthenticated() && resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid));
+      allow delete: if isAdmin() || isSaaSAdmin();
     }
     
     match /subscription_usage/{usageId} {
@@ -479,7 +507,7 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || hasRolePermission("reopen_comanda");
     }
 
     match /debt_payments/{paymentId} {
@@ -489,7 +517,7 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || hasRolePermission("reopen_comanda");
     }
 
     // --- Novos Recursos de Relacionamento e Lembretes (Reminders) ---
@@ -621,7 +649,7 @@ service cloud.firestore {
     // --- In-App Notifications ---
     match /notifications/{notificationId} {
       allow read, list: if isAuthenticated();
-      allow create: if true;
+      allow create: if isAuthenticated() || isStaff();
       allow update: if isAuthenticated();
       allow delete: if isAuthenticated() && isStaff();
     }

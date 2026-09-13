@@ -133,6 +133,7 @@ export const debtService = {
     amount: number;
     description: string;
     date?: string;
+    dueDate?: string;
     tenantId?: string;
   }) {
     const debtRef = collection(db, COLLECTION_DEBTS);
@@ -149,6 +150,7 @@ export const debtService = {
       status: 'pendente',
       description: data.description.trim() || 'Fiado / Débito Avulso',
       date: todayStr,
+      dueDate: data.dueDate || null,
       tenantId: activeTenant,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()

@@ -52,7 +52,8 @@ import {
   Globe,
   Database,
   Eye,
-  PlusCircle
+  PlusCircle,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -258,7 +259,27 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [manualDebtAmount, setManualDebtAmount] = useState<string>('');
   const [manualDebtDesc, setManualDebtDesc] = useState<string>('');
   const [manualDebtDate, setManualDebtDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [manualDebtDueDate, setManualDebtDueDate] = useState<string>('');
   const [isSavingManualDebt, setIsSavingManualDebt] = useState(false);
+
+  const handleSendWhatsAppDebtReminder = (client: any, totalDebt: number) => {
+    const amountStr = totalDebt.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    const shopName = tenant?.nome || tenant?.name || 'Barbearia';
+    
+    let msg = `Olá, ${client.nome}! Tudo bem? 💈\n\n`;
+    msg += `Passando para lembrar referente ao seu saldo pendente de *R$ ${amountStr}* em *${shopName}*.\n\n`;
+    msg += `Qualquer dúvida ou para solicitar a chave Pix para acerto, estamos à disposição! ✂️`;
+
+    const phone = client.phone || client.telefone || '';
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (cleanPhone.length >= 10) {
+      const fullPhone = cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
+      window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+    } else {
+      navigator.clipboard.writeText(msg);
+      toast.success('Cliente sem telefone cadastrado. A mensagem de cobrança foi copiada para a área de transferência!');
+    }
+  };
 
   const [products, setProducts] = useState<Product[]>([]);
   const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
@@ -333,6 +354,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     setManualDebtAmount('');
     setManualDebtDesc('Fiado / Débito Avulso');
     setManualDebtDate(new Date().toISOString().split('T')[0]);
+    setManualDebtDueDate('');
     setIsManualDebtModalOpen(true);
   };
 
@@ -355,7 +377,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         cliente_name: targetClient?.nome || 'Cliente',
         amount,
         description: manualDebtDesc.trim() || 'Fiado / Débito Avulso',
-        date: manualDebtDate
+        date: manualDebtDate,
+        dueDate: manualDebtDueDate || undefined
       });
       toast.success("Fiado lançado com sucesso na conta do cliente!");
       setIsManualDebtModalOpen(false);
@@ -799,7 +822,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
 
       if (activeTab === 'client-accounts') {
         const allClients = await userService.getAllClients();
-        setClients(allClients);
+        const uniqueClients = Array.from(new Map(allClients.map(c => [c.uid || (c as any).id, c])).values());
+        setClients(uniqueClients);
       }
 
       if (activeTab === 'subscriptions') {
@@ -809,9 +833,10 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           subscriptionService.getPlans(),
           userService.getAllClients()
         ]);
+        const uniqueClients = Array.from(new Map(allClients.map(c => [c.uid || (c as any).id, c])).values());
         setSubscriptions(subs);
         setSubscriptionPlans(plans);
-        setClients(allClients);
+        setClients(uniqueClients);
         setLoadingSubscriptions(false);
       }
 
@@ -2521,15 +2546,26 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                                 <td className="px-8 py-6">
                                   <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                     {totalDebt > 0.001 && (
-                                      <button 
-                                        type="button"
-                                        onClick={() => handleOpenQuickSettle(client, totalDebt)}
-                                        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white transition-all rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 text-xs font-bold"
-                                        title="Receber pagamento deste cliente e abater dívidas"
-                                      >
-                                        <DollarSign size={14} />
-                                        <span>Receber</span>
-                                      </button>
+                                      <>
+                                        <button 
+                                          type="button"
+                                          onClick={() => handleSendWhatsAppDebtReminder(client, totalDebt)}
+                                          className="px-2.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-all rounded-xl cursor-pointer flex items-center gap-1 text-xs font-bold"
+                                          title="Enviar lembrete de fiado via WhatsApp"
+                                        >
+                                          <MessageSquare size={14} />
+                                          <span>Cobrar WA</span>
+                                        </button>
+                                        <button 
+                                          type="button"
+                                          onClick={() => handleOpenQuickSettle(client, totalDebt)}
+                                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white transition-all rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                                          title="Receber pagamento deste cliente e abater dívidas"
+                                        >
+                                          <DollarSign size={14} />
+                                          <span>Receber</span>
+                                        </button>
+                                      </>
                                     )}
 
                                     <button 
@@ -3570,15 +3606,27 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-muted uppercase tracking-widest">Data do Débito</label>
-                  <input 
-                    type="date"
-                    required
-                    value={manualDebtDate}
-                    onChange={(e) => setManualDebtDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Data do Débito</label>
+                    <input 
+                      type="date"
+                      required
+                      value={manualDebtDate}
+                      onChange={(e) => setManualDebtDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Data Prometida (Vencimento)</label>
+                    <input 
+                      type="date"
+                      value={manualDebtDueDate}
+                      onChange={(e) => setManualDebtDueDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
+                    />
+                  </div>
                 </div>
 
                 <button 

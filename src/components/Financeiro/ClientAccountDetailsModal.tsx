@@ -19,6 +19,7 @@ import { comandaService } from '../../services/comandaService';
 import { paymentMethodService } from '../../services/paymentMethodService';
 import { getActiveTenantId } from '../../services/tenantService';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTenant } from '../../contexts/TenantContext';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
@@ -37,7 +38,11 @@ import {
   Edit3,
   RotateCcw,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  MessageSquare,
+  Calendar,
+  SlidersHorizontal,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -73,6 +78,7 @@ export function ClientAccountDetailsModal({
   const [showAddDebtForm, setShowAddDebtForm] = useState(false);
   const [newDebtAmount, setNewDebtAmount] = useState('');
   const [newDebtDesc, setNewDebtDesc] = useState('');
+  const [newDebtDueDate, setNewDebtDueDate] = useState('');
   const [submittingNewDebt, setSubmittingNewDebt] = useState(false);
   
   const [editingDebt, setEditingDebt] = useState<ClientDebt | null>(null);
@@ -82,7 +88,170 @@ export function ClientAccountDetailsModal({
   const [receiptPayment, setReceiptPayment] = useState<DebtPayment | null>(null);
   const [isRevertingPayment, setIsRevertingPayment] = useState(false);
 
+  // Correction Modal State (Zero impact on daily cash)
+  const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
+  const [correctionType, setCorrectionType] = useState<'increase' | 'decrease'>('decrease');
+  const [correctionAmount, setCorrectionAmount] = useState('');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [submittingCorrection, setSubmittingCorrection] = useState(false);
+
+  const handleApplyCorrection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseFloat(correctionAmount);
+    if (isNaN(val) || val <= 0) {
+      toast.error('Informe um valor válido para a correção.');
+      return;
+    }
+    if (!correctionReason.trim()) {
+      toast.error('O motivo da correção é obrigatório.');
+      return;
+    }
+
+    setSubmittingCorrection(true);
+    try {
+      const currentOpen = client?.total_em_aberto || 0;
+      const currentBal = client?.saldo_atual ?? client?.balance ?? 0;
+      const authorName = user?.displayName || 'Admin';
+      const timestampStr = format(new Date(), 'dd/MM/yyyy HH:mm');
+
+      if (correctionType === 'increase') {
+        // Aumentar Fiado (Add debt record and increase total_em_aberto)
+        const debtRef = collection(db, 'client_debts');
+        const newDebtId = doc(debtRef).id;
+        const noteText = `[CORREÇÃO / AJUSTE] +R$ ${val.toFixed(2)} - ${correctionReason.trim()} (por ${authorName})`;
+
+        await setDoc(doc(db, 'client_debts', newDebtId), {
+          id: newDebtId,
+          cliente_id,
+          cliente_name: client?.nome || 'Cliente',
+          amount: val,
+          remainingAmount: val,
+          status: 'pendente',
+          description: noteText,
+          date: format(new Date(), 'yyyy-MM-dd'),
+          tenantId: getActiveTenantId(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        // Add ledger note
+        await addDoc(collection(db, 'client_ledger_notes'), {
+          cliente_id,
+          text: `[CORREÇÃO DE SALDO (+ R$ ${val.toFixed(2)})]: ${correctionReason.trim()}`,
+          type: 'debit',
+          value: val,
+          createdAt: serverTimestamp(),
+          authorName
+        });
+
+        const newBal = currentBal - val;
+        await updateDoc(doc(db, 'usuarios', cliente_id), {
+          total_em_aberto: currentOpen + val,
+          balance: newBal,
+          saldo_atual: newBal,
+          updatedAt: serverTimestamp()
+        });
+
+        toast.success(`Correção realizada: R$ ${val.toFixed(2)} adicionados ao fiado do cliente (Sem impacto no Caixa).`);
+      } else {
+        // Diminuir Fiado / Abater sem caixa (Reduce outstanding debt FIFO)
+        const activeDebts = debts.filter(d => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status) && (d.remainingAmount || 0) > 0.001);
+        activeDebts.sort((a, b) => {
+          const aTime = a.createdAt?.seconds || 0;
+          const bTime = b.createdAt?.seconds || 0;
+          return aTime - bTime;
+        });
+
+        let remainingToReduce = val;
+        for (const debt of activeDebts) {
+          if (remainingToReduce <= 0.001) break;
+          const debtRem = debt.remainingAmount ?? debt.amount ?? 0;
+          const reduceForThis = Math.min(debtRem, remainingToReduce);
+          const newRem = debtRem - reduceForThis;
+
+          await updateDoc(doc(db, 'client_debts', debt.id), {
+            remainingAmount: newRem,
+            status: newRem <= 0.001 ? 'pago' : 'parcial',
+            description: `${debt.description || 'Fiado'} (Ajuste/Correção R$ ${reduceForThis.toFixed(2)}: ${correctionReason.trim()})`,
+            updatedAt: serverTimestamp()
+          });
+
+          remainingToReduce -= reduceForThis;
+        }
+
+        // Add ledger note
+        await addDoc(collection(db, 'client_ledger_notes'), {
+          cliente_id,
+          text: `[CORREÇÃO DE SALDO (- R$ ${val.toFixed(2)})]: ${correctionReason.trim()}`,
+          type: 'credit',
+          value: val,
+          createdAt: serverTimestamp(),
+          authorName
+        });
+
+        const newOpen = Math.max(0, currentOpen - val);
+        const newBal = currentBal + val;
+        await updateDoc(doc(db, 'usuarios', cliente_id), {
+          total_em_aberto: newOpen,
+          balance: newBal,
+          saldo_atual: newBal,
+          updatedAt: serverTimestamp()
+        });
+
+        toast.success(`Correção realizada: R$ ${val.toFixed(2)} abatidos do fiado sem movimentar caixa.`);
+      }
+
+      setIsCorrectionModalOpen(false);
+      setCorrectionAmount('');
+      setCorrectionReason('');
+      await loadInfo();
+      if (onPaymentSuccess) onPaymentSuccess();
+    } catch (err: any) {
+      console.error("Erro ao aplicar correção de saldo:", err);
+      toast.error(err.message || 'Erro ao salvar correção.');
+    } finally {
+      setSubmittingCorrection(false);
+    }
+  };
+
   const { user } = useAuth();
+  const { tenant } = useTenant();
+
+  const handleSendWhatsAppDebtReminder = (
+    clientName: string,
+    phone?: string,
+    amount?: number,
+    dueDate?: string,
+    description?: string
+  ) => {
+    const valStr = (amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    const shopName = tenant?.nome || tenant?.name || 'Barbearia';
+    
+    let msg = `Olá, ${clientName}! Tudo bem? 💈\n\n`;
+    msg += `Passando para lembrar referente ao seu saldo pendente de *R$ ${valStr}* em *${shopName}*`;
+    if (dueDate) {
+      try {
+        const formattedDate = format(new Date(dueDate + (dueDate.includes('T') ? '' : 'T12:00:00')), "dd/MM/yyyy");
+        msg += ` (Vencimento: ${formattedDate})`;
+      } catch {
+        msg += ` (Vencimento: ${dueDate})`;
+      }
+    }
+    msg += `.\n`;
+    if (description) {
+      msg += `\n*Detalhes:* ${description}\n`;
+    }
+    msg += `\nQualquer dúvida ou para solicitar a chave Pix para acerto, estamos à disposição! ✂️`;
+
+    const cleanPhone = (phone || '').replace(/\D/g, '');
+    if (cleanPhone.length >= 10) {
+      const fullPhone = cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
+      window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+    } else {
+      navigator.clipboard.writeText(msg);
+      toast.success('Cliente sem telefone cadastrado. A mensagem de cobrança foi copiada para a área de transferência!');
+    }
+  };
 
   useEffect(() => {
     loadInfo();
@@ -229,6 +398,7 @@ export function ClientAccountDetailsModal({
         status: 'pendente',
         description: newDebtDesc.trim(),
         date: format(new Date(), 'yyyy-MM-dd'),
+        dueDate: newDebtDueDate || null,
         tenantId: getActiveTenantId(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -247,6 +417,7 @@ export function ClientAccountDetailsModal({
       toast.success("Fiado registrado com sucesso!");
       setNewDebtAmount('');
       setNewDebtDesc('');
+      setNewDebtDueDate('');
       setShowAddDebtForm(false);
       await loadInfo();
     } catch (err: any) {
@@ -429,11 +600,28 @@ export function ClientAccountDetailsModal({
                 R$ {(client?.balance || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
             </div>
-            <div className="bg-amber-50/50 border border-amber-100 p-5 rounded-3xl space-y-1 shadow-sm">
-              <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">Em Aberto (Fiado)</p>
-              <p className="text-xl font-black text-amber-700">
-                R$ {totalOutstanding.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
+            <div className="bg-amber-50/50 border border-amber-100 p-5 rounded-3xl space-y-1 shadow-sm flex flex-col justify-between">
+              <div>
+                <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">Em Aberto (Fiado)</p>
+                <p className="text-xl font-black text-amber-700">
+                  R$ {totalOutstanding.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+              {totalOutstanding > 0.001 && (
+                <button
+                  type="button"
+                  onClick={() => handleSendWhatsAppDebtReminder(
+                    client?.nome || 'Cliente',
+                    client?.phone || client?.telefone,
+                    totalOutstanding
+                  )}
+                  className="mt-2 text-[10px] font-extrabold text-emerald-700 bg-emerald-100/90 hover:bg-emerald-200 px-2.5 py-1 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer w-fit shadow-xs"
+                  title="Enviar lembrete de cobrança via WhatsApp"
+                >
+                  <MessageSquare size={12} />
+                  <span>Cobrar WhatsApp</span>
+                </button>
+              )}
             </div>
             <div className="bg-slate-50 border border-slate-100 p-5 rounded-3xl space-y-1 shadow-sm">
               <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Total Gasto</p>
@@ -511,6 +699,16 @@ export function ClientAccountDetailsModal({
 
                 <button
                   type="button"
+                  onClick={() => setIsCorrectionModalOpen(true)}
+                  className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  title="Ajustar ou corrigir o valor do fiado sem movimentar o caixa (anotação de correção)"
+                >
+                  <SlidersHorizontal size={14} />
+                  <span>Corrigir Saldo</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setShowAddDebtForm(!showAddDebtForm)}
                   className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                 >
@@ -554,7 +752,7 @@ export function ClientAccountDetailsModal({
                           <X size={16} />
                         </button>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                         <div className="sm:col-span-2">
                           <label className="text-[10px] font-black text-red-800 block mb-1 uppercase tracking-wider">Descrição do Fiado</label>
                           <input 
@@ -580,6 +778,15 @@ export function ClientAccountDetailsModal({
                             min="0.01"
                           />
                         </div>
+                        <div>
+                          <label className="text-[10px] font-black text-red-800 block mb-1 uppercase tracking-wider">Vencimento (Opcional)</label>
+                          <input 
+                            type="date" 
+                            value={newDebtDueDate} 
+                            onChange={(e) => setNewDebtDueDate(e.target.value)}
+                            className="w-full bg-white border border-red-200 rounded-xl py-2 px-3 text-xs text-primary font-bold focus:outline-none focus:ring-2 focus:ring-red-500" 
+                          />
+                        </div>
                       </div>
                       <button 
                         type="submit" 
@@ -597,13 +804,19 @@ export function ClientAccountDetailsModal({
                 {debts.map((debt, index) => (
                   <div key={`client-debt-${debt.id || index}-${index}`} className="bg-white border border-slate-100 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:shadow-md transition-all shadow-sm">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className={`text-[10px] font-black text-white px-2 py-0.5 rounded-full uppercase tracking-widest ${
                           debt.status === 'pago' ? 'bg-emerald-500' : 'bg-amber-500'
                         }`}>
                           {debt.status === 'pago' ? 'Liquidado' : debt.status === 'parcial' ? 'Parcial' : 'Pendente'}
                         </span>
                         <span className="text-[10px] text-muted font-bold">{debt.date ? format(new Date(debt.date), "dd 'de' MMMM, yyyy", { locale: ptBR }) : 'Data N/D'}</span>
+                        {debt.dueDate && (
+                          <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full flex items-center gap-1 border border-amber-200">
+                            <Calendar size={10} />
+                            Venc: {format(new Date(debt.dueDate + (debt.dueDate.includes('T') ? '' : 'T12:00:00')), "dd/MM/yyyy")}
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm font-bold text-primary">Comanda #{debt.comanda_id?.substring(0, 8) || 'N/A'}</p>
                       <p className="text-xs text-muted">Original: R$ {debt.amount.toFixed(2)}</p>
@@ -627,6 +840,19 @@ export function ClientAccountDetailsModal({
                           >
                             <DollarSign size={14} />
                             <span>Pagar</span>
+                          </button>
+                          <button
+                            onClick={() => handleSendWhatsAppDebtReminder(
+                              client?.nome || 'Cliente',
+                              client?.phone || client?.telefone,
+                              debt.remainingAmount,
+                              debt.dueDate,
+                              debt.description || `Comanda #${debt.comanda_id?.substring(0, 8) || ''}`
+                            )}
+                            className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl transition-all cursor-pointer"
+                            title="Enviar lembrete deste fiado no WhatsApp"
+                          >
+                            <MessageSquare size={16} />
                           </button>
                           <button
                             onClick={() => handleStartEditDebt(debt)}
@@ -1194,6 +1420,124 @@ export function ClientAccountDetailsModal({
                     Fechar
                   </button>
                 </div>
+              </motion.div>
+            </div>
+          )}
+
+          {/* Modal de Correção / Ajuste Manual de Caderneta (Sem impacto no Caixa) */}
+          {isCorrectionModalOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-white rounded-3xl p-6 md:p-8 max-w-lg w-full space-y-6 shadow-2xl border border-slate-100"
+              >
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                      <SlidersHorizontal size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-primary">Corrigir Valor da Caderneta</h3>
+                      <p className="text-xs text-muted font-medium">Ajuste direto do fiado sem movimentar o caixa diário</p>
+                    </div>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsCorrectionModalOpen(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-50 transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleApplyCorrection} className="space-y-4">
+                  <div className="p-4 bg-amber-50 border border-amber-200/80 rounded-2xl text-amber-900 text-xs flex items-start gap-2.5">
+                    <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Aviso sobre o Livro Caixa</p>
+                      <p className="text-[11px] text-amber-800 leading-relaxed mt-0.5">
+                        Este ajuste altera exclusivamente o saldo da caderneta do cliente. Não haverá lançamento de entrada ou saída no Caixa Diário.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Tipo de Correção</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setCorrectionType('decrease')}
+                        className={`py-3 px-4 rounded-2xl text-xs font-black border transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          correctionType === 'decrease'
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <ArrowDownRight size={16} />
+                        <span>Diminuir / Abater Fiado</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setCorrectionType('increase')}
+                        className={`py-3 px-4 rounded-2xl text-xs font-black border transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          correctionType === 'increase'
+                            ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <ArrowUpRight size={16} />
+                        <span>Aumentar / Adicionar Fiado</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Valor do Ajuste (R$)</label>
+                    <input 
+                      type="number" 
+                      step="0.01" 
+                      min="0.01"
+                      required
+                      placeholder="0,00"
+                      value={correctionAmount}
+                      onChange={(e) => setCorrectionAmount(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-base font-black text-primary focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Motivo / Justificativa da Correção *</label>
+                    <textarea 
+                      rows={3}
+                      required
+                      placeholder="Ex: Correção de erro de digitação na comanda de ontem, abono autorizado pelo gerente, ajuste da caderneta antiga..."
+                      value={correctionReason}
+                      onChange={(e) => setCorrectionReason(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setIsCorrectionModalOpen(false)}
+                      className="px-5 py-3 border border-slate-200 text-slate-600 rounded-2xl text-xs font-bold hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingCorrection}
+                      className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shadow-md shadow-indigo-600/20 disabled:opacity-50"
+                    >
+                      {submittingCorrection ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                      <span>Salvar Correção</span>
+                    </button>
+                  </div>
+                </form>
               </motion.div>
             </div>
           )}

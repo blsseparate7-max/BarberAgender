@@ -40,6 +40,7 @@ import {
   FileText,
   Printer,
   Eye,
+  BarChart3,
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -203,6 +204,12 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [advances, setAdvances] = useState<ProfessionalAdvance[]>([]);
   const [payouts, setPayouts] = useState<ProfessionalPayment[]>([]);
+  const [comandas, setComandas] = useState<any[]>([]);
+  const [selectedBarberId, setSelectedBarberId] = useState<string>(profile.uid);
+  const [barbersList, setBarbersList] = useState<UserProfile[]>([]);
+  const [visibleCount, setVisibleCount] = useState<number>(10);
+  const [showAnaliticoModal, setShowAnaliticoModal] = useState<boolean>(false);
+  const [showExtratoModal, setShowExtratoModal] = useState<boolean>(false);
   const [startDate, setStartDate] = useState<string>(() => {
     const d = new Date();
     return format(new Date(d.getFullYear(), d.getMonth(), 1), 'yyyy-MM-dd');
@@ -223,6 +230,26 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   });
   const [newDailyGoal, setNewDailyGoal] = useState<string>('');
   const [newMonthlyGoal, setNewMonthlyGoal] = useState<string>('');
+
+  const currentBarber = React.useMemo(() => {
+    return barbersList.find(b => b.uid === selectedBarberId) || profile;
+  }, [barbersList, selectedBarberId, profile]);
+
+  const isAdminOrOwner = React.useMemo(() => {
+    const r = ((profile as any).role || profile.tipo || '').toLowerCase();
+    return r === 'admin' || r === 'owner' || r === 'dono' || r === 'gerente';
+  }, [profile]);
+
+  // Load barbers list for selector if admin or multi-barber tenant
+  useEffect(() => {
+    const proTenant = profile.tenantId || getActiveTenantId();
+    userService.getAllBarbers(true, proTenant).then(setBarbersList).catch(err => console.warn(err));
+  }, [profile?.tenantId]);
+
+  // Reset pagination count when filters or active barber changes
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [startDate, endDate, statusFilter, typeFilter, selectedBarberId]);
 
   // Tab states: Estoque
   const [products, setProducts] = useState<Product[]>([]);
@@ -285,16 +312,19 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
   // 3. Fetch Commissions and Financial Data in real-time (Optimized, lightweight listeners)
   useEffect(() => {
-    if (profile?.uid) {
+    const activeBarberId = currentBarber?.uid || profile?.uid;
+    const activeBarberNome = currentBarber?.nome || profile?.nome || 'Barbeiro';
+
+    if (activeBarberId) {
       setLoadingCommissions(true);
-      const proTenant = profile.tenantId || getActiveTenantId();
+      const proTenant = currentBarber?.tenantId || profile?.tenantId || getActiveTenantId();
 
       const refreshAllFinancial = async () => {
         try {
           const [commsData, advsData, payoutsData] = await Promise.all([
-            commissionService.getCommissions({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant }),
-            commissionService.getAdvances({ profissional_id: profile.uid, profissional_name: profile.nome, tenantId: proTenant }),
-            commissionService.getPayouts(profile.uid, proTenant)
+            commissionService.getCommissions({ profissional_id: activeBarberId, profissional_name: activeBarberNome, tenantId: proTenant }),
+            commissionService.getAdvances({ profissional_id: activeBarberId, profissional_name: activeBarberNome, tenantId: proTenant }),
+            commissionService.getPayouts(activeBarberId, proTenant)
           ]);
           setCommissions(commsData);
           setAdvances(advsData);
@@ -316,12 +346,19 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       const qAdvs = proTenant ? query(collection(db, 'professional_advances'), where('tenantId', '==', proTenant)) : collection(db, 'professional_advances');
       const unsubAdvs = onSnapshot(qAdvs, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
+      // Realtime listener for tenant comandas to reconcile gross revenue
+      const qCmds = proTenant ? query(collection(db, 'comandas'), where('tenantId', '==', proTenant)) : collection(db, 'comandas');
+      const unsubCmds = onSnapshot(qCmds, (snap) => {
+        setComandas(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, (e) => console.warn(e));
+
       return () => {
         unsubComms();
         unsubAdvs();
+        unsubCmds();
       };
     }
-  }, [profile?.uid, profile?.tenantId, profile?.nome]);
+  }, [currentBarber?.uid, currentBarber?.nome, profile?.tenantId]);
 
   // Tab states: Avaliações
   const [reviews, setReviews] = useState<any[]>([]);
@@ -570,22 +607,29 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
   // Calculate statistics for Commission tab using unified ledger engine
   const ledger = React.useMemo(() => {
+    const activePro = currentBarber || profile;
     const currentBarberProfile: UserProfile = {
-      uid: profile.uid,
-      nome: profile.nome || 'Barbeiro',
-      email: profile.email,
+      uid: activePro.uid,
+      nome: activePro.nome || 'Barbeiro',
+      email: activePro.email,
       tipo: 'barbeiro',
       ativo: true,
       saldo_atual: 0,
       total_gasto: 0,
       total_pago: 0,
-      percentual_comissao: profile.percentual_comissao ?? profile.commission_percentage ?? 50,
-      commission_percentage: profile.commission_percentage ?? profile.percentual_comissao ?? 50
+      percentual_comissao: activePro.percentual_comissao ?? activePro.commission_percentage ?? 50,
+      commission_percentage: activePro.commission_percentage ?? activePro.percentual_comissao ?? 50
     } as UserProfile;
-    // Current month fixed to actual month (e.g. 2026-09) to ensure 100% fidelity with Portal Admin
-    const currentMonthStr = format(new Date(), 'yyyy-MM');
-    return calculateProfessionalLedger(currentBarberProfile, commissions, advances, currentMonthStr);
-  }, [profile, commissions, advances]);
+    return calculateProfessionalLedger(
+      currentBarberProfile, 
+      commissions, 
+      advances, 
+      startDate, 
+      endDate, 
+      comandas, 
+      appointments
+    );
+  }, [currentBarber, profile, commissions, advances, startDate, endDate, comandas, appointments]);
 
   const stats = React.useMemo(() => {
     // 1. Pending commission (Comissão pendente bruta menos vales pendentes)
@@ -777,55 +821,8 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         </div>
       )}
 
-      {/* Header Banner */}
-      {activeTab !== 'agenda' && (
-        <header className="bg-slate-900 text-white pt-6 pb-12 px-4 shadow-md rounded-b-[2rem] relative shrink-0 z-30">
-          <div className="absolute inset-0 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 opacity-95 rounded-b-[2rem] overflow-hidden pointer-events-none">
-            <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl" />
-            <div className="absolute top-1/2 left-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-xl" />
-          </div>
-
-          <div className="max-w-md mx-auto flex items-center justify-between relative z-10">
-            <div className="flex items-center gap-3">
-              <div 
-                onClick={() => fileInputRef.current?.click()}
-                className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner uppercase overflow-hidden relative group cursor-pointer"
-                title="Toque para alterar foto de perfil"
-              >
-                {currentProfile.fotoUrl || currentProfile.avatarUrl ? (
-                  <img 
-                    src={currentProfile.fotoUrl || currentProfile.avatarUrl} 
-                    alt={currentProfile.nome} 
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  currentProfile.nome.substring(0, 2)
-                )}
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                  <Camera size={14} />
-                </div>
-              </div>
-              <div>
-                <p className="text-[10px] uppercase font-black tracking-widest text-indigo-300">Painel do Barbeiro</p>
-                <h2 className="text-lg font-black tracking-tight">{currentProfile.nome}</h2>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <NotificationBell />
-              <button 
-                onClick={handleLogout}
-                className="p-2.5 bg-slate-800/80 hover:bg-red-500/20 hover:text-red-400 text-slate-300 rounded-xl transition border border-slate-700/50"
-                title="Sair do Sistema"
-              >
-                <LogOut size={16} />
-              </button>
-            </div>
-          </div>
-        </header>
-      )}
-
-      {/* Main Content Area */}
-      <main className={`flex-1 w-full mx-auto px-4 relative z-10 max-w-4xl pb-24 ${activeTab === 'agenda' ? 'pt-4' : '-mt-6'}`}>
+      {/* Main Content Area - Full screen space optimized */}
+      <main className="flex-1 w-full mx-auto px-4 relative z-10 max-w-4xl pb-24 pt-4">
         
         {/* AGENDA TAB */}
         {activeTab === 'agenda' && (() => {
@@ -1093,58 +1090,79 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         {/* COMISSÃO TAB */}
         {activeTab === 'comissao' && (
           <div className="space-y-4">
-            {/* Header / Primary Stats */}
+            {/* Unified Financial Hero Card (Estilo Carteira Digital) */}
             <div className={`p-5 rounded-3xl shadow-md space-y-4 relative overflow-hidden transition-all ${
-              stats.toReceive < 0 
-                ? 'bg-rose-950 border border-rose-800/60 text-white' 
-                : stats.toReceive === 0 
-                ? 'bg-slate-900 border border-slate-800 text-white' 
-                : 'bg-slate-900 border border-slate-800 text-white'
+              ledger.saldoPendenteLiquido < 0 
+                ? 'bg-gradient-to-br from-slate-900 via-slate-950 to-rose-950 border border-rose-800/60 text-white' 
+                : 'bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 border border-slate-800 text-white'
             }`}>
-              <div className={`absolute top-0 right-0 w-28 h-28 rounded-full blur-xl pointer-events-none ${
-                stats.toReceive < 0 ? 'bg-rose-500/20' : 'bg-emerald-500/10'
+              <div className={`absolute top-0 right-0 w-36 h-36 rounded-full blur-2xl pointer-events-none ${
+                ledger.saldoPendenteLiquido < 0 ? 'bg-rose-500/20' : 'bg-emerald-500/15'
               }`} />
               
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2 relative z-10">
                 <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
-                  stats.toReceive < 0 ? 'text-rose-300' : 'text-indigo-300'
+                  ledger.saldoPendenteLiquido < 0 ? 'text-rose-300' : 'text-emerald-300'
                 }`}>
-                  <DollarSign size={13} className={stats.toReceive < 0 ? 'text-rose-400' : 'text-emerald-400'} />
-                  {stats.toReceive < 0 ? 'Saldo Devedor / A Compensar' : 'Saldo Líquido A Receber'}
+                  <DollarSign size={14} className={ledger.saldoPendenteLiquido < 0 ? 'text-rose-400' : 'text-emerald-400'} />
+                  {ledger.saldoPendenteLiquido < 0 ? 'Saldo Devedor / A Compensar (Sua Conta)' : 'Minhas Comissões A Receber'}
                 </span>
-                <span className={`text-[9px] font-bold px-2.5 py-0.5 rounded-full border ${
-                  stats.toReceive < 0 
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' 
-                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/20'
-                }`}>
-                  {stats.toReceive < 0 ? 'Vales Excedentes' : 'Saldo Real Atual'}
-                </span>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowGrossDetailsModal(true)}
+                    className="text-[10px] font-extrabold text-white bg-white/10 hover:bg-white/20 border border-white/15 px-3 py-1 rounded-xl flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-2xs backdrop-blur-xs"
+                    title="Ver recibo e detalhes de comissões"
+                  >
+                    <FileText size={12} className="text-emerald-400" />
+                    <span>Recibo PDF / Detalhes</span>
+                  </button>
+                  <span className={`text-[9px] font-bold px-2.5 py-1 rounded-full border ${
+                    ledger.saldoPendenteLiquido < 0 
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' 
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  }`}>
+                    {ledger.saldoPendenteLiquido < 0 ? 'Vales Excedentes' : 'Saldo Acumulado A Pagar'}
+                  </span>
+                </div>
               </div>
 
-              <div>
-                <p className={`text-3xl font-black tracking-tight ${
-                  stats.toReceive < 0 ? 'text-rose-300' : 'text-white'
+              <div className="relative z-10">
+                <p className={`text-3xl sm:text-4xl font-black tracking-tight ${
+                  ledger.saldoPendenteLiquido < 0 ? 'text-rose-300' : 'text-white'
                 }`}>
-                  {stats.toReceive < 0 ? `- R$ ${Math.abs(stats.toReceive).toFixed(2)}` : `R$ ${stats.toReceive.toFixed(2)}`}
+                  {ledger.saldoPendenteLiquido < 0 
+                    ? `- R$ ${Math.abs(ledger.saldoPendenteLiquido).toFixed(2)}` 
+                    : `R$ ${ledger.saldoPendenteLiquido.toFixed(2)}`}
                 </p>
-                <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-300 font-medium mt-1.5 pt-2 border-t border-slate-800/80">
-                  <span>Comissões Pendentes: <strong className="text-emerald-400 font-bold">R$ {stats.toReceiveCommissions.toFixed(2)}</strong></span>
-                  {stats.pendingAdvances > 0 && (
-                    <span>Vales A Abater: <strong className="text-rose-400 font-bold">- R$ {stats.pendingAdvances.toFixed(2)}</strong></span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-slate-300 font-medium mt-2 pt-2.5 border-t border-slate-800/80">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    Comissões a Receber: <strong className="text-emerald-400 font-bold">R$ {ledger.comissaoPendenteBruta.toFixed(2)}</strong>
+                  </span>
+                  {ledger.valesPendentes > 0 && (
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-rose-400" />
+                      Vales Abertos: <strong className="text-rose-400 font-bold">- R$ {ledger.valesPendentes.toFixed(2)}</strong>
+                    </span>
                   )}
-                  <span>= Saldo Atual: <strong className={stats.toReceive < 0 ? 'text-rose-400 font-bold' : 'text-indigo-300 font-bold'}>
-                    {stats.toReceive < 0 ? `- R$ ${Math.abs(stats.toReceive).toFixed(2)} (A Compensar)` : `R$ ${stats.toReceive.toFixed(2)}`}
-                  </strong></span>
+                  {ledger.comissaoRepassadaMes > 0 && (
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                      Já Pago (Mês): <strong className="text-indigo-300 font-bold">R$ {ledger.comissaoRepassadaMes.toFixed(2)}</strong>
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Atendimentos Summary (Moved from Schedule Tab) */}
+            {/* Atendimentos Summary */}
             <div className="bg-white border border-slate-200/80 p-4 rounded-3xl shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Calendar size={14} className="text-indigo-600" />
                 <span className="text-xs font-black uppercase text-slate-400 tracking-wider">
-                  Atendimentos do Dia ({format(selectedDate, "dd/MM")})
+                  Atendimentos de Hoje ({format(selectedDate, "dd/MM")})
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -1159,416 +1177,41 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               </div>
             </div>
 
-            {/* Filtros de Data e Status */}
-            <div className="bg-white border border-slate-200/80 p-4.5 rounded-3xl shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
-                  <Filter size={13} className="text-indigo-600" />
-                  Filtrar Produção & Vales
-                </span>
-                <button
-                  onClick={() => {
-                    const d = new Date();
-                    setStartDate(format(new Date(d.getFullYear(), d.getMonth(), 1), 'yyyy-MM-dd'));
-                    setEndDate(format(new Date(), 'yyyy-MM-dd'));
-                    setStatusFilter('todos');
-                    setTypeFilter('todos');
-                    toast.success('Filtros restaurados!');
-                  }}
-                  className="text-[10px] font-bold text-indigo-600 hover:underline uppercase"
-                >
-                  Limpar Filtros
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">De (Início)</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">Até (Fim)</label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">Status de Repasse</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e: any) => setStatusFilter(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
-                  >
-                    <option value="todos">Todos os Status</option>
-                    <option value="pendente">Pendente (A receber)</option>
-                    <option value="pago">Pago (Repassado)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-1">Tipo de Registro</label>
-                  <select
-                    value={typeFilter}
-                    onChange={(e: any) => setTypeFilter(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all"
-                  >
-                    <option value="todos">Todos os Registros</option>
-                    <option value="comissao">Comissões Apenas</option>
-                    <option value="vale">Vales/Retiradas</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Resumo Financeiro do Período */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-              <div className="bg-white border border-indigo-200/90 p-3 rounded-2xl shadow-xs flex flex-col justify-between hover:shadow-md transition-all">
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <p className="text-[9px] font-black text-indigo-600 uppercase tracking-wider flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-                      Gerado (Bruto)
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowGrossDetailsModal(true)}
-                      className="text-[9px] font-black text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-2xs"
-                      title="Ver todos os atendimentos e comissões geradas no período"
-                    >
-                      <Eye size={10} />
-                      <span>Ver detalhes</span>
-                    </button>
+            {/* AÇÕES SOB DEMANDA (Economia de Leitura) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setShowExtratoModal(true)}
+                className="p-4 bg-white hover:bg-slate-50 border border-slate-200 hover:border-indigo-300 rounded-3xl shadow-xs transition-all flex items-center justify-between group active:scale-98 cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <FileText size={18} />
                   </div>
-                  <p className="text-base font-black text-slate-900">
-                    R$ {periodStats.totalComissoesGeradas.toFixed(2)}
-                  </p>
-                </div>
-                <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-100">
-                  <p className="text-[8px] text-slate-400 font-semibold">Comissões produzidas</p>
-                  <button
-                    type="button"
-                    onClick={() => setShowGrossDetailsModal(true)}
-                    className="text-[8px] font-bold text-indigo-600 hover:underline flex items-center gap-0.5"
-                  >
-                    <FileText size={9} />
-                    <span>Recibo PDF</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-2xs flex flex-col justify-between">
-                <div>
-                  <p className="text-[9px] font-black text-emerald-600 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    Já Recebido
-                  </p>
-                  <p className="text-base font-black text-emerald-600">
-                    R$ {periodStats.totalComissoesPagas.toFixed(2)}
-                  </p>
-                </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Repasses efetuados</p>
-              </div>
-
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-2xs flex flex-col justify-between">
-                <div>
-                  <p className="text-[9px] font-black text-amber-600 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                    Pendente (Bruto)
-                  </p>
-                  <p className="text-base font-black text-amber-600">
-                    R$ {periodStats.totalComissoesPendentes.toFixed(2)}
-                  </p>
-                </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">A repassar no período</p>
-              </div>
-
-              <div className="bg-white border border-slate-200/80 p-3 rounded-2xl shadow-2xs flex flex-col justify-between">
-                <div>
-                  <p className="text-[9px] font-black text-rose-600 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                    Vales A Abater
-                  </p>
-                  <p className="text-base font-black text-rose-600">
-                    - R$ {periodStats.totalValesPendentes.toFixed(2)}
-                  </p>
-                </div>
-                <p className="text-[8px] text-slate-400 font-semibold mt-1.5">Adiantamentos pendentes</p>
-              </div>
-
-              <div className={`p-3 rounded-2xl shadow-2xs flex flex-col justify-between col-span-2 sm:col-span-1 border transition-colors ${
-                periodStats.saldoLiquidoPeriodo < 0 
-                  ? 'bg-rose-50/90 border-rose-200/90' 
-                  : 'bg-indigo-50/80 border-indigo-200/80'
-              }`}>
-                <div>
-                  <p className={`text-[9px] font-black uppercase tracking-wider mb-1 flex items-center gap-1 ${
-                    periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-700' : 'text-indigo-700'
-                  }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                      periodStats.saldoLiquidoPeriodo < 0 ? 'bg-rose-600' : 'bg-indigo-600'
-                    }`} />
-                    {periodStats.saldoLiquidoPeriodo < 0 ? 'Saldo Devedor (Período)' : 'A Receber (Líquido)'}
-                  </p>
-                  <p className={`text-base font-black ${
-                    periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-900' : 'text-indigo-900'
-                  }`}>
-                    {periodStats.saldoLiquidoPeriodo < 0 
-                      ? `- R$ ${Math.abs(periodStats.saldoLiquidoPeriodo).toFixed(2)}` 
-                      : `R$ ${periodStats.saldoLiquidoPeriodo.toFixed(2)}`}
-                  </p>
-                </div>
-                <p className={`text-[8px] font-bold mt-1.5 ${
-                  periodStats.saldoLiquidoPeriodo < 0 ? 'text-rose-600/90' : 'text-indigo-600/80'
-                }`}>
-                  {periodStats.saldoLiquidoPeriodo < 0 ? 'Vales superam comissões pendentes' : 'Pendente bruto menos vales'}
-                </p>
-              </div>
-            </div>
-
-            {/* Stimulus Goals Section */}
-            <div className="bg-white border border-slate-200/80 p-4.5 rounded-3xl shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
-                  <Target size={14} className="text-indigo-600" />
-                  Metas de Estímulo Pessoal
-                </span>
-                <button
-                  onClick={() => {
-                    setNewDailyGoal(personalDailyGoal.toString());
-                    setNewMonthlyGoal(personalMonthlyGoal.toString());
-                    setIsEditingGoal(!isEditingGoal);
-                  }}
-                  className="text-[10px] font-black text-indigo-600 hover:underline uppercase flex items-center gap-1"
-                >
-                  <Edit3 size={11} />
-                  {isEditingGoal ? 'Cancelar' : 'Ajustar'}
-                </button>
-              </div>
-
-              <AnimatePresence mode="wait">
-                {isEditingGoal ? (
-                  <motion.form 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.12, ease: 'easeOut' }}
-                    onSubmit={handleSaveGoals}
-                    className="space-y-3 bg-slate-50 border p-3.5 rounded-2xl"
-                  >
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">Configurar Suas Metas</p>
-                    
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 ml-1">Meta diária (Clientes atendidos hoje)</label>
-                      <input
-                        type="number"
-                        required
-                        value={newDailyGoal}
-                        onChange={(e) => setNewDailyGoal(e.target.value)}
-                        placeholder="Ex: 5"
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-700 outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 ml-1">Meta mensal (R$ de comissão total no mês)</label>
-                      <input
-                        type="number"
-                        required
-                        value={newMonthlyGoal}
-                        onChange={(e) => setNewMonthlyGoal(e.target.value)}
-                        placeholder="Ex: 3000"
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-700 outline-none"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-wider py-2 rounded-xl transition flex items-center justify-center gap-1.5 shadow-sm"
-                    >
-                      <Save size={12} />
-                      Salvar Novas Metas
-                    </button>
-                  </motion.form>
-                ) : (
-                  <div className="space-y-4">
-                    
-                    {/* Goal 1: Daily clients served */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span className="text-slate-600">Foco do Dia: Clientes Atendidos</span>
-                        <span className="text-indigo-600 font-black">{stats.servedTodayCount} / {personalDailyGoal}</span>
-                      </div>
-                      
-                      {/* Progress bar */}
-                      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border">
-                        <div 
-                          className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(100, (stats.servedTodayCount / personalDailyGoal) * 100)}%` }}
-                        />
-                      </div>
-                      
-                      {/* Motivational text */}
-                      <p className="text-[10px] text-slate-400 font-semibold italic">
-                        {stats.servedTodayCount >= personalDailyGoal 
-                          ? 'Excelente! Meta diária concluída! Continue brilhando! 🌟' 
-                          : `Faltam apenas ${personalDailyGoal - stats.servedTodayCount} atendimentos hoje para bater sua meta!`}
-                      </p>
-                    </div>
-
-                    {/* Goal 2: Monthly commissions earned */}
-                    <div className="space-y-1.5 border-t border-slate-100 pt-3">
-                      <div className="flex items-center justify-between text-xs font-bold">
-                        <span className="text-slate-600">Estímulo do Mês: Comissão Gerada</span>
-                        <span className="text-indigo-600 font-black">R$ {stats.receivedThisMonth.toFixed(2)} / R$ {personalMonthlyGoal.toFixed(2)}</span>
-                      </div>
-                      
-                      {/* Progress bar */}
-                      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border">
-                        <div 
-                          className="h-full bg-indigo-600 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(100, (stats.receivedThisMonth / personalMonthlyGoal) * 100)}%` }}
-                        />
-                      </div>
-                      
-                      {/* Motivational text */}
-                      <p className="text-[10px] text-slate-400 font-semibold italic">
-                        {stats.receivedThisMonth >= personalMonthlyGoal 
-                          ? 'Extraordinário! Meta de comissão do mês alcançada! Que success! 🚀' 
-                          : `Falta R$ ${(personalMonthlyGoal - stats.receivedThisMonth).toFixed(2)} para alcançar a sua meta financeira pessoal.`}
-                      </p>
-                    </div>
-
-                    {/* Official Admin / Team Goals */}
-                    {assignedTeamGoals.length > 0 && (
-                      <div className="space-y-3 border-t border-slate-100 pt-3 mt-3">
-                        <p className="text-[10px] font-black uppercase text-indigo-600 tracking-wider">Metas e Bônus da Gestão</p>
-                        {assignedTeamGoals.map((tg, tgIdx) => {
-                          const currentVal = tg.tipo === 'faturamento' ? stats.receivedThisMonth : stats.servedTodayCount;
-                          const percent = Math.min(100, Math.round((currentVal / (tg.valorMeta || 1)) * 100));
-                          const isAchieved = currentVal >= tg.valorMeta;
-
-                          return (
-                            <div key={`tg-${tg.id || tgIdx}-${tgIdx}`} className="bg-indigo-50/40 p-3 rounded-2xl border border-indigo-100/60 space-y-1.5">
-                              <div className="flex items-center justify-between text-xs font-bold">
-                                <span className="text-primary">{tg.titulo} ({tg.periodo})</span>
-                                <span className={isAchieved ? 'text-emerald-600 font-black' : 'text-slate-600'}>
-                                  {tg.tipo === 'faturamento' ? `R$ ${currentVal.toFixed(2)}` : `${currentVal}x`} / {tg.valorMeta} ({percent}%)
-                                </span>
-                              </div>
-                              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full transition-all duration-500 ${isAchieved ? 'bg-emerald-500' : 'bg-indigo-600'}`}
-                                  style={{ width: `${percent}%` }}
-                                />
-                              </div>
-                              <div className="flex items-center justify-between text-[10px] pt-0.5">
-                                <span className="text-slate-500 italic">
-                                  Bônus: <strong className="text-emerald-600">R$ {tg.valorBonus.toFixed(2)}</strong>
-                                </span>
-                                <span className={isAchieved ? 'text-emerald-700 font-bold' : 'text-muted'}>
-                                  {isAchieved ? '🎉 Meta Batida!' : 'Em andamento'}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                  <div className="text-left">
+                    <h5 className="text-xs font-black text-slate-800 uppercase tracking-wider">Ver Extrato Detalhado</h5>
+                    <p className="text-[10px] font-bold text-slate-400">Consultar lançamentos, vales e histórico</p>
                   </div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            {/* Detailed Transaction Statement */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
-                  Extrato Detalhado do Período ({transactionsList.length})
-                </h3>
-                <span className="text-[9px] bg-indigo-50 text-indigo-700 font-extrabold px-2 py-0.5 rounded-full border border-indigo-100">
-                  Apenas Valores Líquidos
-                </span>
-              </div>
-
-              {loadingCommissions ? (
-                <div className="bg-white border rounded-3xl p-10 text-center flex flex-col items-center justify-center gap-3 shadow-sm">
-                  <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-xs font-bold text-slate-400 animate-pulse uppercase tracking-wider">Carregando repasses e histórico...</p>
                 </div>
-              ) : transactionsList.length === 0 ? (
-                <div className="bg-white border rounded-3xl p-10 text-center flex flex-col items-center justify-center gap-3 shadow-sm">
-                  <DollarSign className="text-slate-300 w-10 h-10 mx-auto" />
-                  <h4 className="font-extrabold text-slate-700 text-sm">Sem movimentações</h4>
-                  <p className="text-slate-400 text-[10px] max-w-xs font-semibold leading-relaxed">
-                    Nenhuma comissão ou retirada encontrada no período selecionado com os filtros ativos.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {transactionsList.map((item, idx) => {
-                    const isComm = item.type === 'comissao';
-                    return (
-                      <div 
-                        key={`${item.type}-${item.id || idx}-${idx}`}
-                        className="bg-white border border-slate-200/80 p-3.5 rounded-2xl shadow-sm flex items-center justify-between hover:border-indigo-100 transition-colors duration-150"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                            isComm 
-                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                              : 'bg-rose-50 text-rose-600 border border-rose-100'
-                          }`}>
-                            {isComm ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-black text-slate-800 truncate">
-                              {item.title}
-                            </p>
-                            <p className="text-[10px] text-slate-400 font-bold flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                              <span>{item.date ? new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR') : 'Data Indefinida'}</span>
-                              {isComm && (
-                                <>
-                                  <span className="w-1 h-1 rounded-full bg-slate-300" />
-                                  <span className="text-slate-500 truncate">Cliente: {item.clientName}</span>
-                                </>
-                              )}
-                              {!isComm && (
-                                <>
-                                  <span className="w-1 h-1 rounded-full bg-slate-300" />
-                                  <span className="text-rose-500/80 font-bold truncate">{item.description}</span>
-                                </>
-                              )}
-                            </p>
-                          </div>
-                        </div>
+                <ChevronRight size={16} className="text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-1 transition-all" />
+              </button>
 
-                        <div className="text-right shrink-0 ml-3">
-                          <p className={`text-xs font-black ${isComm ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {isComm ? '+' : '-'} R$ {item.value.toFixed(2)}
-                          </p>
-                          <span className={`text-[8px] font-black uppercase tracking-wider ${
-                            item.status === 'pago' 
-                              ? 'text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100' 
-                              : 'text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100'
-                          }`}>
-                            {item.status || 'pendente'}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
+              <button
+                type="button"
+                onClick={() => setShowAnaliticoModal(true)}
+                className="p-4 bg-white hover:bg-slate-50 border border-slate-200 hover:border-indigo-300 rounded-3xl shadow-xs transition-all flex items-center justify-between group active:scale-98 cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-100 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <BarChart3 size={18} />
+                  </div>
+                  <div className="text-left">
+                    <h5 className="text-xs font-black text-slate-800 uppercase tracking-wider">Ver Relatório Analítico & Metas</h5>
+                    <p className="text-[10px] font-bold text-slate-400">Metas diárias, médias e atalhos de filtros</p>
+                  </div>
                 </div>
-              )}
+                <ChevronRight size={16} className="text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all" />
+              </button>
             </div>
           </div>
         )}
@@ -1776,6 +1419,25 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         {/* PERFIL TAB */}
         {activeTab === 'perfil' && (
           <div className="space-y-4">
+            
+            {/* Top Bar for Profile Tab */}
+            <div className="flex items-center justify-between bg-white border border-slate-200/80 p-4 rounded-2xl shadow-xs">
+              <div className="flex items-center gap-2">
+                <User size={18} className="text-indigo-600" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">Meu Perfil Profissional</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <NotificationBell />
+                <button 
+                  onClick={handleLogout}
+                  className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-black rounded-xl transition border border-red-200 flex items-center gap-1.5 cursor-pointer"
+                  title="Sair do Sistema"
+                >
+                  <LogOut size={14} />
+                  <span>Sair</span>
+                </button>
+              </div>
+            </div>
             
             {/* Detailed Professional Card */}
             <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm space-y-4">
@@ -2350,6 +2012,231 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold text-xs transition-all active:scale-95 cursor-pointer"
                 >
                   Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL EXTRATO DETALHADO */}
+      <AnimatePresence>
+        {showExtratoModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase text-slate-900 tracking-wider">Extrato Detalhado de Lançamentos</h3>
+                    <p className="text-[10px] font-bold text-slate-400">Suas comissões, vales e retiradas no período</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowExtratoModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-4">
+                {/* Filtros Internos do Extrato */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-400 block mb-1">De</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl py-1.5 px-2 text-xs font-bold text-slate-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-400 block mb-1">Até</label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl py-1.5 px-2 text-xs font-bold text-slate-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-400 block mb-1">Status</label>
+                    <select
+                      value={statusFilter}
+                      onChange={(e: any) => setStatusFilter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl py-1.5 px-2 text-xs font-bold text-slate-700 outline-none"
+                    >
+                      <option value="todos">Todos</option>
+                      <option value="pendente">Pendentes</option>
+                      <option value="pago">Pagos</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black uppercase text-slate-400 block mb-1">Tipo</label>
+                    <select
+                      value={typeFilter}
+                      onChange={(e: any) => setTypeFilter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl py-1.5 px-2 text-xs font-bold text-slate-700 outline-none"
+                    >
+                      <option value="todos">Todos</option>
+                      <option value="comissao">Comissões</option>
+                      <option value="vale">Vales</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Lista de Transações */}
+                {loadingCommissions ? (
+                  <div className="p-8 text-center text-slate-400 font-bold text-xs animate-pulse">Carregando movimentações...</div>
+                ) : transactionsList.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 font-bold text-xs">Nenhum lançamento no período selecionado.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {transactionsList.slice(0, visibleCount).map((item, idx) => {
+                      const isComm = item.type === 'comissao';
+                      return (
+                        <div key={`ext-m-${item.id || idx}`} className="p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between text-xs font-medium">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${isComm ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                              {isComm ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-800">{item.title}</p>
+                              <p className="text-[10px] text-slate-400">{item.date ? new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR') : 'Data N/D'}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className={`font-black ${isComm ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {isComm ? '+' : '-'} R$ {item.value.toFixed(2)}
+                            </p>
+                            <span className="text-[8px] font-black uppercase text-slate-400">{item.status || 'pendente'}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {transactionsList.length > visibleCount && (
+                      <button
+                        onClick={() => setVisibleCount(prev => prev + 10)}
+                        className="w-full py-2 bg-indigo-50 text-indigo-700 font-black text-xs rounded-xl hover:bg-indigo-100 transition"
+                      >
+                        Carregar Mais (+10)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 bg-slate-50 border-t border-slate-100 text-right">
+                <button
+                  onClick={() => setShowExtratoModal(false)}
+                  className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-black text-xs transition"
+                >
+                  Fechar Extrato
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL RELATÓRIO ANALÍTICO & METAS */}
+      <AnimatePresence>
+        {showAnaliticoModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                    <BarChart3 size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase text-slate-900 tracking-wider">Relatório Analítico de Desempenho</h3>
+                    <p className="text-[10px] font-bold text-slate-400">Metas pessoais e indicativos do seu rendimento</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAnaliticoModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-4">
+                {/* Cards Analíticos de Resumo */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-2xl">
+                    <p className="text-[9px] font-black text-indigo-600 uppercase tracking-wider mb-1">Gerado Bruto</p>
+                    <p className="text-base font-black text-slate-900">R$ {periodStats.totalComissoesGeradas.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-2xl">
+                    <p className="text-[9px] font-black text-emerald-600 uppercase tracking-wider mb-1">Já Recebido</p>
+                    <p className="text-base font-black text-emerald-600">R$ {periodStats.totalComissoesPagas.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-2xl">
+                    <p className="text-[9px] font-black text-amber-600 uppercase tracking-wider mb-1">Pendente</p>
+                    <p className="text-base font-black text-amber-600">R$ {periodStats.totalComissoesPendentes.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-2xl">
+                    <p className="text-[9px] font-black text-rose-600 uppercase tracking-wider mb-1">Vales Pego</p>
+                    <p className="text-base font-black text-rose-600">- R$ {periodStats.totalValesPendentes.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                {/* Seção de Metas */}
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
+                      <Target size={14} className="text-indigo-600" />
+                      Suas Metas Pessoais
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs font-bold">
+                        <span>Foco Hoje: Atendimentos</span>
+                        <span className="text-indigo-600 font-black">{stats.servedTodayCount} / {personalDailyGoal}</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, (stats.servedTodayCount / personalDailyGoal) * 100)}%` }} />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 pt-2 border-t border-slate-200">
+                      <div className="flex justify-between text-xs font-bold">
+                        <span>Comissão Mês</span>
+                        <span className="text-indigo-600 font-black">R$ {stats.receivedThisMonth.toFixed(2)} / R$ {personalMonthlyGoal.toFixed(2)}</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${Math.min(100, (stats.receivedThisMonth / personalMonthlyGoal) * 100)}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 border-t border-slate-100 text-right">
+                <button
+                  onClick={() => setShowAnaliticoModal(false)}
+                  className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-black text-xs transition"
+                >
+                  Fechar Relatório
                 </button>
               </div>
             </motion.div>

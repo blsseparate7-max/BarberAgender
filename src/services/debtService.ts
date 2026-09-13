@@ -66,6 +66,112 @@ export const debtService = {
     return data.divida_id;
   },
 
+  async settleClientDebtsGlobal(data: {
+    cliente_id: string;
+    amount: number;
+    paymentMethod: PaymentMethod;
+    methodId?: string;
+    userId: string;
+    userName: string;
+  }) {
+    const debts = await this.getClientDebts(data.cliente_id);
+    const activeDebts = debts.filter(d => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status) && (d.remainingAmount || 0) > 0.001);
+    
+    // Sort FIFO (oldest debt first)
+    activeDebts.sort((a, b) => {
+      const aDate = a.date || '';
+      const bDate = b.date || '';
+      if (aDate !== bDate) return aDate.localeCompare(bDate);
+      const aTime = a.createdAt?.seconds || 0;
+      const bTime = b.createdAt?.seconds || 0;
+      return aTime - bTime;
+    });
+
+    let remainingToPay = data.amount;
+    const settled: { debtId: string; paidAmount: number }[] = [];
+
+    for (const debt of activeDebts) {
+      if (remainingToPay <= 0.001) break;
+      const debtRemaining = debt.remainingAmount ?? debt.amount ?? 0;
+      const payForThis = Math.min(debtRemaining, remainingToPay);
+      
+      await comandaService.payDebt(
+        debt.id,
+        payForThis,
+        data.paymentMethod || 'dinheiro',
+        data.methodId || '',
+        data.userId,
+        data.userName
+      );
+
+      settled.push({ debtId: debt.id, paidAmount: payForThis });
+      remainingToPay -= payForThis;
+    }
+
+    // If client paid more than total outstanding debts, add the excess as balance credit
+    if (remainingToPay > 0.001) {
+      const clientRef = doc(db, 'usuarios', data.cliente_id);
+      const clientSnap = await getDoc(clientRef);
+      if (clientSnap.exists()) {
+        const clientData = clientSnap.data();
+        const currentBal = clientData.saldo_atual ?? clientData.balance ?? 0;
+        await updateDoc(clientRef, {
+          saldo_atual: currentBal + remainingToPay,
+          balance: currentBal + remainingToPay,
+          total_pago: increment(remainingToPay),
+          updatedAt: serverTimestamp()
+        });
+      }
+    }
+
+    return settled;
+  },
+
+  async addManualDebt(data: {
+    cliente_id: string;
+    cliente_name: string;
+    amount: number;
+    description: string;
+    date?: string;
+    tenantId?: string;
+  }) {
+    const debtRef = collection(db, COLLECTION_DEBTS);
+    const newDebtId = doc(debtRef).id;
+    const activeTenant = data.tenantId || getActiveTenantId();
+    const todayStr = data.date || new Date().toISOString().split('T')[0];
+
+    await setDoc(doc(db, COLLECTION_DEBTS, newDebtId), {
+      id: newDebtId,
+      cliente_id: data.cliente_id,
+      cliente_name: data.cliente_name || 'Cliente',
+      amount: data.amount,
+      remainingAmount: data.amount,
+      status: 'pendente',
+      description: data.description.trim() || 'Fiado / Débito Avulso',
+      date: todayStr,
+      tenantId: activeTenant,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+
+    const clientRef = doc(db, 'usuarios', data.cliente_id);
+    const clientSnap = await getDoc(clientRef);
+    if (clientSnap.exists()) {
+      const clientData = clientSnap.data();
+      const currentOpen = clientData.total_em_aberto || 0;
+      const currentBal = clientData.saldo_atual ?? clientData.balance ?? 0;
+      const newBal = currentBal - data.amount;
+      await updateDoc(clientRef, {
+        total_em_aberto: currentOpen + data.amount,
+        balance: newBal,
+        saldo_atual: newBal,
+        updatedAt: serverTimestamp()
+      });
+    }
+
+    return newDebtId;
+  },
+
   async getDebtPayments(divida_id: string) {
     const q = query(
       collection(db, COLLECTION_PAYMENTS),

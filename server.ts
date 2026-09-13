@@ -1360,14 +1360,14 @@ function encodeFirestoreFields(data: any): any {
         const isRealCustomerId = customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_');
         const selectedBillingType = (billingType === 'CREDIT_CARD' || billingType === 'PIX') ? billingType : 'PIX';
 
-        // If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
-        if ((selectedBillingType === 'CREDIT_CARD' || req.body?.isSubscription) && isRealCustomerId) {
+        // 1. If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
+        if (selectedBillingType === 'CREDIT_CARD' && isRealCustomerId) {
           try {
             const createSub = async () => fetchAsaasApi('/subscriptions', {
               method: 'POST',
               body: JSON.stringify({
                 customer: customerId,
-                billingType: selectedBillingType,
+                billingType: 'CREDIT_CARD',
                 value: Number(amount),
                 nextDueDate: dueDateStr,
                 cycle: 'MONTHLY',
@@ -1386,7 +1386,7 @@ function encodeFirestoreFields(data: any): any {
             if (subData && !subData.errors && subData.id) {
               payData = subData;
             } else if (subData?.errors) {
-              console.warn("Retorno de erro ao criar assinatura no Asaas:", subData.errors);
+              console.warn("Retorno de erro ao criar assinatura de cartão no Asaas:", subData.errors);
               payData = subData;
             }
           } catch (subErr) {
@@ -1394,43 +1394,44 @@ function encodeFirestoreFields(data: any): any {
           }
         }
 
-        // Create single payment charge or subscription if selectedBillingType is PIX or fallback needed
+        // 2. For PIX or single charge fallback: create ONE single charge with exact dueDate (D+0, no +3 offset, no premature next-month invoices)
         if ((!payData || payData?.errors) && isRealCustomerId) {
-          // If PIX, we create a recurring subscription if requested or a charge with explicit PIX billingType
-          const createPaymentOrSub = async () => {
-            if (isClientSubscription || req.body?.isSubscription) {
-              return fetchAsaasApi('/subscriptions', {
-                method: 'POST',
-                body: JSON.stringify({
-                  customer: customerId,
-                  billingType: selectedBillingType,
-                  value: Number(amount),
-                  nextDueDate: dueDateStr,
-                  cycle: 'MONTHLY',
-                  description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
-                  externalReference: finalExternalRef
-                })
-              });
-            } else {
-              return fetchAsaasApi('/payments', {
-                method: 'POST',
-                body: JSON.stringify({
-                  customer: customerId,
-                  billingType: selectedBillingType,
-                  value: Number(amount),
-                  dueDate: dueDateStr,
-                  description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
-                  externalReference: finalExternalRef
-                })
-              });
-            }
+          const createSinglePayment = async () => {
+            return fetchAsaasApi('/payments', {
+              method: 'POST',
+              body: JSON.stringify({
+                customer: customerId,
+                billingType: selectedBillingType,
+                value: Number(amount),
+                dueDate: dueDateStr,
+                description: `Assinatura BarberElite - Plano ${planName || 'Mensal'} (${tenantId})`,
+                externalReference: finalExternalRef
+              })
+            });
           };
 
-          payData = await createPaymentOrSub();
+          payData = await createSinglePayment();
 
           if (payData?.errors && isSandboxMode) {
             await ensureCustomerCpfCnpjValid(true);
-            payData = await createPaymentOrSub();
+            payData = await createSinglePayment();
+          }
+
+          // Safety check: ensure the created payment has the exact requested dueDate
+          if (payData && payData.id && String(payData.id).startsWith('pay_') && !String(payData.id).startsWith('pay_sandbox_')) {
+            const createdDue = payData.dueDate ? String(payData.dueDate).split('T')[0] : '';
+            if (createdDue && createdDue !== dueDateStr) {
+              try {
+                console.log(`[Asaas Payment DueDate Align] Forçando vencimento exato de ${payData.id} para ${dueDateStr}...`);
+                await fetchAsaasApi(`/payments/${payData.id}`, {
+                  method: 'PUT',
+                  body: JSON.stringify({ dueDate: dueDateStr })
+                });
+                payData.dueDate = dueDateStr;
+              } catch (alignErr) {
+                console.warn("[Asaas Payment DueDate Align] Erro ao alinhar dueDate:", alignErr);
+              }
+            }
           }
         }
 
@@ -1467,7 +1468,21 @@ function encodeFirestoreFields(data: any): any {
               paymentIdForPixOrLink = firstPayment.id;
               invoiceUrl = firstPayment.invoiceUrl;
               bankSlipUrl = firstPayment.bankSlipUrl;
-              console.log(`[Subscription] Encontrado pagamento correspondente: ${paymentIdForPixOrLink}`);
+              console.log(`[Subscription] Encontrado pagamento correspondente: ${paymentIdForPixOrLink} (Vencimento atual Asaas: ${firstPayment.dueDate})`);
+
+              // Force first payment dueDate to match the requested subscription date exactly (prevent +3 days offset)
+              const payDueDateStr = firstPayment.dueDate ? String(firstPayment.dueDate).split('T')[0] : '';
+              if (payDueDateStr && payDueDateStr !== dueDateStr && firstPayment.id && String(firstPayment.id).startsWith('pay_') && !String(firstPayment.id).startsWith('pay_sandbox_')) {
+                try {
+                  console.log(`[Subscription DueDate Align] Forçando vencimento da cobrança ${firstPayment.id} para ${dueDateStr}...`);
+                  await fetchAsaasApi(`/payments/${firstPayment.id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ dueDate: dueDateStr })
+                  });
+                } catch (alignErr) {
+                  console.warn("[Subscription DueDate Align] Aviso ao alinhar data de vencimento no Asaas:", alignErr);
+                }
+              }
             }
           } catch (e) {
             console.warn("Falha ao buscar pagamentos da assinatura:", e);
@@ -3356,10 +3371,44 @@ function encodeFirestoreFields(data: any): any {
       let asaasInvoiceSynced = false;
       let asaasFeedback = '';
 
-      // 1. Update Asaas Subscription if asaasSubscriptionId exists and is real
-      if (asaasApiKey && subDocData.asaasSubscriptionId && String(subDocData.asaasSubscriptionId).startsWith('sub_')) {
+      // Discover missing asaasSubscriptionId or asaasInvoiceId if possible
+      let currentAsaasSubId = subDocData.asaasSubscriptionId;
+      let currentAsaasInvoiceId = subDocData.asaasInvoiceId;
+
+      if (asaasApiKey && !currentAsaasSubId && currentAsaasInvoiceId && String(currentAsaasInvoiceId).startsWith('pay_')) {
         try {
-          const updateSubRes = await fetch(`${baseUrl}/subscriptions/${subDocData.asaasSubscriptionId}`, {
+          const checkPayRes = await fetch(`${baseUrl}/payments/${currentAsaasInvoiceId}`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          const checkPayJson = await safeJsonFetch(checkPayRes);
+          if (checkPayJson && checkPayJson.subscription) {
+            currentAsaasSubId = checkPayJson.subscription;
+            console.log(`[Update Dates] Vinculada assinatura Asaas ${currentAsaasSubId} a partir da fatura ${currentAsaasInvoiceId}`);
+          }
+        } catch (e) {
+          console.warn("[Update Dates] Falha ao consultar fatura para obter assinatura:", e);
+        }
+      }
+
+      if (asaasApiKey && !currentAsaasSubId) {
+        try {
+          const searchSubRes = await fetch(`${baseUrl}/subscriptions?externalReference=client_sub:${targetSubDocId}`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          const searchSubJson = await safeJsonFetch(searchSubRes);
+          if (searchSubJson?.data && Array.isArray(searchSubJson.data) && searchSubJson.data.length > 0) {
+            currentAsaasSubId = searchSubJson.data[0].id;
+            console.log(`[Update Dates] Encontrada assinatura Asaas ${currentAsaasSubId} via externalReference`);
+          }
+        } catch (e) {
+          console.warn("[Update Dates] Falha ao pesquisar assinatura por externalReference:", e);
+        }
+      }
+
+      // 1. Update Asaas Subscription if currentAsaasSubId exists
+      if (asaasApiKey && currentAsaasSubId && String(currentAsaasSubId).startsWith('sub_')) {
+        try {
+          const updateSubRes = await fetch(`${baseUrl}/subscriptions/${currentAsaasSubId}`, {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
@@ -3373,37 +3422,65 @@ function encodeFirestoreFields(data: any): any {
           const updateSubJson = await safeJsonFetch(updateSubRes);
           if (updateSubRes.ok && updateSubJson && !updateSubJson.errors) {
             asaasSubSynced = true;
-            console.log(`[Update Dates] Assinatura Asaas ${subDocData.asaasSubscriptionId} atualizada para nextDueDate=${endDate}`);
+            console.log(`[Update Dates] Assinatura Asaas ${currentAsaasSubId} atualizada para nextDueDate=${endDate}`);
           } else {
-            console.warn(`[Update Dates] Aviso ao atualizar assinatura Asaas ${subDocData.asaasSubscriptionId}:`, updateSubJson?.errors || updateSubJson);
+            console.warn(`[Update Dates] Aviso ao atualizar assinatura Asaas ${currentAsaasSubId}:`, updateSubJson?.errors || updateSubJson);
             if (updateSubJson?.errors?.[0]?.description) {
               asaasFeedback = updateSubJson.errors[0].description;
             }
+          }
+
+          // Also check all pending payments linked to this subscription to guarantee due dates are updated
+          try {
+            const subPendingPaymentsRes = await fetch(`${baseUrl}/subscriptions/${currentAsaasSubId}/payments?status=PENDING`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const subPendingPaymentsJson = await safeJsonFetch(subPendingPaymentsRes);
+            if (subPendingPaymentsJson?.data && Array.isArray(subPendingPaymentsJson.data)) {
+              for (const pPay of subPendingPaymentsJson.data) {
+                if (pPay.id && String(pPay.id).startsWith('pay_')) {
+                  const targetDueDate = (subDocData.status === 'pending' || !subDocData.lastRenewalDate) ? startDate : endDate;
+                  await fetch(`${baseUrl}/payments/${pPay.id}`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'access_token': asaasApiKey
+                    },
+                    body: JSON.stringify({ dueDate: targetDueDate })
+                  });
+                  asaasInvoiceSynced = true;
+                  console.log(`[Update Dates] Cobrança pendente da assinatura ${pPay.id} atualizada para dueDate=${targetDueDate}`);
+                }
+              }
+            }
+          } catch (pErr) {
+            console.warn("[Update Dates] Falha ao listar cobranças pendentes da assinatura:", pErr);
           }
         } catch (subApiErr) {
           console.warn("[Update Dates] Erro ao conectar na API Asaas para subscription:", subApiErr);
         }
       }
 
-      // 2. Update Asaas Pending Invoice if asaasInvoiceId exists and is real
-      if (asaasApiKey && subDocData.asaasInvoiceId && String(subDocData.asaasInvoiceId).startsWith('pay_') && !String(subDocData.asaasInvoiceId).startsWith('pay_sandbox_')) {
+      // 2. Update Asaas Pending Invoice if currentAsaasInvoiceId exists and is real
+      if (asaasApiKey && currentAsaasInvoiceId && String(currentAsaasInvoiceId).startsWith('pay_') && !String(currentAsaasInvoiceId).startsWith('pay_sandbox_')) {
         try {
-          const updatePayRes = await fetch(`${baseUrl}/payments/${subDocData.asaasInvoiceId}`, {
+          const targetPayDueDate = (subDocData.status === 'pending' || !subDocData.lastRenewalDate) ? startDate : endDate;
+          const updatePayRes = await fetch(`${baseUrl}/payments/${currentAsaasInvoiceId}`, {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
               'access_token': asaasApiKey
             },
             body: JSON.stringify({
-              dueDate: endDate
+              dueDate: targetPayDueDate
             })
           });
           const updatePayJson = await safeJsonFetch(updatePayRes);
           if (updatePayRes.ok && updatePayJson && !updatePayJson.errors) {
             asaasInvoiceSynced = true;
-            console.log(`[Update Dates] Cobrança Asaas ${subDocData.asaasInvoiceId} atualizada para dueDate=${endDate}`);
+            console.log(`[Update Dates] Cobrança Asaas ${currentAsaasInvoiceId} atualizada para dueDate=${targetPayDueDate}`);
           } else {
-            console.warn(`[Update Dates] Aviso ao atualizar cobrança Asaas ${subDocData.asaasInvoiceId}:`, updatePayJson?.errors || updatePayJson);
+            console.warn(`[Update Dates] Aviso ao atualizar cobrança Asaas ${currentAsaasInvoiceId}:`, updatePayJson?.errors || updatePayJson);
           }
         } catch (payApiErr) {
           console.warn("[Update Dates] Erro ao conectar na API Asaas para payment:", payApiErr);
@@ -3416,6 +3493,10 @@ function encodeFirestoreFields(data: any): any {
         endDate,
         updatedAt: new Date().toISOString()
       };
+
+      if (currentAsaasSubId && !subDocData.asaasSubscriptionId) {
+        updatePayload.asaasSubscriptionId = currentAsaasSubId;
+      }
 
       if (asaasSubSynced || asaasInvoiceSynced) {
         updatePayload.asaasLastSyncedAt = new Date().toISOString();
@@ -3445,6 +3526,245 @@ function encodeFirestoreFields(data: any): any {
     } catch (error: any) {
       console.error("Erro ao atualizar datas da assinatura:", error);
       res.status(500).json({ error: error.message || "Falha ao atualizar datas da assinatura." });
+    }
+  });
+
+  // Endpoint de Alinhamento em Cascata dos Ciclos de Assinaturas (Ativas & Pendentes)
+  app.post(["/api/saas/subscription/cascade-align-cycles", "/saas/subscription/cascade-align-cycles"], async (req, res) => {
+    try {
+      const { tenantId } = req.body || {};
+      const targetTenant = tenantId || 'gbcortes7';
+      const dbAdmin = getAdminDb();
+
+      // 1. Obter credenciais do Asaas
+      const asaasCreds = await getTenantAsaasCredentials(targetTenant);
+      const asaasApiKey = asaasCreds?.apiKey;
+      const baseUrl = asaasCreds?.baseUrl;
+
+      // 2. Buscar todas as assinaturas do tenant no Firestore
+      let localSubs: any[] = [];
+      if (dbAdmin) {
+        const subsSnap = await dbAdmin.collection('subscriptions').where('tenantId', '==', targetTenant).get();
+        localSubs = subsSnap.docs.map((d: any) => ({ id: d.id, ref: d.ref, data: d.data(), isRest: false }));
+      } else {
+        const restSubs = await queryFirestoreRest('subscriptions', 'tenantId', 'EQUAL', targetTenant);
+        if (Array.isArray(restSubs)) {
+          localSubs = restSubs.map((r: any) => ({ id: r.id, ref: null, data: r.data || r, isRest: true }));
+        }
+      }
+
+      console.log(`[Cascade Align] Iniciando alinhamento em lote para ${localSubs.length} assinaturas do tenant ${targetTenant}...`);
+
+      let alignedActiveCount = 0;
+      let alignedPendingCount = 0;
+      let asaasSyncedCount = 0;
+      let errorsCount = 0;
+      const details: any[] = [];
+
+      for (const item of localSubs) {
+        const subId = item.id;
+        const subData = item.data || {};
+        const isRest = item.isRest;
+        const subRef = item.ref;
+
+        try {
+          // Determine base start date & base day
+          let rawStart = subData.startDate;
+          if (!rawStart && subData.createdAt) {
+            rawStart = typeof subData.createdAt === 'string' ? subData.createdAt.substring(0, 10) : '';
+          }
+          if (!rawStart) {
+            rawStart = new Date().toISOString().split('T')[0];
+          }
+
+          // Parse start date: Year, Month, Day
+          const [sY, sM, sD] = rawStart.split('-').map(Number);
+          const baseDay = sD || 1;
+          const cleanStartDateStr = `${String(sY).padStart(4, '0')}-${String(sM).padStart(2, '0')}-${String(baseDay).padStart(2, '0')}`;
+
+          // Calculate correct monthly end date preserving the baseDay
+          let targetEndDate = new Date(sY, sM, baseDay, 12, 0, 0); // sM is 1-indexed, so passing it as 0-indexed month adds 1 month!
+          if (targetEndDate.getDate() !== baseDay) {
+            targetEndDate.setDate(0); // clamp to last day of month if month is shorter
+          }
+          const targetEndDateStr = targetEndDate.toISOString().split('T')[0];
+
+          let asaasSubUpdated = false;
+          let asaasInvoiceUpdated = false;
+
+          // Find Asaas IDs if not directly saved
+          let currentAsaasSubId = subData.asaasSubscriptionId;
+          let currentAsaasInvoiceId = subData.asaasInvoiceId;
+
+          if (asaasApiKey && !currentAsaasSubId && currentAsaasInvoiceId && String(currentAsaasInvoiceId).startsWith('pay_')) {
+            try {
+              const checkPayRes = await fetch(`${baseUrl}/payments/${currentAsaasInvoiceId}`, {
+                headers: { 'access_token': asaasApiKey }
+              });
+              const checkPayJson = await safeJsonFetch(checkPayRes);
+              if (checkPayJson && checkPayJson.subscription) {
+                currentAsaasSubId = checkPayJson.subscription;
+              }
+            } catch (e) { /* ignore */ }
+          }
+
+          if (asaasApiKey && !currentAsaasSubId) {
+            try {
+              const searchSubRes = await fetch(`${baseUrl}/subscriptions?externalReference=client_sub:${subId}`, {
+                headers: { 'access_token': asaasApiKey }
+              });
+              const searchSubJson = await safeJsonFetch(searchSubRes);
+              if (searchSubJson?.data && Array.isArray(searchSubJson.data) && searchSubJson.data.length > 0) {
+                currentAsaasSubId = searchSubJson.data[0].id;
+              }
+            } catch (e) { /* ignore */ }
+          }
+
+          // A. Sincronizar Assinatura no Asaas (nextDueDate)
+          if (asaasApiKey && currentAsaasSubId && String(currentAsaasSubId).startsWith('sub_')) {
+            try {
+              const subPutRes = await fetch(`${baseUrl}/subscriptions/${currentAsaasSubId}`, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'access_token': asaasApiKey
+                },
+                body: JSON.stringify({
+                  nextDueDate: targetEndDateStr,
+                  updatePendingPayments: true
+                })
+              });
+              const subPutJson = await safeJsonFetch(subPutRes);
+              if (subPutRes.ok && subPutJson && !subPutJson.errors) {
+                asaasSubUpdated = true;
+              }
+
+              // Also check any pending payment under this subscription
+              const pendingPaysRes = await fetch(`${baseUrl}/subscriptions/${currentAsaasSubId}/payments?status=PENDING`, {
+                headers: { 'access_token': asaasApiKey }
+              });
+              const pendingPaysJson = await safeJsonFetch(pendingPaysRes);
+              if (pendingPaysJson?.data && Array.isArray(pendingPaysJson.data)) {
+                // Sort by dateCreated or dueDate ascending
+                const pendingList = [...pendingPaysJson.data].sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+                
+                // If subscription is pending or active, keep only the first valid current cycle payment and cancel premature future duplicates
+                for (let idx = 0; idx < pendingList.length; idx++) {
+                  const p = pendingList[idx];
+                  if (!p.id || !String(p.id).startsWith('pay_')) continue;
+
+                  if (idx === 0) {
+                    // Keep the first current invoice and align its due date exactly to cleanStartDateStr (if pending) or targetEndDateStr
+                    const targetDue = (subData.status === 'pending' || !subData.lastRenewalDate) ? cleanStartDateStr : targetEndDateStr;
+                    await fetch(`${baseUrl}/payments/${p.id}`, {
+                      method: 'PUT',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'access_token': asaasApiKey
+                      },
+                      body: JSON.stringify({ dueDate: targetDue })
+                    });
+                    asaasInvoiceUpdated = true;
+                  } else {
+                    // If there is an extra premature pending invoice created automatically for next month, delete it so Asaas dashboard stays clean
+                    try {
+                      console.log(`[Cascade Align] Removendo cobrança futura prematura ${p.id} da assinatura ${currentAsaasSubId}...`);
+                      await fetch(`${baseUrl}/payments/${p.id}`, {
+                        method: 'DELETE',
+                        headers: { 'access_token': asaasApiKey }
+                      });
+                    } catch (delErr) {
+                      console.warn(`[Cascade Align] Erro ao deletar cobrança prematura ${p.id}:`, delErr);
+                    }
+                  }
+                }
+              }
+            } catch (asErr) {
+              console.warn(`[Cascade Align] Falha ao sincronizar assinatura Asaas ${currentAsaasSubId}:`, asErr);
+            }
+          }
+
+          // B. Sincronizar Fatura Avulsa pendente no Asaas
+          if (asaasApiKey && currentAsaasInvoiceId && String(currentAsaasInvoiceId).startsWith('pay_') && !String(currentAsaasInvoiceId).startsWith('pay_sandbox_')) {
+            try {
+              const targetPayDue = (subData.status === 'pending' || !subData.lastRenewalDate) ? cleanStartDateStr : targetEndDateStr;
+              const payPutRes = await fetch(`${baseUrl}/payments/${currentAsaasInvoiceId}`, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'access_token': asaasApiKey
+                },
+                body: JSON.stringify({ dueDate: targetPayDue })
+              });
+              const payPutJson = await safeJsonFetch(payPutRes);
+              if (payPutRes.ok && payPutJson && !payPutJson.errors) {
+                asaasInvoiceUpdated = true;
+              }
+            } catch (apErr) {
+              console.warn(`[Cascade Align] Falha ao atualizar fatura Asaas ${currentAsaasInvoiceId}:`, apErr);
+            }
+          }
+
+          // C. Atualizar no Firestore
+          const updatePayload: any = {
+            startDate: cleanStartDateStr,
+            endDate: targetEndDateStr,
+            updatedAt: new Date().toISOString()
+          };
+          if (currentAsaasSubId && !subData.asaasSubscriptionId) {
+            updatePayload.asaasSubscriptionId = currentAsaasSubId;
+          }
+          if (asaasSubUpdated || asaasInvoiceUpdated) {
+            updatePayload.asaasLastSyncedAt = new Date().toISOString();
+            asaasSyncedCount++;
+          }
+
+          if (dbAdmin && !isRest) {
+            await subRef.update(updatePayload);
+          } else {
+            await updateFirestoreRestDoc('subscriptions', subId, updatePayload);
+          }
+
+          if (subData.status === 'active') {
+            alignedActiveCount++;
+          } else {
+            alignedPendingCount++;
+          }
+
+          details.push({
+            subId,
+            clientName: subData.cliente_name || 'Cliente',
+            planName: subData.planName || 'Plano',
+            status: subData.status || 'unknown',
+            baseDay,
+            startDate: cleanStartDateStr,
+            endDate: targetEndDateStr,
+            asaasSubUpdated,
+            asaasInvoiceUpdated
+          });
+
+        } catch (subErr: any) {
+          console.error(`[Cascade Align] Erro na assinatura ${subId}:`, subErr);
+          errorsCount++;
+        }
+      }
+
+      console.log(`✅ [Cascade Align] Concluído: ${alignedActiveCount} ativas, ${alignedPendingCount} pendentes, ${asaasSyncedCount} sincronizadas com Asaas.`);
+
+      return res.json({
+        success: true,
+        alignedActiveCount,
+        alignedPendingCount,
+        asaasSyncedCount,
+        errorsCount,
+        totalProcessed: localSubs.length,
+        details,
+        message: `Operação concluída com sucesso! ${alignedActiveCount} assinatura(s) ativa(s) e ${alignedPendingCount} pendente(s) foram alinhadas para o dia base exato de contratação no sistema e no Asaas.`
+      });
+
+    } catch (error: any) {
+      console.error("Erro no alinhamento de ciclos em cascata:", error);
+      res.status(500).json({ error: error.message || "Falha ao processar alinhamento em cascata." });
     }
   });
 
@@ -4796,7 +5116,7 @@ function encodeFirestoreFields(data: any): any {
 
           if (!newEndStr) {
             const nextMonth = new Date(baseDate);
-            nextMonth.setDate(nextMonth.getDate() + 30);
+            nextMonth.setMonth(nextMonth.getMonth() + 1);
             newEndStr = nextMonth.toISOString().split('T')[0];
           }
 

@@ -51,7 +51,8 @@ import {
   Landmark,
   Globe,
   Database,
-  Eye
+  Eye,
+  PlusCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -245,6 +246,20 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [clientSearchTerm, setClientSearchTerm] = useState('');
   const [clientFilter, setClientFilter] = useState<'all' | 'debtors' | 'creditors'>('all');
   const [clients, setClients] = useState<any[]>([]);
+
+  // Quick Fiado / Client Debt Management
+  const [quickSettleClient, setQuickSettleClient] = useState<{ uid: string; nome: string; totalDebt: number } | null>(null);
+  const [quickSettleAmount, setQuickSettleAmount] = useState<string>('');
+  const [quickSettleMethodId, setQuickSettleMethodId] = useState<string>('');
+  const [isSubmittingQuickSettle, setIsSubmittingQuickSettle] = useState(false);
+
+  const [isManualDebtModalOpen, setIsManualDebtModalOpen] = useState(false);
+  const [manualDebtClientId, setManualDebtClientId] = useState<string>('');
+  const [manualDebtAmount, setManualDebtAmount] = useState<string>('');
+  const [manualDebtDesc, setManualDebtDesc] = useState<string>('');
+  const [manualDebtDate, setManualDebtDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [isSavingManualDebt, setIsSavingManualDebt] = useState(false);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
   const [editingPaymentMethod, setEditingPaymentMethod] = useState<PaymentMethodConfig | null>(null);
@@ -266,6 +281,89 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       toast.error(err.message || "Erro ao executar auditoria e limpeza de dados.");
     } finally {
       setIsAuditing(false);
+    }
+  };
+
+  const handleOpenQuickSettle = (client: any, totalDebt: number) => {
+    setQuickSettleClient({ uid: client.uid, nome: client.nome, totalDebt });
+    setQuickSettleAmount(totalDebt > 0 ? totalDebt.toFixed(2) : '');
+    const firstMethod = paymentMethods.find(m => !m.vai_para_conta_cliente && !m.goesToClientAccount);
+    setQuickSettleMethodId(firstMethod?.id || '');
+  };
+
+  const handleExecuteQuickSettle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickSettleClient || !user) return;
+    const amount = parseFloat(quickSettleAmount);
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Informe um valor válido.");
+      return;
+    }
+    const method = paymentMethods.find(m => m.id === quickSettleMethodId);
+    if (!method) {
+      toast.error("Selecione uma forma de recebimento.");
+      return;
+    }
+    setIsSubmittingQuickSettle(true);
+    try {
+      await debtService.settleClientDebtsGlobal({
+        cliente_id: quickSettleClient.uid,
+        amount,
+        paymentMethod: (method.tipo || method.type || 'dinheiro') as any,
+        methodId: method.id,
+        userId: user.uid,
+        userName: profile?.nome || user.displayName || 'Administrador'
+      });
+      toast.success(`Recebimento de R$ ${amount.toFixed(2)} registrado com sucesso!`);
+      setQuickSettleClient(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao registrar recebimento de fiado.");
+    } finally {
+      setIsSubmittingQuickSettle(false);
+    }
+  };
+
+  const handleOpenManualDebtModal = (client?: any) => {
+    if (client) {
+      setManualDebtClientId(client.uid);
+    } else {
+      setManualDebtClientId(clients[0]?.uid || '');
+    }
+    setManualDebtAmount('');
+    setManualDebtDesc('Fiado / Débito Avulso');
+    setManualDebtDate(new Date().toISOString().split('T')[0]);
+    setIsManualDebtModalOpen(true);
+  };
+
+  const handleExecuteSaveManualDebt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualDebtClientId) {
+      toast.error("Selecione um cliente.");
+      return;
+    }
+    const amount = parseFloat(manualDebtAmount);
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Informe um valor de fiado válido.");
+      return;
+    }
+    const targetClient = clients.find(c => c.uid === manualDebtClientId);
+    setIsSavingManualDebt(true);
+    try {
+      await debtService.addManualDebt({
+        cliente_id: manualDebtClientId,
+        cliente_name: targetClient?.nome || 'Cliente',
+        amount,
+        description: manualDebtDesc.trim() || 'Fiado / Débito Avulso',
+        date: manualDebtDate
+      });
+      toast.success("Fiado lançado com sucesso na conta do cliente!");
+      setIsManualDebtModalOpen(false);
+      await loadData();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao lançar fiado manual.");
+    } finally {
+      setIsSavingManualDebt(false);
     }
   };
 
@@ -2339,6 +2437,16 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                         <option value="creditors">Somente com Crédito</option>
                       </select>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenManualDebtModal()}
+                      className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm shadow-red-600/20 active:scale-95 cursor-pointer"
+                      title="Lançar um novo fiado ou débito avulso para qualquer cliente"
+                    >
+                      <PlusCircle size={16} />
+                      <span>Lançar Fiado Manual</span>
+                    </button>
                   </div>
                   
                   <div className="overflow-x-auto">
@@ -2350,7 +2458,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                           <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Crédito em Haver</th>
                           <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Total Gasto</th>
                           <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right">Total Pago</th>
-                          <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Ações</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center">Ações Rápidas</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
@@ -2411,13 +2519,36 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                                   R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                 </td>
                                 <td className="px-8 py-6">
-                                  <div className="flex items-center justify-center gap-2">
+                                  <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                    {totalDebt > 0.001 && (
+                                      <button 
+                                        type="button"
+                                        onClick={() => handleOpenQuickSettle(client, totalDebt)}
+                                        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white transition-all rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                                        title="Receber pagamento deste cliente e abater dívidas"
+                                      >
+                                        <DollarSign size={14} />
+                                        <span>Receber</span>
+                                      </button>
+                                    )}
+
                                     <button 
-                                      onClick={() => setSelectedClientAccount(client.uid)}
-                                      className="p-2.5 text-slate-500 hover:text-accent hover:bg-accent/10 transition-all bg-white rounded-xl border border-slate-200 shadow-sm cursor-pointer flex items-center gap-2 text-xs font-bold"
-                                      title="Ver Extrato e Quitar Fiados"
+                                      type="button"
+                                      onClick={() => handleOpenManualDebtModal(client)}
+                                      className="px-2.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 transition-all rounded-xl cursor-pointer flex items-center gap-1 text-xs font-bold"
+                                      title="Lançar novo fiado para este cliente"
                                     >
-                                      <Wallet size={16} />
+                                      <PlusCircle size={14} />
+                                      <span>+ Fiado</span>
+                                    </button>
+
+                                    <button 
+                                      type="button"
+                                      onClick={() => setSelectedClientAccount(client.uid)}
+                                      className="px-3 py-2 text-slate-700 hover:text-accent hover:bg-accent/10 transition-all bg-white rounded-xl border border-slate-200 shadow-sm cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                                      title="Ver extrato completo, notas e histórico"
+                                    >
+                                      <Wallet size={14} />
                                       <span>Extrato / Acerto</span>
                                     </button>
                                   </div>
@@ -3277,6 +3408,190 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
             onPaymentSuccess={loadData}
             paymentMethods={memoizedPaymentMethods}
           />
+        )}
+
+        {/* Quick Settle Client Debt Modal */}
+        {quickSettleClient && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.form 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onSubmit={handleExecuteQuickSettle}
+              className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+                    <DollarSign size={20} />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-primary uppercase tracking-tight text-sm">Receber / Quitar Fiado</h4>
+                    <p className="text-[10px] text-muted font-bold">{quickSettleClient.nome}</p>
+                  </div>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => setQuickSettleClient(null)} 
+                  className="p-1.5 text-muted hover:text-primary rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Valor do Pagamento</label>
+                    <span className="text-[10px] font-bold text-red-600">
+                      Saldo Devedor: R$ {quickSettleClient.totalDebt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      required
+                      value={quickSettleAmount}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setQuickSettleAmount(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 pl-12 pr-4 text-xl font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest">Forma de Recebimento</label>
+                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                    {paymentMethods
+                      .filter(m => !m.vai_para_conta_cliente && !m.goesToClientAccount)
+                      .map((method, idx) => (
+                        <button
+                          key={`quick-pay-method-${method.id || idx}`}
+                          type="button"
+                          onClick={() => setQuickSettleMethodId(method.id)}
+                          className={`py-3 px-3 rounded-xl text-xs font-bold transition-all border-2 text-center cursor-pointer ${
+                            quickSettleMethodId === method.id 
+                              ? 'bg-emerald-50 border-emerald-500 text-emerald-700' 
+                              : 'bg-white border-slate-100 text-slate-600 hover:border-slate-200'
+                          }`}
+                        >
+                          {method.nome || method.name}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={isSubmittingQuickSettle || !quickSettleAmount || !quickSettleMethodId}
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold transition-all shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 cursor-pointer"
+                >
+                  {isSubmittingQuickSettle ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
+                  <span>Confirmar Recebimento</span>
+                </button>
+              </div>
+            </motion.form>
+          </div>
+        )}
+
+        {/* Manual Fiado Creation Modal */}
+        {isManualDebtModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.form 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onSubmit={handleExecuteSaveManualDebt}
+              className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-red-500/10 text-red-600 flex items-center justify-center">
+                    <PlusCircle size={20} />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-primary uppercase tracking-tight text-sm">Lançar Fiado Manual</h4>
+                    <p className="text-[10px] text-muted font-bold">Registrar débito na conta do cliente</p>
+                  </div>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => setIsManualDebtModalOpen(false)} 
+                  className="p-1.5 text-muted hover:text-primary rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest">Selecionar Cliente</label>
+                  <select
+                    required
+                    value={manualDebtClientId}
+                    onChange={(e) => setManualDebtClientId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
+                  >
+                    <option value="">Selecione um cliente...</option>
+                    {clients.map((c) => (
+                      <option key={`opt-client-${c.uid}`} value={c.uid}>
+                        {c.nome} {c.phone ? `(${c.phone})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest">Valor do Fiado (R$)</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      required
+                      placeholder="0,00"
+                      value={manualDebtAmount}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setManualDebtAmount(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 pl-12 pr-4 text-xl font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest">Motivo / Descrição</label>
+                  <input 
+                    type="text"
+                    required
+                    placeholder="Ex: Corte de Cabelo + Pomada"
+                    value={manualDebtDesc}
+                    onChange={(e) => setManualDebtDesc(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-widest">Data do Débito</label>
+                  <input 
+                    type="date"
+                    required
+                    value={manualDebtDate}
+                    onChange={(e) => setManualDebtDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
+                  />
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={isSavingManualDebt || !manualDebtClientId || !manualDebtAmount}
+                  className="w-full py-4 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-bold transition-all shadow-lg shadow-red-600/20 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 cursor-pointer"
+                >
+                  {isSavingManualDebt ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
+                  <span>Lançar Fiado</span>
+                </button>
+              </div>
+            </motion.form>
+          </div>
         )}
         {selectedProAccount && (
           <ProfessionalAccountDetailsModal 

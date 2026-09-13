@@ -63,6 +63,7 @@ export function ClientAccountDetailsModal({
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'debts' | 'payments' | 'notes'>('debts');
   const [isPaying, setIsPaying] = useState(false);
+  const [isGlobalPaymentModalOpen, setIsGlobalPaymentModalOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [selectedDebt, setSelectedDebt] = useState<ClientDebt | null>(null);
   const [selectedMethod, setSelectedMethod] = useState<string>('');
@@ -256,29 +257,46 @@ export function ClientAccountDetailsModal({
   };
 
   const handlePayment = async () => {
-    if (!selectedDebt || !paymentAmount || !selectedMethod) return;
+    if (!paymentAmount || !selectedMethod) return;
+    const amount = parseFloat(paymentAmount);
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Informe um valor de pagamento válido!");
+      return;
+    }
     
     setIsPaying(true);
     try {
-      const amount = parseFloat(paymentAmount);
       const method = loadedMethods.find(m => m.id === selectedMethod);
-      
-      if (!method) throw new Error("Método inválido");
+      if (!method) throw new Error("Método de pagamento inválido");
 
-      await comandaService.payDebt(
-        selectedDebt.id,
-        amount,
-        (method.tipo || method.type || 'dinheiro') as any,
-        method.id,
-        user?.uid || '',
-        user?.displayName || 'Sistema'
-      );
+      if (selectedDebt) {
+        await comandaService.payDebt(
+          selectedDebt.id,
+          amount,
+          (method.tipo || method.type || 'dinheiro') as any,
+          method.id,
+          user?.uid || '',
+          user?.displayName || 'Sistema'
+        );
+        toast.success(`Pagamento de R$ ${amount.toFixed(2)} registrado para a dívida selecionada!`);
+      } else {
+        await debtService.settleClientDebtsGlobal({
+          cliente_id,
+          amount,
+          paymentMethod: (method.tipo || method.type || 'dinheiro') as any,
+          methodId: method.id,
+          userId: user?.uid || '',
+          userName: user?.displayName || 'Sistema'
+        });
+        toast.success(`Quitação de R$ ${amount.toFixed(2)} lançada com sucesso no caixa e na conta!`);
+      }
 
-      toast.success("Pagamento registrado com sucesso!");
-      loadInfo();
+      await loadInfo();
       if (onPaymentSuccess) onPaymentSuccess();
       setSelectedDebt(null);
+      setIsGlobalPaymentModalOpen(false);
       setPaymentAmount('');
+      setSelectedMethod('');
     } catch (error: any) {
       toast.error(error.message || "Erro ao registrar pagamento");
     } finally {
@@ -465,6 +483,22 @@ export function ClientAccountDetailsModal({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {totalOutstanding > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDebt(null);
+                      setPaymentAmount(totalOutstanding.toString());
+                      setIsGlobalPaymentModalOpen(true);
+                    }}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    title="Receber valor total ou parcial abatendo das dívidas do cliente"
+                  >
+                    <DollarSign size={14} />
+                    <span>Quitar / Receber Saldo</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setShowPrintStatement(true)}
@@ -781,28 +815,46 @@ export function ClientAccountDetailsModal({
         </div>
 
         <AnimatePresence>
-          {selectedDebt && (
+          {(selectedDebt || isGlobalPaymentModalOpen) && (
             <div key="modal-pay-debt-overlay" className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
               <motion.div 
                 key="modal-pay-debt-content"
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
                 className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
               >
                 <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                  <h4 className="font-black text-primary uppercase tracking-widest flex items-center gap-2">
-                    <DollarSign size={18} className="text-emerald-500" />
-                    Receber Pagamento
-                  </h4>
-                  <button onClick={() => setSelectedDebt(null)} className="text-muted hover:text-primary cursor-pointer">
+                  <div>
+                    <h4 className="font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                      <DollarSign size={18} className="text-emerald-500" />
+                      {selectedDebt ? 'Receber Dívida Específica' : 'Receber / Quitar Saldo Geral'}
+                    </h4>
+                    <p className="text-[10px] text-muted font-bold mt-0.5">
+                      {selectedDebt ? `Comanda #${selectedDebt.comanda_id?.substring(0, 8) || 'N/A'}` : `Abater das pendências de ${client?.nome}`}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setSelectedDebt(null);
+                      setIsGlobalPaymentModalOpen(false);
+                    }} 
+                    className="text-muted hover:text-primary cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
                     <X size={20} />
                   </button>
                 </div>
                 <div className="p-8 space-y-6">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor do Pagamento</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor do Pagamento</label>
+                      <span className="text-[10px] font-bold text-slate-400">
+                        {selectedDebt ? `Total desta dívida: R$ ${selectedDebt.remainingAmount.toFixed(2)}` : `Saldo total pendente: R$ ${totalOutstanding.toFixed(2)}`}
+                      </span>
+                    </div>
                     <input 
                       type="number"
+                      step="0.01"
                       value={paymentAmount}
                       onFocus={(e) => e.target.select()}
                       onChange={(e) => setPaymentAmount(e.target.value)}

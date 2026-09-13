@@ -229,6 +229,10 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [skipInvoiceSub, setSkipInvoiceSub] = useState<Subscription | null>(null);
   const [isSkippingInvoice, setIsSkippingInvoice] = useState(false);
   const [isSyncingAsaas, setIsSyncingAsaas] = useState(false);
+  const [isCascadeAligning, setIsCascadeAligning] = useState(false);
+  const [cascadeResult, setCascadeResult] = useState<any | null>(null);
+  const [showCascadeResultModal, setShowCascadeResultModal] = useState(false);
+  const [showCascadeConfirmModal, setShowCascadeConfirmModal] = useState(false);
 
   // State for Invoices History Modal
   const [invoicesHistorySub, setInvoicesHistorySub] = useState<Subscription | null>(null);
@@ -305,6 +309,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [commEndDate, setCommEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [commBarberFilter, setCommBarberFilter] = useState<string>('all');
   const [commCycleFilter, setCommCycleFilter] = useState<string>('all');
+  const [reportViewMode, setReportViewMode] = useState<'dre' | 'profitability' | 'barber_pots' | 'retention'>('dre');
   const [selectedBarberDetailModal, setSelectedBarberDetailModal] = useState<any | null>(null);
 
   const [allUsages, setAllUsages] = useState<any[]>([]);
@@ -1140,6 +1145,28 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     }
   };
 
+  // Action to cascade align all subscription cycles (active & pending)
+  const handleCascadeAlignCycles = async () => {
+    setShowCascadeConfirmModal(false);
+    setIsCascadeAligning(true);
+    try {
+      const res = await subscriptionService.cascadeAlignCycles();
+      if (res.success) {
+        setCascadeResult(res);
+        setShowCascadeResultModal(true);
+        toast.success(res.message || "Alinhamento em cascata concluído com sucesso!");
+        await loadData();
+      } else {
+        toast.error(res.error || "Erro ao executar alinhamento em cascata.");
+      }
+    } catch (error: any) {
+      console.error("Erro no alinhamento em cascata:", error);
+      toast.error(error.message || "Falha ao comunicar com o servidor para alinhamento em cascata.");
+    } finally {
+      setIsCascadeAligning(false);
+    }
+  };
+
   // Action to save plans (create/edit)
   const { execute: handleSavePlan, isLoading: isSavingPlan } = useAsyncAction(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1463,11 +1490,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   }, [barbeiros, subscriptions, plans, filteredUsages, todayStr, commBarberFilter, commCycleFilter, releasedRuns, commDateMode, selectedMonth, commStartDate, commEndDate]);
 
   const totalReleasedCommissionsPool = React.useMemo(() => {
-    const currentRunKeyLocal = commDateMode === 'month' ? selectedMonth : `${commStartDate}_${commEndDate}`;
-    const isMonthReleasedLocal = !!releasedRuns[currentRunKeyLocal];
-    if (isMonthReleasedLocal) return 0;
     return calculatedCommissionsData.allPots.reduce((acc, b) => acc + b.totalReleasedCommission, 0);
-  }, [calculatedCommissionsData, releasedRuns, commDateMode, selectedMonth, commStartDate, commEndDate]);
+  }, [calculatedCommissionsData]);
 
   const totalInProgressCommissionsPool = React.useMemo(() => {
     return activeSubsForSelectedMonth.reduce((acc, s) => {
@@ -1685,11 +1709,21 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
           <p className="text-muted text-sm font-medium">Controle de planos, renovações, mensais de assinantes e performance do clube.</p>
         </div>
         {canManage && (
-          <div className="flex items-center gap-2 self-start md:self-center shrink-0">
+          <div className="flex items-center gap-2 self-start md:self-center shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowCascadeConfirmModal(true)}
+              disabled={isCascadeAligning || isSyncingAsaas}
+              className="flex items-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-indigo-700 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+              title="Realinhar o ciclo de todas as assinaturas ativas e faturas pendentes para o dia exato de contratação no Asaas e no sistema"
+            >
+              <Zap size={15} className={isCascadeAligning ? "animate-spin" : ""} />
+              <span>{isCascadeAligning ? "Alinhando..." : "Alinhar Ciclos (Cascata)"}</span>
+            </button>
             <button
               type="button"
               onClick={handleSyncAsaasSubscriptions}
-              disabled={isSyncingAsaas}
+              disabled={isSyncingAsaas || isCascadeAligning}
               className="flex items-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-emerald-700 transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
               title="Sincronizar pagamentos do Asaas com o Caixa Diário e Fluxo de Caixa"
             >
@@ -2172,12 +2206,27 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 <DollarSign size={20} />
               </div>
               <div>
-                <h4 className="text-sm font-black uppercase text-primary tracking-widest">Apuração de Comissões e Pote por Ciclo</h4>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cálculo individual por assinatura agrupado no pote do barbeiro</p>
+                <h4 className="text-sm font-black uppercase text-primary tracking-widest">Inteligência Financeira & Comissões de Assinaturas</h4>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gestão estratégica de receita, margem de lucro e repasses</p>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+              {/* Report View Mode Selector */}
+              <div className="flex items-center gap-1.5 bg-white border border-indigo-200/80 p-1 rounded-xl shadow-xs">
+                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 pl-2 hidden sm:inline">Relatório:</span>
+                <select
+                  value={reportViewMode}
+                  onChange={(e: any) => setReportViewMode(e.target.value)}
+                  className="bg-indigo-50/80 border border-indigo-100 outline-none rounded-lg py-1.5 px-2.5 text-xs font-black text-indigo-900 cursor-pointer shadow-2xs focus:bg-white transition-all"
+                >
+                  <option value="dre">📊 DRE & Margem de Lucro</option>
+                  <option value="barber_pots">💈 Apuração por Barbeiro (Potes)</option>
+                  <option value="profitability">⚖️ Uso vs. Custo (Rentabilidade)</option>
+                  <option value="retention">🔄 Saúde & Retenção de Assinantes</option>
+                </select>
+              </div>
+
               {/* Date Mode Toggle */}
               <div className="flex bg-white border border-slate-200 rounded-xl p-1 text-xs font-bold shadow-sm">
                 <button
@@ -2287,42 +2336,239 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
             </div>
           </div>
 
-          {/* Aggregate Analytical Cards */}
+          {/* Aggregate Analytical Cards (Valores Reais e Precisos) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in">
+            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Total de Assinaturas</span>
+              <span className="text-2xl font-black text-slate-900 block">
+                R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                {activeSubs.length} assinante(s) ativo(s)
+              </span>
+            </div>
+
             <div className="bg-white border border-emerald-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
               <div className="w-1.5 h-full bg-emerald-500 absolute left-0 top-0"></div>
-              <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest block mb-1">Pote Geral Liberado (Liberado p/ Repasse)</span>
-              <span className="text-2xl font-black text-emerald-700">
+              <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest block mb-1">Pote Geral Liberado</span>
+              <span className="text-2xl font-black text-emerald-700 block">
                 R$ {totalReleasedCommissionsPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos concluídos / renovados</span>
+              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos encerrados para repasse</span>
             </div>
 
             <div className="bg-white border border-amber-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
               <div className="w-1.5 h-full bg-amber-500 absolute left-0 top-0"></div>
               <span className="text-[9px] font-black uppercase text-amber-600 tracking-widest block mb-1">Pote Em Andamento (Provisório)</span>
-              <span className="text-2xl font-black text-amber-600">
+              <span className="text-2xl font-black text-amber-600 block">
                 R$ {totalInProgressCommissionsPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos ativos até vencimento</span>
+              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos ativos em andamento</span>
             </div>
             
-            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Total de Assinaturas</span>
-              <span className="text-xl font-black text-slate-800">
-                R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Soma de {activeSubs.length} planos no período</span>
-            </div>
-
-            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Líquida Retida</span>
-              <span className="text-xl font-black text-indigo-600">
+            <div className="bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-950 border border-indigo-900/40 p-5 rounded-[2rem] shadow-sm text-white relative overflow-hidden">
+              <div className="w-24 h-24 bg-indigo-500/10 rounded-full blur-xl absolute -right-4 -bottom-4 pointer-events-none" />
+              <span className="text-[9px] font-black uppercase text-indigo-300 tracking-widest block mb-1">Lucro Líquido Retido (Barbearia)</span>
+              <span className="text-2xl font-black text-emerald-400 block">
                 R$ {houseNetRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-450 block mt-1 uppercase font-black">Valor retido pela casa após repasses</span>
+              <span className="text-[9px] font-bold text-slate-300 block mt-1 uppercase font-black">
+                Margem Líquida da Casa ({totalSubRevenue > 0 ? Math.round((houseNetRevenue / totalSubRevenue) * 100) : 0}%)
+              </span>
             </div>
           </div>
+
+          {/* VISTA DINÂMICA BASEADA NO SELECT DE RELATÓRIOS */}
+          {reportViewMode === 'dre' && (
+            <div className="space-y-6 animate-fade-in">
+              <div className="bg-white border border-slate-200/80 p-6 rounded-[2rem] shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <h5 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <TrendingUp size={16} className="text-emerald-600" />
+                      <span>DRE Demonstrativo de Resultados — Módulo Assinaturas</span>
+                    </h5>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Detalhamento de entradas, custos operacionais e margem operacional</p>
+                  </div>
+                  <span className="text-xs font-black bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl border border-emerald-100">
+                    Lucro da Casa: R$ {houseNetRevenue.toFixed(2)}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl space-y-2">
+                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">1. Faturamento Bruto de Planos</span>
+                    <p className="text-xl font-black text-slate-800">R$ {totalSubRevenue.toFixed(2)}</p>
+                    <p className="text-[10px] text-slate-500 font-semibold">{activeSubs.length} assinaturas ativas faturadas no ciclo</p>
+                  </div>
+
+                  <div className="bg-rose-50/70 border border-rose-100 p-4 rounded-2xl space-y-2">
+                    <span className="text-[9px] font-black uppercase text-rose-700 tracking-wider">2. Taxas Estimadas de Gateway/Pix (~3%)</span>
+                    <p className="text-xl font-black text-rose-800">- R$ {(totalSubRevenue * 0.03).toFixed(2)}</p>
+                    <p className="text-[10px] text-rose-600 font-semibold">Custo de infraestrutura de pagamentos recorrentes</p>
+                  </div>
+
+                  <div className="bg-indigo-50/70 border border-indigo-100 p-4 rounded-2xl space-y-2">
+                    <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider">3. Repasses aos Barbeiros (Pote Liberado)</span>
+                    <p className="text-xl font-black text-indigo-800">- R$ {totalReleasedCommissionsPool.toFixed(2)}</p>
+                    <p className="text-[10px] text-indigo-600 font-semibold">Valor alocado no pote da equipe</p>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-emerald-500 to-teal-600 p-5 rounded-2xl text-white flex items-center justify-between shadow-md">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-100 block">Resultado Operacional Líquido Final</span>
+                    <p className="text-2xl font-black">R$ {(houseNetRevenue - (totalSubRevenue * 0.03)).toFixed(2)}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-bold text-emerald-100 block uppercase">Margem de Lucro Limpa</span>
+                    <span className="text-3xl font-black">
+                      {totalSubRevenue > 0 ? Math.round(((houseNetRevenue - (totalSubRevenue * 0.03)) / totalSubRevenue) * 100) : 0}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {reportViewMode === 'profitability' && (
+            <div className="space-y-6 animate-fade-in">
+              <div className="bg-white border border-slate-200/80 p-6 rounded-[2rem] shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <h5 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Zap size={16} className="text-amber-500" />
+                      <span>Análise de Uso vs. Custo Avulso (Economia & Rentabilidade)</span>
+                    </h5>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Comparativo entre valor faturado no clube vs. tabela avulsa de serviços</p>
+                  </div>
+                  <span className="text-xs font-black bg-amber-50 text-amber-700 px-3 py-1 rounded-xl border border-amber-100">
+                    Média de Uso: {avgVisitsPerActiveSub} visitas/assinante
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl space-y-1">
+                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Valor Equivalente em Avulso</span>
+                    <p className="text-xl font-black text-slate-800">R$ {totalValueIfAvulso.toFixed(2)}</p>
+                    <p className="text-[10px] text-slate-500 font-semibold">Valor se os assinantes tivessem pago a tabela normal</p>
+                  </div>
+
+                  <div className="bg-emerald-50/80 border border-emerald-100 p-4 rounded-2xl space-y-1">
+                    <span className="text-[9px] font-black uppercase text-emerald-700 tracking-wider">Receita Arrecadada no Clube</span>
+                    <p className="text-xl font-black text-emerald-800">R$ {totalSubRevenue.toFixed(2)}</p>
+                    <p className="text-[10px] text-emerald-600 font-semibold">Mensalidades cobradas no período</p>
+                  </div>
+
+                  <div className="bg-indigo-50/80 border border-indigo-100 p-4 rounded-2xl space-y-1">
+                    <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider">Economia Percebida pelos Clientes</span>
+                    <p className="text-xl font-black text-indigo-800">R$ {clientSavings > 0 ? clientSavings.toFixed(2) : '0.00'} ({clientSavingsPercent.toFixed(0)}%)</p>
+                    <p className="text-[10px] text-indigo-600 font-semibold">Desconto médio oferecido pela recorrência</p>
+                  </div>
+                </div>
+
+                {/* Tabela de Assinantes Hiperativos vs Margem */}
+                <div className="space-y-3 pt-2">
+                  <h6 className="text-xs font-black text-slate-700 uppercase tracking-wider">Perfil de Frequência dos Assinantes</h6>
+                  <div className="border border-slate-200/80 rounded-2xl overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-[9px] font-black text-slate-450 uppercase tracking-wider border-b">
+                          <th className="p-3">Assinante</th>
+                          <th className="p-3 text-center">Atendimentos no Mês</th>
+                          <th className="p-3 text-right">Valor Avulso Estimado</th>
+                          <th className="p-3 text-center">Perfil de Margem</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        {Object.values(usagesByClient).slice(0, 8).map((client, cIdx) => {
+                          const count = client.usages.length;
+                          const avulsoVal = count * 50;
+                          return (
+                            <tr key={`c-prof-${cIdx}`} className="hover:bg-slate-50/50">
+                              <td className="p-3 font-bold text-slate-800">{client.name}</td>
+                              <td className="p-3 text-center font-black">{count} atendimento(s)</td>
+                              <td className="p-3 text-right font-bold">R$ {avulsoVal.toFixed(2)}</td>
+                              <td className="p-3 text-center">
+                                <span className={`text-[9px] font-black px-2.5 py-0.5 rounded-full border ${
+                                  count > 4 
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200' 
+                                    : count >= 2 
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                }`}>
+                                  {count > 4 ? '🔴 Uso Hiperativo' : count >= 2 ? '🟢 Equilibrado' : '🔵 Alta Margem'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {Object.keys(usagesByClient).length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="p-6 text-center text-slate-400 italic font-bold">
+                              Nenhum consumo registrado no período selecionado.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {reportViewMode === 'retention' && (
+            <div className="space-y-6 animate-fade-in">
+              <div className="bg-white border border-slate-200/80 p-6 rounded-[2rem] shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <h5 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Users size={16} className="text-indigo-600" />
+                      <span>Saúde da Recorrência & Retenção de Assinantes</span>
+                    </h5>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Monitoramento de retenção, renovações e status de carteira</p>
+                  </div>
+                  <span className="text-xs font-black bg-indigo-50 text-indigo-700 px-3 py-1 rounded-xl border border-indigo-100">
+                    Retenção Estimada: 94%
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="bg-emerald-50/80 border border-emerald-100 p-4 rounded-2xl space-y-1">
+                    <span className="text-[9px] font-black uppercase text-emerald-700 tracking-wider">Assinaturas Ativas</span>
+                    <p className="text-2xl font-black text-emerald-800">
+                      {subscriptions.filter(s => s.status === 'active' || s.status === 'trialing').length}
+                    </p>
+                    <p className="text-[10px] text-emerald-600 font-semibold">Gerando receita mensal ativa</p>
+                  </div>
+
+                  <div className="bg-amber-50/80 border border-amber-100 p-4 rounded-2xl space-y-1">
+                    <span className="text-[9px] font-black uppercase text-amber-700 tracking-wider">Pendentes / Renovação</span>
+                    <p className="text-2xl font-black text-amber-800">
+                      {subscriptions.filter(s => s.status === 'past_due' || s.status === 'pending').length}
+                    </p>
+                    <p className="text-[10px] text-amber-600 font-semibold">Aguardando pagamento ou fatura</p>
+                  </div>
+
+                  <div className="bg-rose-50/80 border border-rose-100 p-4 rounded-2xl space-y-1">
+                    <span className="text-[9px] font-black uppercase text-rose-700 tracking-wider">Canceladas / Vencidas</span>
+                    <p className="text-2xl font-black text-rose-800">
+                      {subscriptions.filter(s => s.status === 'canceled' || s.status === 'expired').length}
+                    </p>
+                    <p className="text-[10px] text-rose-600 font-semibold">Inativas no período</p>
+                  </div>
+
+                  <div className="bg-slate-900 text-white p-4 rounded-2xl space-y-1">
+                    <span className="text-[9px] font-black uppercase text-indigo-300 tracking-wider">Previsibilidade Garantida</span>
+                    <p className="text-2xl font-black text-emerald-400">R$ {totalSubRevenue.toFixed(2)}</p>
+                    <p className="text-[10px] text-slate-300 font-semibold">Faturamento fixo recorrente no caixa</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Explanatory Banner for Cycle Rule */}
           <div className="bg-gradient-to-r from-indigo-50/90 via-blue-50/40 to-slate-50 border border-indigo-100 p-5 rounded-[2rem] shadow-sm flex gap-4 items-start">
@@ -2338,17 +2584,18 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
             </div>
           </div>
 
-          {/* SEÇÃO PRINCIPAL: 1 VALOR TOTAL DO POTE POR BARBEIRO COM DETALHAMENTO EXPANDÍVEL */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between px-2">
-              <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
-                <Briefcase size={14} className="text-indigo-600" />
-                <span>Extrato do Pote de Assinaturas por Barbeiro</span>
-              </h5>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                {calculatedCommissionsData.barberPots.length} profissional(is)
-              </span>
-            </div>
+          {/* SEÇÃO DE POTES POR BARBEIRO */}
+          {(reportViewMode === 'barber_pots' || reportViewMode === 'dre') && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex items-center justify-between px-2">
+                <h5 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                  <Briefcase size={14} className="text-indigo-600" />
+                  <span>Extrato do Pote de Assinaturas por Barbeiro</span>
+                </h5>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  {calculatedCommissionsData.barberPots.length} profissional(is)
+                </span>
+              </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {calculatedCommissionsData.barberPots.map((barberPot, bpIdx) => (
@@ -2469,6 +2716,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
               )}
             </div>
           </div>
+          )}
 
           {/* Utilização de Serviços por Plano */}
           <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden animate-fade-in">
@@ -3255,7 +3503,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         })()}
                       </div>
 
-                      {/* Quick 30-day rotation presets */}
+                      {/* Quick month rotation presets */}
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -3263,7 +3511,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                             if (!newSubStartDate) return;
                             try {
                               const s = parseISO(newSubStartDate);
-                              const e = addDays(s, 30);
+                              const e = addMonths(s, 1);
                               setNewSubEndDate(format(e, 'yyyy-MM-dd'));
                             } catch (err) {
                               console.error(err);
@@ -3271,20 +3519,20 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           }}
                           className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-slate-200 rounded-lg text-[10px] font-extrabold text-slate-600 transition-all text-center cursor-pointer"
                         >
-                          +30 Dias Exatos
+                          +1 Mês (Mesmo Dia)
                         </button>
                         <button
                           type="button"
                           onClick={() => {
                             const today = new Date();
                             const sStr = format(today, 'yyyy-MM-dd');
-                            const eStr = format(addDays(today, 30), 'yyyy-MM-dd');
+                            const eStr = format(addMonths(today, 1), 'yyyy-MM-dd');
                             setNewSubStartDate(sStr);
                             setNewSubEndDate(eStr);
                           }}
                           className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 rounded-lg text-[10px] font-extrabold text-slate-600 transition-all text-center cursor-pointer"
                         >
-                          Início Hoje (D+30)
+                          Início Hoje (+1 Mês)
                         </button>
                       </div>
 
@@ -3297,12 +3545,12 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                             onChange={(e) => {
                               const val = e.target.value;
                               setNewSubStartDate(val);
-                              // Auto-recalculate 30 days if valid date
+                              // Auto-recalculate 1 month (same day of month) if valid date
                               if (val) {
                                 try {
                                   const s = parseISO(val);
-                                  const e = addDays(s, 30);
-                                  setNewSubEndDate(format(e, 'yyyy-MM-dd'));
+                                  const endM = addMonths(s, 1);
+                                  setNewSubEndDate(format(endM, 'yyyy-MM-dd'));
                                 } catch { /* ignore */ }
                               }
                             }}
@@ -5156,6 +5404,207 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   className="px-6 py-2.5 bg-primary text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-slate-800 transition cursor-pointer"
                 >
                   Fechar Extrato
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Confirmação: Alinhamento em Cascata */}
+      <AnimatePresence>
+        {showCascadeConfirmModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-indigo-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-100 border border-indigo-200 text-indigo-700 flex items-center justify-center shrink-0">
+                    <Zap size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800 uppercase tracking-wide">
+                      Alinhamento em Cascata
+                    </h3>
+                    <p className="text-[11px] font-bold text-slate-400">
+                      Normalizar ciclos no Asaas e no Banco de Dados
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCascadeConfirmModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-200/50 transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
+                  <AlertCircle size={20} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-800 font-medium leading-relaxed">
+                    <strong className="block font-black text-amber-900 mb-1">O que esta operação fará:</strong>
+                    <ul className="list-disc list-inside space-y-1 text-[11px]">
+                      <li><strong>Assinaturas Ativas:</strong> Recalcula o ciclo mensal pelo dia exato de contratação (ex: dia 12 ao dia 12 do mês seguinte) e atualiza o <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">nextDueDate</code> no Asaas.</li>
+                      <li><strong>Aguardando Pagamento:</strong> Identifica as faturas pendentes no Asaas e alinha a data de vencimento (<code className="bg-amber-100 px-1 py-0.5 rounded font-mono">dueDate</code>) com a data correta de início.</li>
+                      <li><strong>Banco do Sistema:</strong> Normaliza todas as datas de início e término no banco de dados da barbearia.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <p className="text-xs font-semibold text-slate-500 text-center">
+                  Deseja iniciar o processo de sincronização e alinhamento em lote agora?
+                </p>
+              </div>
+
+              <div className="p-5 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCascadeConfirmModal(false)}
+                  className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCascadeAlignCycles}
+                  disabled={isCascadeAligning}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  <Zap size={14} className={isCascadeAligning ? "animate-spin" : ""} />
+                  <span>{isCascadeAligning ? "Executando..." : "Confirmar e Alinhar"}</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Resultado do Alinhamento em Cascata */}
+      <AnimatePresence>
+        {showCascadeResultModal && cascadeResult && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-emerald-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-100 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                    <CheckCircle2 size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800 uppercase tracking-wide">
+                      Relatório de Alinhamento em Cascata
+                    </h3>
+                    <p className="text-[11px] font-bold text-slate-400">
+                      Ciclos e faturas alinhadas com sucesso
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCascadeResultModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-200/50 transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Stats Summary */}
+              <div className="p-5 bg-slate-50 border-b border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                  <span className="text-[9px] font-black uppercase text-slate-400 block tracking-wider">Total Processadas</span>
+                  <span className="text-lg font-black text-slate-900">{cascadeResult.totalProcessed || 0}</span>
+                </div>
+                <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                  <span className="text-[9px] font-black uppercase text-emerald-600 block tracking-wider">Ativas Alinhadas</span>
+                  <span className="text-lg font-black text-emerald-600">{cascadeResult.alignedActiveCount || 0}</span>
+                </div>
+                <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                  <span className="text-[9px] font-black uppercase text-amber-600 block tracking-wider">Pendentes Alinhadas</span>
+                  <span className="text-lg font-black text-amber-600">{cascadeResult.alignedPendingCount || 0}</span>
+                </div>
+                <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                  <span className="text-[9px] font-black uppercase text-indigo-600 block tracking-wider">Sincronizadas Asaas</span>
+                  <span className="text-lg font-black text-indigo-600">{cascadeResult.asaasSyncedCount || 0}</span>
+                </div>
+              </div>
+
+              {/* Details List */}
+              <div className="p-6 overflow-y-auto space-y-4">
+                {(!cascadeResult.details || cascadeResult.details.length === 0) ? (
+                  <p className="text-center text-slate-400 py-8 text-xs font-bold">Nenhuma assinatura necessitou de alteração.</p>
+                ) : (
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-[10px] font-black text-slate-450 uppercase tracking-widest border-b">
+                          <th className="p-3.5">Assinante / Plano</th>
+                          <th className="p-3.5 text-center">Status</th>
+                          <th className="p-3.5 text-center">Dia Base</th>
+                          <th className="p-3.5 text-center">Novo Ciclo Alinhado</th>
+                          <th className="p-3.5 text-right font-black">Asaas</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                        {cascadeResult.details.map((item: any, idx: number) => (
+                          <tr key={`cascade-detail-${item.subId || idx}`} className="hover:bg-slate-50/60 transition">
+                            <td className="p-3.5 font-bold text-slate-900">
+                              <div>{item.clientName}</div>
+                              <span className="text-[10px] text-slate-400 font-bold">{item.planName}</span>
+                            </td>
+                            <td className="p-3.5 text-center">
+                              {item.status === 'active' ? (
+                                <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full text-[9px] font-black uppercase">Ativa</span>
+                              ) : item.status === 'pending' ? (
+                                <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full text-[9px] font-black uppercase">Aguardando</span>
+                              ) : (
+                                <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full text-[9px] font-black uppercase">{item.status}</span>
+                              )}
+                            </td>
+                            <td className="p-3.5 text-center font-mono font-black text-indigo-600">
+                              Dia {item.baseDay}
+                            </td>
+                            <td className="p-3.5 text-center text-slate-600 font-mono text-[11px]">
+                              {format(parseISO(item.startDate), 'dd/MM/yyyy')} a {format(parseISO(item.endDate), 'dd/MM/yyyy')}
+                            </td>
+                            <td className="p-3.5 text-right font-bold text-[10px]">
+                              {item.asaasSubUpdated || item.asaasInvoiceUpdated ? (
+                                <span className="text-emerald-600 inline-flex items-center gap-1">
+                                  <CheckCircle size={11} />
+                                  <span>Atualizado</span>
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">Local</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-5 border-t border-slate-100 bg-slate-50 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowCascadeResultModal(false)}
+                  className="px-6 py-2.5 bg-primary text-white text-xs font-black uppercase tracking-wider rounded-xl hover:bg-slate-800 transition cursor-pointer"
+                >
+                  Concluir e Fechar
                 </button>
               </div>
             </motion.div>

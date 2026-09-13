@@ -48,7 +48,13 @@ export function calculateProfessionalLedger(
   // Função robusta de correspondência do profissional (tolera UIDs antigos, barbeiro_id e variações de nome)
   const isMatchingBarber = (item: any) => {
     if (!item) return false;
-    if (item.profissional_id === barberUid || item.barbeiro_id === barberUid) return true;
+    
+    // Se o item já possui um ID de profissional/barbeiro definido
+    if (item.profissional_id || item.barbeiro_id) {
+      if (item.profissional_id === barberUid || item.barbeiro_id === barberUid) return true;
+      // Se possui um ID de outro profissional, não faz correspondência por nome para evitar cruzamento de dados
+      return false;
+    }
 
     const proName = (item.profissional_name || item.barbeiro_nome || '').toLowerCase().trim();
     if (proName && barberName) {

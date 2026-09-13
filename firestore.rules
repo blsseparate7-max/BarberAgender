@@ -28,11 +28,12 @@ service cloud.firestore {
         (
           getUserEmail() == "barber@admin.ai" ||
           getUserEmail() == "blsseparate7@gmail.com" ||
+          getUserEmail() == "admin.barber@gmail.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'saas_admin' &&
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tenantId == 'saas' &&
            get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true &&
-           (getUserEmail() == "barber@admin.ai" || getUserEmail() == "blsseparate7@gmail.com"))
+           (getUserEmail() == "barber@admin.ai" || getUserEmail() == "blsseparate7@gmail.com" || getUserEmail() == "admin.barber@gmail.com"))
         );
     }
 
@@ -41,6 +42,7 @@ service cloud.firestore {
         (
           isSaaSAdmin() ||
           getUserEmail() == "blsseparate7@gmail.com" ||
+          getUserEmail() == "admin.barber@gmail.com" ||
           getUserEmail() == "barbeariagbcortes7@gmail.com" ||
           getUserEmail() == "gabriel.alexandre@gbcortes7.com" ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
@@ -188,9 +190,10 @@ service cloud.firestore {
       // 2. Admin pode atualizar usuários da sua barbearia (sem conceder saas_admin)
       // 3. Dono de barbearia sincronizando seu perfil
       // 4. Usuário comum atualizando a si próprio (campos não protegidos)
-      // 5. Barbeiro atualizando dados de clientes:
+      // 5. Staff ou Barbeiro atualizando dados de clientes (incluindo saldo/estatísticas financeiras ao reabrir/fechar comanda):
       allow update: if isSaaSAdmin() ||
         (isAdmin() && request.resource.data.tipo != 'saas_admin' && request.resource.data.tenantId != 'saas') ||
+        (isStaff() && resource != null && resource.data.tipo != 'saas_admin' && resource.data.tipo != 'admin') ||
         (
           isAuthenticated() && request.auth.uid == userId && 
           (
@@ -284,13 +287,13 @@ service cloud.firestore {
     match /financial_transactions/{transactionId} {
       allow read: if true;
       allow create, update: if true;
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
     
     match /cash_sessions/{sessionId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("manage_cash");
+      allow delete: if isAdmin() || isStaff() || hasRolePermission("manage_cash");
     }
 
     match /professional_advances/{advanceId} {
@@ -300,7 +303,7 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     match /professional_payments/{paymentId} {
@@ -310,19 +313,19 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     match /inconsistency_logs/{logId} {
       allow read: if isStaff();
       allow create: if isStaff() || isBarbeiro();
-      allow update, delete: if isStaff();
+      allow update, delete: if isStaff() || isBarbeiro();
     }
 
     match /cash_movements/{movementId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     match /professional_schedules/{barberId} {
@@ -342,7 +345,7 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     match /commission_payouts/{payoutId} {
@@ -351,7 +354,7 @@ service cloud.firestore {
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
       allow create, update: if isStaff();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || hasRolePermission("reopen_comanda");
     }
 
     // --- Estoque ---
@@ -368,7 +371,7 @@ service cloud.firestore {
     match /inventory_movements/{movementId} {
       allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
       allow create: if isStaff() || isBarbeiro();
-      allow update, delete: if isStaff();
+      allow update, delete: if isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     // --- Assinaturas ---
@@ -450,7 +453,7 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create: if isStaff() || isBarbeiro();
-      allow update, delete: if isStaff();
+      allow update, delete: if isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     // --- Insights e Sistema ---
@@ -476,7 +479,7 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     match /debt_payments/{paymentId} {
@@ -486,7 +489,7 @@ service cloud.firestore {
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
       allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
     }
 
     // --- Novos Recursos de Relacionamento e Lembretes (Reminders) ---

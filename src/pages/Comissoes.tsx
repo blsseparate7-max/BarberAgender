@@ -80,6 +80,9 @@ export function Comissoes() {
     loadBarbers();
     if (tenantId) {
       commissionService.purgeOrphanedCommissions(tenantId);
+      if (tenantId === 'gbcortes7') {
+        commissionService.purgePreSeptemberData('gbcortes7');
+      }
     }
   }, [tenantId]);
 
@@ -489,35 +492,54 @@ export function Comissoes() {
       {/* Main Team Roster & Historical Subsections */}
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-2">
-          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200/50">
-            <button 
-              onClick={() => setActiveTab('overview')}
-              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                activeTab === 'overview' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950'
-              }`}
-            >
-              Visão da Equipe
-            </button>
-            <button 
-              onClick={() => setActiveTab('commissions')}
-              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                activeTab === 'commissions' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950'
-              }`}
-            >
-              Extrato Geral
-            </button>
-            <button 
-              onClick={() => setActiveTab('payouts')}
-              className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                activeTab === 'payouts' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950'
-              }`}
-            >
-              Histórico de Repasses
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200/50">
+              <button 
+                onClick={() => setActiveTab('overview')}
+                className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                  activeTab === 'overview' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950'
+                }`}
+              >
+                Visão da Equipe
+              </button>
+              <button 
+                onClick={() => setActiveTab('commissions')}
+                className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                  activeTab === 'commissions' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950'
+                }`}
+              >
+                Extrato Geral
+              </button>
+              <button 
+                onClick={() => setActiveTab('payouts')}
+                className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                  activeTab === 'payouts' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950'
+                }`}
+              >
+                Histórico de Repasses
+              </button>
+            </div>
+
+            {/* Quick Barber Selector Box */}
+            <div className="flex items-center gap-2 bg-white border border-slate-200 p-1.5 rounded-2xl shadow-xs">
+              <span className="text-[10px] font-black uppercase text-slate-400 pl-2 hidden md:inline">Barbeiro:</span>
+              <select
+                value={selectedBarber}
+                onChange={(e) => setSelectedBarber(e.target.value)}
+                className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-black py-1.5 px-3 rounded-xl outline-none focus:border-blue-500 cursor-pointer"
+              >
+                <option value="">💈 Todos os Barbeiros ({teamRoster.length})</option>
+                {teamRoster.map((b) => (
+                  <option key={`opt-b-${b.uid}`} value={b.uid}>
+                    {b.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">
-            {teamRoster.length} profissionais listados
+            {teamRoster.filter(b => !selectedBarber || b.uid === selectedBarber).length} profissional(is) exibido(s)
           </div>
         </div>
 
@@ -537,7 +559,9 @@ export function Comissoes() {
                 exit={{ opacity: 0, y: -10 }}
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300"
               >
-                {teamRoster.map((barber, index) => {
+                {teamRoster
+                  .filter(b => !selectedBarber || b.uid === selectedBarber)
+                  .map((barber, index) => {
                   const avatarColorClass = getAvatarBg(barber.nome);
                   const isNegative = barber.pending < 0;
                   const isPending = barber.pending > 0;
@@ -548,14 +572,14 @@ export function Comissoes() {
                       className="bg-white border border-slate-200 rounded-[2rem] p-6 hover:border-slate-350 hover:shadow-md transition-all duration-300 flex flex-col justify-between shadow-xs group"
                     >
                       {/* Barber Basic Header */}
-                      <div className="flex items-center gap-4 mb-5 pb-4 border-b border-slate-100">
+                      <div className="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
                         <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border font-black text-lg shadow-xs shrink-0 ${avatarColorClass}`}>
                           {getInitials(barber.nome)}
                         </div>
-                        <div className="overflow-hidden">
+                        <div className="overflow-hidden min-w-0 flex-1">
                           <h3 className="font-black text-slate-900 group-hover:text-blue-600 transition-colors truncate">{barber.nome}</h3>
                           <p className="text-[10px] text-slate-400 font-bold truncate uppercase tracking-wider">{barber.email}</p>
-                          <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase mt-1.5 border ${
+                          <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase mt-1.5 border ${
                             isNegative 
                               ? 'bg-rose-50 text-rose-700 border-rose-200'
                               : isPending 
@@ -568,9 +592,9 @@ export function Comissoes() {
                       </div>
 
                       {/* Barber Mini stats - 100% Reconciled with Barbeiros */}
-                      <div className="grid grid-cols-2 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-5 text-center divide-x divide-slate-200/60">
+                      <div className="grid grid-cols-2 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-4 text-center divide-x divide-slate-200/60">
                         <div>
-                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block">Ganhos do Mês</span>
+                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block">Produção Bruta</span>
                           <span className="text-base font-black text-slate-900 block mt-0.5">
                             R$ {barber.comissaoGeradaMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </span>
@@ -602,9 +626,9 @@ export function Comissoes() {
                       </div>
 
                       {/* Quick Ratios */}
-                      <div className="space-y-2 mb-5 text-xs text-slate-600 font-semibold bg-slate-50/50 p-3 rounded-xl border border-slate-100/60">
+                      <div className="space-y-1.5 mb-5 text-xs text-slate-600 font-semibold bg-slate-50/50 p-3 rounded-xl border border-slate-100/60">
                         <div className="flex justify-between items-center">
-                          <span className="text-slate-400 text-[11px]">Faturamento gerado (mês):</span>
+                          <span className="text-slate-400 text-[11px]">Faturamento gerado:</span>
                           <span className="font-bold text-slate-800 text-[11px]">R$ {barber.totalBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="flex justify-between items-center">
@@ -613,18 +637,28 @@ export function Comissoes() {
                         </div>
                       </div>
 
-                      {/* View Action Drill-down Button */}
-                      <button 
-                        onClick={() => {
-                          setSelectedBarberId(barber.uid);
-                          setSelectedBarberName(barber.nome);
-                        }}
-                        className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3.5 rounded-2xl font-black text-xs tracking-wider uppercase transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
-                      >
-                        <FileText size={14} />
-                        Acessar Ficha & Recibos
-                        <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
-                      </button>
+                      {/* Action Buttons */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsPayoutModalOpen(true)}
+                          className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                        >
+                          <DollarSign size={14} />
+                          Pagar Repasse
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setSelectedBarberId(barber.uid);
+                            setSelectedBarberName(barber.nome);
+                          }}
+                          className="py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                        >
+                          <FileText size={14} />
+                          Ver Extrato
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { SubscriptionPlan, Subscription, SubscriptionUsage, SubscriptionStatus } from '../types';
-import { format, addDays } from 'date-fns';
+import { format, addDays, addMonths } from 'date-fns';
 import { getActiveTenantId } from './tenantService';
 import { cashService } from './cashService';
 
@@ -285,6 +285,24 @@ export const subscriptionService = {
     }
   },
 
+  async cascadeAlignCycles() {
+    const activeTenantId = getActiveTenantId();
+    try {
+      const response = await fetch('/api/saas/subscription/cascade-align-cycles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: activeTenantId
+        })
+      });
+      const data = await response.json();
+      return data;
+    } catch (apiErr: any) {
+      console.error("Erro ao executar alinhamento de ciclos em cascata:", apiErr);
+      throw new Error(apiErr.message || "Falha na comunicação com o servidor.");
+    }
+  },
+
   // Usage
   async registerUsage(
     subscriptionId: string, 
@@ -535,7 +553,7 @@ export const subscriptionService = {
       newStartDateStr = todayStr;
     }
     const newStartDate = new Date(newStartDateStr + 'T12:00:00');
-    const newEndDate = addDays(newStartDate, 30);
+    const newEndDate = addMonths(newStartDate, 1);
     const newEndDateStr = format(newEndDate, 'yyyy-MM-dd');
 
     return await runTransaction(db, async (transaction) => {
@@ -613,7 +631,9 @@ export const subscriptionService = {
     const plan = planSnap.data() as SubscriptionPlan;
 
     const startDate = new Date();
-    const endDate = addDays(startDate, 30);
+    const startDateStr = format(startDate, 'yyyy-MM-dd');
+    const endDate = addMonths(startDate, 1);
+    const endDateStr = format(endDate, 'yyyy-MM-dd');
 
     // Clean up or cancel old pending subscriptions for this client and tenant to prevent duplicate rows
     try {
@@ -647,15 +667,15 @@ export const subscriptionService = {
       cliente_name: data.cliente_name,
       plano_id: data.plano_id,
       planName: plan.name,
-      startDate: format(startDate, 'yyyy-MM-dd'),
-      endDate: format(endDate, 'yyyy-MM-dd'),
+      startDate: startDateStr,
+      endDate: endDateStr,
       status: 'pending',
       autoRenew: true,
       haircutsUsed: 0,
       beardsUsed: 0,
       services: plan.services || [],
       serviceUsages: {},
-      lastRenewalDate: format(startDate, 'yyyy-MM-dd'),
+      lastRenewalDate: startDateStr,
       discounts: plan.discounts || [],
       allowedDaysOfWeek: plan.allowedDaysOfWeek || [0, 1, 2, 3, 4, 5, 6],
       customRestrictionNote: plan.customRestrictionNote || '',
@@ -696,6 +716,8 @@ export const subscriptionService = {
           planName: plan.name,
           amount: plan.price,
           billingType: data.billingType || 'PIX',
+          dueDate: startDateStr,
+          nextDueDate: startDateStr,
           isSubscription: true,
           isClientSubscription: true,
           subscriptionId: subId,

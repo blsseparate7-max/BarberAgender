@@ -67,17 +67,19 @@ export const commissionService = {
       const targetFirstName = targetName.split(' ')[0] || '';
 
       results = results.filter(c => {
-        if (targetId && (c.profissional_id === targetId || (c as any).barbeiro_id === targetId)) {
-          return true;
+        if (c.profissional_id || (c as any).barbeiro_id) {
+          if (targetId && (c.profissional_id === targetId || (c as any).barbeiro_id === targetId)) return true;
+          return false;
         }
         const cName = (c.profissional_name || (c as any).barbeiro_nome || '').toLowerCase().trim();
         if (targetName && cName) {
-          if (cName === targetName || cName.includes(targetName) || targetName.includes(cName)) return true;
-          if (targetFirstName === 'gabriel' && cName.includes('gabriel')) return true;
-          if ((targetFirstName === 'mateus' || targetFirstName === 'matheus') && (cName.includes('mateus') || cName.includes('matheus'))) return true;
+          if (cName === targetName) return true;
+          if (targetFirstName === 'gabriel' && cName.startsWith('gabriel')) return true;
+          if ((targetFirstName === 'mateus' || targetFirstName === 'matheus') && (cName.startsWith('mateus') || cName.startsWith('matheus'))) return true;
           if (targetName.startsWith('luiz miguel') && cName.startsWith('luiz miguel')) return true;
           if (targetName.startsWith('luiz henrique') && cName.startsWith('luiz henrique')) return true;
-          if (targetFirstName === 'moises' && cName.includes('moises')) return true;
+          if (targetFirstName === 'moises' && cName.startsWith('moises')) return true;
+          if (targetName.length > 5 && cName.includes(targetName)) return true;
         }
         const cEmail = ((c as any).profissional_email || c.profissional_id || '').toLowerCase().trim();
         if (targetEmail && cEmail && cEmail === targetEmail) return true;
@@ -91,7 +93,10 @@ export const commissionService = {
       results = results.filter(c => c.status === filters.status);
     }
     if (filters.startDate && filters.endDate) {
-      results = results.filter(c => c.date >= filters.startDate! && c.date <= filters.endDate!);
+      results = results.filter(c => {
+        const cDate = (c.date || '').substring(0, 10);
+        return cDate >= filters.startDate! && cDate <= filters.endDate!;
+      });
     }
 
     // Sort in memory by date desc, then by seconds desc, then by ID
@@ -153,7 +158,7 @@ export const commissionService = {
       if (targetProFirstName === 'gabriel' && t.includes('gabriel')) return true;
       if ((targetProFirstName === 'mateus' || targetProFirstName === 'matheus') && (t.includes('mateus') || t.includes('matheus'))) return true;
       if (targetProName.startsWith('luiz miguel') && t.includes('luiz miguel')) return true;
-      if (targetProName.startsWith('luiz henrique') && (t.includes('luiz henrique') || t.includes('rick'))) return true;
+      if (targetProName.startsWith('luiz henrique') && t.includes('luiz henrique')) return true;
       if (targetProFirstName === 'moises' && t.includes('moises')) return true;
       if (targetProEmail && t.includes(targetProEmail)) return true;
       return false;
@@ -162,7 +167,10 @@ export const commissionService = {
     // Filter advances in memory if filters are provided
     if (targetId || targetProName || targetProEmail) {
       results = results.filter(a => {
-        if (targetId && (a.profissional_id === targetId || (a as any).barber_id === targetId)) return true;
+        if (a.profissional_id || (a as any).barber_id) {
+          if (targetId && (a.profissional_id === targetId || (a as any).barber_id === targetId)) return true;
+          return false;
+        }
         if (matchesProText(a.profissional_name) || matchesProText(a.description)) return true;
         const aEmail = ((a as any).profissional_email || a.profissional_id || '').toLowerCase().trim();
         if (targetProEmail && aEmail === targetProEmail) return true;
@@ -177,6 +185,8 @@ export const commissionService = {
 
       payablesSnap.docs.forEach(docSnap => {
         const p = docSnap.data() as any;
+        if (p.status === 'cancelado' || p.is_deleted === true || (p.amount || 0) <= 0) return;
+
         const category = (p.category || '').toLowerCase();
         const desc = (p.description || '').toLowerCase();
         const supplier = (p.supplier || '').toLowerCase();
@@ -185,8 +195,12 @@ export const commissionService = {
         const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
 
         let matchesPro = false;
-        if (targetId && (p.profissional_id === targetId || p.barber_id === targetId)) {
-          matchesPro = true;
+        if (p.profissional_id || p.barber_id) {
+          if (targetId && (p.profissional_id === targetId || p.barber_id === targetId)) {
+            matchesPro = true;
+          } else {
+            matchesPro = false;
+          }
         } else if (targetProName || targetProEmail) {
           matchesPro = matchesProText(supplier) || matchesProText(proName) || matchesProText(desc);
         } else {
@@ -195,6 +209,14 @@ export const commissionService = {
 
         if (isVale && matchesPro) {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
+          if (activeTenant === 'gbcortes7' && pDate && pDate < '2026-09-01') return;
+
+          // If linked to an advance that was deleted, do not resurrect
+          if (p.advanceId || p.transactionId) {
+            const hasExisting = results.some(r => r.id === p.advanceId || r.id === p.transactionId || r.transaction_id === p.transactionId);
+            if (!hasExisting) return;
+          }
+
           const pAmount = p.amount || 0;
 
           const isDuplicate = results.some(r => 
@@ -254,6 +276,10 @@ export const commissionService = {
 
       cashSnap.docs.forEach(docSnap => {
         const c = docSnap.data() as any;
+        if (c.is_deleted === true || c.status === 'cancelado' || c.status === 'excluido' || c.deleted === true || (c.amount || 0) <= 0) {
+          return;
+        }
+
         const category = (c.category || '').toLowerCase();
         const desc = (c.description || '').toLowerCase();
         const cProName = (c.profissional_name || '').toLowerCase();
@@ -271,10 +297,27 @@ export const commissionService = {
 
         if (isVale && matchesPro) {
           const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          if (activeTenant === 'gbcortes7' && cDate && cDate < '2026-09-01') {
+            return;
+          }
+
+          // If linked to an advance that was deleted from professional_advances, do not resurrect it
+          if (c.referencia_id) {
+            const hasExisting = results.some(r => 
+              r.id === c.referencia_id || 
+              r.transaction_id === c.referencia_id || 
+              r.movement_id === docSnap.id
+            );
+            if (!hasExisting) {
+              return;
+            }
+          }
+
           const cAmount = c.amount || 0;
 
           const isDuplicate = results.some(r => 
             r.id === docSnap.id || 
+            r.movement_id === docSnap.id ||
             (Math.abs(r.amount - cAmount) < 0.01 && r.date === cDate)
           );
 
@@ -301,7 +344,10 @@ export const commissionService = {
     }
 
     if (filters.startDate && filters.endDate) {
-      results = results.filter(a => a.date >= filters.startDate! && a.date <= filters.endDate!);
+      results = results.filter(a => {
+        const aDate = (a.date || '').substring(0, 10);
+        return aDate >= filters.startDate! && aDate <= filters.endDate!;
+      });
     }
 
     results.sort((a, b) => {
@@ -456,6 +502,7 @@ export const commissionService = {
       const advSnap = await getDoc(advanceRef);
       if (!advSnap.exists()) return;
       const advance = { id: advSnap.id, ...advSnap.data() } as ProfessionalAdvance;
+      const activeTenant = advance.tenantId || getActiveTenantId();
 
       // 1. Delete advance document
       await deleteDoc(advanceRef);
@@ -513,16 +560,51 @@ export const commissionService = {
 
       // 4. Cascade delete cash_movement if linked
       try {
-        if (advance.movement_id) {
-          await cashService.removeMovement(advance.movement_id);
-        } else if (advance.transaction_id) {
+        const candidateMoveIds = new Set<string>();
+        if (advance.movement_id) candidateMoveIds.add(advance.movement_id);
+
+        const refIds = [advance.id, advance.transaction_id].filter(Boolean) as string[];
+        for (const refId of refIds) {
           const qMove = query(
             collection(db, 'cash_movements'),
-            where('referencia_id', '==', advance.transaction_id)
+            where('referencia_id', '==', refId)
           );
           const snap = await getDocs(qMove);
-          for (const d of snap.docs) {
-            await cashService.removeMovement(d.id);
+          snap.docs.forEach(d => candidateMoveIds.add(d.id));
+        }
+
+        // Also search for matching unlinked movement by pro, date and amount
+        if (candidateMoveIds.size === 0 && advance.amount && advance.date) {
+          const qCandidate = query(
+            collection(db, 'cash_movements'),
+            where('tenantId', '==', advance.tenantId || activeTenant)
+          );
+          const cSnap = await getDocs(qCandidate);
+          cSnap.docs.forEach(d => {
+            const m = d.data();
+            const mDate = m.date || (m.createdAt ? new Date(m.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+            if (
+              Math.abs((m.amount || 0) - advance.amount) < 0.01 &&
+              mDate === advance.date &&
+              ((m.profissional_id && m.profissional_id === advance.profissional_id) ||
+               (m.description && m.description.toLowerCase().includes((advance.profissional_name || '').toLowerCase())))
+            ) {
+              candidateMoveIds.add(d.id);
+            }
+          });
+        }
+
+        for (const moveId of candidateMoveIds) {
+          try {
+            await cashService.removeMovement(moveId);
+          } catch {
+            // If cash register is already closed or removeMovement fails, soft-delete directly
+            await updateDoc(doc(db, 'cash_movements', moveId), {
+              is_deleted: true,
+              status: 'cancelado',
+              amount: 0,
+              cancel_reason: 'Vale excluído no módulo de comissões'
+            });
           }
         }
       } catch (e) {
@@ -1558,6 +1640,108 @@ export const commissionService = {
       return { commissionsSettled, advancesSettled, payablesSettled, comandasSettled };
     } catch (err) {
       console.error("Erro ao liquidar histórico anterior a setembro:", err);
+      throw err;
+    }
+  },
+
+  async purgePreSeptemberData(targetTenantId?: string) {
+    try {
+      const activeTenant = targetTenantId || getActiveTenantId();
+      if (!activeTenant) return { commissionsDeleted: 0, advancesDeleted: 0, payoutsDeleted: 0 };
+
+      const queryConstraints = activeTenant === 'gbcortes7'
+        ? [where('tenantId', 'in', [activeTenant, ''])]
+        : [where('tenantId', '==', activeTenant)];
+
+      let batches: any[] = [];
+      let currentBatch = writeBatch(db);
+      let opsCount = 0;
+
+      const addOp = (ref: any) => {
+        currentBatch.delete(ref);
+        opsCount++;
+        if (opsCount >= 400) {
+          batches.push(currentBatch);
+          currentBatch = writeBatch(db);
+          opsCount = 0;
+        }
+      };
+
+      const isBeforeSept = (docData: any): boolean => {
+        if (docData.date) {
+          const d = String(docData.date).split('T')[0];
+          if (d && d < '2026-09-01') return true;
+          if (d && d >= '2026-09-01') return false;
+        }
+        if (docData.data) {
+          const d = String(docData.data).split('T')[0];
+          if (d && d < '2026-09-01') return true;
+          if (d && d >= '2026-09-01') return false;
+        }
+        if (docData.createdAt) {
+          if (typeof docData.createdAt === 'object' && docData.createdAt?.seconds) {
+            const iso = new Date(docData.createdAt.seconds * 1000).toISOString().split('T')[0];
+            if (iso < '2026-09-01') return true;
+            if (iso >= '2026-09-01') return false;
+          } else if (typeof docData.createdAt === 'string') {
+            const iso = docData.createdAt.split('T')[0];
+            if (iso < '2026-09-01') return true;
+            if (iso >= '2026-09-01') return false;
+          }
+        }
+        return false;
+      };
+
+      // 1. Delete commissions before 01/09/2026
+      const commsSnap = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
+      let commissionsDeleted = 0;
+      commsSnap.docs.forEach(docSnap => {
+        const comm = docSnap.data();
+        if (isBeforeSept(comm)) {
+          addOp(docSnap.ref);
+          commissionsDeleted++;
+        }
+      });
+
+      // 2. Delete advances before 01/09/2026
+      const advsSnap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
+      let advancesDeleted = 0;
+      advsSnap.docs.forEach(docSnap => {
+        const adv = docSnap.data();
+        if (isBeforeSept(adv)) {
+          addOp(docSnap.ref);
+          advancesDeleted++;
+        }
+      });
+
+      // 3. Delete payouts before 01/09/2026
+      const paySnap = await getDocs(query(collection(db, PAYOUTS_COLLECTION), ...queryConstraints));
+      let payoutsDeleted = 0;
+      paySnap.docs.forEach(docSnap => {
+        const p = docSnap.data();
+        if (isBeforeSept(p)) {
+          addOp(docSnap.ref);
+          payoutsDeleted++;
+        }
+      });
+
+      if (opsCount > 0) {
+        batches.push(currentBatch);
+      }
+
+      for (const b of batches) {
+        await b.commit();
+      }
+
+      console.log(`[commissionService] Purge Pre-September completed for tenant ${activeTenant}:`, {
+        commissionsDeleted,
+        advancesDeleted,
+        payoutsDeleted
+      });
+
+      return { commissionsDeleted, advancesDeleted, payoutsDeleted };
+    } catch (err) {
+      console.error("Erro ao expurgar dados anteriores a setembro:", err);
       throw err;
     }
   }

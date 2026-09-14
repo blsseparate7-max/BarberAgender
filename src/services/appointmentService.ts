@@ -141,18 +141,10 @@ async function resolveProfessionalSchedule(profissional_id: string, cachedProfil
     console.warn("Could not load professional_schedules:", err);
   }
 
-  // 4. Fallback default schedule
+  // 4. Fallback: If professional has no registered schedule, return empty workingHours (no available slots)
   return {
     profissional_id,
-    workingHours: [
-      { dayOfWeek: 1, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-      { dayOfWeek: 2, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-      { dayOfWeek: 3, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-      { dayOfWeek: 4, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-      { dayOfWeek: 5, isOpen: true, startTime: '09:00', endTime: '19:00', lunchStart: '12:00', lunchEnd: '13:00' },
-      { dayOfWeek: 6, isOpen: true, startTime: '09:00', endTime: '17:00', lunchStart: '12:00', lunchEnd: '13:00' },
-      { dayOfWeek: 0, isOpen: false, startTime: '09:00', endTime: '19:00' },
-    ],
+    workingHours: [],
     exceptions: [],
     vacations: []
   };
@@ -1042,18 +1034,7 @@ export const appointmentService = {
       isOpen = true;
     } else {
       let workingDay = Array.isArray(schedule?.workingHours) ? schedule.workingHours.find((wh: any) => wh.dayOfWeek === dayOfWeek) : null;
-      if (!workingDay) {
-        // Fallback default open hours if this day was missing from the custom configuration
-        workingDay = { 
-          dayOfWeek, 
-          isOpen: dayOfWeek !== 0, 
-          startTime: '09:00', 
-          endTime: dayOfWeek === 6 ? '17:00' : '19:00',
-          lunchStart: '12:00', 
-          lunchEnd: '13:00' 
-        };
-      }
-      if (!workingDay.isOpen) return [];
+      if (!workingDay || !workingDay.isOpen) return [];
       startTime = workingDay.startTime || '09:00';
       endTime = workingDay.endTime || '19:00';
       lunchStart = workingDay.lunchStart;

@@ -145,6 +145,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPassword, setGuestPassword] = useState('');
   const [guestCreatedAppointment, setGuestCreatedAppointment] = useState<any | null>(null);
+  const [selectedShowcaseCategory, setSelectedShowcaseCategory] = useState<string>('all');
 
   // Proximity & Geolocation helpers
   const handleRequestLocation = () => {
@@ -2076,70 +2077,134 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
                   {/* Services & Prices Showcase Grid */}
                   <div className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
-                    <div>
-                      <h3 className="text-base font-black text-slate-800 tracking-tight flex items-center gap-2">
-                        <Scissors className="text-amber-500" size={20} />
-                        Serviços & Valores
-                      </h3>
-                      <p className="text-xs text-slate-500 font-semibold mt-0.5">Confira nossa tabela completa de serviços profissionais</p>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+                      <div>
+                        <h3 className="text-base font-black text-slate-800 tracking-tight flex items-center gap-2">
+                          <Scissors className="text-amber-500" size={20} />
+                          Serviços & Valores
+                        </h3>
+                        <p className="text-xs text-slate-500 font-semibold mt-0.5">Selecione uma categoria para filtrar ou confira nossa tabela</p>
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-200/80 px-3 py-1 rounded-full w-fit">
+                        {services.length} {services.length === 1 ? 'serviço' : 'serviços no total'}
+                      </span>
                     </div>
 
                     {services.length > 0 ? (
-                      <div className="space-y-8">
-                        {(Object.entries(
-                          services.reduce((acc, service) => {
-                            const cat = service.categoria || 'Geral';
+                      <div className="space-y-6">
+                        {(() => {
+                          const catMap = services.reduce((acc, s) => {
+                            const cat = s.categoria || 'Geral';
                             if (!acc[cat]) acc[cat] = [];
-                            acc[cat].push(service);
+                            acc[cat].push(s);
                             return acc;
-                          }, {} as Record<string, Service[]>)
-                        ) as [string, Service[]][]).map(([categoryName, catServices]) => (
-                          <div key={`category-group-${categoryName}`} className="space-y-4">
-                            <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
-                              <h4 className="text-xs font-black uppercase text-indigo-600 tracking-wider flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                                {categoryName}
-                              </h4>
-                              <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500 font-bold">
-                                {catServices.length} {catServices.length === 1 ? 'serviço' : 'serviços'}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              {catServices.map((service, sIdx) => (
-                                <div 
-                                  key={`showcase-svc-${service.id || sIdx}`}
-                                  className="p-4 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100/80 hover:border-slate-200 transition-all flex flex-col justify-between gap-3 group"
-                                >
-                                  <div className="space-y-1">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
-                                      <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                                        R$ {Number(service.preco || 0).toFixed(2)}
-                                      </span>
-                                    </div>
-                                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                                      {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-100/50">
-                                    <span className="flex items-center gap-1"><Clock size={11} /> {service.duracao_minutos || service.duration || 30} min</span>
-                                    <button 
-                                      onClick={() => {
-                                        setSelectedService(service);
-                                        setSelectedServices([service]);
-                                        setBookingStep(1); // Go choose professional
-                                        setActiveTab('schedule');
-                                      }}
-                                      className="text-indigo-600 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-indigo-700"
-                                    >
-                                      Agendar este <ChevronRight size={10} />
-                                    </button>
-                                  </div>
+                          }, {} as Record<string, Service[]>);
+
+                          const catList = Object.keys(catMap);
+
+                          return (
+                            <div className="space-y-6">
+                              {/* Horizontal Category Selector Bar */}
+                              {catList.length > 1 && (
+                                <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedShowcaseCategory('all')}
+                                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                                      selectedShowcaseCategory === 'all'
+                                        ? 'bg-slate-900 text-amber-400 shadow-md shadow-slate-900/10 scale-[1.02]'
+                                        : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
+                                    }`}
+                                  >
+                                    <span>✨ Todos</span>
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
+                                      selectedShowcaseCategory === 'all' ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-200 text-slate-600'
+                                    }`}>
+                                      {services.length}
+                                    </span>
+                                  </button>
+
+                                  {catList.map((catName) => {
+                                    const count = catMap[catName].length;
+                                    const isActive = selectedShowcaseCategory === catName;
+                                    return (
+                                      <button
+                                        key={`cat-pill-${catName}`}
+                                        type="button"
+                                        onClick={() => setSelectedShowcaseCategory(catName)}
+                                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                                          isActive
+                                            ? 'bg-slate-900 text-amber-400 shadow-md shadow-slate-900/10 scale-[1.02]'
+                                            : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
+                                        }`}
+                                      >
+                                        <span>✂️ {catName}</span>
+                                        <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
+                                          isActive ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-200 text-slate-600'
+                                        }`}>
+                                          {count}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
                                 </div>
-                              ))}
+                              )}
+
+                              {/* Filtered Services Listing */}
+                              <div className="space-y-8">
+                                {(Object.entries(catMap) as [string, Service[]][])
+                                  .filter(([catName]) => selectedShowcaseCategory === 'all' || selectedShowcaseCategory === catName)
+                                  .map(([categoryName, catServices]) => (
+                                    <div key={`category-group-${categoryName}`} className="space-y-4">
+                                      <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
+                                        <h4 className="text-xs font-black uppercase text-indigo-600 tracking-wider flex items-center gap-2">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                                          {categoryName}
+                                        </h4>
+                                        <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500 font-bold">
+                                          {catServices.length} {catServices.length === 1 ? 'serviço' : 'serviços'}
+                                        </span>
+                                      </div>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {catServices.map((service, sIdx) => (
+                                          <div 
+                                            key={`showcase-svc-${service.id || sIdx}`}
+                                            className="p-4 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100/80 hover:border-slate-200 transition-all flex flex-col justify-between gap-3 group"
+                                          >
+                                            <div className="space-y-1">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
+                                                <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap shadow-xs">
+                                                  R$ {Number(service.preco || 0).toFixed(2)}
+                                                </span>
+                                              </div>
+                                              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                                                {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
+                                              </p>
+                                            </div>
+                                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-2 border-t border-slate-100/60">
+                                              <span className="flex items-center gap-1"><Clock size={11} /> {service.duracao_minutos || service.duration || 30} min</span>
+                                              <button 
+                                                onClick={() => {
+                                                  setSelectedService(service);
+                                                  setSelectedServices([service]);
+                                                  setBookingStep(1); // Go choose professional
+                                                  setActiveTab('schedule');
+                                                }}
+                                                className="text-indigo-600 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-indigo-700 cursor-pointer"
+                                              >
+                                                Agendar este <ChevronRight size={10} />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })()}
                       </div>
                     ) : (
                       <p className="text-xs text-slate-400 italic">Nenhum serviço listado no momento.</p>

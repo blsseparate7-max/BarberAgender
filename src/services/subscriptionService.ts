@@ -689,6 +689,9 @@ export const subscriptionService = {
     const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
     const subId = subscriptionRef.id;
 
+    const planAllowed = plan.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
+    const effectiveBillingType: 'PIX' | 'CREDIT_CARD' = data.billingType || (planAllowed.includes('CREDIT_CARD') && !planAllowed.includes('PIX') ? 'CREDIT_CARD' : 'PIX');
+
     // Pre-save to Firestore FIRST so document exists with status 'pending' before webhook fires
     const subscriptionData: any = {
       tenantId: activeTenantId,
@@ -717,7 +720,8 @@ export const subscriptionService = {
       paymentUrl: '',
       pixCopiaECola: '',
       pixQrCodeUrl: '',
-      billingType: data.billingType || 'PIX',
+      billingType: effectiveBillingType,
+      allowedPaymentMethods: planAllowed,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
@@ -744,7 +748,7 @@ export const subscriptionService = {
           planId: data.plano_id,
           planName: plan.name,
           amount: plan.price,
-          billingType: data.billingType || 'PIX',
+          billingType: effectiveBillingType,
           dueDate: startDateStr,
           nextDueDate: startDateStr,
           isSubscription: true,
@@ -764,8 +768,8 @@ export const subscriptionService = {
           asaasCustomerId = chargeData.customerId;
         }
         paymentUrl = chargeData.paymentUrl || '';
-        pixCopiaECola = chargeData.pixCopiaECola || '';
-        pixQrCodeUrl = chargeData.pixQrCodeUrl || '';
+        pixCopiaECola = effectiveBillingType === 'PIX' ? (chargeData.pixCopiaECola || '') : '';
+        pixQrCodeUrl = effectiveBillingType === 'PIX' ? (chargeData.pixQrCodeUrl || '') : '';
 
         await updateDoc(subscriptionRef, {
           asaasInvoiceId: asaasInvoiceId || null,
@@ -774,6 +778,8 @@ export const subscriptionService = {
           paymentUrl,
           pixCopiaECola,
           pixQrCodeUrl,
+          billingType: effectiveBillingType,
+          allowedPaymentMethods: planAllowed,
           updatedAt: serverTimestamp()
         });
       } else if (chargeData.error) {
@@ -790,7 +796,13 @@ export const subscriptionService = {
       throw e;
     }
 
-    return { id: subId, paymentUrl, pixCopiaECola, pixQrCodeUrl };
+    return { 
+      id: subId, 
+      paymentUrl, 
+      pixCopiaECola: effectiveBillingType === 'PIX' ? pixCopiaECola : '', 
+      pixQrCodeUrl: effectiveBillingType === 'PIX' ? pixQrCodeUrl : '',
+      billingType: effectiveBillingType
+    };
   },
 
   async confirmAsaasSubscriptionPayment(id: string) {

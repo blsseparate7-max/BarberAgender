@@ -1882,24 +1882,28 @@ function encodeFirestoreFields(data: any): any {
         }
 
         // c) If PIX, fetch Pix QR Code
-        let pixCopiaECola = invoiceUrl || payData?.invoiceUrl || '';
+        let pixCopiaECola = '';
         let pixQrCodeUrl = '';
 
-        if (paymentIdForPixOrLink && typeof paymentIdForPixOrLink === 'string' && !paymentIdForPixOrLink.startsWith('sub_') && (billingType === 'PIX' || !billingType)) {
-          try {
-            const pixData = await fetchAsaasApi(`/payments/${paymentIdForPixOrLink}/pixQrCode`);
-            if (pixData?.payload) pixCopiaECola = pixData.payload;
-            if (pixData?.encodedImage) pixQrCodeUrl = `data:image/png;base64,${pixData.encodedImage}`;
-          } catch (pixErr) {
-            console.warn("Aviso ao obter QR Code do Pix no Asaas:", pixErr);
-          }
-        }
-
-        // Always guarantee a QR code image URL if pixCopiaECola or invoiceUrl is available
         const finalPaymentUrl = bankSlipUrl || invoiceUrl || payData?.bankSlipUrl || payData?.invoiceUrl || '';
-        const qrTarget = pixCopiaECola || finalPaymentUrl;
-        if (!pixQrCodeUrl && qrTarget) {
-          pixQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrTarget)}`;
+
+        if (selectedBillingType === 'PIX') {
+          pixCopiaECola = invoiceUrl || payData?.invoiceUrl || '';
+          if (paymentIdForPixOrLink && typeof paymentIdForPixOrLink === 'string' && !paymentIdForPixOrLink.startsWith('sub_')) {
+            try {
+              const pixData = await fetchAsaasApi(`/payments/${paymentIdForPixOrLink}/pixQrCode`);
+              if (pixData?.payload) pixCopiaECola = pixData.payload;
+              if (pixData?.encodedImage) pixQrCodeUrl = `data:image/png;base64,${pixData.encodedImage}`;
+            } catch (pixErr) {
+              console.warn("Aviso ao obter QR Code do Pix no Asaas:", pixErr);
+            }
+          }
+
+          // Guarantee a QR code image URL for PIX if pixCopiaECola is available
+          const qrTarget = pixCopiaECola || finalPaymentUrl;
+          if (!pixQrCodeUrl && qrTarget) {
+            pixQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrTarget)}`;
+          }
         }
 
         return res.json({
@@ -1908,11 +1912,12 @@ function encodeFirestoreFields(data: any): any {
           paymentId: paymentIdForPixOrLink,
           customerId: customerId,
           paymentUrl: finalPaymentUrl,
-          pixCopiaECola: pixCopiaECola || finalPaymentUrl,
-          pixQrCodeUrl: pixQrCodeUrl,
+          billingType: selectedBillingType,
+          pixCopiaECola: selectedBillingType === 'PIX' ? (pixCopiaECola || finalPaymentUrl) : undefined,
+          pixQrCodeUrl: selectedBillingType === 'PIX' ? pixQrCodeUrl : undefined,
           status: payData?.status === 'RECEIVED' || payData?.status === 'CONFIRMED' ? 'CONFIRMED' : 'PENDING',
           gatewayUsed: 'asaas',
-          message: 'Cobrança gerada com sucesso via Asaas.'
+          message: selectedBillingType === 'CREDIT_CARD' ? 'Assinatura via Cartão gerada com sucesso.' : 'Cobrança PIX gerada com sucesso via Asaas.'
         });
       }
 

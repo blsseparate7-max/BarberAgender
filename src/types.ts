@@ -772,6 +772,10 @@ export interface LoyaltyConfig {
   cashbackPercentage: number;
   minRedemptionPoints: number;
   vipThreshold: number; // points to become VIP
+  birthdayBonusEnabled?: boolean;
+  birthdayBonusPoints?: number;
+  birthdayBonusCashback?: number;
+  birthdayBonusMessage?: string;
   updatedAt: any;
 }
 
@@ -787,7 +791,7 @@ export interface LoyaltyHistory {
   id: string;
   cliente_id: string;
   type: 'earn' | 'redeem';
-  source: 'appointment' | 'manual' | 'purchase';
+  source: 'appointment' | 'manual' | 'purchase' | 'birthday';
   points: number;
   cashback: number;
   description: string;

@@ -53,6 +53,10 @@ export const loyaltyService = {
         cashbackPercentage: 5,
         minRedemptionPoints: 100,
         vipThreshold: 1000,
+        birthdayBonusEnabled: true,
+        birthdayBonusPoints: 100,
+        birthdayBonusCashback: 10,
+        birthdayBonusMessage: 'Parabéns pelo seu aniversário, {nome}! 🎂🎁 Ganhou um presente especial no nosso Clube de Fidelidade. Venha celebrar conosco!',
         updatedAt: new Date()
       };
       try {
@@ -786,5 +790,108 @@ export const loyaltyService = {
       totalPointsAwarded,
       totalCashbackAwarded: Number(totalCashbackAwarded.toFixed(2))
     };
+  },
+
+  // Check if birthday bonus was already granted to client this year
+  async checkBirthdayBonusGranted(cliente_id: string, year: number = new Date().getFullYear()): Promise<boolean> {
+    const activeTenantId = getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
+    try {
+      const q = query(
+        collection(db, HISTORY_COLLECTION),
+        where('tenantId', '==', activeTenantId),
+        where('cliente_id', '==', cliente_id),
+        where('source', '==', 'birthday')
+      );
+      const snap = await getDocs(q);
+      return snap.docs.some(doc => {
+        const data = doc.data();
+        if (!data.date) return false;
+        return data.date.startsWith(String(year));
+      });
+    } catch (err) {
+      console.warn("Error checking birthday bonus:", err);
+      return false;
+    }
+  },
+
+  // Grant birthday bonus to client
+  async grantBirthdayBonus(cliente_id: string, customPoints?: number, customCashback?: number, year: number = new Date().getFullYear()) {
+    const config = await this.getConfig();
+    const activeTenantId = getActiveTenantId() || localStorage.getItem('barberelite_tenant_id') || 'gbcortes7';
+
+    const bonusDescription = `Presente de Aniversário (${year}) 🎂`;
+
+    // Check if already granted
+    const alreadyGranted = await this.checkBirthdayBonusGranted(cliente_id, year);
+    if (alreadyGranted) {
+      throw new Error(`O presente de aniversário de ${year} já foi creditado para este cliente.`);
+    }
+
+    const isPontosMode = (config.loyaltyMode || 'saldo') === 'pontos';
+    let ptsToCredit = customPoints !== undefined ? customPoints : (config.birthdayBonusPoints || 100);
+    let cbToCredit = customCashback !== undefined ? customCashback : (config.birthdayBonusCashback || 10);
+
+    if (isPontosMode) {
+      cbToCredit = 0;
+    } else {
+      ptsToCredit = 0;
+    }
+
+    return await runTransaction(db, async (transaction) => {
+      const docId = `${activeTenantId}_${cliente_id}`;
+      const pointsRef = doc(db, POINTS_COLLECTION, docId);
+      const userRef = doc(db, 'usuarios', cliente_id);
+
+      const pointsSnap = await transaction.get(pointsRef);
+      const userSnap = await transaction.get(userRef);
+
+      let currentPoints = 0;
+      let currentCashback = 0;
+
+      if (pointsSnap.exists()) {
+        const data = pointsSnap.data() as LoyaltyPoints;
+        currentPoints = data.points || 0;
+        currentCashback = data.cashback || 0;
+      } else if (userSnap.exists()) {
+        const uData = userSnap.data();
+        currentPoints = uData.pontos ?? uData.points ?? 0;
+        currentCashback = uData.cashback ?? 0;
+      }
+
+      const newPoints = currentPoints + ptsToCredit;
+      const newCashback = Number((currentCashback + cbToCredit).toFixed(2));
+
+      transaction.set(pointsRef, {
+        cliente_id,
+        tenantId: activeTenantId,
+        points: newPoints,
+        cashback: newCashback,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      if (userSnap.exists()) {
+        transaction.update(userRef, {
+          pontos: newPoints,
+          points: newPoints,
+          cashback: newCashback,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      const historyRef = doc(collection(db, HISTORY_COLLECTION));
+      transaction.set(historyRef, {
+        cliente_id,
+        tenantId: activeTenantId,
+        type: 'earn',
+        source: 'birthday',
+        points: ptsToCredit,
+        cashback: cbToCredit,
+        description: bonusDescription,
+        date: format(new Date(), 'yyyy-MM-dd'),
+        createdAt: serverTimestamp()
+      });
+
+      return { points: ptsToCredit, cashback: cbToCredit };
+    });
   }
 };

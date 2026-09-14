@@ -81,6 +81,7 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
 import { ClientAccountDetailsModal } from '../components/Financeiro/ClientAccountDetailsModal';
+import { AniversariantesView, getBirthdayInfo } from '../components/AniversariantesView';
 
 const formatCpfMask = (value: string) => {
   const digits = value.replace(/\D/g, '').slice(0, 11);
@@ -103,12 +104,12 @@ export function isCustomerLinked(customer?: UserProfile | null): boolean {
   return true;
 }
 
-export function Clientes() {
+export function Clientes({ onNavigateToSubTab }: { onNavigateToSubTab?: (subTab: string) => void } = {}) {
   const { tenantId } = useTenant();
   const [customers, setCustomers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive' | 'birthdays'>('all');
   const [filterTier, setFilterTier] = useState<'all' | 'vvip' | 'debtor' | 'new' | 'loyalty'>('all');
   const [sortBy, setSortBy] = useState<'nome' | 'spent' | 'balance' | 'debt' | 'recent' | 'lastVisit' | 'phone'>('nome');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -168,8 +169,23 @@ export function Clientes() {
       });
       const activeDocs = Array.from(uniqueDocsMap.values());
       
-      // Automatic cleanup of duplicate profiles (e.g. Gustavo Felipe Alecrim, Gabriel Gasque in gbcortes7)
+      // Automatic cleanup of duplicate profiles (e.g. José Paulo de Oliveira x José Paulo (Luan), Gustavo Felipe Alecrim, Gabriel Gasque)
       const nameGroups: Record<string, UserProfile[]> = {};
+      
+      const getCoreName = (fullName: string): string => {
+        if (!fullName) return '';
+        const clean = fullName
+          .replace(/\(.*?\)/g, '')
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .trim();
+        const words = clean.split(/\s+/).filter(w => w.length > 1 && !['de', 'da', 'do', 'dos', 'das', 'e'].includes(w));
+        if (words.length >= 2) return `core_${words[0]}_${words[1]}`;
+        if (words.length === 1) return `core_${words[0]}`;
+        return '';
+      };
+
       rawDocs.forEach(c => {
         if (c.ativo === false || (c as any).mergedInto) return;
         const normName = (c.nome || '')
@@ -178,7 +194,8 @@ export function Clientes() {
           .replace(/[\u0300-\u036f]/g, '')
           .trim();
         const cleanPhone = (c.telefone || c.phone || '').replace(/\D/g, '');
-        const groupKey = cleanPhone && cleanPhone.length >= 10 ? `phone_${cleanPhone}` : (normName.length > 2 ? `name_${normName}` : '');
+        const coreKey = getCoreName(c.nome || '');
+        const groupKey = cleanPhone && cleanPhone.length >= 8 ? `phone_${cleanPhone}` : (coreKey || (normName.length > 2 ? `name_${normName}` : ''));
         
         if (groupKey) {
           if (!nameGroups[groupKey]) nameGroups[groupKey] = [];
@@ -188,9 +205,22 @@ export function Clientes() {
 
       Object.values(nameGroups).forEach(group => {
         if (group.length > 1) {
-          const verified = group.find(c => isCustomerLinked(c) || ((c.email || '').includes('@') && !c.email.includes('manual_') && !c.email.includes('placeholder') && !c.email.includes('sem_email')));
+          // Select primary profile: prefer linked / real email, then profile with phone, then highest spent
+          const sorted = [...group].sort((a, b) => {
+            const aLinked = isCustomerLinked(a) || Boolean((a.email || '').includes('@') && !a.email.includes('manual_') && !a.email.includes('placeholder') && !a.email.includes('sem_email'));
+            const bLinked = isCustomerLinked(b) || Boolean((b.email || '').includes('@') && !b.email.includes('manual_') && !b.email.includes('placeholder') && !b.email.includes('sem_email'));
+            if (aLinked && !bLinked) return -1;
+            if (!aLinked && bLinked) return 1;
+            const aPhone = Boolean(a.telefone || a.phone);
+            const bPhone = Boolean(b.telefone || b.phone);
+            if (aPhone && !bPhone) return -1;
+            if (!aPhone && bPhone) return 1;
+            return (b.total_gasto || b.totalSpent || 0) - (a.total_gasto || a.totalSpent || 0);
+          });
+
+          const verified = sorted[0];
           if (verified) {
-            group.forEach(async (manual) => {
+            sorted.slice(1).forEach(async (manual) => {
               if (manual.uid !== verified.uid) {
                 try {
                   // Call server API for atomic admin merge & deletion
@@ -531,18 +561,10 @@ export function Clientes() {
           <Loader2 className="animate-spin text-accent" size={48} />
           <p className="text-muted font-bold animate-pulse">Carregando base estratégica...</p>
         </div>
-      ) : filteredAndSortedCustomers.length === 0 ? (
-        <div className="bg-white border border-dashed border-slate-200 rounded-[2.5rem] py-24 text-center shadow-sm">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-slate-50 rounded-3xl mb-6 shadow-inner border border-slate-100">
-            <UserIcon className="text-slate-300" size={40} />
-          </div>
-          <h3 className="text-xl font-black text-primary mb-2 tracking-tight">Nenhum cliente encontrado</h3>
-          <p className="text-muted text-sm max-w-xs mx-auto font-medium">Tente ajustar sua busca ou cadastre um novo cliente para começar a gerenciar sua base.</p>
-        </div>
       ) : (
         <div className="space-y-6">
-          {/* Sub-abas de Ativos / Inativos */}
-          <div className="flex border border-slate-200 bg-slate-50 p-1.5 rounded-[2rem] shadow-sm gap-1">
+          {/* Sub-abas de Ativos / Inativos / Aniversariantes */}
+          <div className="flex border border-slate-200 bg-slate-50 p-1.5 rounded-[2rem] shadow-sm gap-1 overflow-x-auto">
             <button
               type="button"
               onClick={() => {
@@ -596,22 +618,60 @@ export function Clientes() {
                 {customers.filter(c => c.ativo === false).length}
               </span>
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFilterStatus('birthdays');
+                setCurrentPage(1);
+              }}
+              className={`flex-1 sm:flex-initial px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                filterStatus === 'birthdays'
+                  ? 'bg-white text-pink-600 shadow-sm border border-slate-200/50'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50'
+              }`}
+            >
+              <Cake size={14} className="text-pink-500" />
+              <span>Aniversariantes</span>
+              <span className="bg-pink-50 text-pink-700 font-mono text-[10px] px-2 py-0.5 rounded-md font-bold">
+                {customers.filter(c => {
+                  const b = getBirthdayInfo(c.birthDate || c.dataNascimento || (c as any).data_nascimento || (c as any).aniversario);
+                  return b && b.month === (new Date().getMonth() + 1);
+                }).length}
+              </span>
+            </button>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse table-auto md:table-fixed">
-                <thead>
-                  <tr className="bg-slate-50/90 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                    <th 
-                      onClick={() => handleHeaderSort('nome')} 
-                      className="py-3.5 px-4 md:px-5 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[32%]"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span className={sortBy === 'nome' ? 'text-primary font-black' : ''}>Cliente</span>
-                        {renderSortIcon('nome')}
-                      </div>
-                    </th>
+          {filterStatus === 'birthdays' ? (
+            <AniversariantesView 
+              customers={customers} 
+              loyaltyConfig={loyaltyConfig} 
+              onNavigateToConfig={() => onNavigateToSubTab?.('configuracoes-fidelidade')}
+              onReloadCustomers={() => {}}
+            />
+          ) : filteredAndSortedCustomers.length === 0 ? (
+            <div className="bg-white border border-dashed border-slate-200 rounded-[2.5rem] py-24 text-center shadow-sm">
+              <div className="inline-flex items-center justify-center w-20 h-20 bg-slate-50 rounded-3xl mb-6 shadow-inner border border-slate-100">
+                <UserIcon className="text-slate-300" size={40} />
+              </div>
+              <h3 className="text-xl font-black text-primary mb-2 tracking-tight">Nenhum cliente encontrado</h3>
+              <p className="text-muted text-sm max-w-xs mx-auto font-medium">Tente ajustar sua busca ou cadastre um novo cliente para começar a gerenciar sua base.</p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse table-auto md:table-fixed">
+                    <thead>
+                      <tr className="bg-slate-50/90 border-b border-slate-200/80 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                        <th 
+                          onClick={() => handleHeaderSort('nome')} 
+                          className="py-3.5 px-4 md:px-5 cursor-pointer hover:bg-slate-100/70 hover:text-primary transition-colors select-none group w-auto md:w-[32%]"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className={sortBy === 'nome' ? 'text-primary font-black' : ''}>Cliente</span>
+                            {renderSortIcon('nome')}
+                          </div>
+                        </th>
 
                     <th 
                       onClick={() => handleHeaderSort('phone')} 
@@ -719,6 +779,8 @@ export function Clientes() {
               </div>
             )}
           </div>
+        </>
+      )}
         </div>
       )}
 
@@ -1188,9 +1250,9 @@ function CustomerForm({ customer, onClose }: { customer: UserProfile | null, onC
         toast.success("Cliente cadastrado com sucesso!");
       }
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving customer:", error);
-      toast.error("Erro ao salvar cadastro.");
+      toast.error(error?.message || "Erro ao salvar cadastro.");
     }
   });
 

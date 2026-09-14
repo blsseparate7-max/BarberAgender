@@ -42,6 +42,8 @@ import {
   Calendar,
   Share2,
   MessageCircle,
+  MessageSquare,
+  QrCode,
   HelpCircle as QuestionIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -225,6 +227,122 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMsg, setTicketMsg] = useState('');
 
+  // Evolution WhatsApp Connection States
+  const [evolutionStatus, setEvolutionStatus] = useState<string>('disconnected');
+  const [evolutionQrCode, setEvolutionQrCode] = useState<string | null>(null);
+  const [loadingEvolution, setLoadingEvolution] = useState<boolean>(false);
+  const [testPhone, setTestPhone] = useState<string>('');
+  const [sendingTestMessage, setSendingTestMessage] = useState<boolean>(false);
+
+  const checkEvolutionStatus = async () => {
+    if (!tenant?.id) return;
+    try {
+      const res = await fetch(`/api/whatsapp/instance/status?tenantId=${tenant.id}`);
+      const data = await res.json();
+      if (data.success) {
+        setEvolutionStatus(data.status || 'disconnected');
+      }
+    } catch (_) {}
+  };
+
+  const handleConnectEvolution = async () => {
+    if (!tenant?.id) return;
+    setLoadingEvolution(true);
+    const toastId = toast.loading("Gerando QR Code do WhatsApp...");
+    try {
+      const res = await fetch('/api/whatsapp/instance/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: tenant.id })
+      });
+      const data = await res.json();
+      toast.dismiss(toastId);
+      if (res.ok && data.success) {
+        if (data.qrcode) {
+          setEvolutionQrCode(data.qrcode);
+          setEvolutionStatus('connecting');
+          toast.success("QR Code gerado! Escaneie com a câmera do seu WhatsApp.");
+        } else if (data.status === 'open') {
+          setEvolutionStatus('open');
+          setEvolutionQrCode(null);
+          toast.success("WhatsApp já está conectado!");
+        } else {
+          toast.info("Aguardando inicialização da instância no servidor.");
+        }
+      } else {
+        toast.error(data.error || "Erro ao conectar com a Evolution API.");
+      }
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Falha ao conectar: ${err.message || err}`);
+    } finally {
+      setLoadingEvolution(false);
+    }
+  };
+
+  const handleDisconnectEvolution = async () => {
+    if (!tenant?.id) return;
+    setLoadingEvolution(true);
+    const toastId = toast.loading("Desconectando WhatsApp...");
+    try {
+      const res = await fetch('/api/whatsapp/instance/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: tenant.id })
+      });
+      const data = await res.json();
+      toast.dismiss(toastId);
+      if (res.ok && data.success) {
+        setEvolutionStatus('disconnected');
+        setEvolutionQrCode(null);
+        toast.success("WhatsApp desconectado com sucesso.");
+      } else {
+        toast.error(data.error || "Erro ao desconectar WhatsApp.");
+      }
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Falha ao desconectar: ${err.message || err}`);
+    } finally {
+      setLoadingEvolution(false);
+    }
+  };
+
+  const handleSendTestMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenant?.id || !testPhone.trim()) return;
+    setSendingTestMessage(true);
+    const toastId = toast.loading("Enviando mensagem de teste...");
+    try {
+      const res = await fetch('/api/whatsapp/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: tenant.id,
+          phone: testPhone,
+          text: `Olá! Teste de integração do WhatsApp enviado com sucesso para ${tenant.name || 'sua barbearia'} via Evolution API! 🚀`
+        })
+      });
+      const data = await res.json();
+      toast.dismiss(toastId);
+      if (res.ok && data.success) {
+        toast.success("Mensagem de teste enviada no WhatsApp!");
+      } else {
+        toast.error(data.error || "Erro ao enviar mensagem.");
+      }
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Erro no envio: ${err.message || err}`);
+    } finally {
+      setSendingTestMessage(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'notifications') {
+      checkEvolutionStatus();
+    }
+  }, [activeSection, tenant?.id]);
+
   // SaaS Payment Modal States
   const [showSaaSPaymentModal, setShowSaaSPaymentModal] = useState(false);
   const [saasChargeData, setSaasChargeData] = useState<SaaSChargeResponse | null>(null);
@@ -290,6 +408,10 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [minRedemptionPoints, setMinRedemptionPoints] = useState('100');
   const [vipThreshold, setVipThreshold] = useState('1000');
   const [pointsAppointment, setPointsAppointment] = useState('10');
+  const [birthdayBonusEnabled, setBirthdayBonusEnabled] = useState(true);
+  const [birthdayBonusPoints, setBirthdayBonusPoints] = useState('100');
+  const [birthdayBonusCashback, setBirthdayBonusCashback] = useState('10');
+  const [birthdayBonusMessage, setBirthdayBonusMessage] = useState('Parabéns pelo seu aniversário, {nome}! 🎂🎁 Ganhou um presente especial no nosso Clube de Fidelidade. Venha celebrar conosco!');
   const [delayLimit, setDelayLimit] = useState('15');
   const [autoQueue, setAutoQueue] = useState(true);
 
@@ -561,6 +683,10 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
           setMinRedemptionPoints(String(config.minRedemptionPoints ?? 100));
           setVipThreshold(String(config.vipThreshold ?? 1000));
           setPointsAppointment(String(config.pointsPerAppointment ?? 10));
+          setBirthdayBonusEnabled(config.birthdayBonusEnabled ?? true);
+          setBirthdayBonusPoints(String(config.birthdayBonusPoints ?? 100));
+          setBirthdayBonusCashback(String(config.birthdayBonusCashback ?? 10));
+          setBirthdayBonusMessage(config.birthdayBonusMessage || 'Parabéns pelo seu aniversário, {nome}! 🎂🎁 Ganhou um presente especial no nosso Clube de Fidelidade. Venha celebrar conosco!');
         }
       } catch (err) {
         console.warn("Could not load loyalty config:", err);
@@ -624,6 +750,10 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
           cashbackPercentage: Number(cashbackPct) || 0,
           minRedemptionPoints: Number(minRedemptionPoints) || 0,
           vipThreshold: Number(vipThreshold) || 0,
+          birthdayBonusEnabled,
+          birthdayBonusPoints: Number(birthdayBonusPoints) || 0,
+          birthdayBonusCashback: Number(birthdayBonusCashback) || 0,
+          birthdayBonusMessage,
         });
         toast.success("Configurações do Programa de Fidelidade salvas com sucesso!");
       }
@@ -2093,6 +2223,78 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                         </div>
                       </div>
                     )}
+
+                    {/* BÔNUS DE ANIVERSÁRIO PARA CLIENTES */}
+                    <div className="space-y-6 p-6 bg-pink-50/40 rounded-3xl border border-pink-200/60">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                            <span>🎂</span> Presente & Bônus de Aniversário
+                          </h4>
+                          <p className="text-xs text-muted mt-0.5">
+                            Ofereça pontos ou cashback de presente para os clientes no dia de seu aniversário.
+                          </p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={birthdayBonusEnabled} 
+                            onChange={(e) => setBirthdayBonusEnabled(e.target.checked)}
+                            className="sr-only peer" 
+                          />
+                          <div className="w-12 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
+                        </label>
+                      </div>
+
+                      {birthdayBonusEnabled && (
+                        <div className="space-y-4 pt-2 border-t border-pink-200/50 animate-fadeIn">
+                          {loyaltyMode === 'saldo' ? (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Cashback de Presente de Aniversário (R$)</label>
+                              <div className="relative">
+                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">R$</span>
+                                <input 
+                                  type="number" 
+                                  step="0.50"
+                                  min="0"
+                                  value={birthdayBonusCashback} 
+                                  onChange={(e) => setBirthdayBonusCashback(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 pl-12 pr-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 transition-all text-primary"
+                                  placeholder="Ex: 10.00"
+                                />
+                              </div>
+                              <p className="text-[11px] text-muted ml-1">Valor em reais creditado na conta de fidelidade do aniversariante.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Pontos de Presente de Aniversário</label>
+                              <input 
+                                type="number" 
+                                step="10"
+                                min="0"
+                                value={birthdayBonusPoints} 
+                                onChange={(e) => setBirthdayBonusPoints(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 px-5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 transition-all text-primary"
+                                placeholder="Ex: 100"
+                              />
+                              <p className="text-[11px] text-muted ml-1">Quantidade de pontos adicionada ao saldo do cliente.</p>
+                            </div>
+                          )}
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Mensagem Padrão de Aniversário (WhatsApp)</label>
+                            <textarea
+                              rows={3}
+                              value={birthdayBonusMessage}
+                              onChange={(e) => setBirthdayBonusMessage(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 transition-all text-primary"
+                              placeholder="Digite a mensagem de felicitação..."
+                            />
+                            <p className="text-[11px] text-muted ml-1">Use a tag <code className="bg-pink-100 text-pink-800 px-1 py-0.5 rounded font-bold">&#123;nome&#125;</code> para inserir automaticamente o nome do cliente no WhatsApp.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2110,45 +2312,157 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
 
             {/* Notificações */}
             {activeSection === 'notifications' && (
-              <form onSubmit={handleSaveNotifications} className="space-y-8">
-                <div>
-                  <h3 className="text-xl font-black text-primary tracking-tight">Canais de Comunicação</h3>
-                  <p className="text-xs text-muted font-semibold mt-1">Controle quais notificações o BarberElite enviará automaticamente.</p>
+              <div className="space-y-8">
+                {/* Evolution API WhatsApp Connection Card */}
+                <div className="bg-slate-900 text-white rounded-3xl p-6 md:p-8 space-y-6 shadow-xl border border-slate-800">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl border border-emerald-500/20">
+                        <MessageSquare size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black tracking-tight text-white">Conexão do WhatsApp da Barbearia</h3>
+                        <p className="text-xs text-slate-400 font-medium">Instância Evolution API dedicada para envio automático de lembretes e confirmações aos clientes.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`w-3 h-3 rounded-full ${
+                        evolutionStatus === 'open' ? 'bg-emerald-500 shadow-lg shadow-emerald-500/50 animate-pulse' :
+                        evolutionStatus === 'connecting' ? 'bg-amber-500 animate-pulse' : 'bg-rose-500'
+                      }`} />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">
+                        {evolutionStatus === 'open' ? 'WhatsApp Conectado' :
+                         evolutionStatus === 'connecting' ? 'Aguardando QR Code' : 'Desconectado'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* WhatsApp Status Details & Actions */}
+                  {evolutionStatus === 'open' ? (
+                    <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl p-5 space-y-4">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <CheckCircle2 size={24} className="text-emerald-400 shrink-0" />
+                          <div>
+                            <p className="text-xs font-bold text-slate-200">Seu WhatsApp está online e pronto para envio automático!</p>
+                            <p className="text-[11px] text-slate-400">Mensagens de confirmação de corte, lembretes de agendamento e cobranças serão enviadas por este número.</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleDisconnectEvolution}
+                          disabled={loadingEvolution}
+                          className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs py-2 px-4 rounded-xl transition-all whitespace-nowrap"
+                        >
+                          {loadingEvolution ? 'Desconectando...' : 'Desconectar WhatsApp'}
+                        </button>
+                      </div>
+
+                      {/* Test Message Form */}
+                      <form onSubmit={handleSendTestMessage} className="pt-3 border-t border-slate-700/50 flex flex-col sm:flex-row items-center gap-3">
+                        <input
+                          type="text"
+                          value={testPhone}
+                          onChange={(e) => setTestPhone(e.target.value)}
+                          placeholder="DDD + Seu número de celular (ex: 11999998888)"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl py-2 px-3 text-xs text-slate-100 placeholder:text-slate-500 font-medium"
+                        />
+                        <button
+                          type="submit"
+                          disabled={sendingTestMessage || !testPhone.trim()}
+                          className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs py-2 px-5 rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+                        >
+                          <Send size={14} />
+                          {sendingTestMessage ? 'Enviando...' : 'Testar Envio'}
+                        </button>
+                      </form>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4">
+                      {evolutionQrCode ? (
+                        <div className="space-y-4 flex flex-col items-center">
+                          <div className="p-4 bg-white rounded-2xl shadow-xl border-4 border-emerald-500/30">
+                            <img
+                              src={evolutionQrCode.startsWith('data:') ? evolutionQrCode : `data:image/png;base64,${evolutionQrCode}`}
+                              alt="QR Code WhatsApp"
+                              className="w-56 h-56 object-contain"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-black text-slate-200 uppercase tracking-wider">Escaneie o QR Code acima</p>
+                            <p className="text-[11px] text-slate-400">
+                              Abra o WhatsApp no celular da barbearia &gt; Menu (três pontos) ou Configurações &gt; <strong>Aparelhos Conectados</strong> &gt; <strong>Conectar um aparelho</strong>.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={checkEvolutionStatus}
+                            className="bg-slate-700 hover:bg-slate-600 text-xs text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 transition-all"
+                          >
+                            <RefreshCw size={14} /> Verificar se já conectou
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 max-w-md">
+                          <p className="text-xs text-slate-300 font-medium">
+                            Nenhum WhatsApp está vinculado no momento. Clique no botão abaixo para gerar o QR Code de conexão para a sua barbearia.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleConnectEvolution}
+                            disabled={loadingEvolution}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs py-3 px-6 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 mx-auto uppercase tracking-wider"
+                          >
+                            <QrCode size={16} />
+                            {loadingEvolution ? 'Gerando QR Code...' : 'Gerar QR Code para Conectar WhatsApp'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <div className="space-y-6">
-                  <NotificationToggle 
-                    title="Alertas via WhatsApp" 
-                    desc="Envio imediato de confirmação de agendamentos e cobranças fiadas aos clientes." 
-                    checked={notifWpp} 
-                    onChange={setNotifWpp} 
-                  />
-                  
-                  <NotificationToggle 
-                    title="Notificações Push no Navegador" 
-                    desc="Sinalizar quando um novo horário for agendado ou uma comanda for quitada." 
-                    checked={notifWeb} 
-                    onChange={setNotifWeb} 
-                  />
+                <form onSubmit={handleSaveNotifications} className="space-y-8">
+                  <div>
+                    <h3 className="text-xl font-black text-primary tracking-tight">Canais de Comunicação</h3>
+                    <p className="text-xs text-muted font-semibold mt-1">Controle quais notificações o BarberElite enviará automaticamente.</p>
+                  </div>
 
-                  <NotificationToggle 
-                    title="Newsletter & Relatórios Diários" 
-                    desc="Receber resumos consolidados em português no e-mail cadastrado." 
-                    checked={notifMail} 
-                    onChange={setNotifMail} 
-                  />
-                </div>
+                  <div className="space-y-6">
+                    <NotificationToggle 
+                      title="Alertas via WhatsApp" 
+                      desc="Envio imediato de confirmação de agendamentos e cobranças fiadas aos clientes." 
+                      checked={notifWpp} 
+                      onChange={setNotifWpp} 
+                    />
+                    
+                    <NotificationToggle 
+                      title="Notificações Push no Navegador" 
+                      desc="Sinalizar quando um novo horário for agendado ou uma comanda for quitada." 
+                      checked={notifWeb} 
+                      onChange={setNotifWeb} 
+                    />
 
-                <div className="flex justify-end pt-6">
-                  <button 
-                    type="submit"
-                    className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-lg active:scale-95 uppercase tracking-widest flex items-center gap-3"
-                  >
-                    <Save size={18} />
-                    Salvar Preferências
-                  </button>
-                </div>
-              </form>
+                    <NotificationToggle 
+                      title="Newsletter & Relatórios Diários" 
+                      desc="Receber resumos consolidados em português no e-mail cadastrado." 
+                      checked={notifMail} 
+                      onChange={setNotifMail} 
+                    />
+                  </div>
+
+                  <div className="flex justify-end pt-6">
+                    <button 
+                      type="submit"
+                      className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-lg active:scale-95 uppercase tracking-widest flex items-center gap-3"
+                    >
+                      <Save size={18} />
+                      Salvar Preferências
+                    </button>
+                  </div>
+                </form>
+              </div>
             )}
 
             {/* Segurança e Acesso / Usuários do Sistema */}

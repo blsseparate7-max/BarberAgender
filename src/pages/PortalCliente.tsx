@@ -1576,51 +1576,10 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
   const executeCancelAppointment = async (appId: string) => {
     try {
-      const appRef = doc(db, 'appointments', appId);
-      const appSnap = await getDoc(appRef);
-      
-      const batch = writeBatch(db);
-      
-      if (appSnap.exists()) {
-        const appData = appSnap.data();
-        const comandaId = appData.comanda_id || appData.comandaId || '';
-        
-        // 1. Delete the appointment document
-        batch.delete(appRef);
-        
-        // 2. Delete the comanda document if linked
-        if (comandaId) {
-          batch.delete(doc(db, 'comandas', comandaId));
-          
-          // Also delete other appointments belonging to this comanda
-          const otherApptsQuery = query(
-            collection(db, 'appointments'),
-            where('comanda_id', '==', comandaId)
-          );
-          const otherApptsSnap = await getDocs(otherApptsQuery);
-          otherApptsSnap.forEach((docSnap) => {
-            batch.delete(docSnap.ref);
-          });
-        }
-        
-        // 3. Find any comanda where agendamento_id is this appId
-        const comandaQuery = query(
-          collection(db, 'comandas'),
-          where('agendamento_id', '==', appId)
-        );
-        const comandaSnap = await getDocs(comandaQuery);
-        comandaSnap.forEach((docSnap) => {
-          batch.delete(docSnap.ref);
-        });
-        
-        await batch.commit();
-        toast.success("Agendamento e comanda cancelados com sucesso.");
-      } else {
-        toast.error("Agendamento não encontrado.");
-      }
-      
+      await appointmentService.cancelAppointment(appId);
+      toast.success("Agendamento cancelado com sucesso.");
       await loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error canceling appointment:", err);
       toast.error("Erro ao cancelar o agendamento.");
     }

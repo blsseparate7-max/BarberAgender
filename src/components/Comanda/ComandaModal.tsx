@@ -1181,19 +1181,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
       if (updatedItems.length === 0) {
         // If no items remain, delete the comanda completely and delete all of its linked appointments
-        const batch = writeBatch(db);
-        batch.delete(doc(db, 'comandas', comanda.id));
-
-        const allApptsQuery = query(
-          collection(db, 'appointments'),
-          where('comanda_id', '==', comanda.id)
-        );
-        const allApptsSnap = await getDocs(allApptsQuery);
-        allApptsSnap.forEach((docSnap) => {
-          batch.delete(docSnap.ref);
-        });
-
-        await batch.commit();
+        await comandaService.deleteComandaCompletely(comanda.id);
         toast.success("Comanda vazia e seus horários foram removidos.");
         onClose();
         return;
@@ -1867,13 +1855,10 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     if (!comanda || !user || loading) return;
     setLoading(true);
     try {
-      // 1. Delete linked appointments directly to free up the grid slot
-      await comandaService.deleteLinkedAppointments(comanda.id, comanda.agendamento_id);
+      // Delete comanda and its linked appointments completely to prevent reappearance
+      await comandaService.deleteComandaCompletely(comanda.id);
       
-      // 2. Also close the comanda as cancelada
-      await comandaService.closeComanda(comanda.id, user.uid, profile?.nome || user.email || 'Usuário', 'cancelada');
-      
-      toast.success("Agendamento excluído da agenda e horário liberado com sucesso!");
+      toast.success("Comanda e agendamento excluídos com sucesso!");
       setConfirmDeleteAppointment(false);
       setConfirmCancel(false);
       onSave();

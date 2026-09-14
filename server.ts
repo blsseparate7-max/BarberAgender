@@ -293,7 +293,7 @@ app.use((req, res, next) => {
 });
 
   // Função auxiliar de segurança para autenticar requisições administrativas
-  async function verifyAdminCaller(req: express.Request): Promise<{ authorized: boolean; uid?: string; email?: string; error?: string }> {
+  async function verifyAdminCaller(req: express.Request): Promise<{ authorized: boolean; uid?: string; email?: string; tenantId?: string; error?: string }> {
     try {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -345,7 +345,7 @@ app.use((req, res, next) => {
           if (userDoc.exists) {
             const userData = userDoc.data();
             if (userData?.ativo && (userData.tipo === "admin" || userData.tipo === "gerente" || userData.tipo === "saas_admin")) {
-              return { authorized: true, uid: callerUid, email: callerEmail };
+              return { authorized: true, uid: callerUid, email: callerEmail, tenantId: userData.tenantId };
             }
           }
         } catch (_) {}
@@ -789,6 +789,108 @@ app.use((req, res, next) => {
     }
   });
 
+  // API Route to safely cancel/delete an appointment and its open comanda (Option B)
+  app.post(["/api/appointments/cancel", "/appointments/cancel"], async (req, res) => {
+    try {
+      const { appointmentId } = req.body;
+      if (!appointmentId) {
+        return res.status(400).json({ error: "ID do agendamento inválido." });
+      }
+
+      const dbAdmin = getAdminDb();
+      const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
+      const apiKey = process.env.VITE_FIREBASE_API_KEY || "AIzaSyAcrEPPYvEChBs_oXc4tFpos2oDwWV96Rs";
+
+      let comandaId: string | undefined;
+
+      if (dbAdmin) {
+        const apptRef = dbAdmin.collection('appointments').doc(appointmentId);
+        const apptSnap = await apptRef.get();
+        if (apptSnap.exists) {
+          const apptData = apptSnap.data() || {};
+          comandaId = apptData.comanda_id || apptData.comandaId;
+
+          // Delete appointment doc
+          await apptRef.delete();
+
+          // Delete comanda if present and not closed
+          if (comandaId) {
+            const comRef = dbAdmin.collection('comandas').doc(comandaId);
+            const comSnap = await comRef.get();
+            if (comSnap.exists) {
+              const comData = comSnap.data() || {};
+              if (comData.status !== 'fechada') {
+                await comRef.delete();
+              }
+            }
+          }
+
+          // Delete any other comanda linked via agendamento_id
+          const linkedComandas = await dbAdmin.collection('comandas').where('agendamento_id', '==', appointmentId).get();
+          for (const cDoc of linkedComandas.docs) {
+            if (cDoc.data()?.status !== 'fechada') {
+              await cDoc.ref.delete();
+            }
+          }
+
+          // Delete any open comanda for the same client, date and tenantId
+          const tenantId = apptData.tenantId;
+          const rawClientName = apptData.cliente_name || apptData.cliente_nome;
+          const apptDate = apptData.date;
+          const normClient = rawClientName ? rawClientName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() : '';
+
+          if (tenantId && normClient && normClient.length > 2 && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient !== 'cliente avulso') {
+            const clientComandas = await dbAdmin.collection('comandas')
+              .where('tenantId', '==', tenantId)
+              .where('status', 'in', ['aberta', 'em_atendimento', 'aguardando_pagamento'])
+              .get();
+
+            for (const cDoc of clientComandas.docs) {
+              const cData = cDoc.data() || {};
+              const cNormClient = (cData.cliente_name || cData.cliente_nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+              const cDate = cData.date || (cData.createdAt?.seconds ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+              if (cNormClient === normClient && (!apptDate || !cDate || apptDate === cDate)) {
+                await cDoc.ref.delete();
+              }
+            }
+          }
+        }
+      } else {
+        // Fallback to Firestore REST API with client token if forwarded
+        const authHeader = req.headers.authorization;
+        const reqHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (authHeader) {
+          reqHeaders['Authorization'] = authHeader;
+        }
+
+        const apptUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/appointments/${encodeURIComponent(appointmentId)}?key=${apiKey}`;
+        const apptRes = await fetch(apptUrl, { headers: reqHeaders });
+        if (apptRes.ok) {
+          const apptDoc = await apptRes.json();
+          comandaId = apptDoc.fields?.comanda_id?.stringValue || apptDoc.fields?.comandaId?.stringValue;
+
+          await fetch(apptUrl, { method: 'DELETE', headers: reqHeaders }).catch(() => {});
+
+          if (comandaId) {
+            const comUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/comandas/${encodeURIComponent(comandaId)}?key=${apiKey}`;
+            const comRes = await fetch(comUrl, { headers: reqHeaders });
+            if (comRes.ok) {
+              const comDoc = await comRes.json();
+              if (comDoc.fields?.status?.stringValue !== 'fechada') {
+                await fetch(comUrl, { method: 'DELETE', headers: reqHeaders }).catch(() => {});
+              }
+            }
+          }
+        }
+      }
+
+      return res.json({ success: true, message: "Agendamento e comanda excluídos com sucesso." });
+    } catch (error: any) {
+      console.error("Erro ao cancelar agendamento via API:", error);
+      res.status(500).json({ error: error.message || "Erro ao cancelar agendamento." });
+    }
+  });
+
   // API Route para o SaaS AI Co-Pilot Insights
   app.post(["/api/saas/insights", "/saas/insights"], async (req, res) => {
     try {
@@ -1032,6 +1134,296 @@ Instruções:
     } catch (err: any) {
       console.error("Erro na migração de blindagem de chaves:", err);
       res.status(500).json({ error: err.message || "Erro na migração das chaves." });
+    }
+  });
+
+  // ==========================================
+  // EVOLUTION API - WHATSAPP AUTOMATION ROUTES
+  // ==========================================
+
+  // Get Global Evolution API Settings (SaaS Admin)
+  app.get(["/api/saas/evolution-config", "/saas/evolution-config"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(200).json({ success: false, evolutionUrl: process.env.EVOLUTION_API_URL || "", hasGlobalKey: !!process.env.EVOLUTION_GLOBAL_KEY });
+      }
+      const db = getFirestore(fbAdmin);
+      const docSnap = await db.collection("system_settings").doc("evolution").get();
+      const data = docSnap.exists ? docSnap.data() : {};
+      const evolutionUrl = data?.evolutionUrl || process.env.EVOLUTION_API_URL || "";
+      const globalKey = data?.globalKey || process.env.EVOLUTION_GLOBAL_KEY || "";
+      res.json({
+        success: true,
+        evolutionUrl,
+        hasGlobalKey: !!globalKey,
+        globalKeyMasked: globalKey ? `...${globalKey.slice(-4)}` : ""
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Erro ao buscar configuração Evolution API." });
+    }
+  });
+
+  // Save Global Evolution API Settings (SaaS Admin)
+  app.post(["/api/saas/evolution-config", "/saas/evolution-config"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+      const { evolutionUrl, globalKey } = req.body;
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) {
+        return res.status(500).json({ error: "Servidor sem permissão de escrita no Firestore." });
+      }
+      const db = getFirestore(fbAdmin);
+      const cleanUrl = (evolutionUrl || "").trim().replace(/\/+$/, "");
+      const cleanKey = (globalKey || "").trim();
+
+      await db.collection("system_settings").doc("evolution").set({
+        evolutionUrl: cleanUrl,
+        globalKey: cleanKey,
+        updatedAt: new Date().toISOString(),
+        updatedBy: authCheck.email || "saas_admin"
+      }, { merge: true });
+
+      res.json({ success: true, message: "Configuração global da Evolution API salva com sucesso!" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Erro ao salvar configuração Evolution API." });
+    }
+  });
+
+  // Helper to fetch global Evolution API credentials
+  async function getEvolutionCredentials() {
+    let url = process.env.EVOLUTION_API_URL || "";
+    let key = process.env.EVOLUTION_GLOBAL_KEY || "";
+    try {
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin) {
+        const db = getFirestore(fbAdmin);
+        const docSnap = await db.collection("system_settings").doc("evolution").get();
+        if (docSnap.exists) {
+          const d = docSnap.data();
+          if (d?.evolutionUrl) url = d.evolutionUrl;
+          if (d?.globalKey) key = d.globalKey;
+        }
+      }
+    } catch (_) {}
+    return {
+      baseUrl: (url || "").trim().replace(/\/+$/, ""),
+      apiKey: (key || "").trim()
+    };
+  }
+
+  // Create / Connect Evolution Instance for a Tenant
+  app.post(["/api/whatsapp/instance/connect", "/whatsapp/instance/connect"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+      const { tenantId } = req.body;
+      const targetTenantId = tenantId || authCheck.tenantId;
+      if (!targetTenantId) {
+        return res.status(400).json({ error: "tenantId é obrigatório." });
+      }
+
+      const { baseUrl, apiKey } = await getEvolutionCredentials();
+      if (!baseUrl || !apiKey) {
+        return res.status(400).json({ error: "Evolution API não configurada no Portal SaaS. Por favor, configure a URL e a Chave Global primeiro." });
+      }
+
+      const instanceName = `barbearia_${targetTenantId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+
+      // 1. Try to create or check instance
+      const createRes = await fetch(`${baseUrl}/instance/create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": apiKey
+        },
+        body: JSON.stringify({
+          instanceName,
+          qrcode: true,
+          integration: "WHATSAPP-BAILEYS"
+        })
+      });
+
+      const createJson = await safeJsonFetch(createRes);
+
+      // 2. Fetch QR Code / Connection State
+      const connectRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
+        method: "GET",
+        headers: {
+          "apikey": apiKey
+        }
+      });
+      const connectJson = await safeJsonFetch(connectRes);
+
+      // Save instance metadata to tenant doc
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin) {
+        const db = getFirestore(fbAdmin);
+        await db.collection("tenants").doc(targetTenantId).set({
+          evolutionInstance: instanceName,
+          evolutionStatus: connectJson?.instance?.state || 'connecting',
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      const qrcodeData = connectJson?.base64 || connectJson?.code || createJson?.qrcode?.base64 || createJson?.code || null;
+
+      res.json({
+        success: true,
+        instanceName,
+        status: connectJson?.instance?.state || 'connecting',
+        qrcode: qrcodeData,
+        pairingCode: connectJson?.pairingCode || null,
+        details: connectJson || createJson
+      });
+    } catch (err: any) {
+      console.error("Erro ao conectar instância Evolution API:", err);
+      res.status(500).json({ error: err.message || "Erro ao conectar WhatsApp via Evolution API." });
+    }
+  });
+
+  // Get Instance Connection Status
+  app.get(["/api/whatsapp/instance/status", "/whatsapp/instance/status"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+      const tenantId = (req.query.tenantId as string) || authCheck.tenantId;
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenantId é obrigatório." });
+      }
+
+      const { baseUrl, apiKey } = await getEvolutionCredentials();
+      if (!baseUrl || !apiKey) {
+        return res.json({ success: false, configured: false, status: 'unconfigured', message: 'Evolution API não configurada no SaaS.' });
+      }
+
+      const instanceName = `barbearia_${tenantId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+
+      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instanceName}`, {
+        method: "GET",
+        headers: { "apikey": apiKey }
+      });
+      const stateJson = await safeJsonFetch(stateRes);
+      const state = stateJson?.instance?.state || stateJson?.state || 'disconnected';
+
+      // Save updated status in tenant doc
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin) {
+        const db = getFirestore(fbAdmin);
+        await db.collection("tenants").doc(tenantId).set({
+          evolutionInstance: instanceName,
+          evolutionStatus: state,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      res.json({
+        success: true,
+        configured: true,
+        instanceName,
+        status: state,
+        details: stateJson
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Erro ao consultar status da instância." });
+    }
+  });
+
+  // Disconnect / Logout Instance
+  app.post(["/api/whatsapp/instance/disconnect", "/whatsapp/instance/disconnect"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+      const { tenantId } = req.body;
+      const targetTenantId = tenantId || authCheck.tenantId;
+      const { baseUrl, apiKey } = await getEvolutionCredentials();
+      if (!baseUrl || !apiKey) {
+        return res.status(400).json({ error: "Evolution API não configurada." });
+      }
+
+      const instanceName = `barbearia_${targetTenantId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+
+      await fetch(`${baseUrl}/instance/logout/${instanceName}`, {
+        method: "DELETE",
+        headers: { "apikey": apiKey }
+      }).catch(() => {});
+
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin) {
+        const db = getFirestore(fbAdmin);
+        await db.collection("tenants").doc(targetTenantId).set({
+          evolutionStatus: 'disconnected',
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      res.json({ success: true, message: "WhatsApp desconectado com sucesso!" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Erro ao desconectar WhatsApp." });
+    }
+  });
+
+  // Send WhatsApp Message via Evolution API
+  app.post(["/api/whatsapp/send-message", "/whatsapp/send-message"], async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado." });
+      }
+      const { tenantId, phone, number, text, message } = req.body;
+      const targetTenantId = tenantId || authCheck.tenantId;
+      const targetNumber = (phone || number || "").replace(/\D/g, "");
+      const messageText = text || message || "";
+
+      if (!targetNumber || !messageText) {
+        return res.status(400).json({ error: "Número e texto da mensagem são obrigatórios." });
+      }
+
+      const { baseUrl, apiKey } = await getEvolutionCredentials();
+      if (!baseUrl || !apiKey) {
+        return res.status(400).json({ error: "Evolution API não configurada." });
+      }
+
+      const instanceName = `barbearia_${targetTenantId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+      const formattedPhone = targetNumber.startsWith("55") ? targetNumber : `55${targetNumber}`;
+
+      const sendRes = await fetch(`${baseUrl}/message/sendText/${instanceName}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": apiKey
+        },
+        body: JSON.stringify({
+          number: formattedPhone,
+          text: messageText,
+          options: {
+            delay: 1200,
+            presence: "composing"
+          }
+        })
+      });
+
+      const sendJson = await safeJsonFetch(sendRes);
+      if (sendRes.ok) {
+        res.json({ success: true, message: "Mensagem de WhatsApp enviada com sucesso!", details: sendJson });
+      } else {
+        res.status(400).json({ error: sendJson?.message || sendJson?.error || "Falha ao enviar mensagem pelo WhatsApp." });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Erro ao enviar mensagem pelo WhatsApp." });
     }
   });
 
@@ -3374,6 +3766,7 @@ function encodeFirestoreFields(data: any): any {
       // Discover missing asaasSubscriptionId or asaasInvoiceId if possible
       let currentAsaasSubId = subDocData.asaasSubscriptionId;
       let currentAsaasInvoiceId = subDocData.asaasInvoiceId;
+      let currentAsaasCustomerId = subDocData.asaasCustomerId || subDocData.asaasCustomer;
 
       if (asaasApiKey && !currentAsaasSubId && currentAsaasInvoiceId && String(currentAsaasInvoiceId).startsWith('pay_')) {
         try {
@@ -3381,9 +3774,14 @@ function encodeFirestoreFields(data: any): any {
             headers: { 'access_token': asaasApiKey }
           });
           const checkPayJson = await safeJsonFetch(checkPayRes);
-          if (checkPayJson && checkPayJson.subscription) {
-            currentAsaasSubId = checkPayJson.subscription;
-            console.log(`[Update Dates] Vinculada assinatura Asaas ${currentAsaasSubId} a partir da fatura ${currentAsaasInvoiceId}`);
+          if (checkPayJson) {
+            if (checkPayJson.subscription) {
+              currentAsaasSubId = checkPayJson.subscription;
+              console.log(`[Update Dates] Vinculada assinatura Asaas ${currentAsaasSubId} a partir da fatura ${currentAsaasInvoiceId}`);
+            }
+            if (checkPayJson.customer && !currentAsaasCustomerId) {
+              currentAsaasCustomerId = checkPayJson.customer;
+            }
           }
         } catch (e) {
           console.warn("[Update Dates] Falha ao consultar fatura para obter assinatura:", e);
@@ -3399,9 +3797,46 @@ function encodeFirestoreFields(data: any): any {
           if (searchSubJson?.data && Array.isArray(searchSubJson.data) && searchSubJson.data.length > 0) {
             currentAsaasSubId = searchSubJson.data[0].id;
             console.log(`[Update Dates] Encontrada assinatura Asaas ${currentAsaasSubId} via externalReference`);
+          } else if (currentAsaasCustomerId) {
+            const custSubRes = await fetch(`${baseUrl}/subscriptions?customer=${currentAsaasCustomerId}&status=ACTIVE`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const custSubJson = await safeJsonFetch(custSubRes);
+            if (custSubJson?.data && Array.isArray(custSubJson.data) && custSubJson.data.length > 0) {
+              currentAsaasSubId = custSubJson.data[0].id;
+              console.log(`[Update Dates] Encontrada assinatura Asaas ${currentAsaasSubId} via customerId ${currentAsaasCustomerId}`);
+            }
           }
         } catch (e) {
-          console.warn("[Update Dates] Falha ao pesquisar assinatura por externalReference:", e);
+          console.warn("[Update Dates] Falha ao pesquisar assinatura Asaas:", e);
+        }
+      }
+
+      // Calculate safe future nextDueDate for Asaas (Asaas requires nextDueDate >= today)
+      const todayISO = new Date().toISOString().split('T')[0];
+      let safeAsaasNextDueDate = endDate;
+
+      if (endDate < todayISO) {
+        // Extract day of month from requested endDate and calculate next future occurrence
+        try {
+          const [reqY, reqM, reqD] = endDate.split('-').map(Number);
+          const targetDay = reqD || 10;
+          const now = new Date();
+          let candidateYear = now.getFullYear();
+          let candidateMonth = now.getMonth(); // 0-indexed
+
+          // Try candidate in current month
+          let candidate = new Date(candidateYear, candidateMonth, targetDay);
+          const candidateISO = candidate.toISOString().split('T')[0];
+
+          if (candidateISO <= todayISO) {
+            // Move to next month
+            candidate = new Date(candidateYear, candidateMonth + 1, targetDay);
+          }
+          safeAsaasNextDueDate = candidate.toISOString().split('T')[0];
+          console.log(`[Update Dates] Data solicitada (${endDate}) anterior a hoje (${todayISO}). Ajustada para próximo vencimento futuro no Asaas: ${safeAsaasNextDueDate}`);
+        } catch (dErr) {
+          safeAsaasNextDueDate = todayISO;
         }
       }
 
@@ -3415,14 +3850,14 @@ function encodeFirestoreFields(data: any): any {
               'access_token': asaasApiKey
             },
             body: JSON.stringify({
-              nextDueDate: endDate,
+              nextDueDate: safeAsaasNextDueDate,
               updatePendingPayments: true
             })
           });
           const updateSubJson = await safeJsonFetch(updateSubRes);
           if (updateSubRes.ok && updateSubJson && !updateSubJson.errors) {
             asaasSubSynced = true;
-            console.log(`[Update Dates] Assinatura Asaas ${currentAsaasSubId} atualizada para nextDueDate=${endDate}`);
+            console.log(`[Update Dates] Assinatura Asaas ${currentAsaasSubId} atualizada para nextDueDate=${safeAsaasNextDueDate}`);
           } else {
             console.warn(`[Update Dates] Aviso ao atualizar assinatura Asaas ${currentAsaasSubId}:`, updateSubJson?.errors || updateSubJson);
             if (updateSubJson?.errors?.[0]?.description) {
@@ -3439,7 +3874,7 @@ function encodeFirestoreFields(data: any): any {
             if (subPendingPaymentsJson?.data && Array.isArray(subPendingPaymentsJson.data)) {
               for (const pPay of subPendingPaymentsJson.data) {
                 if (pPay.id && String(pPay.id).startsWith('pay_')) {
-                  const targetDueDate = (subDocData.status === 'pending' || !subDocData.lastRenewalDate) ? startDate : endDate;
+                  const targetDueDate = (subDocData.status === 'pending' || !subDocData.lastRenewalDate) ? startDate : safeAsaasNextDueDate;
                   await fetch(`${baseUrl}/payments/${pPay.id}`, {
                     method: 'PUT',
                     headers: {
@@ -3494,6 +3929,14 @@ function encodeFirestoreFields(data: any): any {
         updatedAt: new Date().toISOString()
       };
 
+      // Se o novo vencimento for futuro ou hoje, reativa o status da assinatura e pagamento caso estivesse pendente/expirada
+      if (endDate >= todayISO) {
+        updatePayload.status = 'active';
+        if (subDocData.status !== 'active' || subDocData.asaasPaymentStatus !== 'received') {
+          updatePayload.asaasPaymentStatus = 'received';
+        }
+      }
+
       if (currentAsaasSubId && !subDocData.asaasSubscriptionId) {
         updatePayload.asaasSubscriptionId = currentAsaasSubId;
       }
@@ -3508,6 +3951,19 @@ function encodeFirestoreFields(data: any): any {
         await updateFirestoreRestDoc('subscriptions', targetSubDocId, updatePayload);
       }
 
+      // Reativar usuário no perfil caso estivesse inativo
+      if (subDocData.cliente_id && subDocData.cliente_id !== 'sem_cadastro' && subDocData.cliente_id !== 'avulso' && updatePayload.status === 'active') {
+        try {
+          if (dbAdmin) {
+            await dbAdmin.collection('usuarios').doc(subDocData.cliente_id).set({ ativo: true, updatedAt: new Date().toISOString() }, { merge: true });
+          } else {
+            await updateFirestoreRestDoc('usuarios', subDocData.cliente_id, { ativo: true, updatedAt: new Date().toISOString() });
+          }
+        } catch (uErr) {
+          console.warn("[Update Dates] Falha ao reativar usuário vinculado:", uErr);
+        }
+      }
+
       const isAsaasConnected = !!(subDocData.asaasSubscriptionId || subDocData.asaasInvoiceId);
       const message = (asaasSubSynced || asaasInvoiceSynced)
         ? `Datas atualizadas e espelhadas com sucesso no Asaas! Novo vencimento programado: ${endDate}`
@@ -3520,12 +3976,725 @@ function encodeFirestoreFields(data: any): any {
         message,
         asaasSynced: asaasSubSynced || asaasInvoiceSynced,
         startDate,
-        endDate
+        endDate,
+        status: updatePayload.status || subDocData.status
       });
-
     } catch (error: any) {
       console.error("Erro ao atualizar datas da assinatura:", error);
       res.status(500).json({ error: error.message || "Falha ao atualizar datas da assinatura." });
+    }
+  });
+
+  // Sync a single subscription directly with Asaas (live query of nextDueDate & status)
+  app.post(["/api/saas/subscription/sync-single", "/saas/subscription/sync-single"], async (req, res) => {
+    try {
+      const { subscriptionId, tenantId } = req.body;
+      if (!subscriptionId) {
+        return res.status(400).json({ error: "subscriptionId é obrigatório." });
+      }
+
+      const dbAdmin = getAdminDb();
+      let subDocData: any = null;
+      let targetSubDocId = subscriptionId;
+      let isRestDoc = false;
+
+      if (dbAdmin) {
+        const docSnap = await dbAdmin.collection('subscriptions').doc(subscriptionId).get();
+        if (docSnap.exists) {
+          subDocData = docSnap.data();
+        } else {
+          const found = await findSubscriptionInFirestore(dbAdmin, { docId: subscriptionId, externalReference: subscriptionId });
+          if (found) {
+            subDocData = found.data;
+            targetSubDocId = found.id;
+            isRestDoc = found.isRest;
+          }
+        }
+      } else {
+        const rDoc = await getFirestoreRestDoc('subscriptions', subscriptionId);
+        if (rDoc) {
+          subDocData = rDoc.data;
+          isRestDoc = true;
+        }
+      }
+
+      if (!subDocData) {
+        return res.status(404).json({ error: "Assinatura não encontrada no banco." });
+      }
+
+      const targetTenantId = tenantId || subDocData.tenantId || 'gbcortes7';
+      const tenantCreds = await getTenantAsaasCredentials(targetTenantId);
+      const { apiKey: asaasApiKey, baseUrl } = tenantCreds;
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Credenciais Asaas não configuradas para este estabelecimento." });
+      }
+
+      let currentAsaasSubId = subDocData.asaasSubscriptionId;
+      const currentAsaasCustomerId = subDocData.asaasCustomerId;
+
+      // Buscar assinatura no Asaas se ID não estiver salvo
+      if (!currentAsaasSubId) {
+        try {
+          const searchSubRes = await fetch(`${baseUrl}/subscriptions?externalReference=client_sub:${targetSubDocId}`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          const searchSubJson = await safeJsonFetch(searchSubRes);
+          if (searchSubJson?.data && Array.isArray(searchSubJson.data) && searchSubJson.data.length > 0) {
+            currentAsaasSubId = searchSubJson.data[0].id;
+          } else if (currentAsaasCustomerId) {
+            const custSubRes = await fetch(`${baseUrl}/subscriptions?customer=${currentAsaasCustomerId}&status=ACTIVE`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const custSubJson = await safeJsonFetch(custSubRes);
+            if (custSubJson?.data && Array.isArray(custSubJson.data) && custSubJson.data.length > 0) {
+              currentAsaasSubId = custSubJson.data[0].id;
+            }
+          }
+        } catch (e) {
+          console.warn("[sync-single] Falha ao pesquisar assinatura Asaas:", e);
+        }
+      }
+
+      if (!currentAsaasSubId) {
+        return res.status(404).json({ error: "Assinatura correspondente (sub_...) não encontrada no gateway Asaas." });
+      }
+
+      // Buscar assinatura em tempo real no Asaas
+      const asaasSubRes = await fetch(`${baseUrl}/subscriptions/${currentAsaasSubId}`, {
+        headers: { 'access_token': asaasApiKey }
+      });
+      const asaasSub = await safeJsonFetch(asaasSubRes);
+      if (!asaasSubRes.ok || !asaasSub || asaasSub.errors) {
+        return res.status(400).json({ error: asaasSub?.errors?.[0]?.description || "Erro ao consultar assinatura no Asaas." });
+      }
+
+      const todayISO = new Date().toISOString().split('T')[0];
+      const nextDueDate = asaasSub.nextDueDate;
+      const asaasStatus = String(asaasSub.status || '').toUpperCase();
+
+      const updatePayload: any = {
+        asaasSubscriptionId: asaasSub.id,
+        updatedAt: new Date().toISOString(),
+        asaasLastSyncedAt: new Date().toISOString()
+      };
+
+      if (nextDueDate) {
+        updatePayload.endDate = nextDueDate;
+      }
+
+      if (asaasStatus === 'ACTIVE') {
+        updatePayload.status = 'active';
+        updatePayload.asaasPaymentStatus = 'received';
+      } else if (asaasStatus === 'EXPIRED') {
+        updatePayload.status = 'expired';
+      } else if (asaasStatus === 'INACTIVE') {
+        updatePayload.status = 'canceled';
+      }
+
+      if (asaasSub.billingType) {
+        const bt = String(asaasSub.billingType).toLowerCase();
+        updatePayload.paymentMethod = bt.includes('credit') ? 'Cartão de Crédito (Online)' : (bt.includes('pix') ? 'PIX (Online)' : 'Boleto (Online)');
+      }
+
+      // Buscar última cobrança pendente para vincular se existir
+      try {
+        const payRes = await fetch(`${baseUrl}/subscriptions/${currentAsaasSubId}/payments?status=PENDING&limit=1`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        const payJson = await safeJsonFetch(payRes);
+        if (payJson?.data?.[0]?.id) {
+          updatePayload.asaasInvoiceId = payJson.data[0].id;
+        }
+      } catch (pErr) {}
+
+      if (dbAdmin && !isRestDoc) {
+        await dbAdmin.collection('subscriptions').doc(targetSubDocId).update(updatePayload);
+      } else {
+        await updateFirestoreRestDoc('subscriptions', targetSubDocId, updatePayload);
+      }
+
+      // Reativar usuário no perfil se ativa
+      if (subDocData.cliente_id && subDocData.cliente_id !== 'sem_cadastro' && subDocData.cliente_id !== 'avulso' && updatePayload.status === 'active') {
+        try {
+          if (dbAdmin) {
+            await dbAdmin.collection('usuarios').doc(subDocData.cliente_id).set({ ativo: true, updatedAt: new Date().toISOString() }, { merge: true });
+          } else {
+            await updateFirestoreRestDoc('usuarios', subDocData.cliente_id, { ativo: true, updatedAt: new Date().toISOString() });
+          }
+        } catch (_) {}
+      }
+
+      return res.json({
+        success: true,
+        message: `Sincronização com o Asaas concluída! Próximo vencimento: ${nextDueDate || 'inalterado'} (${asaasStatus})`,
+        nextDueDate,
+        status: updatePayload.status || subDocData.status,
+        updatedFields: updatePayload
+      });
+    } catch (err: any) {
+      console.error("[sync-single] Erro ao sincronizar assinatura com Asaas:", err);
+      return res.status(500).json({ error: err.message || "Erro interno ao sincronizar com Asaas." });
+    }
+  });
+
+  // Auditoria de assinaturas do cliente no Asaas (detectar duplicatas e identificar a certa vs erradas)
+  app.post(["/api/saas/subscription/audit-customer-asaas", "/saas/subscription/audit-customer-asaas"], async (req, res) => {
+    try {
+      const { tenantId = 'gbcortes7', customerId, subscriptionDocId, clientName } = req.body;
+      const dbAdmin = getAdminDb();
+      const asaasCreds = await getTenantAsaasCredentials(tenantId);
+      const { apiKey: asaasApiKey, baseUrl } = asaasCreds;
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Credenciais Asaas não configuradas para este tenant." });
+      }
+
+      let targetCustomerId = customerId;
+      let targetSubDocId = subscriptionDocId;
+      let targetSubDocData: any = null;
+
+      // Se passou subscriptionDocId, buscar dados locais
+      if (targetSubDocId) {
+        if (dbAdmin) {
+          const sSnap = await dbAdmin.collection('subscriptions').doc(targetSubDocId).get();
+          if (sSnap.exists) {
+            targetSubDocData = sSnap.data();
+            if (!targetCustomerId) targetCustomerId = targetSubDocData.asaasCustomerId;
+          }
+        }
+      }
+
+      // Se não achou customerId, tentar procurar no Firestore por clientName
+      if (!targetCustomerId && clientName) {
+        let subs: any[] = [];
+        if (dbAdmin) {
+          const q = await dbAdmin.collection('subscriptions').where('tenantId', '==', tenantId).get();
+          subs = q.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+        const match = subs.find(s => (s.cliente_name || s.clientName || '').toLowerCase().includes(clientName.toLowerCase()));
+        if (match) {
+          targetSubDocId = match.id;
+          targetSubDocData = match;
+          targetCustomerId = match.asaasCustomerId;
+        }
+      }
+
+      if (!targetCustomerId) {
+        return res.status(400).json({ error: "Não foi possível localizar o asaasCustomerId do cliente." });
+      }
+
+      // Buscar cliente no Asaas
+      const custRes = await fetch(`${baseUrl}/customers/${targetCustomerId}`, {
+        headers: { 'access_token': asaasApiKey }
+      });
+      const custData = await safeJsonFetch(custRes);
+
+      // Buscar todas as assinaturas do cliente no Asaas
+      const subsRes = await fetch(`${baseUrl}/subscriptions?customer=${targetCustomerId}&limit=100`, {
+        headers: { 'access_token': asaasApiKey }
+      });
+      const subsData = await safeJsonFetch(subsRes);
+      const asaasSubsList = subsData?.data || [];
+
+      // Buscar todos os pagamentos do cliente no Asaas
+      const paysRes = await fetch(`${baseUrl}/payments?customer=${targetCustomerId}&limit=100`, {
+        headers: { 'access_token': asaasApiKey }
+      });
+      const paysData = await safeJsonFetch(paysRes);
+      const asaasPaysList = paysData?.data || [];
+
+      // Cruzar informações de cada assinatura no Asaas
+      const systemLinkedSubId = targetSubDocData?.asaasSubscriptionId || null;
+
+      const analyzedSubs = asaasSubsList.map((sub: any) => {
+        const subPayments = asaasPaysList.filter((p: any) => p.subscription === sub.id);
+        const hasPaidPayment = subPayments.some((p: any) => ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(p.status));
+        const isSystemLinked = systemLinkedSubId === sub.id;
+        const isActive = sub.status === 'ACTIVE';
+
+        let recommendation: 'MANTER_CERTA' | 'CANCELAR_DUPLICADA' | 'JA_INATIVA' = 'CANCELAR_DUPLICADA';
+        let reason = '';
+
+        if (!isActive) {
+          recommendation = 'JA_INATIVA';
+          reason = `Assinatura já está com status ${sub.status} no Asaas.`;
+        } else if (isSystemLinked || hasPaidPayment) {
+          recommendation = 'MANTER_CERTA';
+          reason = isSystemLinked 
+            ? 'Esta é a assinatura oficial vinculada ao sistema e ativa no painel.' 
+            : 'Possui pagamentos confirmados no Asaas.';
+        } else {
+          recommendation = 'CANCELAR_DUPLICADA';
+          reason = 'Assinatura duplicada/órfã sem pagamentos confirmados ou não vinculada ao sistema.';
+        }
+
+        return {
+          id: sub.id,
+          status: sub.status,
+          value: sub.value,
+          nextDueDate: sub.nextDueDate,
+          dateCreated: sub.dateCreated,
+          billingType: sub.billingType,
+          cycle: sub.cycle,
+          description: sub.description,
+          externalReference: sub.externalReference,
+          isSystemLinked,
+          paymentsCount: subPayments.length,
+          payments: subPayments.map((p: any) => ({
+            id: p.id,
+            status: p.status,
+            value: p.value,
+            dueDate: p.dueDate,
+            paymentDate: p.paymentDate || p.clientPaymentDate,
+            billingType: p.billingType
+          })),
+          recommendation,
+          reason
+        };
+      });
+
+      return res.json({
+        success: true,
+        client: {
+          name: custData?.name || targetSubDocData?.cliente_name,
+          email: custData?.email,
+          cpfCnpj: custData?.cpfCnpj,
+          asaasCustomerId: targetCustomerId,
+          systemDocId: targetSubDocId,
+          systemLinkedSubId
+        },
+        totalAsaasSubscriptions: asaasSubsList.length,
+        analyzedSubscriptions: analyzedSubs
+      });
+    } catch (err: any) {
+      console.error("[audit-customer-asaas] Erro:", err);
+      return res.status(500).json({ error: err.message || "Erro ao auditar assinaturas no Asaas." });
+    }
+  });
+
+  // Limpeza de assinaturas duplicadas no Asaas e ajuste do vencimento oficial
+  app.post(["/api/saas/subscription/cleanup-and-set-due-date", "/saas/subscription/cleanup-and-set-due-date"], async (req, res) => {
+    try {
+      const {
+        tenantId = 'gbcortes7',
+        keepSubscriptionId,
+        deleteSubscriptionIds = [],
+        newNextDueDate,
+        subscriptionDocId
+      } = req.body;
+
+      const asaasCreds = await getTenantAsaasCredentials(tenantId);
+      const { apiKey: asaasApiKey, baseUrl } = asaasCreds;
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Credenciais Asaas não configuradas para este tenant." });
+      }
+
+      const deletionResults: any[] = [];
+
+      // 1. Excluir assinaturas duplicadas no Asaas
+      for (const subId of deleteSubscriptionIds) {
+        if (!subId || !subId.startsWith('sub_')) continue;
+        try {
+          console.log(`[cleanup] Excluindo assinatura duplicada no Asaas: ${subId}`);
+          const delRes = await fetch(`${baseUrl}/subscriptions/${subId}`, {
+            method: 'DELETE',
+            headers: { 'access_token': asaasApiKey }
+          });
+          const delData = await safeJsonFetch(delRes);
+          deletionResults.push({ id: subId, success: delRes.ok, data: delData });
+        } catch (delErr: any) {
+          console.error(`[cleanup] Erro ao excluir ${subId}:`, delErr);
+          deletionResults.push({ id: subId, success: false, error: delErr.message });
+        }
+      }
+
+      // 2. Atualizar a assinatura correta no Asaas para o dia 4 (newNextDueDate)
+      let updateResult: any = null;
+      if (keepSubscriptionId && newNextDueDate) {
+        try {
+          console.log(`[cleanup] Atualizando nextDueDate de ${keepSubscriptionId} para ${newNextDueDate}`);
+          let upRes = await fetch(`${baseUrl}/subscriptions/${keepSubscriptionId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'access_token': asaasApiKey
+            },
+            body: JSON.stringify({
+              nextDueDate: newNextDueDate,
+              updatePendingPayments: true
+            })
+          });
+
+          // Se PUT não for aceito, tenta POST
+          if (!upRes.ok && upRes.status === 405) {
+            upRes = await fetch(`${baseUrl}/subscriptions/${keepSubscriptionId}`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'access_token': asaasApiKey
+              },
+              body: JSON.stringify({
+                nextDueDate: newNextDueDate,
+                updatePendingPayments: true
+              })
+            });
+          }
+
+          updateResult = await safeJsonFetch(upRes);
+          console.log(`[cleanup] Resultado atualização Asaas:`, updateResult);
+        } catch (upErr: any) {
+          console.error(`[cleanup] Erro ao atualizar ${keepSubscriptionId}:`, upErr);
+          updateResult = { error: upErr.message };
+        }
+      }
+
+      // 3. Atualizar Firestore para o documento do sistema
+      if (subscriptionDocId) {
+        const dbAdmin = getAdminDb();
+        const firestorePayload: any = {
+          asaasSubscriptionId: keepSubscriptionId,
+          endDate: newNextDueDate,
+          status: 'active',
+          asaasPaymentStatus: 'received',
+          dueDateDay: 4,
+          updatedAt: new Date().toISOString(),
+          asaasLastSyncedAt: new Date().toISOString()
+        };
+
+        if (dbAdmin) {
+          await dbAdmin.collection('subscriptions').doc(subscriptionDocId).set(firestorePayload, { merge: true });
+        } else {
+          await updateFirestoreRestDoc('subscriptions', subscriptionDocId, firestorePayload);
+        }
+      }
+
+      // 4. Buscar status atualizado da assinatura oficial no Asaas
+      let currentAsaasSub: any = null;
+      if (keepSubscriptionId) {
+        const checkRes = await fetch(`${baseUrl}/subscriptions/${keepSubscriptionId}`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        currentAsaasSub = await safeJsonFetch(checkRes);
+      }
+
+      return res.json({
+        success: true,
+        message: `Assinaturas duplicadas removidas e vencimento ajustado para todo dia 4!`,
+        deletionResults,
+        updateResult,
+        currentAsaasSub: {
+          id: currentAsaasSub?.id,
+          status: currentAsaasSub?.status,
+          nextDueDate: currentAsaasSub?.nextDueDate,
+          value: currentAsaasSub?.value,
+          billingType: currentAsaasSub?.billingType
+        }
+      });
+    } catch (err: any) {
+      console.error("[cleanup-and-set-due-date] Erro geral:", err);
+      return res.status(500).json({ error: err.message || "Erro ao processar limpeza e ajuste." });
+    }
+  });
+
+  // Auditoria Geral de Assinaturas e Cobranças de Outubro/Novembro no Asaas
+  app.post(["/api/saas/subscription/audit-all-asaas-subs", "/saas/subscription/audit-all-asaas-subs"], async (req, res) => {
+    try {
+      const { tenantId = 'gbcortes7' } = req.body || {};
+      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Credenciais Asaas não configuradas." });
+      }
+
+      // 1. Buscar todas as assinaturas no Asaas (ativas e gerais)
+      let allAsaasSubs: any[] = [];
+      let offset = 0;
+      while (true) {
+        const sRes = await fetch(`${baseUrl}/subscriptions?limit=100&offset=${offset}`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        const sData = await safeJsonFetch(sRes);
+        const list = sData?.data || [];
+        allAsaasSubs = allAsaasSubs.concat(list);
+        if (!sData?.hasMore || list.length === 0) break;
+        offset += 100;
+      }
+
+      // 2. Buscar dados dos clientes e pagamentos de cada assinatura
+      const subAudits: any[] = [];
+
+      for (const sub of allAsaasSubs) {
+        // Buscar pagamentos desta assinatura
+        const pRes = await fetch(`${baseUrl}/payments?subscription=${sub.id}&limit=50`, {
+          headers: { 'access_token': asaasApiKey }
+        });
+        const pData = await safeJsonFetch(pRes);
+        const payments = pData?.data || [];
+
+        // Buscar dados do cliente
+        let customerName = 'Desconhecido';
+        let customerEmail = '';
+        let customerPhone = '';
+        if (sub.customer) {
+          try {
+            const cRes = await fetch(`${baseUrl}/customers/${sub.customer}`, {
+              headers: { 'access_token': asaasApiKey }
+            });
+            const cData = await safeJsonFetch(cRes);
+            if (cData) {
+              customerName = cData.name || customerName;
+              customerEmail = cData.email || '';
+              customerPhone = cData.phone || cData.mobilePhone || '';
+            }
+          } catch (cErr) {}
+        }
+
+        // Analisar pagamentos
+        const confirmedPays = payments.filter((p: any) => ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(p.status));
+        const pendingPays = payments.filter((p: any) => p.status === 'PENDING');
+        const overduePays = payments.filter((p: any) => p.status === 'OVERDUE');
+
+        // Tem pagamento confirmado em outubro (vencimento ou pagamento em 2026-10)?
+        const hasOctPaid = confirmedPays.some((p: any) => (p.dueDate || '').startsWith('2026-10') || (p.paymentDate || '').startsWith('2026-10'));
+        // Tem cobrança pendente em outubro?
+        const hasOctPending = pendingPays.some((p: any) => (p.dueDate || '').startsWith('2026-10'));
+        // Tem cobrança em setembro paga?
+        const hasSepPaid = confirmedPays.some((p: any) => (p.dueDate || '').startsWith('2026-09') || (p.paymentDate || '').startsWith('2026-09'));
+
+        // Se o nextDueDate já pulou para novembro (2026-11-...) e NÃO tem pagamento em outubro
+        const nextDueDateStr = sub.nextDueDate || '';
+        const isNextDueInNovOrLater = nextDueDateStr >= '2026-11-01';
+        const isOctoberMissing = sub.status === 'ACTIVE' && isNextDueInNovOrLater && !hasOctPaid && !hasOctPending;
+
+        subAudits.push({
+          subscriptionId: sub.id,
+          status: sub.status,
+          dateCreated: sub.dateCreated,
+          nextDueDate: sub.nextDueDate,
+          value: sub.value,
+          billingType: sub.billingType,
+          cycle: sub.cycle,
+          description: sub.description,
+          customer: {
+            id: sub.customer,
+            name: customerName,
+            email: customerEmail,
+            phone: customerPhone
+          },
+          hasSepPaid,
+          hasOctPaid,
+          hasOctPending,
+          isNextDueInNovOrLater,
+          isOctoberMissing,
+          payments: payments.map((p: any) => ({
+            id: p.id,
+            status: p.status,
+            value: p.value,
+            dueDate: p.dueDate,
+            paymentDate: p.paymentDate || p.clientPaymentDate,
+            billingType: p.billingType,
+            description: p.description
+          }))
+        });
+      }
+
+      // Filtrar os casos que precisam de correção (outubro pulado)
+      const clientsMissingOctober = subAudits.filter(s => s.isOctoberMissing);
+
+      return res.json({
+        success: true,
+        totalSubscriptionsInAsaas: allAsaasSubs.length,
+        clientsMissingOctoberCount: clientsMissingOctober.length,
+        clientsMissingOctober,
+        allAudits: subAudits
+      });
+    } catch (err: any) {
+      console.error("[audit-all-asaas-subs] Erro:", err);
+      return res.status(500).json({ error: err.message || "Erro na auditoria." });
+    }
+  });
+
+  // Execução da Correção de Outubro (Opção A): Criar cobranças de Outubro e limpar duplicadas
+  app.post(["/api/saas/subscription/execute-october-fix", "/saas/subscription/execute-october-fix"], async (req, res) => {
+    try {
+      const { tenantId = 'gbcortes7' } = req.body || {};
+      const { apiKey: asaasApiKey, baseUrl } = await getTenantAsaasCredentials(tenantId);
+      const dbAdmin = getAdminDb();
+
+      if (!asaasApiKey) {
+        return res.status(400).json({ error: "Credenciais Asaas não configuradas para este tenant." });
+      }
+
+      // Lista dos 7 clientes que precisam da cobrança de outubro
+      const targets = [
+        {
+          name: "Victor Gabriel de Souza Silva",
+          docId: "2T3W8tERqGqnqZadfRPM",
+          asaasCustomerId: "cus_000198263793",
+          asaasSubId: "sub_u1g8bmk14noof7yg",
+          planName: "Corte de Cabelo - Ilimitado",
+          value: 84.99,
+          dueDate: "2026-10-04",
+          dueDateDay: 4
+        },
+        {
+          name: "Nicolas Gabriel dos Santos Luiz",
+          docId: "fwXsISgwsHkb2gj3SVZY",
+          asaasCustomerId: "cus_000198269692",
+          asaasSubId: "sub_yrj55s04pgggxbun",
+          planName: "Corte de Cabelo - Ilimitado",
+          value: 84.99,
+          dueDate: "2026-10-04",
+          dueDateDay: 4
+        },
+        {
+          name: "Edrik Miamura",
+          docId: "R8msqYZY4N3RkX2ekuEy",
+          asaasCustomerId: "cus_000198788292",
+          asaasSubId: "sub_au7ezaa3lficqyh3",
+          planName: "Corte de Cabelo - Ilimitado",
+          value: 84.99,
+          dueDate: "2026-10-07",
+          dueDateDay: 7
+        },
+        {
+          name: "Pedro henrique dos santos",
+          docId: "jyWIrHf9aE41yPlGYvbu",
+          asaasCustomerId: "cus_000198786382",
+          asaasSubId: "sub_5pgffi10kkuoffa6",
+          planName: "Corte de Cabelo - Ilimitado",
+          value: 84.99,
+          dueDate: "2026-10-07",
+          dueDateDay: 7
+        },
+        {
+          name: "Allan Delles",
+          docId: "wrqY2uERThcxWxfAV63p",
+          asaasCustomerId: "cus_000198926875",
+          asaasSubId: "sub_acbgezfuac5lt571",
+          planName: "Corte de Cabelo - Ilimitado",
+          value: 84.99,
+          dueDate: "2026-10-08",
+          dueDateDay: 8
+        },
+        {
+          name: "Felisberto volpe junior",
+          docId: "VCkhrtRmKDXTYXMF2StH",
+          asaasCustomerId: "cus_000198985125",
+          asaasSubId: "sub_3txwqkdtxsrtjatc",
+          planName: "Corte de Cabelo - Ilimitado",
+          value: 84.99,
+          dueDate: "2026-10-08",
+          dueDateDay: 8
+        },
+        {
+          name: "Marcelo Rodrigues",
+          docId: "gdpInwwQ56WmfEZc1nya",
+          asaasCustomerId: "cus_000199941174",
+          asaasSubId: "sub_qef2ufi8zmpzxvup",
+          planName: "Corte de Cabelo - Ilimitado",
+          value: 84.99,
+          dueDate: "2026-10-12",
+          dueDateDay: 12
+        }
+      ];
+
+      // 1. Excluir assinaturas duplicadas do Nicolas Gabriel
+      const duplicateSubsToDelete = ["sub_yccj78r1jp6yhphd", "sub_fw13dczs4c23wcvp"];
+      const deletedSubsResult = [];
+      for (const dSubId of duplicateSubsToDelete) {
+        try {
+          console.log(`[execute-october-fix] Deletando assinatura duplicada: ${dSubId}`);
+          const dRes = await fetch(`${baseUrl}/subscriptions/${dSubId}`, {
+            method: 'DELETE',
+            headers: { 'access_token': asaasApiKey }
+          });
+          const dData = await safeJsonFetch(dRes);
+          deletedSubsResult.push({ id: dSubId, success: dRes.ok, data: dData });
+        } catch (dErr: any) {
+          deletedSubsResult.push({ id: dSubId, success: false, error: dErr.message });
+        }
+      }
+
+      // 2. Criar cobrança avulsa de Outubro para cada cliente
+      const results = [];
+
+      for (const t of targets) {
+        try {
+          console.log(`[execute-october-fix] Criando cobrança de Outubro para ${t.name} (${t.asaasCustomerId})...`);
+          const payPayload = {
+            customer: t.asaasCustomerId,
+            billingType: "UNDEFINED", // Aceita Pix, Cartão ou Boleto sem travar token
+            value: t.value,
+            dueDate: t.dueDate,
+            description: `Assinatura BarberElite - Mensalidade Outubro/2026 (${t.planName})`,
+            externalReference: `october_fix:${t.docId}`,
+            postalService: false
+          };
+
+          const pRes = await fetch(`${baseUrl}/payments`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'access_token': asaasApiKey
+            },
+            body: JSON.stringify(payPayload)
+          });
+
+          const pData = await safeJsonFetch(pRes);
+
+          if (!pRes.ok) {
+            console.error(`[execute-october-fix] Erro Asaas para ${t.name}:`, pData);
+            results.push({ name: t.name, success: false, error: pData });
+            continue;
+          }
+
+          const newInvoiceId = pData.id;
+          const invoiceUrl = pData.invoiceUrl || pData.bankSlipUrl || "";
+
+          // Atualizar no Firestore a assinatura do cliente
+          const firestoreUpdate: any = {
+            endDate: t.dueDate,
+            dueDateDay: t.dueDateDay,
+            asaasInvoiceId: newInvoiceId,
+            asaasOctoberInvoiceId: newInvoiceId,
+            paymentUrl: invoiceUrl || undefined,
+            status: "active",
+            updatedAt: new Date().toISOString()
+          };
+
+          if (dbAdmin) {
+            await dbAdmin.collection('subscriptions').doc(t.docId).set(firestoreUpdate, { merge: true });
+          } else {
+            await updateFirestoreRestDoc('subscriptions', t.docId, firestoreUpdate);
+          }
+
+          results.push({
+            name: t.name,
+            success: true,
+            invoiceId: newInvoiceId,
+            dueDate: t.dueDate,
+            value: t.value,
+            invoiceUrl,
+            status: pData.status
+          });
+        } catch (err: any) {
+          console.error(`[execute-october-fix] Exceção para ${t.name}:`, err);
+          results.push({ name: t.name, success: false, error: err.message });
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "Cobranças de outubro geradas com sucesso e duplicadas limpas!",
+        deletedDuplicates: deletedSubsResult,
+        processedClients: results
+      });
+    } catch (err: any) {
+      console.error("[execute-october-fix] Erro geral:", err);
+      return res.status(500).json({ error: err.message || "Erro ao executar fix de outubro." });
     }
   });
 
@@ -4992,6 +6161,36 @@ function encodeFirestoreFields(data: any): any {
             if ((payment?.customer || subscription?.customer) && !currentSub.asaasCustomerId) {
               idUpdate.asaasCustomerId = payment?.customer || subscription?.customer;
             }
+
+            // Se uma fatura foi cancelada/excluída no Asaas ou a assinatura foi atualizada, sincronizar o novo nextDueDate
+            if (eventType === 'PAYMENT_DELETED' || eventType === 'SUBSCRIPTION_UPDATED') {
+              const asaasSubId = subscription?.id || payment?.subscription || currentSub.asaasSubscriptionId;
+              const subTenant = currentSub.tenantId || 'gbcortes7';
+              if (asaasSubId && String(asaasSubId).startsWith('sub_')) {
+                try {
+                  const creds = await getTenantAsaasCredentials(subTenant);
+                  if (creds && creds.apiKey) {
+                    const subRes = await fetch(`${creds.baseUrl}/subscriptions/${asaasSubId}`, {
+                      headers: { 'access_token': creds.apiKey }
+                    });
+                    const asaasSubData = await safeJsonFetch(subRes);
+                    if (asaasSubData && asaasSubData.nextDueDate) {
+                      idUpdate.endDate = asaasSubData.nextDueDate;
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      if (asaasSubData.nextDueDate >= todayStr) {
+                        idUpdate.status = 'active';
+                        idUpdate.asaasPaymentStatus = 'received';
+                      }
+                      idUpdate.asaasLastSyncedAt = new Date().toISOString();
+                      console.log(`🔄 [ASAAS AUDIT] Evento ${eventType} sincronizou assinatura ${targetSubMatch.id} com novo vencimento no Asaas: ${asaasSubData.nextDueDate}`);
+                    }
+                  }
+                } catch (syncSubErr) {
+                  console.warn(`[ASAAS AUDIT] Falha ao sincronizar ciclo após ${eventType}:`, syncSubErr);
+                }
+              }
+            }
+
             if (Object.keys(idUpdate).length > 0) {
               idUpdate.updatedAt = new Date();
               if (targetSubMatch.ref) {

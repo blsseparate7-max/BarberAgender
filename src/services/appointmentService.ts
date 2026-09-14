@@ -616,12 +616,140 @@ export const appointmentService = {
   },
 
   async cancelAppointment(id: string) {
-    await this.updateStatus(id, 'cancelado');
+    return this.deleteAppointment(id);
   },
 
   async deleteAppointment(id: string) {
-    const docRef = doc(db, COLLECTION, id);
-    await deleteDoc(docRef);
+    // 1. Notify before deleting
+    try {
+      const docRef = doc(db, COLLECTION, id);
+      const appSnap = await getDoc(docRef);
+      if (appSnap.exists()) {
+        const appointment = appSnap.data() as Appointment;
+        const clientName = appointment.cliente_name || 'Cliente';
+        const serviceName = appointment.servico_name || 'Serviço';
+        const profName = appointment.profissional_name || 'Profissional';
+        const message = `${clientName} cancelou o horário de ${serviceName} com ${profName} no dia ${appointment.date} às ${appointment.startTime}.`;
+        const tenantId = appointment.tenantId || getActiveTenantId();
+
+        await notificationService.createNotification({
+          tenantId,
+          recipientId: 'admin',
+          title: 'Agendamento Cancelado! 🚨',
+          message,
+          type: 'cancelled',
+          metadata: {
+            appointmentId: id,
+            clientName,
+            date: appointment.date,
+            startTime: appointment.startTime,
+            profissional_name: profName,
+            servico_name: serviceName
+          }
+        }).catch(() => {});
+
+        if (appointment.profissional_id && appointment.profissional_id !== 'admin') {
+          await notificationService.createNotification({
+            tenantId,
+            recipientId: appointment.profissional_id,
+            title: 'Seu horário foi Cancelado! 🚨',
+            message,
+            type: 'cancelled',
+            metadata: {
+              appointmentId: id,
+              clientName,
+              date: appointment.date,
+              startTime: appointment.startTime,
+              profissional_name: profName,
+              servico_name: serviceName
+            }
+          }).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.warn("Could not pre-notify for appointment cancellation:", err);
+    }
+
+    // 2. Capture appointment data to find linked comanda before deleting
+    let linkedComandaId: string | undefined;
+    let tenantIdVal: string | undefined;
+    let clientNameVal: string | undefined;
+    let apptDateVal: string | undefined;
+
+    try {
+      const aSnap = await getDoc(doc(db, COLLECTION, id));
+      if (aSnap.exists()) {
+        const aData = aSnap.data() as any;
+        linkedComandaId = aData.comanda_id || aData.comandaId;
+        tenantIdVal = aData.tenantId || getActiveTenantId();
+        clientNameVal = aData.cliente_name || aData.cliente_nome;
+        apptDateVal = aData.date;
+      }
+    } catch (_) {}
+
+    // 3. Client-side authoritative deletion with authenticated Firebase SDK
+    try {
+      // 3.1. If linked comanda is directly referenced, delete it completely
+      if (linkedComandaId) {
+        await comandaService.deleteComandaCompletely(linkedComandaId).catch((err) => {
+          console.warn("Could not delete linked comanda completely:", err);
+        });
+      }
+      
+      // 3.2. Delete any comanda linked by agendamento_id or matching client/date/tenant
+      const tId = tenantIdVal || getActiveTenantId();
+      if (tId) {
+        try {
+          const linkedCmdsSnap = await getDocs(query(collection(db, 'comandas'), where('agendamento_id', '==', id)));
+          for (const cDoc of linkedCmdsSnap.docs) {
+            if (cDoc.data()?.status !== 'fechada') {
+              await comandaService.deleteComandaCompletely(cDoc.id).catch(async () => {
+                await deleteDoc(cDoc.ref).catch(() => {});
+              });
+            }
+          }
+
+          const normClient = clientNameVal ? clientNameVal.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() : '';
+          if (normClient && normClient.length > 2 && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient !== 'cliente avulso') {
+            const clientCmdsSnap = await getDocs(query(
+              collection(db, 'comandas'),
+              where('tenantId', '==', tId),
+              where('status', 'in', ['aberta', 'em_atendimento', 'aguardando_pagamento'])
+            ));
+            for (const cDoc of clientCmdsSnap.docs) {
+              const cData = cDoc.data();
+              const cNormClient = (cData.cliente_name || cData.cliente_nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+              const cDate = cData.date || (cData.createdAt?.seconds ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+              if (cNormClient === normClient && (!apptDateVal || !cDate || apptDateVal === cDate)) {
+                await comandaService.deleteComandaCompletely(cDoc.id).catch(async () => {
+                  await deleteDoc(cDoc.ref).catch(() => {});
+                });
+              }
+            }
+          }
+        } catch (cCleanupErr) {
+          console.warn("Error cleaning up related comandas:", cCleanupErr);
+        }
+      }
+
+      // 3.3. Authoritatively delete appointment document directly in Firestore
+      await deleteDoc(doc(db, COLLECTION, id));
+    } catch (delErr) {
+      console.warn("Could not delete appointment doc directly, updating status to cancelado:", delErr);
+      await updateDoc(doc(db, COLLECTION, id), {
+        status: 'cancelado',
+        updatedAt: serverTimestamp()
+      }).catch(() => {});
+    }
+
+    // 4. Asynchronously notify backend server API for auxiliary cleanup/logging
+    fetch('/api/appointments/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appointmentId: id, tenantId: tenantIdVal || getActiveTenantId() })
+    }).catch((apiErr) => {
+      console.warn("API appointment delete notice error (non-fatal):", apiErr);
+    });
   },
 
   async updateStatus(id: string, status: AppointmentStatus, paymentMethod: PaymentMethod = 'dinheiro') {

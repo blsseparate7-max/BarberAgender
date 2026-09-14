@@ -11,7 +11,8 @@ import {
   RefreshCw,
   Loader2,
   XCircle,
-  TrendingUp
+  TrendingUp,
+  Cake
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -21,6 +22,7 @@ import { userService } from '../services/userService';
 import { LoyaltyConfig, LoyaltyPoints, LoyaltyHistory, UserProfile, LoyaltyVoucher } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
+import { AniversariantesView } from '../components/AniversariantesView';
 
 export function Fidelidade({ 
   activeSubTab, 
@@ -30,7 +32,7 @@ export function Fidelidade({
   setActiveTab?: (tab: string) => void; 
 }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
-  const [activeTab, setActiveTab] = useState<'meu_saldo' | 'clientes' | 'cupons' | 'historico'>('meu_saldo');
+  const [activeTab, setActiveTab] = useState<'meu_saldo' | 'clientes' | 'aniversariantes' | 'cupons' | 'historico'>('meu_saldo');
   const [config, setConfig] = useState<LoyaltyConfig | null>(null);
   const [clientPoints, setClientPoints] = useState<LoyaltyPoints | null>(null);
   const [history, setHistory] = useState<LoyaltyHistory[]>([]);
@@ -225,6 +227,9 @@ export function Fidelidade({
         )}
         {(isAdmin || isGerente) && (
           <TabButton active={activeTab === 'clientes'} onClick={() => setActiveTab('clientes')} label="Clientes" icon={<Users size={16} />} />
+        )}
+        {(isAdmin || isGerente) && (
+          <TabButton active={activeTab === 'aniversariantes'} onClick={() => setActiveTab('aniversariantes')} label="🎂 Aniversariantes" icon={<Cake size={16} />} />
         )}
         <TabButton active={activeTab === 'cupons'} onClick={() => setActiveTab('cupons')} label="Vouchers de Resgate" icon={<Tag size={16} />} />
         <TabButton active={activeTab === 'historico'} onClick={() => setActiveTab('historico')} label="Histórico" icon={<History size={16} />} />
@@ -483,6 +488,22 @@ export function Fidelidade({
                 ))}
               </tbody>
             </table>
+          </motion.div>
+        )}
+
+        {activeTab === 'aniversariantes' && (
+          <motion.div
+            key="aniversariantes"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            <AniversariantesView
+              customers={clients}
+              loyaltyConfig={config}
+              onNavigateToConfig={() => setParentActiveTab?.('configuracoes-fidelidade')}
+              onReloadCustomers={loadData}
+            />
           </motion.div>
         )}
       </AnimatePresence>

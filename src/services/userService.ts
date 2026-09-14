@@ -146,30 +146,32 @@ export const userService = {
   async getUserByPhone(phone: string, tenantId?: string) {
     if (!phone) return null;
     const cleanPhone = phone.replace(/\D/g, '');
-    if (!cleanPhone) return null;
+    if (!cleanPhone || cleanPhone.length < 8) return null;
 
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    const usersRef = collection(db, COLLECTION);
-    
-    // Check both 'telefone' and 'phone'
-    const q1 = query(usersRef, where('telefone', '==', phone));
-    const q1Snap = await getDocs(q1);
-    const found1 = q1Snap.docs.find(d => {
-      const data = d.data();
-      const uTenant = (data.tenantId || '').trim().toLowerCase();
-      return !tid || uTenant === tid || (uTenant === '' && tid === 'gbcortes7');
+    const clients = await this.getUsersByRole('cliente', false, tid);
+    const found = clients.find(c => {
+      const p1 = (c.telefone || '').replace(/\D/g, '');
+      const p2 = (c.phone || '').replace(/\D/g, '');
+      return p1 === cleanPhone || p2 === cleanPhone;
     });
-    if (found1) return { uid: found1.id, ...found1.data() } as UserProfile;
 
-    const q2 = query(usersRef, where('phone', '==', cleanPhone));
-    const q2Snap = await getDocs(q2);
-    const found2 = q2Snap.docs.find(d => {
-      const data = d.data();
-      const uTenant = (data.tenantId || '').trim().toLowerCase();
-      return !tid || uTenant === tid || (uTenant === '' && tid === 'gbcortes7');
-    });
-    if (found2) return { uid: found2.id, ...found2.data() } as UserProfile;
+    if (found) return found;
+    return null;
+  },
 
+  async getUserByEmail(email: string, tenantId?: string) {
+    if (!email) return null;
+    const cleanEmail = email.toLowerCase().trim();
+    if (!cleanEmail || cleanEmail.includes('placeholder') || cleanEmail.includes('manual_') || cleanEmail.includes('sem-email') || cleanEmail.includes('sem_email')) {
+      return null;
+    }
+
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const clients = await this.getUsersByRole('cliente', false, tid);
+    const found = clients.find(c => (c.email || '').toLowerCase().trim() === cleanEmail);
+
+    if (found) return found;
     return null;
   },
 
@@ -183,6 +185,134 @@ export const userService = {
       return { exists: true, user: foundUser };
     }
     return { exists: false };
+  },
+
+  async checkEmailExists(email: string, currentUid?: string, tenantId?: string): Promise<{ exists: boolean; user?: UserProfile }> {
+    if (!email) return { exists: false };
+    const foundUser = await this.getUserByEmail(email, tenantId);
+    if (foundUser && (!currentUid || foundUser.uid !== currentUid)) {
+      return { exists: true, user: foundUser };
+    }
+    return { exists: false };
+  },
+
+  async unifyDuplicateClients(tenantId?: string): Promise<{ mergedCount: number; details: string[] }> {
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const clients = await this.getUsersByRole('cliente', false, tid);
+    
+    // Group active clients by clean phone, real email, or core name
+    const groups: Map<string, UserProfile[]> = new Map();
+
+    const getCoreNameKey = (fullName: string): string => {
+      if (!fullName) return '';
+      const clean = fullName
+        .replace(/\(.*?\)/g, '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+      const words = clean.split(/\s+/).filter(w => w.length > 1 && !['de', 'da', 'do', 'dos', 'das', 'e'].includes(w));
+      if (words.length >= 2) return `core_${words[0]}_${words[1]}`;
+      if (words.length === 1) return `core_${words[0]}`;
+      return '';
+    };
+
+    clients.forEach(c => {
+      if (c.ativo === false) return; // ignore already deactivated
+      const phoneDigits = (c.telefone || c.phone || '').replace(/\D/g, '');
+      const email = (c.email || '').toLowerCase().trim();
+      const isRealEmail = email && !email.includes('placeholder') && !email.includes('manual_') && !email.includes('sem-email') && !email.includes('sem_email');
+      const coreNameKey = getCoreNameKey(c.nome || '');
+
+      if (phoneDigits && phoneDigits.length >= 8) {
+        const key = `phone_${phoneDigits}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(c);
+      } else if (isRealEmail) {
+        const key = `email_${email}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(c);
+      } else if (coreNameKey) {
+        if (!groups.has(coreNameKey)) groups.set(coreNameKey, []);
+        groups.get(coreNameKey)!.push(c);
+      }
+    });
+
+    let mergedCount = 0;
+    const details: string[] = [];
+
+    for (const [, group] of groups.entries()) {
+      const uniqueClients = Array.from(new Map(group.map(c => [c.uid, c])).values());
+      if (uniqueClients.length > 1) {
+        // Sort: prefer linked accounts, then accounts with phone number, then highest total_gasto
+        uniqueClients.sort((a, b) => {
+          if (a.isLinked && !b.isLinked) return -1;
+          if (!a.isLinked && b.isLinked) return 1;
+          const aPhone = Boolean(a.telefone || a.phone);
+          const bPhone = Boolean(b.telefone || b.phone);
+          if (aPhone && !bPhone) return -1;
+          if (!aPhone && bPhone) return 1;
+          return (b.total_gasto || b.totalSpent || 0) - (a.total_gasto || a.totalSpent || 0);
+        });
+
+        const primary = uniqueClients[0];
+        const duplicates = uniqueClients.slice(1);
+
+        for (const dup of duplicates) {
+          try {
+            const newSaldo = (primary.saldo_atual || 0) + (dup.saldo_atual || 0);
+            const newGasto = (primary.total_gasto || 0) + (dup.total_gasto || 0);
+            const newPago = (primary.total_pago || 0) + (dup.total_pago || 0);
+            const newEmAberto = (primary.total_em_aberto || 0) + (dup.total_em_aberto || 0);
+
+            // Update primary user doc
+            await updateDoc(doc(db, COLLECTION, primary.uid), {
+              saldo_atual: newSaldo,
+              balance: newSaldo,
+              total_gasto: newGasto,
+              totalSpent: newGasto,
+              total_pago: newPago,
+              totalPaid: newPago,
+              total_em_aberto: newEmAberto,
+              telefone: primary.telefone || dup.telefone || primary.phone || dup.phone || '',
+              phone: primary.phone || dup.phone || primary.telefone || dup.telefone || '',
+              cpf: primary.cpf || dup.cpf || null,
+              cpfCnpj: primary.cpfCnpj || dup.cpfCnpj || null,
+              birthDate: primary.birthDate || dup.birthDate || '',
+              observacoes: (primary.observacoes ? primary.observacoes + ' | ' : '') + (dup.observacoes ? '[Unificado]: ' + dup.observacoes : '')
+            });
+
+            // Re-link debts from dup to primary
+            const debtsQ = query(collection(db, 'client_debts'), where('client_id', '==', dup.uid));
+            const debtsSnap = await getDocs(debtsQ);
+            for (const dDoc of debtsSnap.docs) {
+              await updateDoc(dDoc.ref, { client_id: primary.uid });
+            }
+
+            // Re-link comandas from dup to primary
+            const comQ = query(collection(db, 'comandas'), where('cliente_id', '==', dup.uid));
+            const comSnap = await getDocs(comQ);
+            for (const cDoc of comSnap.docs) {
+              await updateDoc(cDoc.ref, { cliente_id: primary.uid, cliente_nome: primary.nome });
+            }
+
+            // Deactivate duplicate user profile
+            await updateDoc(doc(db, COLLECTION, dup.uid), {
+              ativo: false,
+              nome: `${dup.nome} (Unificado com ${primary.nome})`,
+              observacoes: `Perfil unificado automaticamente com ${primary.uid}`
+            });
+
+            mergedCount++;
+            details.push(`Cliente "${dup.nome}" (ID: ${dup.uid}) unificado com "${primary.nome}" (ID: ${primary.uid}).`);
+          } catch (err) {
+            console.error("Erro ao unificar duplicado:", dup.uid, err);
+          }
+        }
+      }
+    }
+
+    return { mergedCount, details };
   },
 
   async getUserProfile(uid: string) {
@@ -293,6 +423,23 @@ export const userService = {
 
   async createUser(data: Partial<UserProfile> & { password?: string }) {
     let uid = data.uid || '';
+    const tid = data.tenantId || getActiveTenantId();
+
+    // Prevent duplicate phone or email registration
+    const phoneVal = data.telefone || data.phone || '';
+    if (phoneVal) {
+      const phoneCheck = await this.checkPhoneExists(phoneVal, undefined, tid);
+      if (phoneCheck.exists && phoneCheck.user) {
+        throw new Error(`Já existe um cliente cadastrado com este telefone (${phoneCheck.user.nome}). Utilize o perfil existente para registrar atendimentos.`);
+      }
+    }
+
+    if (data.email) {
+      const emailCheck = await this.checkEmailExists(data.email, undefined, tid);
+      if (emailCheck.exists && emailCheck.user) {
+        throw new Error(`Já existe um cliente cadastrado com este e-mail (${emailCheck.user.nome}). Utilize o perfil existente.`);
+      }
+    }
     
     if (data.password && data.email) {
       let createdOnServer = false;

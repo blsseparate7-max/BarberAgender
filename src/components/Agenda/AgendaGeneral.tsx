@@ -226,6 +226,7 @@ export function AgendaGeneral({
       return appointments.filter(app => {
         const matchProf = app.profissional_id === barber.uid || (barber.id && app.profissional_id === barber.id);
         if (!matchProf || app.date !== format(selectedDate, 'yyyy-MM-dd')) return false;
+        if (app.status === 'cancelado') return false;
         if (!app.startTime || !app.endTime) return false;
         
         const appStart = parse(app.startTime, 'HH:mm', new Date());

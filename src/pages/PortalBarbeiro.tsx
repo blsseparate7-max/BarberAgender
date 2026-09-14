@@ -420,8 +420,13 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   // Update appointment status
   const handleUpdateStatus = async (appointmentId: string, newStatus: AppointmentStatus) => {
     try {
-      await appointmentService.updateAppointment(appointmentId, { status: newStatus });
-      toast.success(`Status atualizado para ${newStatus.replace('_', ' ')}!`);
+      if (newStatus === 'cancelado') {
+        await appointmentService.deleteAppointment(appointmentId);
+        toast.success('Agendamento cancelado e excluído com sucesso!');
+      } else {
+        await appointmentService.updateAppointment(appointmentId, { status: newStatus });
+        toast.success(`Status atualizado para ${newStatus.replace('_', ' ')}!`);
+      }
     } catch (err: any) {
       console.error(err);
       toast.error(`Erro ao atualizar status: ${err.message || err}`);

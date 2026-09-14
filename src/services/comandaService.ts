@@ -1387,48 +1387,72 @@ export const comandaService = {
   async cancelLinkedAppointments(comandaId: string, agendamentoId?: string) {
     try {
       const batch = writeBatch(db);
+      const processedAppIds = new Set<string>();
       let updatedCount = 0;
 
-      if (agendamentoId) {
-        const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
-        if (aSnap.exists()) {
-          batch.update(aSnap.ref, {
-            status: 'cancelado',
-            updatedAt: serverTimestamp()
-          });
-          updatedCount++;
-        }
-      }
-
-      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
-      if (comandaSnap.exists()) {
-        const cData = comandaSnap.data();
-        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
-        if (linkedId && linkedId !== agendamentoId) {
-          const lSnap = await getDoc(doc(db, 'appointments', linkedId));
-          if (lSnap.exists()) {
-            batch.update(lSnap.ref, {
-              status: 'cancelado',
+      const markApp = (docSnap: any, statusVal: string = 'cancelado') => {
+        if (!processedAppIds.has(docSnap.id)) {
+          processedAppIds.add(docSnap.id);
+          if (docSnap.data().status !== statusVal) {
+            batch.update(docSnap.ref, {
+              status: statusVal,
               updatedAt: serverTimestamp()
             });
             updatedCount++;
           }
         }
+      };
+
+      if (agendamentoId) {
+        const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
+        if (aSnap.exists()) markApp(aSnap);
       }
 
+      let cData: any = null;
+      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+      if (comandaSnap.exists()) {
+        cData = comandaSnap.data();
+        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+        if (linkedId && linkedId !== agendamentoId) {
+          const lSnap = await getDoc(doc(db, 'appointments', linkedId));
+          if (lSnap.exists()) markApp(lSnap);
+        }
+      }
+
+      // Query by comanda_id
       const apptsQuery = query(
         collection(db, 'appointments'),
         where('comanda_id', '==', comandaId)
       );
       const apptsSnap = await getDocs(apptsQuery);
-      if (!apptsSnap.empty) {
-        apptsSnap.forEach((docSnap) => {
-          if (docSnap.data().status !== 'cancelado') {
-            batch.update(docSnap.ref, {
-              status: 'cancelado',
-              updatedAt: serverTimestamp()
-            });
-            updatedCount++;
+      apptsSnap.forEach((docSnap) => markApp(docSnap));
+
+      // Query by agendamento_id == comandaId
+      const apptsQuery2 = query(
+        collection(db, 'appointments'),
+        where('agendamento_id', '==', comandaId)
+      );
+      const apptsSnap2 = await getDocs(apptsQuery2);
+      apptsSnap2.forEach((docSnap) => markApp(docSnap));
+
+      // Query by client name + date + tenantId if available
+      const tenantId = cData?.tenantId || getActiveTenantId();
+      const rawClientName = cData?.cliente_name || cData?.cliente_nome;
+      const normClient = rawClientName ? rawClientName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() : '';
+      const cDate = cData?.date || (cData?.createdAt?.seconds ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+
+      if (tenantId && normClient && normClient.length > 2 && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient !== 'cliente avulso') {
+        const tenantAppsSnap = await getDocs(query(
+          collection(db, 'appointments'),
+          where('tenantId', '==', tenantId),
+          limit(50)
+        ));
+        tenantAppsSnap.forEach((docSnap) => {
+          const aData = docSnap.data();
+          const normAppClient = (aData.cliente_name || aData.cliente_nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const aDate = aData.date;
+          if (normAppClient === normClient && (!cDate || !aDate || cDate === aDate)) {
+            markApp(docSnap);
           }
         });
       }
@@ -1445,38 +1469,68 @@ export const comandaService = {
   async deleteLinkedAppointments(comandaId: string, agendamentoId?: string) {
     try {
       const batch = writeBatch(db);
+      const processedAppIds = new Set<string>();
       let deletedCount = 0;
+
+      const deleteApp = (docSnap: any) => {
+        if (!processedAppIds.has(docSnap.id)) {
+          processedAppIds.add(docSnap.id);
+          batch.delete(docSnap.ref);
+          deletedCount++;
+        }
+      };
 
       if (agendamentoId) {
         const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
-        if (aSnap.exists()) {
-          batch.delete(aSnap.ref);
-          deletedCount++;
-        }
+        if (aSnap.exists()) deleteApp(aSnap);
       }
 
+      let cData: any = null;
       const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
       if (comandaSnap.exists()) {
-        const cData = comandaSnap.data();
+        cData = comandaSnap.data();
         const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
         if (linkedId && linkedId !== agendamentoId) {
           const lSnap = await getDoc(doc(db, 'appointments', linkedId));
-          if (lSnap.exists()) {
-            batch.delete(lSnap.ref);
-            deletedCount++;
-          }
+          if (lSnap.exists()) deleteApp(lSnap);
         }
       }
 
+      // Query by comanda_id
       const apptsQuery = query(
         collection(db, 'appointments'),
         where('comanda_id', '==', comandaId)
       );
       const apptsSnap = await getDocs(apptsQuery);
-      if (!apptsSnap.empty) {
-        apptsSnap.forEach((docSnap) => {
-          batch.delete(docSnap.ref);
-          deletedCount++;
+      apptsSnap.forEach((docSnap) => deleteApp(docSnap));
+
+      // Query by agendamento_id == comandaId
+      const apptsQuery2 = query(
+        collection(db, 'appointments'),
+        where('agendamento_id', '==', comandaId)
+      );
+      const apptsSnap2 = await getDocs(apptsQuery2);
+      apptsSnap2.forEach((docSnap) => deleteApp(docSnap));
+
+      // Query by client name + date + tenantId if available
+      const tenantId = cData?.tenantId || getActiveTenantId();
+      const rawClientName = cData?.cliente_name || cData?.cliente_nome;
+      const normClient = rawClientName ? rawClientName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() : '';
+      const cDate = cData?.date || (cData?.createdAt?.seconds ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+
+      if (tenantId && normClient && normClient.length > 2 && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient !== 'cliente avulso') {
+        const tenantAppsSnap = await getDocs(query(
+          collection(db, 'appointments'),
+          where('tenantId', '==', tenantId),
+          limit(50)
+        ));
+        tenantAppsSnap.forEach((docSnap) => {
+          const aData = docSnap.data();
+          const normAppClient = (aData.cliente_name || aData.cliente_nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const aDate = aData.date;
+          if (normAppClient === normClient && (!cDate || !aDate || cDate === aDate)) {
+            deleteApp(docSnap);
+          }
         });
       }
 
@@ -1492,48 +1546,72 @@ export const comandaService = {
   async markAbsentLinkedAppointments(comandaId: string, agendamentoId?: string) {
     try {
       const batch = writeBatch(db);
+      const processedAppIds = new Set<string>();
       let updatedCount = 0;
 
-      if (agendamentoId) {
-        const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
-        if (aSnap.exists()) {
-          batch.update(aSnap.ref, {
-            status: 'faltou',
-            updatedAt: serverTimestamp()
-          });
-          updatedCount++;
-        }
-      }
-
-      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
-      if (comandaSnap.exists()) {
-        const cData = comandaSnap.data();
-        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
-        if (linkedId && linkedId !== agendamentoId) {
-          const lSnap = await getDoc(doc(db, 'appointments', linkedId));
-          if (lSnap.exists()) {
-            batch.update(lSnap.ref, {
-              status: 'faltou',
-              updatedAt: serverTimestamp()
-            });
-            updatedCount++;
-          }
-        }
-      }
-
-      const apptsQuery = query(
-        collection(db, 'appointments'),
-        where('comanda_id', '==', comandaId)
-      );
-      const apptsSnap = await getDocs(apptsQuery);
-      if (!apptsSnap.empty) {
-        apptsSnap.forEach((docSnap) => {
+      const markApp = (docSnap: any) => {
+        if (!processedAppIds.has(docSnap.id)) {
+          processedAppIds.add(docSnap.id);
           if (docSnap.data().status !== 'faltou') {
             batch.update(docSnap.ref, {
               status: 'faltou',
               updatedAt: serverTimestamp()
             });
             updatedCount++;
+          }
+        }
+      };
+
+      if (agendamentoId) {
+        const aSnap = await getDoc(doc(db, 'appointments', agendamentoId));
+        if (aSnap.exists()) markApp(aSnap);
+      }
+
+      let cData: any = null;
+      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+      if (comandaSnap.exists()) {
+        cData = comandaSnap.data();
+        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+        if (linkedId && linkedId !== agendamentoId) {
+          const lSnap = await getDoc(doc(db, 'appointments', linkedId));
+          if (lSnap.exists()) markApp(lSnap);
+        }
+      }
+
+      // Query by comanda_id
+      const apptsQuery = query(
+        collection(db, 'appointments'),
+        where('comanda_id', '==', comandaId)
+      );
+      const apptsSnap = await getDocs(apptsQuery);
+      apptsSnap.forEach((docSnap) => markApp(docSnap));
+
+      // Query by agendamento_id == comandaId
+      const apptsQuery2 = query(
+        collection(db, 'appointments'),
+        where('agendamento_id', '==', comandaId)
+      );
+      const apptsSnap2 = await getDocs(apptsQuery2);
+      apptsSnap2.forEach((docSnap) => markApp(docSnap));
+
+      // Query by client name + date + tenantId if available
+      const tenantId = cData?.tenantId || getActiveTenantId();
+      const rawClientName = cData?.cliente_name || cData?.cliente_nome;
+      const normClient = rawClientName ? rawClientName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() : '';
+      const cDate = cData?.date || (cData?.createdAt?.seconds ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+
+      if (tenantId && normClient && normClient.length > 2 && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient !== 'cliente avulso') {
+        const tenantAppsSnap = await getDocs(query(
+          collection(db, 'appointments'),
+          where('tenantId', '==', tenantId),
+          limit(50)
+        ));
+        tenantAppsSnap.forEach((docSnap) => {
+          const aData = docSnap.data();
+          const normAppClient = (aData.cliente_name || aData.cliente_nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const aDate = aData.date;
+          if (normAppClient === normClient && (!cDate || !aDate || cDate === aDate)) {
+            markApp(docSnap);
           }
         });
       }
@@ -1544,6 +1622,59 @@ export const comandaService = {
       }
     } catch (err) {
       console.warn("Error auto-marking absent linked appointments for comanda:", err);
+    }
+  },
+
+  async deleteComandaCompletely(id: string) {
+    try {
+      const docRef = doc(db, COLLECTION, id);
+      const snap = await getDoc(docRef);
+      if (!snap.exists()) {
+        console.log(`Comanda ${id} já não existe.`);
+        return;
+      }
+      const data = snap.data() as Comanda;
+      const linkedAppId = data.agendamento_id || (data as any).agendamentoId || (data as any).appointment_id || (data as any).appointmentId;
+
+      // 1. Delete linked appointments completely to free up agenda grid slots
+      await this.deleteLinkedAppointments(id, linkedAppId);
+
+      // 2. Revert any financial transactions and loyalty
+      await this.revertComandaFinancials(id, data.cliente_id).catch(() => {});
+
+      // 3. Delete linked daily_flow entries
+      if (data.daily_flow_id) {
+        try {
+          await deleteDoc(doc(db, 'daily_flow', data.daily_flow_id));
+        } catch (dfErr) {
+          console.warn("Could not delete daily_flow:", dfErr);
+        }
+      }
+
+      const dfQuery = query(collection(db, 'daily_flow'), where('comanda_id', '==', id));
+      const dfSnaps = await getDocs(dfQuery);
+      for (const dfDoc of dfSnaps.docs) {
+        await deleteDoc(dfDoc.ref).catch(() => {});
+      }
+
+      // 4. Delete linked unpaid commissions
+      const commQuery = query(collection(db, 'commissions'), where('comanda_id', '==', id));
+      const commSnaps = await getDocs(commQuery);
+      for (const commDoc of commSnaps.docs) {
+        if (commDoc.data().status !== 'paga') {
+          await deleteDoc(commDoc.ref).catch(() => {});
+        } else {
+          await updateDoc(commDoc.ref, { status: 'cancelado', updatedAt: serverTimestamp() }).catch(() => {});
+        }
+      }
+
+      // 5. Delete the comanda document itself
+      await deleteDoc(docRef);
+
+      console.log(`Comanda ${id} e todos os seus vínculos foram completamente excluídos.`);
+    } catch (err) {
+      console.error(`Erro ao excluir comanda completamente ${id}:`, err);
+      throw err;
     }
   },
 

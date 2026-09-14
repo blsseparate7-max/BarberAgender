@@ -252,6 +252,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [newSubStartDate, setNewSubStartDate] = useState('');
   const [newSubEndDate, setNewSubEndDate] = useState('');
   const [isSavingSubDates, setIsSavingSubDates] = useState(false);
+  const [isSyncingWithAsaas, setIsSyncingWithAsaas] = useState(false);
   const [planComissaoTipo, setPlanComissaoTipo] = useState<'fixo' | 'pool_atendimentos' | 'pool_pontos'>('fixo');
   const [planComissaoPoolPorcentagem, setPlanComissaoPoolPorcentagem] = useState(50);
   const [planComissaoFixaValor, setPlanComissaoFixaValor] = useState(10.00);
@@ -779,12 +780,38 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         toast.success("Datas da assinatura atualizadas com sucesso!");
       }
       await loadData();
-      setSelectedSubDetail(prev => prev ? { ...prev, startDate: newSubStartDate, endDate: newSubEndDate } : null);
+      const todayStr = new Date().toISOString().split('T')[0];
+      const newStatus = (newSubEndDate >= todayStr) ? 'active' : selectedSubDetail.status;
+      setSelectedSubDetail(prev => prev ? { ...prev, startDate: newSubStartDate, endDate: newSubEndDate, status: newStatus } : null);
     } catch (err: any) {
       console.error("Erro ao atualizar datas da assinatura:", err);
       toast.error(err?.message || "Erro ao salvar novas datas da assinatura.");
     } finally {
       setIsSavingSubDates(false);
+    }
+  };
+
+  const handleSyncSubWithAsaas = async () => {
+    if (!selectedSubDetail) return;
+    setIsSyncingWithAsaas(true);
+    try {
+      const result: any = await subscriptionService.syncSingleSubscription(selectedSubDetail.id);
+      toast.success(result?.message || "Sincronização com o Asaas concluída com sucesso!");
+      if (result?.nextDueDate) {
+        setNewSubEndDate(result.nextDueDate);
+      }
+      await loadData();
+      setSelectedSubDetail(prev => prev ? { 
+        ...prev, 
+        endDate: result?.nextDueDate || prev.endDate,
+        status: (result?.status || 'active') as any,
+        asaasSubscriptionId: result?.updatedFields?.asaasSubscriptionId || prev.asaasSubscriptionId
+      } : null);
+    } catch (err: any) {
+      console.error("Erro ao sincronizar assinatura com Asaas:", err);
+      toast.error(err?.message || "Falha ao sincronizar com o Asaas.");
+    } finally {
+      setIsSyncingWithAsaas(false);
     }
   };
 
@@ -3570,11 +3597,32 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
                         {/* Asaas status banner */}
                         {!!(selectedSubDetail.asaasSubscriptionId || selectedSubDetail.asaasInvoiceId) && (
-                          <div className="p-3 bg-indigo-50/70 border border-indigo-150 rounded-xl flex items-start gap-2 text-[11px] text-indigo-900 leading-snug">
-                            <Zap size={14} className="text-indigo-600 shrink-0 mt-0.5" />
-                            <span>
-                              <strong>Espelhamento Asaas Ativo:</strong> Ao salvar, o Asaas atualizará o vencimento da assinatura e das faturas pendentes automaticamente.
-                            </span>
+                          <div className="p-3.5 bg-indigo-50/70 border border-indigo-150 rounded-xl space-y-2 text-[11px] text-indigo-900 leading-snug">
+                            <div className="flex items-start gap-2">
+                              <Zap size={14} className="text-indigo-600 shrink-0 mt-0.5" />
+                              <span>
+                                <strong>Espelhamento Asaas Ativo:</strong> Ao salvar, o Asaas atualizará o vencimento da assinatura e das faturas pendentes automaticamente.
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleSyncSubWithAsaas}
+                              disabled={isSyncingWithAsaas || isSavingSubDates}
+                              className="w-full mt-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                              title="Consultar no Asaas o próximo vencimento e status atualizados"
+                            >
+                              {isSyncingWithAsaas ? (
+                                <>
+                                  <Loader2 size={12} className="animate-spin" />
+                                  <span>Consultando Asaas...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCw size={12} />
+                                  <span>Puxar Próximo Vencimento do Asaas</span>
+                                </>
+                              )}
+                            </button>
                           </div>
                         )}
 

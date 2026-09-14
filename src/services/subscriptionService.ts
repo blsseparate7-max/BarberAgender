@@ -256,14 +256,21 @@ export const subscriptionService = {
 
   async updateSubscriptionDates(id: string, startDate: string, endDate: string) {
     const activeTenantId = getActiveTenantId();
+    const todayStr = new Date().toISOString().split('T')[0];
 
     // 1. Update directly in Firestore for instant UI reactivity
     const docRef = doc(db, SUBSCRIPTIONS_COLLECTION, id);
-    await updateDoc(docRef, {
+    const localUpdatePayload: any = {
       startDate,
       endDate,
       updatedAt: serverTimestamp()
-    });
+    };
+    if (endDate >= todayStr) {
+      localUpdatePayload.status = 'active';
+      localUpdatePayload.asaasPaymentStatus = 'received';
+    }
+
+    await updateDoc(docRef, localUpdatePayload);
 
     // 2. Call backend to mirror new dates with Asaas gateway
     try {
@@ -282,6 +289,28 @@ export const subscriptionService = {
     } catch (apiErr) {
       console.warn("Aviso ao espelhar datas no Asaas via backend:", apiErr);
       return { success: true, asaasSynced: false, message: "Datas da assinatura atualizadas com sucesso no sistema!" };
+    }
+  },
+
+  async syncSingleSubscription(id: string) {
+    const activeTenantId = getActiveTenantId();
+    try {
+      const response = await fetch('/api/saas/subscription/sync-single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptionId: id,
+          tenantId: activeTenantId
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Falha ao sincronizar com o Asaas.");
+      }
+      return data;
+    } catch (apiErr: any) {
+      console.error("Erro ao sincronizar assinatura com Asaas:", apiErr);
+      throw new Error(apiErr.message || "Falha na comunicação com o Asaas.");
     }
   },
 

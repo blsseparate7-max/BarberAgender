@@ -205,6 +205,12 @@ export function PortalSaaSAdmin() {
   const [pixQrCodeUrl, setPixQrCodeUrl] = useState('');
   const [savingPix, setSavingPix] = useState(false);
 
+  // Evolution API Global Settings States
+  const [evolutionUrl, setEvolutionUrl] = useState('');
+  const [evolutionGlobalKey, setEvolutionGlobalKey] = useState('');
+  const [hasEvolutionGlobalKey, setHasEvolutionGlobalKey] = useState(false);
+  const [savingEvolution, setSavingEvolution] = useState(false);
+
   // Edit Tenant Additional States
   const [editTenantPlanId, setEditTenantPlanId] = useState('');
   const [editTenantPlanName, setEditTenantPlanName] = useState('');
@@ -250,6 +256,16 @@ export function PortalSaaSAdmin() {
         setPixCity(platformSettings.pixCity || 'LONDRINA');
         setPixQrCodeUrl(platformSettings.qrCodeUrl || '');
       }
+
+      // Load Evolution API Global Config
+      fetch('/api/saas/evolution-config')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            if (data.evolutionUrl) setEvolutionUrl(data.evolutionUrl);
+            setHasEvolutionGlobalKey(data.hasGlobalKey);
+          }
+        }).catch(() => {});
     } catch (err: any) {
       console.error(err);
       toast.error('Erro ao carregar os dados administrativos.');
@@ -276,6 +292,36 @@ export function PortalSaaSAdmin() {
       toast.error(`Erro ao salvar Pix: ${err.message || err}`);
     } finally {
       setSavingPix(false);
+    }
+  };
+
+  const handleSaveEvolutionSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingEvolution(true);
+    const toastId = toast.loading('Salvando integração Evolution API...');
+    try {
+      const res = await fetch('/api/saas/evolution-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evolutionUrl,
+          globalKey: evolutionGlobalKey
+        })
+      });
+      const data = await res.json();
+      toast.dismiss(toastId);
+      if (res.ok && data.success) {
+        toast.success(data.message || "Configuração Evolution API salva!");
+        setHasEvolutionGlobalKey(true);
+        setEvolutionGlobalKey('');
+      } else {
+        toast.error(data.error || "Erro ao salvar Evolution API.");
+      }
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Erro ao comunicar com o servidor: ${err.message || err}`);
+    } finally {
+      setSavingEvolution(false);
     }
   };
 
@@ -1623,6 +1669,57 @@ export function PortalSaaSAdmin() {
                     Gateway Ativo
                   </span>
                 </div>
+              </div>
+
+              {/* Evolution API WhatsApp Global Server Configuration Card */}
+              <div className="bg-blue-50/40 border border-blue-200/60 rounded-[1.5rem] p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="text-blue-600" size={20} />
+                  <div>
+                    <h5 className="font-black text-slate-900 text-sm">Servidor Evolution API (Automação de WhatsApp Multi-Tenant)</h5>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Configure a URL do servidor Evolution API e a Chave de API Global. Cada barbearia poderá conectar a sua própria instância de WhatsApp no PortalAdmin via QR Code.
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSaveEvolutionSettings} className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                  <div className="sm:col-span-2 space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">URL do Servidor Evolution API</label>
+                    <input 
+                      type="url" 
+                      value={evolutionUrl}
+                      onChange={(e) => setEvolutionUrl(e.target.value)}
+                      placeholder="Ex: https://whatsapp.seusistema.com.br"
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Chave Global (Global API Key)</label>
+                    <input 
+                      type="password" 
+                      value={evolutionGlobalKey}
+                      onChange={(e) => setEvolutionGlobalKey(e.target.value)}
+                      placeholder={hasEvolutionGlobalKey ? "•••••••• (Chave Salva)" : "Cole a GLOBAL_KEY aqui"}
+                      className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div className="sm:col-span-3 flex items-center justify-between pt-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${hasEvolutionGlobalKey && evolutionUrl ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                      <span className="text-xs font-bold text-slate-600">
+                        Status do Servidor Evolution: {hasEvolutionGlobalKey && evolutionUrl ? 'Ativo e Configurado' : 'Aguardando Configuração'}
+                      </span>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={savingEvolution}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-black text-xs py-2.5 px-6 rounded-xl shadow-sm uppercase tracking-wider transition-all"
+                    >
+                      {savingEvolution ? 'Salvando...' : 'Salvar Servidor Evolution'}
+                    </button>
+                  </div>
+                </form>
               </div>
 
               {/* Plans List Table/Cards */}

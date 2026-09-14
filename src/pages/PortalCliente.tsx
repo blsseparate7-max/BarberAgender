@@ -145,7 +145,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPassword, setGuestPassword] = useState('');
   const [guestCreatedAppointment, setGuestCreatedAppointment] = useState<any | null>(null);
-  const [selectedShowcaseCategory, setSelectedShowcaseCategory] = useState<string>('all');
+  const [selectedShowcaseCategory, setSelectedShowcaseCategory] = useState<string>('popular');
 
   // Proximity & Geolocation helpers
   const handleRequestLocation = () => {
@@ -2093,6 +2093,11 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     {services.length > 0 ? (
                       <div className="space-y-6">
                         {(() => {
+                          const popularServices = services.filter(s => (s as any).destaque || (s as any).popular || (s as any).isPopular);
+                          const featuredServices = popularServices.length >= 2 
+                            ? popularServices 
+                            : services.slice(0, 5);
+
                           const catMap = services.reduce((acc, s) => {
                             const cat = s.categoria || 'Geral';
                             if (!acc[cat]) acc[cat] = [];
@@ -2105,102 +2110,168 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                           return (
                             <div className="space-y-6">
                               {/* Horizontal Category Selector Bar */}
-                              {catList.length > 1 && (
-                                <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedShowcaseCategory('all')}
-                                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-                                      selectedShowcaseCategory === 'all'
-                                        ? 'bg-slate-900 text-amber-400 shadow-md shadow-slate-900/10 scale-[1.02]'
-                                        : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
-                                    }`}
-                                  >
-                                    <span>✨ Todos</span>
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
-                                      selectedShowcaseCategory === 'all' ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-200 text-slate-600'
-                                    }`}>
-                                      {services.length}
-                                    </span>
-                                  </button>
+                              <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedShowcaseCategory('popular')}
+                                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                                    selectedShowcaseCategory === 'popular'
+                                      ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 scale-[1.02]'
+                                      : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
+                                  }`}
+                                >
+                                  <span>🔥 Mais Agendados</span>
+                                  <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
+                                    selectedShowcaseCategory === 'popular' ? 'bg-slate-950/15 text-slate-950' : 'bg-slate-200 text-slate-600'
+                                  }`}>
+                                    {featuredServices.length}
+                                  </span>
+                                </button>
 
-                                  {catList.map((catName) => {
-                                    const count = catMap[catName].length;
-                                    const isActive = selectedShowcaseCategory === catName;
-                                    return (
-                                      <button
-                                        key={`cat-pill-${catName}`}
-                                        type="button"
-                                        onClick={() => setSelectedShowcaseCategory(catName)}
-                                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-                                          isActive
-                                            ? 'bg-slate-900 text-amber-400 shadow-md shadow-slate-900/10 scale-[1.02]'
-                                            : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
-                                        }`}
-                                      >
-                                        <span>✂️ {catName}</span>
-                                        <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
-                                          isActive ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-200 text-slate-600'
-                                        }`}>
-                                          {count}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
+                                {catList.map((catName) => {
+                                  const count = catMap[catName].length;
+                                  const isActive = selectedShowcaseCategory === catName;
+                                  return (
+                                    <button
+                                      key={`cat-pill-${catName}`}
+                                      type="button"
+                                      onClick={() => setSelectedShowcaseCategory(catName)}
+                                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                                        isActive
+                                          ? 'bg-slate-900 text-amber-400 shadow-md shadow-slate-900/10 scale-[1.02]'
+                                          : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
+                                      }`}
+                                    >
+                                      <span>✂️ {catName}</span>
+                                      <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
+                                        isActive ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-200 text-slate-600'
+                                      }`}>
+                                        {count}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedShowcaseCategory('all')}
+                                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                                    selectedShowcaseCategory === 'all'
+                                      ? 'bg-slate-900 text-amber-400 shadow-md shadow-slate-900/10 scale-[1.02]'
+                                      : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
+                                  }`}
+                                >
+                                  <span>✨ Ver Todos</span>
+                                  <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
+                                    selectedShowcaseCategory === 'all' ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-200 text-slate-600'
+                                  }`}>
+                                    {services.length}
+                                  </span>
+                                </button>
+                              </div>
 
                               {/* Filtered Services Listing */}
                               <div className="space-y-8">
-                                {(Object.entries(catMap) as [string, Service[]][])
-                                  .filter(([catName]) => selectedShowcaseCategory === 'all' || selectedShowcaseCategory === catName)
-                                  .map(([categoryName, catServices]) => (
-                                    <div key={`category-group-${categoryName}`} className="space-y-4">
-                                      <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
-                                        <h4 className="text-xs font-black uppercase text-indigo-600 tracking-wider flex items-center gap-2">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                                          {categoryName}
-                                        </h4>
-                                        <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500 font-bold">
-                                          {catServices.length} {catServices.length === 1 ? 'serviço' : 'serviços'}
-                                        </span>
-                                      </div>
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {catServices.map((service, sIdx) => (
-                                          <div 
-                                            key={`showcase-svc-${service.id || sIdx}`}
-                                            className="p-4 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100/80 hover:border-slate-200 transition-all flex flex-col justify-between gap-3 group"
-                                          >
-                                            <div className="space-y-1">
-                                              <div className="flex items-center justify-between gap-2">
-                                                <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
-                                                <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap shadow-xs">
-                                                  R$ {Number(service.preco || 0).toFixed(2)}
-                                                </span>
-                                              </div>
-                                              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                                                {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
-                                              </p>
-                                            </div>
-                                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-2 border-t border-slate-100/60">
-                                              <span className="flex items-center gap-1"><Clock size={11} /> {service.duracao_minutos || service.duration || 30} min</span>
-                                              <button 
-                                                onClick={() => {
-                                                  setSelectedService(service);
-                                                  setSelectedServices([service]);
-                                                  setBookingStep(1); // Go choose professional
-                                                  setActiveTab('schedule');
-                                                }}
-                                                className="text-indigo-600 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-indigo-700 cursor-pointer"
-                                              >
-                                                Agendar este <ChevronRight size={10} />
-                                              </button>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
+                                {selectedShowcaseCategory === 'popular' ? (
+                                  <div className="space-y-4">
+                                    <div className="border-b border-amber-100 pb-2 flex items-center justify-between">
+                                      <h4 className="text-xs font-black uppercase text-amber-600 tracking-wider flex items-center gap-2">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                        🔥 Os Mais Agendados
+                                      </h4>
+                                      <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200/60 px-2 py-0.5 rounded-full font-bold">
+                                        Favoritos dos clientes
+                                      </span>
                                     </div>
-                                  ))}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                      {featuredServices.map((service, sIdx) => (
+                                        <div 
+                                          key={`showcase-featured-${service.id || sIdx}`}
+                                          className="p-4 bg-gradient-to-br from-amber-50/40 to-slate-50/50 hover:from-amber-50/70 hover:to-slate-50 rounded-2xl border border-amber-200/50 hover:border-amber-300 transition-all flex flex-col justify-between gap-3 group relative overflow-hidden"
+                                        >
+                                          <div className="space-y-1">
+                                            <div className="flex items-center justify-between gap-2">
+                                              <div className="flex items-center gap-1.5">
+                                                <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
+                                                <span className="text-[9px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded-md">Mais Pedido</span>
+                                              </div>
+                                              <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap shadow-xs">
+                                                R$ {Number(service.preco || 0).toFixed(2)}
+                                              </span>
+                                            </div>
+                                            <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                                              {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
+                                            </p>
+                                          </div>
+                                          <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-2 border-t border-slate-100/60">
+                                            <span className="flex items-center gap-1"><Clock size={11} /> {service.duracao_minutos || service.duration || 30} min</span>
+                                            <button 
+                                              onClick={() => {
+                                                setSelectedService(service);
+                                                setSelectedServices([service]);
+                                                setBookingStep(1); // Go choose professional
+                                                setActiveTab('schedule');
+                                              }}
+                                              className="text-amber-700 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-amber-800 cursor-pointer"
+                                            >
+                                              Agendar este <ChevronRight size={10} />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  (Object.entries(catMap) as [string, Service[]][])
+                                    .filter(([catName]) => selectedShowcaseCategory === 'all' || selectedShowcaseCategory === catName)
+                                    .map(([categoryName, catServices]) => (
+                                      <div key={`category-group-${categoryName}`} className="space-y-4">
+                                        <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
+                                          <h4 className="text-xs font-black uppercase text-indigo-600 tracking-wider flex items-center gap-2">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                                            {categoryName}
+                                          </h4>
+                                          <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500 font-bold">
+                                            {catServices.length} {catServices.length === 1 ? 'serviço' : 'serviços'}
+                                          </span>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                          {catServices.map((service, sIdx) => (
+                                            <div 
+                                              key={`showcase-svc-${service.id || sIdx}`}
+                                              className="p-4 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100/80 hover:border-slate-200 transition-all flex flex-col justify-between gap-3 group"
+                                            >
+                                              <div className="space-y-1">
+                                                <div className="flex items-center justify-between gap-2">
+                                                  <h4 className="text-xs font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{service.nome}</h4>
+                                                  <span className="text-xs font-black text-slate-900 bg-white border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap shadow-xs">
+                                                    R$ {Number(service.preco || 0).toFixed(2)}
+                                                  </span>
+                                                </div>
+                                                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                                                  {service.descricao || "Atendimento especializado realizado com produtos de alta qualidade."}
+                                                </p>
+                                              </div>
+                                              <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold pt-2 border-t border-slate-100/60">
+                                                <span className="flex items-center gap-1"><Clock size={11} /> {service.duracao_minutos || service.duration || 30} min</span>
+                                                <button 
+                                                  onClick={() => {
+                                                    setSelectedService(service);
+                                                    setSelectedServices([service]);
+                                                    setBookingStep(1); // Go choose professional
+                                                    setActiveTab('schedule');
+                                                  }}
+                                                  className="text-indigo-600 font-black uppercase hover:underline flex items-center gap-1 group-hover:text-indigo-700 cursor-pointer"
+                                                >
+                                                  Agendar este <ChevronRight size={10} />
+                                                </button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ))
+                                )}
                               </div>
                             </div>
                           );

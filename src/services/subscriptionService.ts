@@ -689,8 +689,8 @@ export const subscriptionService = {
     const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
     const subId = subscriptionRef.id;
 
-    const planAllowed = plan.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
-    const effectiveBillingType: 'PIX' | 'CREDIT_CARD' = data.billingType || (planAllowed.includes('CREDIT_CARD') && !planAllowed.includes('PIX') ? 'CREDIT_CARD' : 'PIX');
+    const planAllowed = plan.allowedPaymentMethods || ['CREDIT_CARD'];
+    const effectiveBillingType: 'PIX' | 'CREDIT_CARD' = data.billingType === 'PIX' ? 'PIX' : 'CREDIT_CARD';
 
     // Pre-save to Firestore FIRST so document exists with status 'pending' before webhook fires
     const subscriptionData: any = {

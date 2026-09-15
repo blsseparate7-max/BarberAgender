@@ -1750,7 +1750,7 @@ function encodeFirestoreFields(data: any): any {
         };
 
         const isRealCustomerId = customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_');
-        const selectedBillingType = (billingType === 'CREDIT_CARD' || billingType === 'PIX') ? billingType : 'PIX';
+        const selectedBillingType = (billingType === 'PIX') ? 'PIX' : 'CREDIT_CARD';
 
         // 1. If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
         if (selectedBillingType === 'CREDIT_CARD' && isRealCustomerId) {
@@ -1786,7 +1786,7 @@ function encodeFirestoreFields(data: any): any {
           }
         }
 
-        // 2. For PIX or single charge fallback: create ONE single charge with exact dueDate (D+0, no +3 offset, no premature next-month invoices)
+        // 2. Single charge fallback or direct payment creation with exact dueDate (D+0, no +3 offset)
         if ((!payData || payData?.errors) && isRealCustomerId) {
           const createSinglePayment = async () => {
             return fetchAsaasApi('/payments', {
@@ -1809,7 +1809,7 @@ function encodeFirestoreFields(data: any): any {
             payData = await createSinglePayment();
           }
 
-          // Safety check: ensure the created payment has the exact requested dueDate
+          // Safety check: ensure the created payment has the exact requested dueDate (today)
           if (payData && payData.id && String(payData.id).startsWith('pay_') && !String(payData.id).startsWith('pay_sandbox_')) {
             const createdDue = payData.dueDate ? String(payData.dueDate).split('T')[0] : '';
             if (createdDue && createdDue !== dueDateStr) {
@@ -1846,7 +1846,7 @@ function encodeFirestoreFields(data: any): any {
           }
         }
 
-        // If it's a subscription, retrieve the actual first payment to get its QR code or checkout link
+        // If it's a subscription, retrieve the actual first payment and align its dueDate to today (prevent +3 days offset)
         let paymentIdForPixOrLink = payData?.id;
         let invoiceUrl = payData?.invoiceUrl;
         let bankSlipUrl = payData?.bankSlipUrl;
@@ -1871,6 +1871,7 @@ function encodeFirestoreFields(data: any): any {
                     method: 'PUT',
                     body: JSON.stringify({ dueDate: dueDateStr })
                   });
+                  firstPayment.dueDate = dueDateStr;
                 } catch (alignErr) {
                   console.warn("[Subscription DueDate Align] Aviso ao alinhar data de vencimento no Asaas:", alignErr);
                 }
@@ -6297,31 +6298,46 @@ function encodeFirestoreFields(data: any): any {
           let newStartStr = todayStr;
           let newEndStr = '';
 
-          const payDueDate = payment?.dueDate ? String(payment.dueDate).split('T')[0] : null;
-          let baseDate = new Date();
+          const isInitialActivation = subData.status === 'pending' || !subData.lastRenewalDate;
 
-          if (payDueDate) {
-            baseDate = new Date(payDueDate + 'T12:00:00');
-            newStartStr = payDueDate;
-          } else if (subData.endDate) {
-            baseDate = new Date(subData.endDate + 'T12:00:00');
-            newStartStr = subData.endDate;
-          } else {
-            newStartStr = todayStr;
-          }
-
-          // If subscription is an object with nextDueDate greater than current payment dueDate
-          if (subscription && typeof subscription === 'object' && subscription.nextDueDate) {
-            const nextDueStr = String(subscription.nextDueDate).split('T')[0];
-            if (!payDueDate || nextDueStr > payDueDate) {
-              newEndStr = nextDueStr;
+          if (isInitialActivation) {
+            // For initial subscription creation, strictly respect contract startDate & exact 30-day / 1-month duration
+            newStartStr = subData.startDate || todayStr;
+            if (subData.endDate) {
+              newEndStr = subData.endDate;
+            } else {
+              const baseD = new Date(newStartStr + 'T12:00:00');
+              baseD.setMonth(baseD.getMonth() + 1);
+              newEndStr = baseD.toISOString().split('T')[0];
             }
-          }
+          } else {
+            // Renewal cycle for existing active subscription
+            const payDueDate = payment?.dueDate ? String(payment.dueDate).split('T')[0] : null;
+            let baseDate = new Date();
 
-          if (!newEndStr) {
-            const nextMonth = new Date(baseDate);
-            nextMonth.setMonth(nextMonth.getMonth() + 1);
-            newEndStr = nextMonth.toISOString().split('T')[0];
+            if (payDueDate && payDueDate > (subData.endDate || '')) {
+              newStartStr = subData.endDate || todayStr;
+              baseDate = new Date(newStartStr + 'T12:00:00');
+            } else if (subData.endDate) {
+              newStartStr = subData.endDate;
+              baseDate = new Date(subData.endDate + 'T12:00:00');
+            } else {
+              newStartStr = todayStr;
+              baseDate = new Date(todayStr + 'T12:00:00');
+            }
+
+            if (subscription && typeof subscription === 'object' && subscription.nextDueDate) {
+              const nextDueStr = String(subscription.nextDueDate).split('T')[0];
+              if (nextDueStr > newStartStr) {
+                newEndStr = nextDueStr;
+              }
+            }
+
+            if (!newEndStr) {
+              const nextMonth = new Date(baseDate);
+              nextMonth.setMonth(nextMonth.getMonth() + 1);
+              newEndStr = nextMonth.toISOString().split('T')[0];
+            }
           }
 
           console.log(`🔄 [ASAAS AUDIT] Confirmando pagamento & Ativando assinatura do cliente ${subData.cliente_name || 'Desconhecido'} (${subMatch.id}). Novo período: ${newStartStr} até ${newEndStr}`);

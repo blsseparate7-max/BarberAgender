@@ -83,7 +83,12 @@ export const AccountsPayableManager: React.FC<AccountsPayableManagerProps> = ({ 
 
   useEffect(() => {
     setLoading(true);
-    let q = query(collection(db, 'accounts_payable'), orderBy('dueDate', 'asc'));
+    const activeTenantId = getActiveTenantId();
+    let q = query(
+      collection(db, 'accounts_payable'), 
+      where('tenantId', '==', activeTenantId), 
+      orderBy('dueDate', 'asc')
+    );
     
     if (dateRange.start && dateRange.end) {
       q = query(q, where('dueDate', '>=', dateRange.start), where('dueDate', '<=', dateRange.end));

@@ -500,7 +500,80 @@ export const commissionService = {
     try {
       const advanceRef = doc(db, ADVANCES_COLLECTION, advanceId);
       const advSnap = await getDoc(advanceRef);
-      if (!advSnap.exists()) return;
+      if (!advSnap.exists()) {
+        // Fallback: If it's a financial_transaction, cascade-delete it
+        const txRef = doc(db, 'financial_transactions', advanceId);
+        const txSnap = await getDoc(txRef);
+        if (txSnap.exists()) {
+          const txData = txSnap.data();
+          await deleteDoc(txRef);
+          
+          // Delete matching accounts_payable if linked
+          const qPay = query(collection(db, 'accounts_payable'), where('transactionId', '==', advanceId));
+          const paySnap = await getDocs(qPay);
+          for (const d of paySnap.docs) {
+            await deleteDoc(d.ref);
+          }
+          
+          // Delete matching cash_movements if linked
+          const qMove = query(collection(db, 'cash_movements'), where('referencia_id', '==', advanceId));
+          const moveSnap = await getDocs(qMove);
+          for (const d of moveSnap.docs) {
+            try {
+              await cashService.removeMovement(d.id);
+            } catch {
+              await updateDoc(d.ref, {
+                is_deleted: true,
+                status: 'cancelado',
+                amount: 0,
+                cancel_reason: 'Vale excluído no módulo de comissões'
+              });
+            }
+          }
+          
+          // Also delete any professional_advance referencing this transaction_id
+          const qAdv = query(collection(db, ADVANCES_COLLECTION), where('transaction_id', '==', advanceId));
+          const advsSnap = await getDocs(qAdv);
+          for (const d of advsSnap.docs) {
+            await deleteDoc(d.ref);
+          }
+          return;
+        }
+
+        // Fallback: If it's a cash_movement, delete/cancel it
+        const moveRef = doc(db, 'cash_movements', advanceId);
+        const moveSnap = await getDoc(moveRef);
+        if (moveSnap.exists()) {
+          const moveData = moveSnap.data();
+          try {
+            await cashService.removeMovement(advanceId);
+          } catch {
+            await updateDoc(moveRef, {
+              is_deleted: true,
+              status: 'cancelado',
+              amount: 0,
+              cancel_reason: 'Vale excluído no módulo de comissões'
+            });
+          }
+          
+          // Check for matching financial_transaction linked to this cash movement
+          if (moveData.referencia_id) {
+            const txRef2 = doc(db, 'financial_transactions', moveData.referencia_id);
+            const txSnap2 = await getDoc(txRef2);
+            if (txSnap2.exists()) {
+              await deleteDoc(txRef2);
+            }
+            
+            const qAdv2 = query(collection(db, ADVANCES_COLLECTION), where('transaction_id', '==', moveData.referencia_id));
+            const advsSnap2 = await getDocs(qAdv2);
+            for (const d of advsSnap2.docs) {
+              await deleteDoc(d.ref);
+            }
+          }
+          return;
+        }
+        return;
+      }
       const advance = { id: advSnap.id, ...advSnap.data() } as ProfessionalAdvance;
       const activeTenant = advance.tenantId || getActiveTenantId();
 
@@ -632,11 +705,7 @@ export const commissionService = {
         const name = (adv.profissional_name || '').toLowerCase();
         const desc = (adv.description || '').toLowerCase();
         
-        // 1. Explicit check for Luiz Henrique R$ 3 and Moisés R$ 40
-        const isLuiz3 = adv.amount === 3 && (name.includes('luiz') || desc.includes('luiz') || adv.profissional_id === 'luiz' || adv.profissional_id === 'luiz_henrique');
-        const isMoises40 = adv.amount === 40 && (name.includes('mois') || desc.includes('mois'));
-
-        // 2. Check if transaction_id was set but no longer exists in financial_transactions
+        // 1. Check if transaction_id was set but no longer exists in financial_transactions
         let isOrphan = false;
         if (adv.transaction_id) {
           try {
@@ -647,7 +716,7 @@ export const commissionService = {
           } catch (_) {}
         }
 
-        if (isLuiz3 || isMoises40 || isOrphan) {
+        if (isOrphan) {
           console.log(`[Purge Vale] Deletando vale órfão ${docSnap.id}: R$ ${adv.amount} (${adv.profissional_name})`);
           await this.deleteAdvance(docSnap.id);
         }
@@ -656,29 +725,6 @@ export const commissionService = {
       // Also clean up any lingering cash_movements or accounts_payable with Luiz 3,00 or Moises 40,00
       try {
         const paySnap = await getDocs(query(collection(db, 'accounts_payable'), ...queryConstraints));
-        for (const pDoc of paySnap.docs) {
-          const p = pDoc.data();
-          const desc = (p.description || '').toLowerCase();
-          const sup = (p.supplier || '').toLowerCase();
-          if (
-            (p.amount === 3 && (desc.includes('luiz') || sup.includes('luiz'))) ||
-            (p.amount === 40 && (desc.includes('mois') || sup.includes('mois')))
-          ) {
-            await deleteDoc(pDoc.ref);
-          }
-        }
-
-        const moveSnap = await getDocs(query(collection(db, 'cash_movements'), ...queryConstraints));
-        for (const mDoc of moveSnap.docs) {
-          const m = mDoc.data();
-          const desc = (m.description || '').toLowerCase();
-          if (
-            (m.amount === 3 && desc.includes('luiz')) ||
-            (m.amount === 40 && desc.includes('mois'))
-          ) {
-            await deleteDoc(mDoc.ref);
-          }
-        }
       } catch (e) {
         console.warn("Aviso ao limpar resíduos adicionais:", e);
       }

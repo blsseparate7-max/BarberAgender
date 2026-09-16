@@ -51,6 +51,7 @@ import { ptBR } from 'date-fns/locale';
 import { useAuth } from '../contexts/AuthContext';
 import { subscriptionService } from '../services/subscriptionService';
 import { userService } from '../services/userService';
+import { getActiveTenantId } from '../services/tenantService';
 import { SubscriptionPlan, Subscription, SubscriptionStatus, UserProfile, Service, Product, SubscriptionDiscount } from '../types';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { DAYS_OF_WEEK_OPTIONS, formatAllowedDays, isDateAllowedForPlan } from '../utils/subscriptionDays';
@@ -377,10 +378,11 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const loadComissoesData = async () => {
     setLoadingUsages(true);
     try {
+      const activeTenant = getActiveTenantId();
       const [usages, b, runsSnap] = await Promise.all([
         subscriptionService.getAllUsageHistory(),
         userService.getAllBarbers(),
-        getDocs(collection(db, 'subscription_commission_runs'))
+        getDocs(query(collection(db, 'subscription_commission_runs'), where('tenantId', '==', activeTenant)))
       ]);
       setAllUsages(usages);
       setBarbeiros(b);
@@ -425,13 +427,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       }
 
       // Fetch Subscription plans, clients, and usage history/commission data
+      const activeTenant = getActiveTenantId();
       const [p, s, c, usages, b, runsSnap] = await Promise.all([
         subscriptionService.getPlans(),
         subscriptionService.getSubscriptions(profile?.tipo === 'cliente' ? user?.uid : undefined),
         canManage ? userService.getAllClients() : Promise.resolve([]),
         canManage ? subscriptionService.getAllUsageHistory() : Promise.resolve([]),
         canManage ? userService.getAllBarbers() : Promise.resolve([]),
-        canManage ? getDocs(collection(db, 'subscription_commission_runs')) : Promise.resolve({ forEach: () => {} } as any)
+        canManage ? getDocs(query(collection(db, 'subscription_commission_runs'), where('tenantId', '==', activeTenant))) : Promise.resolve({ forEach: () => {} } as any)
       ]);
       setPlans(p);
       setSubscriptions(s);
@@ -1700,6 +1703,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
         }));
 
       await setDoc(doc(db, 'subscription_commission_runs', currentRunKey), {
+        tenantId: getActiveTenantId(),
         releasedAt: new Date().toISOString(),
         releasedBy: profile?.nome || 'Administrador',
         totalAmount: Number(totalCommissionsToRelease.toFixed(2)),

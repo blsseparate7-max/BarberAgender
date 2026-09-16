@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   collection, 
   query, 
@@ -7,10 +7,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getActiveTenantId } from '../../services/tenantService';
+import { useAuth } from '../../contexts/AuthContext';
 import { 
   FileText, 
   Printer, 
-  Download, 
   Calendar, 
   TrendingUp, 
   TrendingDown, 
@@ -27,10 +27,20 @@ import {
   Briefcase,
   Layers,
   ChevronRight,
-  Users
+  ChevronDown,
+  Users,
+  Plus,
+  Minus,
+  Copy,
+  Check,
+  Send,
+  Building2,
+  Filter,
+  ExternalLink,
+  Sparkles
 } from 'lucide-react';
-import { motion } from 'motion/react';
-import { format, startOfMonth, endOfMonth, parseISO, subMonths } from 'date-fns';
+import { motion, AnimatePresence } from 'motion/react';
+import { format, endOfMonth, parseISO, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 
@@ -73,13 +83,7 @@ interface MonthData {
       commission: number;
       payouts: number;
       pending: number;
-      items?: Array<{
-        date: string;
-        description: string;
-        type: 'servico' | 'produto';
-        baseValue: number;
-        commissionValue: number;
-      }>;
+      serviceCount: number;
     }
   };
 
@@ -91,24 +95,68 @@ interface MonthData {
 
 export function FechamentoMes() {
   const currentTenantId = getActiveTenantId();
+  const { profile } = useAuth();
   
   // Selected Months
   const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), 'yyyy-MM'));
   const [compareMonth, setCompareMonth] = useState<string>(format(subMonths(new Date(), 1), 'yyyy-MM'));
   const [showComparison, setShowComparison] = useState<boolean>(true);
   
-  // Navigation Tabs and expanded items
-  const [activeTab, setActiveTab] = useState<'kpis' | 'professionals' | 'costs' | 'accounting'>('kpis');
-  const [expandedBarber, setExpandedBarber] = useState<string | null>(null);
+  // 3 Sub-tabs: 'dre' (DRE & Balanço Geral), 'equipe' (Produção da Equipe), 'fiscal' (Fiscal & Contabilidade)
+  const [activeTab, setActiveTab] = useState<'dre' | 'equipe' | 'fiscal'>('dre');
+
+  // Filter for Team Tab (Select Barbeiro)
+  const [selectedBarberFilter, setSelectedBarberFilter] = useState<string>('all');
+
+  // DRE Accordion state (expand with + or collapse with -)
+  const [dreExpanded, setDreExpanded] = useState<{
+    receitas: boolean;
+    comissoes: boolean;
+    operacionais: boolean;
+    compras: boolean;
+    sangrias: boolean;
+  }>({
+    receitas: true,
+    comissoes: true,
+    operacionais: true,
+    compras: false,
+    sangrias: false
+  });
+
+  const toggleDreSection = (key: keyof typeof dreExpanded) => {
+    setDreExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleAllDre = (expand: boolean) => {
+    setDreExpanded({
+      receitas: expand,
+      comissoes: expand,
+      operacionais: expand,
+      compras: expand,
+      sangrias: expand
+    });
+  };
   
   const [loading, setLoading] = useState<boolean>(true);
   const [dataA, setDataA] = useState<MonthData | null>(null);
   const [dataB, setDataB] = useState<MonthData | null>(null);
 
-  // Accounting Profile state (Optional for export)
+  // Accounting Profile state
   const [barberShopName, setBarberShopName] = useState<string>('Barbearia Real');
   const [cnpj, setCnpj] = useState<string>('');
   const [accountantEmail, setAccountantEmail] = useState<string>('');
+  const [copiedWhatsapp, setCopiedWhatsapp] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (profile) {
+      if (profile.nome_barbearia || profile.nome) {
+        setBarberShopName(profile.nome_barbearia || profile.nome || 'BarberElite Pro');
+      }
+      if (profile.cnpj) {
+        setCnpj(profile.cnpj);
+      }
+    }
+  }, [profile]);
 
   useEffect(() => {
     loadAllData();
@@ -200,7 +248,6 @@ export function FechamentoMes() {
         } else if (desc.includes('fiado') || desc.includes('débito') || desc.includes('dívida') || t.isDebtPayment || category.includes('fiado')) {
           metrics.debtPaymentsRevenue += amount;
         } else {
-          // Fallback guess based on method/comanda link
           if (t.comandaId) {
             metrics.servicesRevenue += amount;
           } else {
@@ -208,7 +255,7 @@ export function FechamentoMes() {
           }
         }
 
-        // Means of Payment (Consolidation for accountant)
+        // Means of Payment
         const method = (t.paymentMethod || '').toLowerCase();
         if (method.includes('pix')) {
           metrics.byPaymentMethod.pix += amount;
@@ -221,7 +268,7 @@ export function FechamentoMes() {
         } else if (method === 'fiado' || method === 'saldo' || method === 'cliente_saldo') {
           metrics.byPaymentMethod.fiado += amount;
         } else if (method.includes('online') || method.includes('asaas')) {
-          metrics.byPaymentMethod.pix += amount; // Online standard payment
+          metrics.byPaymentMethod.pix += amount;
         } else {
           metrics.byPaymentMethod.outros += amount;
         }
@@ -237,7 +284,7 @@ export function FechamentoMes() {
 
         if (category.includes('compra') || category.includes('estoque') || desc.includes('produto') || desc.includes('fornecedor')) {
           metrics.productPurchases += amount;
-        } else if (category.includes('operacion') || category.includes('aluguel') || category.includes('luz') || category.includes('agua') || category.includes('água')) {
+        } else if (category.includes('operacion') || category.includes('aluguel') || category.includes('luz') || category.includes('agua') || category.includes('água') || category.includes('internet')) {
           metrics.operationalExpenses += amount;
         } else {
           metrics.otherExpenses += amount;
@@ -251,11 +298,10 @@ export function FechamentoMes() {
       }
     });
 
-    // Payables (ensure unpaid accounts are shown as open obligations or paid ones are verified)
+    // Payables (check paid accounts not already tracked)
     payables.forEach(p => {
       const amount = Number(p.amount || 0);
       if (p.status === 'paid') {
-        // If already paid and NOT in transactions (to avoid double counting), check category
         const cat = (p.category || 'Outros').toLowerCase();
         if (cat.includes('operacion') || cat.includes('aluguel') || cat.includes('luz')) {
           metrics.operationalExpenses += amount;
@@ -267,7 +313,7 @@ export function FechamentoMes() {
       }
     });
 
-    // Commissions Generated
+    // Commissions Generated & Barber Stats
     commissions.forEach(c => {
       const val = Number(c.commission_value || 0);
       metrics.commissionsGenerated += val;
@@ -282,7 +328,7 @@ export function FechamentoMes() {
             commission: 0,
             payouts: 0,
             pending: 0,
-            items: [] as any[]
+            serviceCount: 0
           };
         }
         metrics.barberStats[barberId].commission += val;
@@ -295,15 +341,7 @@ export function FechamentoMes() {
         } else {
           metrics.barberStats[barberId].pending += val;
         }
-        
-        // Push detailed commission item for expand button
-        metrics.barberStats[barberId].items.push({
-          description: c.description || c.service_name || (c.commission_type === 'produto' ? 'Venda de Produto' : 'Serviço prestado'),
-          baseValue: baseVal,
-          commissionValue: val,
-          date: c.date,
-          type: c.commission_type || 'servico'
-        });
+        metrics.barberStats[barberId].serviceCount += 1;
       }
     });
 
@@ -319,8 +357,7 @@ export function FechamentoMes() {
       }
     });
 
-    // In a multi-tenant setup, sometimes we want a robust estimate for Net Profit:
-    // Net Profit = Gross Revenue - Total Expenses - Commissions Generated (since commissions are operational expenses)
+    // Net Profit = Gross Revenue - Total Expenses - Commissions Generated
     metrics.netProfit = metrics.grossRevenue - metrics.totalExpenses - metrics.commissionsGenerated;
 
     return metrics;
@@ -354,16 +391,8 @@ export function FechamentoMes() {
     };
   };
 
-  const handleSendToAccountant = () => {
-    if (!accountantEmail) {
-      toast.error("Por favor, digite o e-mail do seu contador para prosseguir.");
-      return;
-    }
-    toast.success(`Relatório de fechamento consolidado enviado com sucesso para ${accountantEmail}!`);
-  };
-
   const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
   };
 
   const getMonthName = (monthStr: string) => {
@@ -372,41 +401,126 @@ export function FechamentoMes() {
     return format(date, 'MMMM / yyyy', { locale: ptBR });
   };
 
+  // Team computations
+  const barbersList = useMemo(() => {
+    if (!dataA) return [];
+    const list = Object.values(dataA.barberStats) as Array<MonthData['barberStats'][string]>;
+    return list.sort((a, b) => b.production - a.production);
+  }, [dataA]);
+
+  const filteredBarbers = useMemo(() => {
+    if (selectedBarberFilter === 'all') return barbersList;
+    return barbersList.filter(b => b.id === selectedBarberFilter);
+  }, [barbersList, selectedBarberFilter]);
+
+  const topBarber = barbersList.length > 0 ? barbersList[0] : null;
+  const totalBarbersCount = barbersList.length;
+  const avgProductionPerBarber = totalBarbersCount > 0 && dataA 
+    ? (barbersList.reduce((acc, b) => acc + b.production, 0) / totalBarbersCount) 
+    : 0;
+  const totalRetainedByShop = barbersList.reduce((acc, b) => acc + Math.max(0, b.production - b.commission), 0);
+
+  // Fiscal WhatsApp Message generator
+  const getFiscalWhatsAppMessage = () => {
+    if (!dataA) return '';
+    const electronicTotal = (dataA.byPaymentMethod.credito + dataA.byPaymentMethod.debito + dataA.byPaymentMethod.pix);
+    return `*RELATÓRIO FISCAL & CONTÁBIL - ${getMonthName(dataA.monthStr).toUpperCase()}*\n` +
+      `*Estabelecimento:* ${barberShopName}\n` +
+      (cnpj ? `*CNPJ:* ${cnpj}\n` : '') +
+      `*Emissão:* ${new Date().toLocaleDateString('pt-BR')}\n\n` +
+      `=========================================\n` +
+      `*1. DEMONSTRATIVO DE RECEITAS (BRUTO)*\n` +
+      `• *Serviços Prestados (NFS-e):* ${formatCurrency(dataA.servicesRevenue)}\n` +
+      `• *Venda de Produtos (NFC-e):* ${formatCurrency(dataA.productsRevenue)}\n` +
+      `• *Clubes & Assinaturas:* ${formatCurrency(dataA.subscriptionsRevenue)}\n` +
+      `• *Quitações de Fiado:* ${formatCurrency(dataA.debtPaymentsRevenue)}\n` +
+      `• *Outros Recebimentos:* ${formatCurrency(dataA.otherRevenue)}\n` +
+      `*FATURAMENTO BRUTO TOTAL:* ${formatCurrency(dataA.grossRevenue)}\n\n` +
+      `=========================================\n` +
+      `*2. ENTRADAS POR MEIO ELETRÔNICO (RECEITA/SEFAZ)*\n` +
+      `• *Cartão de Crédito:* ${formatCurrency(dataA.byPaymentMethod.credito)}\n` +
+      `• *Cartão de Débito:* ${formatCurrency(dataA.byPaymentMethod.debito)}\n` +
+      `• *Pix:* ${formatCurrency(dataA.byPaymentMethod.pix)}\n` +
+      `*TOTAL MEIOS ELETRÔNICOS:* ${formatCurrency(electronicTotal)}\n` +
+      `• *Dinheiro em Espécie:* ${formatCurrency(dataA.byPaymentMethod.dinheiro)}\n\n` +
+      `=========================================\n` +
+      `*3. REPASSES E SAÍDAS OPERACIONAIS*\n` +
+      `• *Comissões Repassadas (Equipe):* ${formatCurrency(dataA.commissionsGenerated)}\n` +
+      `• *Despesas Operacionais (Aluguel/Luz/Água):* ${formatCurrency(dataA.operationalExpenses)}\n` +
+      `• *Compras de Estoque / Insumos:* ${formatCurrency(dataA.productPurchases)}\n` +
+      `• *Sangrias de Caixa:* ${formatCurrency(dataA.sangriaExpenses)}\n` +
+      `*TOTAL DE SAÍDAS:* ${formatCurrency(dataA.totalExpenses + dataA.commissionsGenerated)}\n\n` +
+      `*RESULTADO LÍQUIDO DO MÊS:* ${formatCurrency(dataA.netProfit)}\n\n` +
+      `_Gerado com precisão pelo módulo de Fechamento BarberElite Pro._`;
+  };
+
+  const handleCopyFiscalWhatsApp = () => {
+    const text = getFiscalWhatsAppMessage();
+    navigator.clipboard.writeText(text);
+    setCopiedWhatsapp(true);
+    toast.success("Resumo fiscal formatado copiado com sucesso!");
+    setTimeout(() => setCopiedWhatsapp(false), 3000);
+  };
+
+  const handleOpenWhatsApp = () => {
+    const text = encodeURIComponent(getFiscalWhatsAppMessage());
+    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
+  };
+
+  const handleSendToAccountant = () => {
+    if (!accountantEmail) {
+      toast.error("Por favor, digite o e-mail do seu contador para prosseguir.");
+      return;
+    }
+    toast.success(`Relatório de fechamento consolidado enviado com sucesso para ${accountantEmail}!`);
+  };
+
+  // Electronic & Physical calculations for fiscal
+  const electronicTotal = dataA ? (dataA.byPaymentMethod.credito + dataA.byPaymentMethod.debito + dataA.byPaymentMethod.pix) : 0;
+  const grossTotal = dataA ? dataA.grossRevenue : 1;
+  const netMarginPct = dataA && dataA.grossRevenue > 0 ? ((dataA.netProfit / dataA.grossRevenue) * 100) : 0;
+  const commissionPct = dataA && dataA.grossRevenue > 0 ? ((dataA.commissionsGenerated / dataA.grossRevenue) * 100) : 0;
+
   return (
-    <div className="space-y-8" id="fechamento-mes-tab-wrapper">
+    <div className="space-y-6" id="fechamento-mes-tab-wrapper">
       
-      {/* 1. Header & Controls */}
-      <div className="bg-surface border border-border p-6 rounded-[2rem] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6" id="closure-controls-card">
-        <div className="space-y-2">
+      {/* 1. Header & Controls Card */}
+      <div className="bg-surface border border-border p-5 md:p-6 rounded-3xl shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-5" id="closure-controls-card">
+        <div className="space-y-1">
           <div className="flex items-center gap-2 text-primary font-bold">
-            <Layers className="text-accent" size={20} />
-            <h2 className="text-xl font-black tracking-tight">Painel de Fechamento Contábil</h2>
+            <div className="p-2 rounded-xl bg-accent/10 text-accent">
+              <Layers size={20} />
+            </div>
+            <div>
+              <h2 className="text-xl font-black tracking-tight">Fechamento do Mês</h2>
+              <p className="text-xs text-muted font-medium">Balanço executivo, desempenho dos barbeiros e fechamento fiscal contábil.</p>
+            </div>
           </div>
-          <p className="text-xs text-muted font-semibold uppercase tracking-wider">Feche as contas do mês, compare com o mês anterior e prepare relatórios simplificados para o seu contador.</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-black uppercase text-muted tracking-wider">Mês Base:</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2">
+            <Calendar size={14} className="text-muted" />
+            <span className="text-[11px] font-black uppercase text-muted tracking-wider">Mês:</span>
             <input 
               id="closure-month-select"
               type="month"
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none focus:border-accent"
+              className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
               <input 
                 id="closure-compare-toggle"
                 type="checkbox"
                 checked={showComparison}
                 onChange={(e) => setShowComparison(e.target.checked)}
-                className="w-4 h-4 rounded text-accent border-slate-300 focus:ring-accent"
+                className="w-3.5 h-3.5 rounded text-accent border-slate-300 focus:ring-accent"
               />
-              <span className="text-xs font-black uppercase text-muted tracking-wider">Comparar com:</span>
+              <span className="text-[11px] font-black uppercase text-muted tracking-wider">Comparar:</span>
             </label>
             <input 
               id="closure-compare-month-select"
@@ -414,630 +528,809 @@ export function FechamentoMes() {
               value={compareMonth}
               disabled={!showComparison}
               onChange={(e) => setCompareMonth(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary outline-none focus:border-accent disabled:opacity-50"
+              className="bg-transparent text-xs font-bold text-primary outline-none disabled:opacity-40 cursor-pointer"
             />
           </div>
 
           <button
             id="closure-print-btn"
             onClick={() => window.print()}
-            className="flex items-center justify-center gap-2 bg-primary text-white px-5 py-2.5 rounded-xl font-bold text-xs hover:bg-slate-800 transition-all shadow-md active:scale-95 uppercase tracking-wider"
+            className="flex items-center justify-center gap-2 bg-primary text-white px-4 py-2.5 rounded-2xl font-bold text-xs hover:bg-slate-800 transition-all shadow-sm active:scale-95 uppercase tracking-wider"
           >
             <Printer size={14} />
-            <span>Imprimir Fechamento</span>
+            <span>Imprimir</span>
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-24 gap-4" id="closure-loading-spinner">
-          <Clock className="animate-spin text-accent" size={48} />
-          <p className="text-[10px] font-black text-muted uppercase tracking-[0.3em] animate-pulse">Consolidando DRE e movimentações do fechamento...</p>
+        <div className="flex flex-col items-center justify-center py-24 gap-4 bg-surface border border-border rounded-3xl" id="closure-loading-spinner">
+          <Clock className="animate-spin text-accent" size={40} />
+          <p className="text-xs font-bold text-muted uppercase tracking-widest animate-pulse">Consolidando DRE e fechamento do mês...</p>
         </div>
       ) : (
-        <div className="space-y-8" id="closure-main-content">
+        <div className="space-y-6" id="closure-main-content">
           
-          {/* Horizontal Navigation Menu */}
-          <div className="flex border-b border-slate-200 gap-4 overflow-x-auto pb-1" id="closure-tabs-navigation">
+          {/* Sub-Tabs: 3 Abas Intuitivas, Clean e Diretas */}
+          <div className="flex items-center p-1.5 bg-slate-100/80 border border-slate-200 rounded-2xl gap-1 overflow-x-auto" id="closure-tabs-navigation">
             <button 
-              onClick={() => setActiveTab('kpis')} 
-              className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 whitespace-nowrap transition-all ${
-                activeTab === 'kpis' ? 'border-accent text-primary' : 'border-transparent text-muted hover:text-primary'
+              id="tab-closure-dre"
+              onClick={() => setActiveTab('dre')} 
+              className={`flex items-center gap-2 px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all whitespace-nowrap ${
+                activeTab === 'dre' 
+                  ? 'bg-white text-primary shadow-sm border border-slate-200/60' 
+                  : 'text-muted hover:text-primary hover:bg-white/50'
               }`}
             >
-              📊 Resumo Executivo
+              <TrendingUp size={16} className={activeTab === 'dre' ? 'text-accent' : 'text-muted'} />
+              <span>📊 DRE & Balanço Geral</span>
             </button>
             <button 
-              onClick={() => setActiveTab('professionals')} 
-              className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 whitespace-nowrap transition-all ${
-                activeTab === 'professionals' ? 'border-accent text-primary' : 'border-transparent text-muted hover:text-primary'
+              id="tab-closure-equipe"
+              onClick={() => setActiveTab('equipe')} 
+              className={`flex items-center gap-2 px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all whitespace-nowrap ${
+                activeTab === 'equipe' 
+                  ? 'bg-white text-primary shadow-sm border border-slate-200/60' 
+                  : 'text-muted hover:text-primary hover:bg-white/50'
               }`}
             >
-              👥 Equipe & Comissões
+              <Scissors size={16} className={activeTab === 'equipe' ? 'text-sky-500' : 'text-muted'} />
+              <span>💈 Produção da Equipe</span>
             </button>
             <button 
-              onClick={() => setActiveTab('costs')} 
-              className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 whitespace-nowrap transition-all ${
-                activeTab === 'costs' ? 'border-accent text-primary' : 'border-transparent text-muted hover:text-primary'
+              id="tab-closure-fiscal"
+              onClick={() => setActiveTab('fiscal')} 
+              className={`flex items-center gap-2 px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all whitespace-nowrap ${
+                activeTab === 'fiscal' 
+                  ? 'bg-white text-primary shadow-sm border border-slate-200/60' 
+                  : 'text-muted hover:text-primary hover:bg-white/50'
               }`}
             >
-              💸 Custos & Despesas
-            </button>
-            <button 
-              onClick={() => setActiveTab('accounting')} 
-              className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 whitespace-nowrap transition-all ${
-                activeTab === 'accounting' ? 'border-accent text-primary' : 'border-transparent text-muted hover:text-primary'
-              }`}
-            >
-              💼 Contabilidade & Fiscal
+              <FileText size={16} className={activeTab === 'fiscal' ? 'text-indigo-500' : 'text-muted'} />
+              <span>💼 Fiscal & Contabilidade</span>
             </button>
           </div>
 
-          {/* Active Tab Screen */}
-          <div className="space-y-8 print:block">
-            
-            {activeTab === 'kpis' && (
-              <div className="space-y-8 animate-fade-in">
-                {/* Key KPI comparison Row */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6" id="closure-kpis-grid">
-                  
-                  {/* KPI 1: Faturamento Bruto */}
-                  <div className="bg-surface border border-border p-6 rounded-3xl relative overflow-hidden flex flex-col justify-between min-h-[140px] shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">Faturamento Bruto</span>
-                      <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
-                        <DollarSign size={16} />
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      <div className="text-2xl font-black text-primary">
-                        {dataA ? formatCurrency(dataA.grossRevenue) : 'R$ 0,00'}
-                      </div>
-                      {showComparison && dataA && dataB && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          {calculateChange(dataA.grossRevenue, dataB.grossRevenue).positive ? (
-                            <ArrowUpRight size={14} className="text-emerald-500" />
-                          ) : (
-                            <ArrowDownRight size={14} className="text-rose-500" />
-                          )}
-                          <span className={`text-[10px] font-black uppercase ${
-                            calculateChange(dataA.grossRevenue, dataB.grossRevenue).positive ? 'text-emerald-500' : 'text-rose-500'
-                          }`}>
-                            {calculateChange(dataA.grossRevenue, dataB.grossRevenue).label} vs mês ant.
-                          </span>
-                        </div>
-                      )}
+          {/* TAB 1: 📊 DRE & Balanço Geral */}
+          {activeTab === 'dre' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              {/* 4 Hero Cards Executivos */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="closure-hero-cards">
+                
+                {/* 1. Faturamento Bruto */}
+                <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-muted uppercase tracking-wider">Faturamento Bruto</span>
+                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                      <DollarSign size={16} />
                     </div>
                   </div>
-
-                  {/* KPI 2: Despesas Consolidadas */}
-                  <div className="bg-surface border border-border p-6 rounded-3xl relative overflow-hidden flex flex-col justify-between min-h-[140px] shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">Despesas Operacionais</span>
-                      <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
-                        <TrendingDown size={16} />
-                      </div>
+                  <div className="mt-3">
+                    <div className="text-2xl font-black text-primary">
+                      {dataA ? formatCurrency(dataA.grossRevenue) : 'R$ 0,00'}
                     </div>
-                    <div className="mt-4">
-                      <div className="text-2xl font-black text-primary">
-                        {dataA ? formatCurrency(dataA.totalExpenses) : 'R$ 0,00'}
-                      </div>
-                      {showComparison && dataA && dataB && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          {!calculateChange(dataA.totalExpenses, dataB.totalExpenses).positive ? (
-                            <ArrowDownRight size={14} className="text-emerald-500" />
-                          ) : (
-                            <ArrowUpRight size={14} className="text-rose-500" />
-                          )}
-                          <span className={`text-[10px] font-black uppercase ${
-                            !calculateChange(dataA.totalExpenses, dataB.totalExpenses).positive ? 'text-emerald-500' : 'text-rose-500'
-                          }`}>
-                            {calculateChange(dataA.totalExpenses, dataB.totalExpenses).label} vs mês ant.
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* KPI 3: Comissões Geradas */}
-                  <div className="bg-surface border border-border p-6 rounded-3xl relative overflow-hidden flex flex-col justify-between min-h-[140px] shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">Comissões de Equipe</span>
-                      <div className="p-2 rounded-xl bg-sky-50 text-sky-600">
-                        <Scissors size={16} />
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      <div className="text-2xl font-black text-primary">
-                        {dataA ? formatCurrency(dataA.commissionsGenerated) : 'R$ 0,00'}
-                      </div>
-                      {showComparison && dataA && dataB && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          {calculateChange(dataA.commissionsGenerated, dataB.commissionsGenerated).positive ? (
-                            <ArrowUpRight size={14} className="text-sky-500" />
-                          ) : (
-                            <ArrowDownRight size={14} className="text-rose-500" />
-                          )}
-                          <span className={`text-[10px] font-black uppercase ${
-                            calculateChange(dataA.commissionsGenerated, dataB.commissionsGenerated).positive ? 'text-sky-500' : 'text-rose-500'
-                          }`}>
-                            {calculateChange(dataA.commissionsGenerated, dataB.commissionsGenerated).label} vs mês ant.
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* KPI 4: Resultado Líquido */}
-                  <div className={`bg-surface border border-border p-6 rounded-3xl relative overflow-hidden flex flex-col justify-between min-h-[140px] shadow-sm ${
-                    dataA && dataA.netProfit >= 0 ? 'border-emerald-100 bg-emerald-50/5' : 'border-rose-100 bg-rose-50/5'
-                  }`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">Lucro Líquido Real</span>
-                      <div className={`p-2 rounded-xl ${
-                        dataA && dataA.netProfit >= 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
-                      }`}>
-                        <TrendingUp size={16} />
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      <div className={`text-2xl font-black ${
-                        dataA && dataA.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                      }`}>
-                        {dataA ? formatCurrency(dataA.netProfit) : 'R$ 0,00'}
-                      </div>
-                      {showComparison && dataA && dataB && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          {calculateChange(dataA.netProfit, dataB.netProfit).positive ? (
-                            <ArrowUpRight size={14} className="text-emerald-500" />
-                          ) : (
-                            <ArrowDownRight size={14} className="text-rose-500" />
-                          )}
-                          <span className={`text-[10px] font-black uppercase ${
-                            calculateChange(dataA.netProfit, dataB.netProfit).positive ? 'text-emerald-500' : 'text-rose-500'
-                          }`}>
-                            {calculateChange(dataA.netProfit, dataB.netProfit).label} vs mês ant.
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* Sub KPI Row: Ticket Médio and Fiado Lançado */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6" id="closure-sub-metrics-grid">
-                  
-                  {/* KPI 5: Ticket Médio */}
-                  <div className="bg-surface border border-border p-6 rounded-3xl relative overflow-hidden flex flex-col justify-between min-h-[140px] shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">Ticket Médio por Comanda</span>
-                      <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
-                        <Percent size={16} />
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      <div className="text-2xl font-black text-primary">
-                        {dataA ? formatCurrency(dataA.grossRevenue / (dataA.totalComandasCount || 1)) : 'R$ 0,00'}
-                      </div>
-                      <p className="text-[10px] text-muted font-bold uppercase mt-1">Calculado sobre {dataA ? dataA.totalComandasCount : 0} comandas finalizadas</p>
-                    </div>
-                  </div>
-
-                  {/* KPI 6: Fiado Gerado */}
-                  <div className="bg-surface border border-border p-6 rounded-3xl relative overflow-hidden flex flex-col justify-between min-h-[140px] shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-muted uppercase tracking-wider">Fiado Gerado no Mês</span>
-                      <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
-                        <AlertCircle size={16} />
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      <div className="text-2xl font-black text-amber-700">
-                        {dataA ? formatCurrency(dataA.debtsCreated) : 'R$ 0,00'}
-                      </div>
-                      <p className="text-[10px] text-muted font-bold uppercase mt-1">Valores com pagamento pendente de clientes</p>
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* Detailed Side-by-Side Financial breakdown */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8" id="closure-breakdowns-row">
-                  
-                  {/* Left side: Revenues */}
-                  <div className="bg-surface border border-border p-6 rounded-[2rem] shadow-sm space-y-6">
-                    <div className="border-b border-slate-100 pb-4">
-                      <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
-                        <TrendingUp className="text-emerald-500" size={18} />
-                        <span>Origem do Faturamento</span>
-                      </h3>
-                    </div>
-
-                    {dataA && (
-                      <div className="space-y-4">
-                        {/* Services */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs font-bold text-primary">
-                            <span>Cortes & Serviços</span>
-                            <span>{formatCurrency(dataA.servicesRevenue)}</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                            <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${(dataA.servicesRevenue / (dataA.grossRevenue || 1)) * 100}%` }} />
-                          </div>
-                        </div>
-
-                        {/* Products */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs font-bold text-primary">
-                            <span>Venda de Produtos</span>
-                            <span>{formatCurrency(dataA.productsRevenue)}</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                            <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${(dataA.productsRevenue / (dataA.grossRevenue || 1)) * 100}%` }} />
-                          </div>
-                        </div>
-
-                        {/* Subscriptions */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs font-bold text-primary">
-                            <span>Assinaturas & Clubes</span>
-                            <span>{formatCurrency(dataA.subscriptionsRevenue)}</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                            <div className="bg-purple-500 h-full rounded-full" style={{ width: `${(dataA.subscriptionsRevenue / (dataA.grossRevenue || 1)) * 100}%` }} />
-                          </div>
-                        </div>
-
-                        {/* Debt payoff */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs font-bold text-primary">
-                            <span>Pagamentos de Fiado</span>
-                            <span>{formatCurrency(dataA.debtPaymentsRevenue)}</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                            <div className="bg-amber-500 h-full rounded-full" style={{ width: `${(dataA.debtPaymentsRevenue / (dataA.grossRevenue || 1)) * 100}%` }} />
-                          </div>
-                        </div>
-
-                        {/* Other */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-xs font-bold text-primary">
-                            <span>Outros Lançamentos</span>
-                            <span>{formatCurrency(dataA.otherRevenue)}</span>
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                            <div className="bg-slate-400 h-full rounded-full" style={{ width: `${(dataA.otherRevenue / (dataA.grossRevenue || 1)) * 100}%` }} />
-                          </div>
-                        </div>
+                    {showComparison && dataA && dataB && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        {calculateChange(dataA.grossRevenue, dataB.grossRevenue).positive ? (
+                          <ArrowUpRight size={13} className="text-emerald-500" />
+                        ) : (
+                          <ArrowDownRight size={13} className="text-rose-500" />
+                        )}
+                        <span className={`text-[10px] font-black uppercase ${
+                          calculateChange(dataA.grossRevenue, dataB.grossRevenue).positive ? 'text-emerald-500' : 'text-rose-500'
+                        }`}>
+                          {calculateChange(dataA.grossRevenue, dataB.grossRevenue).label} vs mês ant.
+                        </span>
                       </div>
                     )}
                   </div>
+                </div>
 
-                  {/* Right side: Means of Payment Breakdown */}
-                  <div className="bg-surface border border-border p-6 rounded-[2rem] shadow-sm space-y-6">
-                    <div className="border-b border-slate-100 pb-4">
-                      <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
-                        <CreditCard className="text-primary" size={18} />
-                        <span>Métodos de Entrada (Consolidação Contábil)</span>
-                      </h3>
+                {/* 2. Comissões da Equipe */}
+                <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-muted uppercase tracking-wider">Repasses de Comissão</span>
+                    <div className="p-2 rounded-xl bg-sky-50 text-sky-600">
+                      <Scissors size={16} />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="text-2xl font-black text-primary">
+                      {dataA ? formatCurrency(dataA.commissionsGenerated) : 'R$ 0,00'}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 text-[10px] font-bold text-muted">
+                      <span className="bg-sky-50 text-sky-700 px-2 py-0.5 rounded-full font-black">
+                        {commissionPct.toFixed(1)}% do faturamento
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Despesas da Barbearia */}
+                <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-muted uppercase tracking-wider">Custos & Estoque</span>
+                    <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
+                      <TrendingDown size={16} />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="text-2xl font-black text-rose-600">
+                      {dataA ? formatCurrency(dataA.totalExpenses) : 'R$ 0,00'}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 text-[10px] font-bold text-muted">
+                      <span>Operacional, fornecedores e sangrias</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Lucro Líquido Real (Sobra da Casa) */}
+                <div className={`border p-5 rounded-3xl shadow-sm flex flex-col justify-between ${
+                  dataA && dataA.netProfit >= 0 
+                    ? 'bg-emerald-50/40 border-emerald-200' 
+                    : 'bg-rose-50/40 border-rose-200'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-muted uppercase tracking-wider">Sobra Líquida Real</span>
+                    <div className={`p-2 rounded-xl ${
+                      dataA && dataA.netProfit >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                    }`}>
+                      <TrendingUp size={16} />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className={`text-2xl font-black ${
+                      dataA && dataA.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                    }`}>
+                      {dataA ? formatCurrency(dataA.netProfit) : 'R$ 0,00'}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                        dataA && dataA.netProfit >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                      }`}>
+                        Margem Líquida: {netMarginPct.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* DRE Estruturado em Acordeão (+ / -) */}
+              <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm space-y-4" id="closure-dre-table">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
+                  <div>
+                    <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                      <Briefcase className="text-accent" size={18} />
+                      <span>Demonstrativo do Resultado do Exercício (DRE)</span>
+                    </h3>
+                    <p className="text-xs text-muted mt-0.5">Visão vertical completa das receitas, deduções operacionais e margem líquida.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => toggleAllDre(true)}
+                      className="text-[11px] font-bold text-muted hover:text-primary px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 transition-colors"
+                    >
+                      Expandir todos
+                    </button>
+                    <button 
+                      onClick={() => toggleAllDre(false)}
+                      className="text-[11px] font-bold text-muted hover:text-primary px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 transition-colors"
+                    >
+                      Recolher todos
+                    </button>
+                  </div>
+                </div>
+
+                {dataA && (
+                  <div className="divide-y divide-slate-100 text-xs">
+                    
+                    {/* 1. (+) RECEITA BRUTA OPERACIONAL */}
+                    <div className="py-3">
+                      <div 
+                        onClick={() => toggleDreSection('receitas')}
+                        className="flex items-center justify-between cursor-pointer p-2 rounded-2xl hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="p-1 rounded-lg bg-emerald-100 text-emerald-700">
+                            {dreExpanded.receitas ? <Minus size={13} /> : <Plus size={13} />}
+                          </span>
+                          <span className="font-black text-slate-800 uppercase tracking-wide">
+                            (+) 1. Receitas Brutas Operacionais
+                          </span>
+                        </div>
+                        <span className="font-black text-emerald-600 font-mono text-sm">
+                          {formatCurrency(dataA.grossRevenue)}
+                        </span>
+                      </div>
+
+                      {dreExpanded.receitas && (
+                        <div className="mt-2 pl-9 pr-2 space-y-2 text-[11px] text-slate-600">
+                          <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                            <span>• Cortes e Serviços de Barbearia</span>
+                            <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.servicesRevenue)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                            <span>• Vendas de Produtos de Balcão (Pomadas, Cosméticos)</span>
+                            <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.productsRevenue)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                            <span>• Planos e Clubes de Assinatura</span>
+                            <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.subscriptionsRevenue)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                            <span>• Quitações de Fiado / Créditos</span>
+                            <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.debtPaymentsRevenue)}</span>
+                          </div>
+                          {dataA.otherRevenue > 0 && (
+                            <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                              <span>• Outros Lançamentos de Entrada</span>
+                              <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.otherRevenue)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
-                    {dataA && (
-                      <div className="space-y-3.5">
-                        {[
-                          { label: 'Pix', val: dataA.byPaymentMethod.pix, bg: 'bg-emerald-500' },
-                          { label: 'Dinheiro', val: dataA.byPaymentMethod.dinheiro, bg: 'bg-amber-500' },
-                          { label: 'Cartão de Crédito', val: dataA.byPaymentMethod.credito, bg: 'bg-blue-500' },
-                          { label: 'Cartão de Débito', val: dataA.byPaymentMethod.debito, bg: 'bg-sky-500' },
-                          { label: 'Fiado (Consumo)', val: dataA.byPaymentMethod.fiado, bg: 'bg-rose-500' },
-                          { label: 'Outros', val: dataA.byPaymentMethod.outros, bg: 'bg-slate-500' },
-                        ].map((pay, idx) => (
-                          <div key={`payment-closure-${idx}`} className="flex items-center justify-between text-xs font-semibold p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-3 h-3 rounded-full ${pay.bg}`} />
-                              <span className="text-primary">{pay.label}</span>
+                    {/* 2. (-) REPASSES DE COMISSÃO DA EQUIPE */}
+                    <div className="py-3">
+                      <div 
+                        onClick={() => toggleDreSection('comissoes')}
+                        className="flex items-center justify-between cursor-pointer p-2 rounded-2xl hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="p-1 rounded-lg bg-sky-100 text-sky-700">
+                            {dreExpanded.comissoes ? <Minus size={13} /> : <Plus size={13} />}
+                          </span>
+                          <span className="font-black text-slate-800 uppercase tracking-wide">
+                            (-) 2. Repasses de Comissão (Custo da Equipe)
+                          </span>
+                        </div>
+                        <span className="font-black text-sky-600 font-mono text-sm">
+                          - {formatCurrency(dataA.commissionsGenerated)}
+                        </span>
+                      </div>
+
+                      {dreExpanded.comissoes && (
+                        <div className="mt-2 pl-9 pr-2 space-y-2 text-[11px] text-slate-600">
+                          <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                            <span>• Comissões apuradas aos barbeiros no período</span>
+                            <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.commissionsGenerated)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-1 text-slate-500 text-[10px]">
+                            <span>Percentual médio sobre faturamento total</span>
+                            <span className="font-bold">{commissionPct.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. (-) DESPESAS FIXAS & OPERACIONAIS */}
+                    <div className="py-3">
+                      <div 
+                        onClick={() => toggleDreSection('operacionais')}
+                        className="flex items-center justify-between cursor-pointer p-2 rounded-2xl hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="p-1 rounded-lg bg-rose-100 text-rose-700">
+                            {dreExpanded.operacionais ? <Minus size={13} /> : <Plus size={13} />}
+                          </span>
+                          <span className="font-black text-slate-800 uppercase tracking-wide">
+                            (-) 3. Custos Fixos & Operacionais da Casa
+                          </span>
+                        </div>
+                        <span className="font-black text-rose-600 font-mono text-sm">
+                          - {formatCurrency(dataA.operationalExpenses)}
+                        </span>
+                      </div>
+
+                      {dreExpanded.operacionais && (
+                        <div className="mt-2 pl-9 pr-2 space-y-2 text-[11px] text-slate-600">
+                          <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                            <span>• Aluguel, Condomínio, Energia Elétrica, Água, Internet e Manutenções</span>
+                            <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.operationalExpenses)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4. (-) COMPRAS DE PRODUTOS & ESTOQUE */}
+                    <div className="py-3">
+                      <div 
+                        onClick={() => toggleDreSection('compras')}
+                        className="flex items-center justify-between cursor-pointer p-2 rounded-2xl hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="p-1 rounded-lg bg-amber-100 text-amber-700">
+                            {dreExpanded.compras ? <Minus size={13} /> : <Plus size={13} />}
+                          </span>
+                          <span className="font-black text-slate-800 uppercase tracking-wide">
+                            (-) 4. Fornecedores & Compras de Estoque
+                          </span>
+                        </div>
+                        <span className="font-black text-amber-600 font-mono text-sm">
+                          - {formatCurrency(dataA.productPurchases)}
+                        </span>
+                      </div>
+
+                      {dreExpanded.compras && (
+                        <div className="mt-2 pl-9 pr-2 space-y-2 text-[11px] text-slate-600">
+                          <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                            <span>• Reposição de cosméticos, pomadas, lâminas e descartáveis</span>
+                            <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.productPurchases)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 5. (-) SANGRIAS E OUTRAS SAÍDAS */}
+                    {(dataA.sangriaExpenses > 0 || dataA.otherExpenses > 0) && (
+                      <div className="py-3">
+                        <div 
+                          onClick={() => toggleDreSection('sangrias')}
+                          className="flex items-center justify-between cursor-pointer p-2 rounded-2xl hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="p-1 rounded-lg bg-slate-100 text-slate-700">
+                              {dreExpanded.sangrias ? <Minus size={13} /> : <Plus size={13} />}
+                            </span>
+                            <span className="font-black text-slate-800 uppercase tracking-wide">
+                              (-) 5. Sangrias de Caixa e Outras Despesas
+                            </span>
+                          </div>
+                          <span className="font-black text-slate-600 font-mono text-sm">
+                            - {formatCurrency(dataA.sangriaExpenses + dataA.otherExpenses)}
+                          </span>
+                        </div>
+
+                        {dreExpanded.sangrias && (
+                          <div className="mt-2 pl-9 pr-2 space-y-2 text-[11px] text-slate-600">
+                            {dataA.sangriaExpenses > 0 && (
+                              <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                                <span>• Retiradas e Sangrias manuais de caixa</span>
+                                <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.sangriaExpenses)}</span>
+                              </div>
+                            )}
+                            {dataA.otherExpenses > 0 && (
+                              <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                                <span>• Outros débitos registrados</span>
+                                <span className="font-bold text-slate-800 font-mono">{formatCurrency(dataA.otherExpenses)}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* TOTALIZADOR: (=) LUCRO LÍQUIDO REAL */}
+                    <div className="pt-4 pb-1">
+                      <div className={`p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        dataA.netProfit >= 0 ? 'bg-emerald-500 text-white shadow-md' : 'bg-rose-500 text-white shadow-md'
+                      }`}>
+                        <div>
+                          <span className="text-[11px] font-black uppercase tracking-wider opacity-90 block">
+                            (=) Resultado Líquido Operacional (Sobra Real no Caixa)
+                          </span>
+                          <span className="text-xs opacity-80 font-medium">
+                            Faturamento Bruto menos comissões, fixos e fornecedores.
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-2xl font-black font-mono block">
+                            {formatCurrency(dataA.netProfit)}
+                          </span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider opacity-90">
+                            Margem Líquida da Barbearia: {netMarginPct.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+              </div>
+
+              {/* Conciliação de Entradas por Método de Pagamento & Indicadores de Apoio */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="closure-payment-methods-grid">
+                
+                {/* Meios de Pagamento (Conciliação) */}
+                <div className="lg:col-span-2 bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                      <CreditCard className="text-primary" size={18} />
+                      <span>Conciliação de Entradas por Meio de Pagamento</span>
+                    </h3>
+                    <span className="text-[10px] font-bold text-muted uppercase">Para conferência de maquininhas</span>
+                  </div>
+
+                  {dataA && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {[
+                        { label: 'Pix', val: dataA.byPaymentMethod.pix, color: 'emerald' },
+                        { label: 'Cartão de Crédito', val: dataA.byPaymentMethod.credito, color: 'blue' },
+                        { label: 'Cartão de Débito', val: dataA.byPaymentMethod.debito, color: 'sky' },
+                        { label: 'Dinheiro em Espécie', val: dataA.byPaymentMethod.dinheiro, color: 'amber' },
+                        { label: 'Fiado (Consumo)', val: dataA.byPaymentMethod.fiado, color: 'rose' },
+                        { label: 'Outros Meios', val: dataA.byPaymentMethod.outros, color: 'slate' },
+                      ].map((item, idx) => {
+                        const pct = ((item.val / grossTotal) * 100);
+                        return (
+                          <div key={`method-card-${idx}`} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+                            <div>
+                              <p className="text-xs font-bold text-slate-700">{item.label}</p>
+                              <p className="text-sm font-black text-primary font-mono mt-0.5">{formatCurrency(item.val)}</p>
                             </div>
-                            <div className="flex items-center gap-4">
-                              <span className="text-primary font-bold">{formatCurrency(pay.val)}</span>
-                              <span className="text-[10px] text-muted font-black w-10 text-right">
-                                {((pay.val / (dataA.grossRevenue || 1)) * 100).toFixed(0)}%
+                            <div className="text-right">
+                              <span className="text-xs font-black text-slate-500 bg-white px-2 py-0.5 rounded-lg border border-slate-200">
+                                {pct.toFixed(0)}%
                               </span>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Cards Complementares: Ticket Médio & Fiado Gerado */}
+                <div className="space-y-4">
+                  
+                  {/* Ticket Médio */}
+                  <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm space-y-2">
+                    <div className="flex items-center justify-between text-indigo-600">
+                      <span className="text-[11px] font-black uppercase text-muted tracking-wider">Ticket Médio</span>
+                      <Percent size={16} />
+                    </div>
+                    <div className="text-2xl font-black text-primary">
+                      {dataA ? formatCurrency(dataA.grossRevenue / (dataA.totalComandasCount || 1)) : 'R$ 0,00'}
+                    </div>
+                    <p className="text-[10px] text-muted font-bold uppercase">
+                      Sobre {dataA ? dataA.totalComandasCount : 0} comandas fechadas
+                    </p>
+                  </div>
+
+                  {/* Fiado Gerado */}
+                  <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm space-y-2">
+                    <div className="flex items-center justify-between text-amber-600">
+                      <span className="text-[11px] font-black uppercase text-muted tracking-wider">Fiado Gerado no Mês</span>
+                      <AlertCircle size={16} />
+                    </div>
+                    <div className="text-2xl font-black text-amber-700">
+                      {dataA ? formatCurrency(dataA.debtsCreated) : 'R$ 0,00'}
+                    </div>
+                    <p className="text-[10px] text-muted font-bold uppercase">
+                      Pendências acumuladas a receber
+                    </p>
                   </div>
 
                 </div>
-              </div>
-            )}
 
-            {activeTab === 'professionals' && (
-              <div className="space-y-6 animate-fade-in bg-surface border border-border p-6 rounded-[2rem] shadow-sm" id="closure-team-commissions">
-                <div className="border-b border-slate-100 pb-4 flex items-center justify-between">
-                  <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
-                    <Users className="text-sky-500" size={18} />
-                    <span>Fechamento por Profissional</span>
-                  </h3>
-                  <span className="text-[10px] text-muted font-black uppercase tracking-widest">Base de produção e comissões no período</span>
+              </div>
+            </motion.div>
+          )}
+
+          {/* TAB 2: 💈 Produção da Equipe (Sem extrato detalhado por comanda, foco gerencial) */}
+          {activeTab === 'equipe' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              {/* Select de Filtro & Cards de Inteligência da Equipe */}
+              <div className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                  <div>
+                    <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                      <Scissors className="text-accent" size={18} />
+                      <span>Desempenho & Margem por Barbeiro</span>
+                    </h3>
+                    <p className="text-xs text-muted mt-0.5">Produção gerada na cadeira, comissões apuradas e margem retida para a barbearia.</p>
+                  </div>
+
+                  {/* Select com Barbeiros */}
+                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2">
+                    <Filter size={14} className="text-muted" />
+                    <span className="text-[11px] font-black uppercase text-muted tracking-wider">Filtrar:</span>
+                    <select 
+                      id="closure-barber-select-filter"
+                      value={selectedBarberFilter}
+                      onChange={(e) => setSelectedBarberFilter(e.target.value)}
+                      className="bg-transparent text-xs font-bold text-primary outline-none cursor-pointer"
+                    >
+                      <option value="all">Todos os Barbeiros ({barbersList.length})</option>
+                      {barbersList.map(b => (
+                        <option key={`opt-barber-${b.id}`} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
-                {dataA && Object.keys(dataA.barberStats).length === 0 ? (
-                  <div className="text-center py-6 text-xs font-semibold text-muted">
-                    Nenhum lançamento de comissão registrado para este período.
+                {/* 3 Métricas Rápidas de Equipe */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  
+                  {/* Top Faturamento */}
+                  <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider block">Barbeiro Destaque</span>
+                      <p className="text-base font-black text-amber-950 mt-0.5">{topBarber ? topBarber.name : 'Nenhum'}</p>
+                      <p className="text-[11px] font-bold text-amber-700 font-mono mt-0.5">{topBarber ? formatCurrency(topBarber.production) : 'R$ 0,00'}</p>
+                    </div>
+                    <div className="p-3 bg-amber-100 rounded-xl text-amber-700">
+                      <Sparkles size={20} />
+                    </div>
+                  </div>
+
+                  {/* Média por Cadeira */}
+                  <div className="p-4 rounded-2xl bg-sky-50/60 border border-sky-200/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-sky-800 tracking-wider block">Média / Cadeira</span>
+                      <p className="text-base font-black text-sky-950 mt-0.5">{formatCurrency(avgProductionPerBarber)}</p>
+                      <p className="text-[11px] font-bold text-sky-700 mt-0.5">{totalBarbersCount} barbeiros ativos</p>
+                    </div>
+                    <div className="p-3 bg-sky-100 rounded-xl text-sky-700">
+                      <Users size={20} />
+                    </div>
+                  </div>
+
+                  {/* Margem Retida da Casa */}
+                  <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider block">Margem Retida pela Casa</span>
+                      <p className="text-base font-black text-emerald-950 mt-0.5">{formatCurrency(totalRetainedByShop)}</p>
+                      <p className="text-[11px] font-bold text-emerald-700 mt-0.5">Lucro bruto após pagar comissões</p>
+                    </div>
+                    <div className="p-3 bg-emerald-100 rounded-xl text-emerald-700">
+                      <TrendingUp size={20} />
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Tabela Clean Gerencial (SEM extrato de comanda por comanda) */}
+                {filteredBarbers.length === 0 ? (
+                  <div className="text-center py-12 text-xs font-semibold text-muted bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                    Nenhum barbeiro com produção registrada no mês selecionado.
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
+                    <table className="w-full text-left border-collapse" id="closure-team-table">
                       <thead>
                         <tr className="border-b border-slate-100 text-[10px] font-black uppercase text-muted tracking-wider">
-                          <th className="pb-3 pl-2 w-10"></th>
-                          <th className="pb-3">Barbeiro</th>
+                          <th className="pb-3 pl-2">Barbeiro</th>
+                          <th className="pb-3 text-center">Atendimentos</th>
                           <th className="pb-3 text-right">Produção Bruta</th>
                           <th className="pb-3 text-right">Comissão Devida</th>
+                          <th className="pb-3 text-right">Margem da Barbearia</th>
                           <th className="pb-3 text-right">Comissões Pagas</th>
-                          <th className="pb-3 text-right">Saldo Pendente</th>
-                          <th className="pb-3 text-right pr-2">Status de Liquidação</th>
+                          <th className="pb-3 text-right">Pendente</th>
+                          <th className="pb-3 text-right pr-2">Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-50 text-xs font-semibold text-primary">
-                        {dataA && Object.values(dataA.barberStats).map((barber: any, idx: number) => {
-                          const pctPaid = barber.commission > 0 ? (barber.payouts / barber.commission) * 100 : 100;
-                          const isExpanded = expandedBarber === barber.id;
+                      <tbody className="divide-y divide-slate-100 text-xs font-semibold text-primary">
+                        {filteredBarbers.map((barber, idx) => {
+                          const houseMargin = Math.max(0, barber.production - barber.commission);
+                          const houseMarginPct = barber.production > 0 ? ((houseMargin / barber.production) * 100) : 0;
+                          const isFullyPaid = barber.pending <= 0;
+
                           return (
-                            <React.Fragment key={`barber-stat-row-${barber.id || idx}`}>
-                              <tr className="hover:bg-slate-50/50 cursor-pointer" onClick={() => setExpandedBarber(isExpanded ? null : barber.id)}>
-                                <td className="py-3.5 pl-2">
-                                  <button className="text-muted hover:text-primary transition-all p-1 bg-slate-50 rounded-lg">
-                                    <ChevronRight size={16} className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                                  </button>
-                                </td>
-                                <td className="py-3.5 font-bold flex items-center gap-2">
-                                  <div className="w-8 h-8 rounded-full bg-primary/5 text-primary flex items-center justify-center font-black text-xs">
-                                    {barber.name.substring(0, 2).toUpperCase()}
-                                  </div>
-                                  <span>{barber.name}</span>
-                                </td>
-                                <td className="py-3.5 text-right font-mono">{formatCurrency(barber.production)}</td>
-                                <td className="py-3.5 text-right font-mono text-indigo-600 font-bold">{formatCurrency(barber.commission)}</td>
-                                <td className="py-3.5 text-right font-mono text-emerald-600">{formatCurrency(barber.payouts)}</td>
-                                <td className="py-3.5 text-right font-mono text-rose-600 font-bold">{formatCurrency(barber.pending)}</td>
-                                <td className="py-3.5 text-right pr-2">
-                                  <span className={`inline-flex px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                                    pctPaid >= 100 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                                  }`}>
-                                    {pctPaid >= 100 ? 'Fechado' : 'Pendências'}
-                                  </span>
-                                </td>
-                              </tr>
-                              {isExpanded && (
-                                <tr>
-                                  <td colSpan={7} className="bg-slate-50/50 p-4 border-b border-slate-200">
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-inner">
-                                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                                        <h4 className="text-xs font-black uppercase text-primary tracking-wider">Histórico Detalhado de Comissões</h4>
-                                        <span className="text-[10px] font-bold text-muted uppercase">Lançamentos no Período ({barber.items?.length || 0})</span>
-                                      </div>
-                                      
-                                      {(!barber.items || barber.items.length === 0) ? (
-                                        <p className="text-center py-2 text-xs text-muted font-medium">Nenhum lançamento detalhado disponível.</p>
-                                      ) : (
-                                        <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-                                          <table className="w-full text-left border-collapse text-[11px]">
-                                            <thead>
-                                              <tr className="border-b border-slate-100 text-[9px] font-black uppercase text-muted tracking-widest">
-                                                <th className="pb-1.5">Data</th>
-                                                <th className="pb-1.5">Descrição</th>
-                                                <th className="pb-1.5">Tipo</th>
-                                                <th className="pb-1.5 text-right">Valor Base</th>
-                                                <th className="pb-1.5 text-right">Comissão</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-50 text-slate-700 font-medium">
-                                              {barber.items.map((item: any, iIdx: number) => (
-                                                <tr key={`barber-item-${barber.id}-${iIdx}`}>
-                                                  <td className="py-1.5 text-muted">{item.date ? format(parseISO(item.date), 'dd/MM/yyyy') : '-'}</td>
-                                                  <td className="py-1.5 font-semibold text-primary">{item.description}</td>
-                                                  <td className="py-1.5">
-                                                    <span className={`inline-flex px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
-                                                      item.type === 'produto' ? 'bg-amber-50 text-amber-600' : 'bg-indigo-50 text-indigo-600'
-                                                    }`}>
-                                                      {item.type === 'produto' ? 'Produto' : 'Serviço'}
-                                                    </span>
-                                                  </td>
-                                                  <td className="py-1.5 text-right font-mono">{formatCurrency(item.baseValue)}</td>
-                                                  <td className="py-1.5 text-right font-mono text-indigo-600 font-bold">{formatCurrency(item.commissionValue)}</td>
-                                                </tr>
-                                              ))}
-                                            </tbody>
-                                          </table>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </React.Fragment>
+                            <tr key={`barber-row-${barber.id || idx}`} className="hover:bg-slate-50/70 transition-colors">
+                              <td className="py-4 pl-2 font-bold flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-2xl bg-primary/5 text-primary flex items-center justify-center font-black text-xs border border-slate-200">
+                                  {barber.name.substring(0, 2).toUpperCase()}
+                                </div>
+                                <div>
+                                  <p className="font-bold text-slate-800">{barber.name}</p>
+                                  <p className="text-[10px] text-muted font-normal">Profissional Parceiro</p>
+                                </div>
+                              </td>
+
+                              <td className="py-4 text-center">
+                                <span className="inline-flex px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 font-bold font-mono text-[11px]">
+                                  {barber.serviceCount} un
+                                </span>
+                              </td>
+
+                              <td className="py-4 text-right font-mono font-bold text-slate-800">
+                                {formatCurrency(barber.production)}
+                              </td>
+
+                              <td className="py-4 text-right font-mono font-bold text-sky-600">
+                                {formatCurrency(barber.commission)}
+                              </td>
+
+                              <td className="py-4 text-right">
+                                <span className="font-mono font-bold text-emerald-700 block">
+                                  {formatCurrency(houseMargin)}
+                                </span>
+                                <span className="text-[10px] text-muted font-bold">
+                                  {houseMarginPct.toFixed(0)}% retido
+                                </span>
+                              </td>
+
+                              <td className="py-4 text-right font-mono text-emerald-600">
+                                {formatCurrency(barber.payouts)}
+                              </td>
+
+                              <td className="py-4 text-right font-mono font-bold">
+                                <span className={barber.pending > 0 ? 'text-rose-600' : 'text-slate-400'}>
+                                  {formatCurrency(barber.pending)}
+                                </span>
+                              </td>
+
+                              <td className="py-4 text-right pr-2">
+                                <span className={`inline-flex px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                  isFullyPaid 
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' 
+                                    : 'bg-amber-50 text-amber-700 border border-amber-200/60'
+                                }`}>
+                                  {isFullyPaid ? '100% Quitado' : 'Com Saldo Pendente'}
+                                </span>
+                              </td>
+                            </tr>
                           );
                         })}
                       </tbody>
                     </table>
                   </div>
                 )}
-              </div>
-            )}
 
-            {activeTab === 'costs' && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fade-in" id="closure-costs-tab-content">
-                {/* Left side: Detailed Expenses */}
-                <div className="bg-surface border border-border p-6 rounded-[2rem] shadow-sm space-y-6">
-                  <div className="border-b border-slate-100 pb-4">
-                    <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
-                      <TrendingDown className="text-rose-500" size={18} />
-                      <span>Detalhamento de Saídas</span>
-                    </h3>
-                  </div>
-
-                  {dataA && (
-                    <div className="space-y-4">
-                      {/* Commissions */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs font-bold text-primary">
-                          <span>Comissões pagas aos Barbeiros</span>
-                          <span>{formatCurrency(dataA.commissionsGenerated)}</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                          <div className="bg-sky-500 h-full rounded-full" style={{ width: `${(dataA.commissionsGenerated / ((dataA.totalExpenses + dataA.commissionsGenerated) || 1)) * 100}%` }} />
-                        </div>
-                      </div>
-
-                      {/* Operational */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs font-bold text-primary">
-                          <span>Custo Ocupacional (Aluguel, Luz, Água, etc.)</span>
-                          <span>{formatCurrency(dataA.operationalExpenses)}</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                          <div className="bg-rose-500 h-full rounded-full" style={{ width: `${(dataA.operationalExpenses / ((dataA.totalExpenses + dataA.commissionsGenerated) || 1)) * 100}%` }} />
-                        </div>
-                      </div>
-
-                      {/* Product Purchases */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs font-bold text-primary">
-                          <span>Compras de Produtos & Estoque</span>
-                          <span>{formatCurrency(dataA.productPurchases)}</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                          <div className="bg-amber-500 h-full rounded-full" style={{ width: `${(dataA.productPurchases / ((dataA.totalExpenses + dataA.commissionsGenerated) || 1)) * 100}%` }} />
-                        </div>
-                      </div>
-
-                      {/* Sangria */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs font-bold text-primary">
-                          <span>Retiradas / Sangrias de Caixa</span>
-                          <span>{formatCurrency(dataA.sangriaExpenses)}</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                          <div className="bg-red-500 h-full rounded-full" style={{ width: `${(dataA.sangriaExpenses / ((dataA.totalExpenses + dataA.commissionsGenerated) || 1)) * 100}%` }} />
-                        </div>
-                      </div>
-
-                      {/* Other */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs font-bold text-primary">
-                          <span>Outras Despesas registradas</span>
-                          <span>{formatCurrency(dataA.otherExpenses)}</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                          <div className="bg-slate-400 h-full rounded-full" style={{ width: `${(dataA.otherExpenses / ((dataA.totalExpenses + dataA.commissionsGenerated) || 1)) * 100}%` }} />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Right side: General Cost Balance */}
-                <div className="bg-surface border border-border p-6 rounded-[2rem] shadow-sm flex flex-col justify-between">
-                  <div className="space-y-4">
-                    <div className="border-b border-slate-100 pb-4">
-                      <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
-                        <Briefcase className="text-amber-500" size={18} />
-                        <span>Balanço Geral do Mês</span>
-                      </h3>
-                    </div>
-                    <p className="text-xs text-muted font-medium">
-                      As saídas totais do mês consolidaram o valor de <strong className="text-primary">{dataA ? formatCurrency(dataA.totalExpenses + dataA.commissionsGenerated) : 'R$ 0,00'}</strong>.
-                    </p>
-                    <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs space-y-2">
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-muted">Total Faturado:</span>
-                        <span className="font-bold text-primary">{dataA ? formatCurrency(dataA.grossRevenue) : 'R$ 0,00'}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold text-muted">Total de Saídas:</span>
-                        <span className="font-bold text-rose-600">{dataA ? formatCurrency(dataA.totalExpenses + dataA.commissionsGenerated) : 'R$ 0,00'}</span>
-                      </div>
-                      <div className="border-t border-slate-200 my-2 pt-2 flex justify-between font-black text-sm">
-                        <span>Sobra Real (Lucro Líquido):</span>
-                        <span className={dataA && dataA.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                          {dataA ? formatCurrency(dataA.netProfit) : 'R$ 0,00'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'accounting' && (
-              <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl space-y-6 animate-fade-in" id="closure-accountant-portal">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <FileText className="text-accent" size={24} />
-                    <h3 className="text-lg font-black tracking-tight">Área do Contador & Fiscal</h3>
-                  </div>
-                  <p className="text-xs text-slate-400 font-semibold max-w-2xl">
-                    O contador precisa da soma dos recebimentos divididos por categorias e meios de pagamento para realizar a emissão do DAS / Simples Nacional ou imposto de renda. Preencha os dados e gere o pacote.
+                {/* Nota informativa de atalho */}
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-muted flex items-center justify-between gap-3">
+                  <p className="flex items-center gap-1.5">
+                    <CheckCircle2 size={14} className="text-emerald-500" />
+                    <span>O extrato analítico detalhado (comanda por comanda e comprovante impresso) permanece centralizado na aba de <strong>Comissões de Equipe</strong>.</span>
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Razão Social / Nome da Barbearia</label>
-                    <input 
-                      id="closure-shop-name-input"
-                      type="text" 
-                      value={barberShopName}
-                      onChange={(e) => setBarberShopName(e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-accent animate-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">CNPJ</label>
-                    <input 
-                      id="closure-cnpj-input"
-                      type="text" 
-                      placeholder="00.000.000/0001-00"
-                      value={cnpj}
-                      onChange={(e) => setCnpj(e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-accent animate-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">E-mail do Contador</label>
-                    <input 
-                      id="closure-accountant-email-input"
-                      type="email" 
-                      placeholder="contabilidade@exemplo.com"
-                      value={accountantEmail}
-                      onChange={(e) => setAccountantEmail(e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-accent animate-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-4 flex flex-wrap gap-4">
-                  <button 
-                    id="closure-send-accountant-btn"
-                    onClick={handleSendToAccountant}
-                    className="bg-accent text-white font-black text-xs uppercase tracking-wider px-6 py-3.5 rounded-2xl shadow-lg hover:brightness-110 active:scale-95 transition-all"
-                  >
-                    Enviar Fechamento para E-mail do Contador
-                  </button>
-                </div>
               </div>
-            )}
+            </motion.div>
+          )}
 
-          </div>
+          {/* TAB 3: 💼 Fiscal & Contabilidade */}
+          {activeTab === 'fiscal' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              {/* Resumo Fiscal para Contabilidade */}
+              <div className="bg-surface border border-border p-6 rounded-3xl shadow-sm space-y-6" id="closure-fiscal-summary">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                  <div>
+                    <h3 className="text-sm font-black text-primary uppercase tracking-wider flex items-center gap-2">
+                      <FileText className="text-indigo-600" size={18} />
+                      <span>Pacote Fiscal & Fechamento para o Contador</span>
+                    </h3>
+                    <p className="text-xs text-muted mt-0.5">Soma dos recebimentos por serviço e produto, cruzamento de maquininhas e emissão do Simples/DAS.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopyFiscalWhatsApp}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                        copiedWhatsapp 
+                          ? 'bg-emerald-600 text-white' 
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {copiedWhatsapp ? <Check size={14} /> : <Copy size={14} />}
+                      <span>{copiedWhatsapp ? 'Copiado!' : 'Copiar Resumo'}</span>
+                    </button>
+                    <button
+                      onClick={handleOpenWhatsApp}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
+                    >
+                      <Send size={14} />
+                      <span>WhatsApp do Contador</span>
+                    </button>
+                  </div>
+                </div>
 
-          {/* 6. CONSOLIDATED PRINT SHEET (Hidden in standard UI via standard css or conditionally rendered/designed for clean printing) */}
-          <div className="hidden print:block p-8 bg-white text-slate-900 space-y-8" id="print-sheet-accounting-document">
+                {/* 4 Blocos Fiscais Principais */}
+                {dataA && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    
+                    {/* Base NFS-e (Serviços) */}
+                    <div className="p-4 rounded-2xl bg-indigo-50/60 border border-indigo-200/80 space-y-1">
+                      <span className="text-[10px] font-black uppercase text-indigo-800 tracking-wider block">1. Base NFS-e (Serviços)</span>
+                      <p className="text-xl font-black text-indigo-950 font-mono">{formatCurrency(dataA.servicesRevenue)}</p>
+                      <p className="text-[10px] text-indigo-700 font-medium">Nota Fiscal de Serviços Prestados</p>
+                    </div>
+
+                    {/* Base NFC-e (Produtos) */}
+                    <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-1">
+                      <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider block">2. Base NFC-e (Produtos)</span>
+                      <p className="text-xl font-black text-amber-950 font-mono">{formatCurrency(dataA.productsRevenue)}</p>
+                      <p className="text-[10px] text-amber-700 font-medium">Venda de mercadoria / ICMS</p>
+                    </div>
+
+                    {/* Meios Eletrônicos (Cartões + Pix) */}
+                    <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 space-y-1">
+                      <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider block">3. Meios Eletrônicos (Receita)</span>
+                      <p className="text-xl font-black text-emerald-950 font-mono">{formatCurrency(electronicTotal)}</p>
+                      <p className="text-[10px] text-emerald-700 font-medium">Cruzamento DIMEP / Cartão & Pix</p>
+                    </div>
+
+                    {/* Dinheiro Vivo */}
+                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                      <span className="text-[10px] font-black uppercase text-slate-700 tracking-wider block">4. Dinheiro em Espécie</span>
+                      <p className="text-xl font-black text-slate-900 font-mono">{formatCurrency(dataA.byPaymentMethod.dinheiro)}</p>
+                      <p className="text-[10px] text-slate-500 font-medium">Entradas em cédulas na gaveta</p>
+                    </div>
+
+                  </div>
+                )}
+
+                {/* Configurações Fiscais da Barbearia */}
+                <div className="bg-slate-900 text-white p-6 rounded-2xl space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="text-accent" size={18} />
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-200">Dados do Estabelecimento & Contador</h4>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Razão Social / Barbearia</label>
+                      <input 
+                        type="text" 
+                        value={barberShopName}
+                        onChange={(e) => setBarberShopName(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-accent"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">CNPJ</label>
+                      <input 
+                        type="text" 
+                        placeholder="00.000.000/0001-00"
+                        value={cnpj}
+                        onChange={(e) => setCnpj(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-accent"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">E-mail do Contador</label>
+                      <input 
+                        type="email" 
+                        placeholder="contador@exemplo.com"
+                        value={accountantEmail}
+                        onChange={(e) => setAccountantEmail(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-accent"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex flex-wrap gap-3">
+                    <button 
+                      onClick={handleSendToAccountant}
+                      className="bg-accent text-white font-black text-xs uppercase tracking-wider px-5 py-2.5 rounded-xl shadow-md hover:brightness-110 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Send size={14} />
+                      <span>Disparar Fechamento por E-mail</span>
+                    </button>
+                    <button 
+                      onClick={() => window.print()}
+                      className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition-all flex items-center gap-2"
+                    >
+                      <Printer size={14} />
+                      <span>Gerar Folha Fiscal A4</span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </motion.div>
+          )}
+
+          {/* 6. CONSOLIDATED PRINT SHEET (Visível apenas na impressão A4 / PDF) */}
+          <div className="hidden print:block p-8 bg-white text-slate-900 space-y-6" id="print-sheet-accounting-document">
             <div className="border-b-2 border-slate-800 pb-4 text-center">
               <h1 className="text-2xl font-black uppercase tracking-tight">{barberShopName}</h1>
               {cnpj && <p className="text-xs font-bold">CNPJ: {cnpj}</p>}
@@ -1050,11 +1343,11 @@ export function FechamentoMes() {
               <table className="w-full text-left text-xs">
                 <tbody>
                   <tr className="border-b border-slate-200 py-1">
-                    <td className="font-bold py-1">Receita de Serviços:</td>
+                    <td className="font-bold py-1">Receita de Serviços (NFS-e):</td>
                     <td className="text-right font-mono py-1">{dataA ? formatCurrency(dataA.servicesRevenue) : 'R$ 0,00'}</td>
                   </tr>
                   <tr className="border-b border-slate-200 py-1">
-                    <td className="font-bold py-1">Receita de Venda de Produtos:</td>
+                    <td className="font-bold py-1">Receita de Venda de Produtos (NFC-e):</td>
                     <td className="text-right font-mono py-1">{dataA ? formatCurrency(dataA.productsRevenue) : 'R$ 0,00'}</td>
                   </tr>
                   <tr className="border-b border-slate-200 py-1">
@@ -1064,10 +1357,6 @@ export function FechamentoMes() {
                   <tr className="border-b border-slate-200 py-1">
                     <td className="font-bold py-1">Receita de Quitações de Fiado:</td>
                     <td className="text-right font-mono py-1">{dataA ? formatCurrency(dataA.debtPaymentsRevenue) : 'R$ 0,00'}</td>
-                  </tr>
-                  <tr className="border-b border-slate-200 py-1">
-                    <td className="font-bold py-1">Outros Recebimentos:</td>
-                    <td className="text-right font-mono py-1">{dataA ? formatCurrency(dataA.otherRevenue) : 'R$ 0,00'}</td>
                   </tr>
                   <tr className="bg-slate-100 font-black py-2">
                     <td className="py-2 px-1">TOTAL FATURADO NO PERÍODO:</td>
@@ -1122,7 +1411,7 @@ export function FechamentoMes() {
                     <td className="text-right font-mono py-1">{dataA ? formatCurrency(dataA.productPurchases) : 'R$ 0,00'}</td>
                   </tr>
                   <tr className="border-b border-slate-200 py-1">
-                    <td className="font-bold py-1">Despesas Operacionais / Aluguel / Água / Luz:</td>
+                    <td className="font-bold py-1">Despesas Operacionais (Aluguel / Água / Luz):</td>
                     <td className="text-right font-mono py-1">{dataA ? formatCurrency(dataA.operationalExpenses) : 'R$ 0,00'}</td>
                   </tr>
                   <tr className="border-b border-slate-200 py-1">
@@ -1132,6 +1421,10 @@ export function FechamentoMes() {
                   <tr className="bg-slate-100 font-black py-2">
                     <td className="py-2 px-1">TOTAL DE SAÍDAS OPERACIONAIS:</td>
                     <td className="text-right font-mono py-2 px-1">{dataA ? formatCurrency(dataA.totalExpenses + dataA.commissionsGenerated) : 'R$ 0,00'}</td>
+                  </tr>
+                  <tr className="bg-slate-200 font-black py-2">
+                    <td className="py-2 px-1">RESULTADO LÍQUIDO DO MÊS:</td>
+                    <td className="text-right font-mono py-2 px-1">{dataA ? formatCurrency(dataA.netProfit) : 'R$ 0,00'}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1153,4 +1446,5 @@ export function FechamentoMes() {
     </div>
   );
 }
+
 export default FechamentoMes;

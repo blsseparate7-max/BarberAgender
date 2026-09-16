@@ -16,9 +16,10 @@ import { commissionService } from '../../services/commissionService';
 import { cashService } from '../../services/cashService';
 import { financialService } from '../../services/financialService';
 import { Commission, ProfessionalAdvance, ProfessionalPayment, UserProfile } from '../../types';
+import { calculateProfessionalLedger } from '../../services/ledgerService';
 
 function extensos(valor: number): string {
-  if (valor === 0) return 'zero reais';
+  if (!valor || isNaN(valor) || valor <= 0) return 'zero reais';
   
   const unidades = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
   const dezenas = ['', 'dez', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
@@ -82,6 +83,39 @@ function extensos(valor: number): string {
   return partesMoeda.join(' e ');
 }
 
+function formatSafeDate(val: any, pattern: string = 'dd/MM/yyyy', fallback: string = '-'): string {
+  if (!val) return fallback;
+  try {
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (!trimmed) return fallback;
+      const parsed = parseISO(trimmed);
+      if (!isNaN(parsed.getTime())) {
+        return format(parsed, pattern);
+      }
+      const d = new Date(trimmed);
+      if (!isNaN(d.getTime())) {
+        return format(d, pattern);
+      }
+    } else if (val && typeof val === 'object') {
+      if (val.seconds) {
+        const d = new Date(val.seconds * 1000);
+        return format(d, pattern);
+      }
+      if (typeof val.toDate === 'function') {
+        const d = val.toDate();
+        return format(d, pattern);
+      }
+      if (val instanceof Date && !isNaN(val.getTime())) {
+        return format(val, pattern);
+      }
+    }
+  } catch (_) {
+    // fallback
+  }
+  return fallback;
+}
+
 interface DetailProps {
   professionalId: string;
   professionalName: string;
@@ -97,6 +131,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   
   const [allCommissions, setAllCommissions] = useState<Commission[]>([]);
   const [allAdvances, setAllAdvances] = useState<ProfessionalAdvance[]>([]);
+  const [allComandas, setAllComandas] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<ProfessionalPayment[]>([]);
   const [isOpenCash, setIsOpenCash] = useState<any>(null);
 
@@ -108,6 +143,27 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   const extractDateOnly = (val: any): string => {
     if (!val) return '';
     if (typeof val === 'string') return val.substring(0, 10);
+    if (val.date && typeof val.date === 'string') return val.date.substring(0, 10);
+    if (val.date && val.date.seconds) {
+      const d = new Date(val.date.seconds * 1000);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    if (Array.isArray(val.payments) && val.payments.length > 0 && val.payments[0]?.date) {
+      return String(val.payments[0].date).substring(0, 10);
+    }
+    if (val.closedAt) {
+      if (typeof val.closedAt === 'string') return val.closedAt.substring(0, 10);
+      if (val.closedAt.seconds) {
+        const d = new Date(val.closedAt.seconds * 1000);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+    }
     if (val.seconds) {
       const d = new Date(val.seconds * 1000);
       const y = d.getFullYear();
@@ -122,21 +178,49 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       const day = String(d.getDate()).padStart(2, '0');
       return `${y}-${m}-${day}`;
     }
+    if (val.createdAt) {
+      if (typeof val.createdAt === 'string') return val.createdAt.substring(0, 10);
+      if (val.createdAt.seconds) {
+        const d = new Date(val.createdAt.seconds * 1000);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+    }
     return '';
   };
+
+  // Set de comandas não fechadas (abertas sem pagamento, canceladas ou estornadas) para ignorar no extrato
+  const nonClosedComandaIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    if (Array.isArray(allComandas)) {
+      allComandas.forEach(c => {
+        const st = (c.status || '').toLowerCase();
+        const hasPay = Number(c.paidAmount || (c as any).valorPago || 0) > 0 || (Array.isArray(c.payments) && c.payments.length > 0);
+        if (st === 'cancelada' || st === 'cancelado' || st === 'estornada' || (st === 'aberta' && !hasPay) || st === 'aguardando_pagamento') {
+          ids.add(c.id);
+        }
+      });
+    }
+    return ids;
+  }, [allComandas]);
 
   // Compute filtered period lists and all-time ledger totals reactively direto do Firestore
   const commissions = React.useMemo(() => {
     return allCommissions.filter(c => {
-      const d = extractDateOnly(c.date || c.createdAt);
-      return d >= localDateRange.start && d <= localDateRange.end && c.status !== 'cancelado' && c.status !== 'estornado';
+      if (c.status === 'cancelado' || c.status === 'estornado') return false;
+      if (c.comanda_id && nonClosedComandaIds.has(c.comanda_id)) return false;
+      const d = extractDateOnly(c);
+      return d >= localDateRange.start && d <= localDateRange.end;
     });
-  }, [allCommissions, localDateRange.start, localDateRange.end]);
+  }, [allCommissions, nonClosedComandaIds, localDateRange.start, localDateRange.end]);
 
   const advances = React.useMemo(() => {
     return allAdvances.filter(a => {
-      const d = extractDateOnly(a.date || a.createdAt);
-      return d >= localDateRange.start && d <= localDateRange.end && a.status !== 'cancelado';
+      if (a.status === 'cancelado') return false;
+      const d = extractDateOnly(a);
+      return d >= localDateRange.start && d <= localDateRange.end;
     });
   }, [allAdvances, localDateRange.start, localDateRange.end]);
 
@@ -228,34 +312,44 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     if (!tenantId) return;
     setLoading(true);
 
-    // Automatically purge orphaned vales and commissions in the background
-    commissionService.purgeOrphanedVales(tenantId);
-    commissionService.purgeOrphanedCommissions(tenantId);
+    const proNameLower = (professionalName || '').toLowerCase().trim();
+    const isGabriel = proNameLower.startsWith('gabriel');
+    const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
+    const isLuizMiguel = proNameLower.startsWith('luiz miguel');
+    const isLuizHenrique = proNameLower.startsWith('luiz henrique');
+
+    const cmdConstraints = tenantId === 'gbcortes7' 
+      ? [where('tenantId', 'in', [tenantId, ''])] 
+      : [where('tenantId', '==', tenantId)];
+    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints);
+    const unsubComandas = onSnapshot(comandasQuery, (snapshot) => {
+      const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllComandas(cList);
+    }, (error) => {
+      console.error("Erro ao escutar comandas detalhadas:", error);
+    });
 
     const commConstraints = tenantId === 'gbcortes7' 
       ? [where('tenantId', 'in', [tenantId, ''])] 
       : [where('tenantId', '==', tenantId)];
     const commsQuery = query(collection(db, 'commissions'), ...commConstraints);
     const unsubComms = onSnapshot(commsQuery, (snapshot) => {
-      const proNameLower = (professionalName || '').toLowerCase().trim();
-      const isGabriel = proNameLower.startsWith('gabriel');
-      const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
-      const isLuizMiguel = proNameLower.startsWith('luiz miguel');
-      const isLuizHenrique = proNameLower.startsWith('luiz henrique');
-
       const commsList = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
         .filter(c => {
-          if (c.profissional_id === professionalId || (c as any).barbeiro_id === professionalId) return true;
-          const cNameLower = (c.profissional_name || '').toLowerCase().trim();
-          if (proNameLower && cNameLower) {
-            if (proNameLower === cNameLower) return true;
-            if (isGabriel && cNameLower.startsWith('gabriel')) return true;
-            if (isMateus && (cNameLower.startsWith('mateus') || cNameLower.startsWith('matheus'))) return true;
-            if (isLuizMiguel && cNameLower.startsWith('luiz miguel')) return true;
-            if (isLuizHenrique && cNameLower.startsWith('luiz henrique')) return true;
-            if (proNameLower.startsWith('moises') && cNameLower.startsWith('moises')) return true;
-            if (proNameLower.startsWith('bryan') && cNameLower.startsWith('bryan')) return true;
+          if (c.profissional_id === professionalId || (c as any).barber_id === professionalId) return true;
+          if (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && (c.profissional_id === 'XpDGfA241JOx7dzoAgKugo86ld62' || (c as any).barber_id === 'XpDGfA241JOx7dzoAgKugo86ld62')) return true;
+          if (!c.profissional_id && !(c as any).barber_id) {
+            const cNameLower = (c.profissional_name || '').toLowerCase().trim();
+            if (proNameLower && cNameLower) {
+              if (proNameLower === cNameLower) return true;
+              if (isGabriel && cNameLower.startsWith('gabriel')) return true;
+              if (isMateus && (cNameLower.startsWith('mateus') || cNameLower.startsWith('matheus'))) return true;
+              if (isLuizMiguel && cNameLower.startsWith('luiz miguel')) return true;
+              if (isLuizHenrique && cNameLower.startsWith('luiz henrique')) return true;
+              if (proNameLower.startsWith('moises') && cNameLower.startsWith('moises')) return true;
+              if (proNameLower.startsWith('bryan') && cNameLower.startsWith('bryan')) return true;
+            }
           }
           return false;
         });
@@ -275,37 +369,22 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
     const mergeAdvances = () => {
       const merged: any[] = [...rawAdvs];
-      const proNameLower = (professionalName || '').toLowerCase().trim();
-      const isGabriel = proNameLower.startsWith('gabriel');
-      const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
-      const isLuizMiguel = proNameLower.startsWith('luiz miguel');
-      const isLuizHenrique = proNameLower.startsWith('luiz henrique');
 
-      const matchesProText = (txt: string) => {
-        if (!txt) return false;
-        const t = txt.toLowerCase();
-        if (proNameLower && t.includes(proNameLower)) return true;
-        if (isGabriel && t.includes('gabriel')) return true;
-        if (isMateus && (t.includes('mateus') || t.includes('matheus'))) return true;
-        if (isLuizMiguel && (t.includes('luiz miguel') || t.includes('miguel'))) return true;
-        if (isLuizHenrique && (t.includes('luiz henrique') || t.includes('henrique') || t.includes('rick'))) return true;
-        if (proNameLower.startsWith('moises') && t.includes('moises')) return true;
-        if (proNameLower.startsWith('bryan') && t.includes('bryan')) return true;
-        return false;
-      };
-
-      // Merge matching payables
+      // Merge matching payables (apenas se for do profissional ou tiver nome correspondente sem ID divergente)
       rawPayables.forEach(p => {
         const category = (p.category || '').toLowerCase();
         const desc = (p.description || '').toLowerCase();
-        const supplier = (p.supplier || '').toLowerCase();
-        const pProName = (p.profissional_name || '').toLowerCase();
         const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
         const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
 
-        let matchesPro = p.profissional_id === professionalId;
-        if (!matchesPro && proNameLower) {
-          matchesPro = matchesProText(supplier) || matchesProText(pProName) || matchesProText(desc);
+        let matchesPro = false;
+        if (p.profissional_id) {
+          matchesPro = p.profissional_id === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && p.profissional_id === 'XpDGfA241JOx7dzoAgKugo86ld62');
+        } else if (proNameLower) {
+          const pName = (p.profissional_name || p.supplier || '').toLowerCase().trim();
+          if (pName) {
+            matchesPro = pName === proNameLower || (isGabriel && pName.startsWith('gabriel')) || (isMateus && (pName.startsWith('mateus') || pName.startsWith('matheus'))) || (isLuizMiguel && pName.startsWith('luiz miguel')) || (isLuizHenrique && pName.startsWith('luiz henrique'));
+          }
         }
 
         if (isVale && matchesPro) {
@@ -338,9 +417,15 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
         const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
 
-        let matchesPro = c.profissional_id === professionalId || c.barber_id === professionalId;
-        if (!matchesPro && proNameLower) {
-          matchesPro = matchesProText(desc);
+        let matchesPro = false;
+        const cProId = c.profissional_id || c.barber_id;
+        if (cProId) {
+          matchesPro = cProId === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && cProId === 'XpDGfA241JOx7dzoAgKugo86ld62');
+        } else if (proNameLower) {
+          const cName = (c.profissional_name || c.barber_name || '').toLowerCase().trim();
+          if (cName) {
+            matchesPro = cName === proNameLower || (isGabriel && cName.startsWith('gabriel')) || (isMateus && (cName.startsWith('mateus') || cName.startsWith('matheus'))) || (isLuizMiguel && cName.startsWith('luiz miguel')) || (isLuizHenrique && cName.startsWith('luiz henrique'));
+          }
         }
 
         if (isVale && matchesPro) {
@@ -373,9 +458,15 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         const isRepasse = desc.includes('repasse') || desc.includes('payout') || desc.includes('pagamento de comiss');
         const isVale = (desc.includes('vale') || desc.includes('adiantamento') || category.includes('vale') || category.includes('adiantamento')) && !isRepasse;
 
-        let matchesPro = t.profissional_id === professionalId || t.barber_id === professionalId;
-        if (!matchesPro && proNameLower) {
-          matchesPro = matchesProText(t.profissional_name) || matchesProText(desc);
+        let matchesPro = false;
+        const tProId = t.profissional_id || t.barber_id;
+        if (tProId) {
+          matchesPro = tProId === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && tProId === 'XpDGfA241JOx7dzoAgKugo86ld62');
+        } else if (proNameLower) {
+          const tName = (t.profissional_name || '').toLowerCase().trim();
+          if (tName) {
+            matchesPro = tName === proNameLower || (isGabriel && tName.startsWith('gabriel')) || (isMateus && (tName.startsWith('mateus') || tName.startsWith('matheus'))) || (isLuizMiguel && tName.startsWith('luiz miguel')) || (isLuizHenrique && tName.startsWith('luiz henrique'));
+          }
         }
 
         if (isVale && matchesPro) {
@@ -409,49 +500,22 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       : [where('tenantId', '==', tenantId)];
     const advsQuery = query(collection(db, 'professional_advances'), ...advConstraints);
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
-      const proNameLower = (professionalName || '').toLowerCase().trim();
-      const isGabriel = proNameLower.startsWith('gabriel');
-      const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
-      const isLuizMiguel = proNameLower.startsWith('luiz miguel');
-      const isLuizHenrique = proNameLower.startsWith('luiz henrique');
-
-      const ADVANCE_DOC_BARBER_MAP: Record<string, string> = {
-        'nfPj2ylUxGzacZMZLOLx': 'K2TXxyN75MZj4s6euPw2POZLNbt2',
-        'tnX3dsrbDWcSXIF5p0m6': 'K2TXxyN75MZj4s6euPw2POZLNbt2',
-        'qMHYpIZ7VvBmDE5DSqme': 'K2TXxyN75MZj4s6euPw2POZLNbt2',
-        'ibzgXpwoXTgMjJBfp1uy': 'XpDGfA241JOx7dzoAgKugo86ld62',
-        'LE0x4KcjHzvlCK5q6Lp6': 'XpDGfA241JOx7dzoAgKugo86ld62',
-        'OhtjdOWrpOuOMfi3Iv7n': 'XpDGfA241JOx7dzoAgKugo86ld62',
-        'MlrpeeIPfjx248iNlwO5': 'XpDGfA241JOx7dzoAgKugo86ld62',
-        'nn8PR2vd5kUBNsvN3fmk': 'XpDGfA241JOx7dzoAgKugo86ld62',
-        'SrCChNgSchQecgRutyZZ': 'XpDGfA241JOx7dzoAgKugo86ld62',
-        'VzBWK8aiN5NBWtFzoTTs': 'XpDGfA241JOx7dzoAgKugo86ld62',
-        'qcqXmSxz696uur2He8fP': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
-        'aciD1nGVcmx8NUeK18M3': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
-        'sJTwq5d39BuyZRKGcA3Z': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
-        '4fDeBay9EYcqYfMT4KOf': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
-      };
-
       rawAdvs = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance))
         .filter(a => {
-          if (ADVANCE_DOC_BARBER_MAP[a.id]) {
-            return ADVANCE_DOC_BARBER_MAP[a.id] === professionalId;
+          const aProId = a.profissional_id || (a as any).barber_id;
+          if (aProId) {
+            return aProId === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && aProId === 'XpDGfA241JOx7dzoAgKugo86ld62');
           }
-          if (a.profissional_id === professionalId || (a as any).barber_id === professionalId) {
-            // Se o item estiver nos IDs remapeados para outro barbeiro, ignora aqui
-            if (ADVANCE_DOC_BARBER_MAP[a.id] && ADVANCE_DOC_BARBER_MAP[a.id] !== professionalId) return false;
-            return true;
-          }
-          const aNameLower = (a.profissional_name || (a as any).motivo || a.description || '').toLowerCase().trim();
+          const aNameLower = (a.profissional_name || '').toLowerCase().trim();
           if (proNameLower && aNameLower) {
             if (proNameLower === aNameLower) return true;
-            if (isGabriel && aNameLower.includes('gabriel')) return true;
-            if (isMateus && (aNameLower.includes('mateus') || aNameLower.includes('matheus'))) return true;
-            if (isLuizMiguel && aNameLower.includes('luiz miguel')) return true;
-            if (isLuizHenrique && (aNameLower.includes('luiz henrique') || aNameLower.includes('rick'))) return true;
-            if (proNameLower.startsWith('moises') && aNameLower.includes('moises')) return true;
-            if (proNameLower.startsWith('bryan') && aNameLower.includes('bryan')) return true;
+            if (isGabriel && aNameLower.startsWith('gabriel')) return true;
+            if (isMateus && (aNameLower.startsWith('mateus') || aNameLower.startsWith('matheus'))) return true;
+            if (isLuizMiguel && aNameLower.startsWith('luiz miguel')) return true;
+            if (isLuizHenrique && aNameLower.startsWith('luiz henrique')) return true;
+            if (proNameLower.startsWith('moises') && aNameLower.startsWith('moises')) return true;
+            if (proNameLower.startsWith('bryan') && aNameLower.startsWith('bryan')) return true;
           }
           return false;
         });
@@ -505,6 +569,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     });
 
     return () => {
+      unsubComandas();
       unsubComms();
       unsubAdvs();
       unsubPayables();
@@ -549,7 +614,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       ...prev, 
       selectedIds: pendingIds, 
       amount: pendingTotal,
-      notes: `Fechamento período de ${format(parseISO(localDateRange.start), 'dd/MM')} a ${format(parseISO(localDateRange.end), 'dd/MM')}`
+      notes: `Fechamento período de ${formatSafeDate(localDateRange.start, 'dd/MM')} a ${formatSafeDate(localDateRange.end, 'dd/MM')}`
     }));
   }, [commissions, localDateRange.start, localDateRange.end]);
 
@@ -832,25 +897,37 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     return { servicos, vendas, gorjetas, assinaturas, bonus };
   })();
 
-  const totals = {
-    // Robust calculation of produced base value with fallback
-    produced: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => {
-      const base = Number(c.base_value) || Number(c.amount) || ((Number(c.commission_percentage) || 0) > 0 ? ((Number(c.commission_value) || 0) * 100) / Number(c.commission_percentage) : Number(c.commission_value)) || 0;
-      return acc + base;
-    }, 0),
-    allTimeProduced: allCommissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => {
-      const base = Number(c.base_value) || Number(c.amount) || ((Number(c.commission_percentage) || 0) > 0 ? ((Number(c.commission_value) || 0) * 100) / Number(c.commission_percentage) : Number(c.commission_value)) || 0;
-      return acc + base;
-    }, 0),
-    commission: commissions.reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
-    serviceCommission: commissions.filter(c => c.commission_type !== 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
-    bonus: periodCommissionsByCategory.bonus,
-    pending: commissions.filter(c => c.status === 'pendente').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
-    pendingService: commissions.filter(c => c.status === 'pendente' && c.commission_type !== 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
-    pendingBonus: commissions.filter(c => c.status === 'pendente' && c.commission_type === 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
-    advances: advances.reduce((acc, a) => acc + (Number(a.amount) || 0), 0),
-    paid: payouts.reduce((acc, p) => acc + (p.date >= localDateRange.start && p.date <= localDateRange.end ? Number(p.amount) || 0 : 0), 0)
-  };
+  const ledger = React.useMemo(() => {
+    const barberObj = professionalProfile || {
+      uid: professionalId,
+      nome: professionalName,
+      percentual_comissao: 50
+    } as UserProfile;
+
+    return calculateProfessionalLedger(
+      barberObj,
+      allCommissions,
+      allAdvances,
+      localDateRange.start,
+      localDateRange.end,
+      allComandas
+    );
+  }, [professionalProfile, professionalId, professionalName, allCommissions, allAdvances, localDateRange.start, localDateRange.end, allComandas]);
+
+  const totals = React.useMemo(() => {
+    return {
+      produced: ledger.faturamentoBrutoMes,
+      allTimeProduced: ledger.faturamentoBrutoTotal,
+      commission: ledger.comissaoGeradaMes,
+      serviceCommission: ledger.comissaoGeradaMes - periodCommissionsByCategory.bonus,
+      bonus: periodCommissionsByCategory.bonus,
+      pending: ledger.comissaoPendenteBruta,
+      pendingService: commissions.filter(c => c.status === 'pendente' && c.commission_type !== 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
+      pendingBonus: commissions.filter(c => c.status === 'pendente' && c.commission_type === 'bonus').reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0),
+      advances: ledger.valesPendentes,
+      paid: ledger.comissaoRepassadaMes
+    };
+  }, [ledger, periodCommissionsByCategory, commissions]);
 
   // 2. All-time actual pending totals to display correct global ledger to user
   const allTimePendingCommissionsTotal = allTimePendingCommissions.reduce((acc, c) => acc + (c.commission_value || 0), 0);
@@ -1314,7 +1391,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                                   c.commission_type === 'assinatura' ? 'Assinatura' : 'Serviço';
                                 return (
                                   <tr key={`comm-det-${c.id || index}-${index}`} className={`hover:bg-slate-50/50 transition-colors ${isBonusItem ? 'bg-emerald-50/30' : ''}`}>
-                                    <td className="px-8 py-5 text-sm font-bold text-slate-500">{format(parseISO(c.date), 'dd/MM/yyyy')}</td>
+                                    <td className="px-8 py-5 text-sm font-bold text-slate-500">{formatSafeDate(c.date || (c as any).createdAt, 'dd/MM/yyyy')}</td>
                                     <td className="px-8 py-5 font-black text-primary text-sm">{c.comanda_number ? `#${c.comanda_number}` : '-'}</td>
                                     <td className="px-8 py-5">
                                       <p className="text-sm font-bold text-primary flex items-center gap-1.5">
@@ -1374,7 +1451,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                         <tbody className="divide-y divide-slate-50">
                           {advances.map((a, index) => (
                             <tr key={`adv-det-${a.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="px-8 py-5 text-sm font-bold text-slate-500">{format(parseISO(a.date), 'dd/MM/yyyy')}</td>
+                              <td className="px-8 py-5 text-sm font-bold text-slate-500">{formatSafeDate(a.date || (a as any).createdAt, 'dd/MM/yyyy')}</td>
                               <td className="px-8 py-5 text-sm font-bold text-primary">{a.description}</td>
                               <td className="px-8 py-5 text-xs text-muted font-medium">{a.responsible_name || 'Administrador'}</td>
                               <td className="px-8 py-5">
@@ -1421,8 +1498,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                         <tbody className="divide-y divide-slate-50">
                           {payouts.map((p, index) => (
                             <tr key={`payout-det-${p.id || index}-${index}`} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="px-8 py-5 text-sm font-bold text-slate-700">{format(parseISO(p.date), 'dd/MM/yyyy')}</td>
-                              <td className="px-8 py-5 text-xs font-bold text-muted uppercase tracking-widest">{format(parseISO(p.period_start), 'dd/MM')} a {format(parseISO(p.period_end), 'dd/MM')}</td>
+                              <td className="px-8 py-5 text-sm font-bold text-slate-700">{formatSafeDate(p.date || (p as any).createdAt, 'dd/MM/yyyy')}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-muted uppercase tracking-widest">{formatSafeDate(p.period_start, 'dd/MM')} a {formatSafeDate(p.period_end, 'dd/MM')}</td>
                               <td className="px-8 py-5">
                                 <p className="text-xs text-slate-400 font-mono">{p.transaction_id}</p>
                                 {p.notes && <p className="text-[10px] text-muted font-medium mt-0.5">{p.notes}</p>}
@@ -1455,7 +1532,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                           </div>
                           <h4 className="text-2xl font-black text-primary mt-1">{profile?.nome_barbearia || 'BarberElite Pro'}</h4>
                           <p className="text-[10px] text-muted font-bold uppercase tracking-wider mt-0.5">
-                            Período: {format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a {format(parseISO(localDateRange.end), 'dd/MM/yyyy')}
+                            Período: {formatSafeDate(localDateRange.start, 'dd/MM/yyyy')} a {formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}
                           </p>
                         </div>
                         <div className="sm:text-right bg-slate-50 px-4 py-3 rounded-2xl border border-slate-150">
@@ -1621,7 +1698,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                       {/* Declaração formal de Recebimento */}
                       <div className="bg-slate-50/50 border border-slate-150 p-5 rounded-2xl text-[11px] text-slate-600 leading-relaxed italic mb-8">
                         <p>
-                          Declaro para os devidos fins que recebi do estabelecimento <strong className="text-slate-800 font-bold">{profile?.nome_barbearia || profile?.nome || 'BarberElite'}</strong> a importância líquida de <strong className="text-slate-900 font-bold">R$ {periodNetTotalToPay.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({extensos(periodNetTotalToPay)})</strong>, correspondente ao repasse líquido de comissões de serviços executados, comissões de vendas de produtos, gorjetas de clientes e recorrências de planos/assinaturas relativos ao período de <strong className="text-slate-800 font-bold">{format(parseISO(localDateRange.start), 'dd/MM/yyyy')}</strong> a <strong className="text-slate-800 font-bold">{format(parseISO(localDateRange.end), 'dd/MM/yyyy')}</strong>, deduzidos todos os vales e retenções do período, dando plena, geral e irrevogável quitação.
+                          Declaro para os devidos fins que recebi do estabelecimento <strong className="text-slate-800 font-bold">{profile?.nome_barbearia || profile?.nome || 'BarberElite'}</strong> a importância líquida de <strong className="text-slate-900 font-bold">R$ {periodNetTotalToPay.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({extensos(periodNetTotalToPay)})</strong>, correspondente ao repasse líquido de comissões de serviços executados, comissões de vendas de produtos, gorjetas de clientes e recorrências de planos/assinaturas relativos ao período de <strong className="text-slate-800 font-bold">{formatSafeDate(localDateRange.start, 'dd/MM/yyyy')}</strong> a <strong className="text-slate-800 font-bold">{formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}</strong>, deduzidos todos os vales e retenções do período, dando plena, geral e irrevogável quitação.
                         </p>
                       </div>
 
@@ -1683,7 +1760,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
-                                                  {format(parseISO(c.date), 'dd/MM')} • Comanda #{c.comanda_number}
+                                                  {formatSafeDate(c.date || (c as any).createdAt, 'dd/MM')} • Comanda #{c.comanda_number}
                                                 </span>
                                               </div>
                                               <div className="text-right font-bold">
@@ -1737,7 +1814,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
-                                                  {format(parseISO(c.date), 'dd/MM')} • Comanda #{c.comanda_number}
+                                                  {formatSafeDate(c.date || (c as any).createdAt, 'dd/MM')} • Comanda #{c.comanda_number}
                                                 </span>
                                               </div>
                                               <div className="text-right font-bold">
@@ -1791,7 +1868,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block">Gorjeta de Cliente</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
-                                                  {format(parseISO(c.date), 'dd/MM')} • {c.cliente_name || 'Cliente Consumidor'} • Comanda #{c.comanda_number}
+                                                  {formatSafeDate(c.date || (c as any).createdAt, 'dd/MM')} • {c.cliente_name || 'Cliente Consumidor'} • Comanda #{c.comanda_number}
                                                 </span>
                                               </div>
                                               <div className="text-right font-bold font-mono">
@@ -1844,7 +1921,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                               <div className="text-left">
                                                 <span className="font-bold text-slate-800 block truncate max-w-[140px]">{c.servico_name}</span>
                                                 <span className="text-[8px] text-slate-400 block mt-0.5">
-                                                  {format(parseISO(c.date), 'dd/MM')} • {c.cliente_name || 'Membro do Club'}
+                                                  {formatSafeDate(c.date || (c as any).createdAt, 'dd/MM')} • {c.cliente_name || 'Membro do Club'}
                                                 </span>
                                               </div>
                                               <div className="text-right font-bold">
@@ -1894,7 +1971,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                           <div className="text-left">
                                             <span className="font-bold text-slate-800 block truncate max-w-[140px]">{a.description || 'Vale Avulso'}</span>
                                             <span className="text-[8px] text-slate-400 block mt-0.5">
-                                              {format(parseISO(a.date), 'dd/MM')} • Aut: {a.responsible_name || 'Admin'}
+                                              {formatSafeDate(a.date || (a as any).createdAt, 'dd/MM')} • Aut: {a.responsible_name || 'Admin'}
                                             </span>
                                           </div>
                                           <div className="flex items-center gap-2">
@@ -1962,7 +2039,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 ESTABELECIMENTO: ${company.toUpperCase()}
 PROFISSIONAL: ${professionalName.toUpperCase()}
 CPF/ID: ${professionalId.toUpperCase()}
-PERIODO: ${format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a ${format(parseISO(localDateRange.end), 'dd/MM/yyyy')}
+PERIODO: ${formatSafeDate(localDateRange.start, 'dd/MM/yyyy')} a ${formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}
 EMISSÃO: ${new Date().toLocaleDateString('pt-BR')}
 
 --- DEMONSTRATIVO DE PROVENTOS (+) ---
@@ -1981,7 +2058,7 @@ TOTAL LÍQUIDO PAGO: R$ ${periodNetTotalToPay.toFixed(2)}
 VALOR POR EXTENSO: (${extensos(periodNetTotalToPay)})
 ========================================
 
-Declaro para os devidos fins que recebi do estabelecimento ${company} a importância líquida correspondente descrita acima, referente ao período de ${format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a ${format(parseISO(localDateRange.end), 'dd/MM/yyyy')}, dando plena e total quitação.
+Declaro para os devidos fins que recebi do estabelecimento ${company} a importância líquida correspondente descrita acima, referente ao período de ${formatSafeDate(localDateRange.start, 'dd/MM/yyyy')} a ${formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}, dando plena e total quitação.
 
 Assinatura: _______________________________
      ${professionalName}
@@ -2013,11 +2090,11 @@ Assinatura: _______________________________
                             const pendingAssinaturas = payrollGroups.assinaturas.filter(c => c.status === 'pendente');
                             const pendingAssinaturasTotal = pendingAssinaturas.reduce((acc, c) => acc + c.commission_value, 0);
 
-                            const formattedMsg = `*RECIBO DE REPASSE FINANCEIRO (HOLERITE)*\n*${company.toUpperCase()}*\n\n*Profissional:* ${professionalName}\n*Período:* ${format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a ${format(parseISO(localDateRange.end), 'dd/MM/yyyy')}\n*Emissão:* ${new Date().toLocaleDateString('pt-BR')}\n\n-----------------------------------------\n*DETALHAMENTO DE PROVENTOS (+)*\n-----------------------------------------\n• *Serviços Executados:* R$ ${pendingServicosTotal.toFixed(2)} (${pendingServicos.length} un)\n• *Vendas de Balcão:* R$ ${pendingVendasTotal.toFixed(2)} (${pendingVendas.length} un)\n• *Gorjetas Especiais:* R$ ${pendingGorjetasTotal.toFixed(2)} (${pendingGorjetas.length} un)\n• *Planos / Assinaturas:* R$ ${pendingAssinaturasTotal.toFixed(2)} (${pendingAssinaturas.length} un)\n\n*TOTAL BRUTO DE PROVENTOS:* R$ ${totals.pending.toFixed(2)}\n\n-----------------------------------------\n*DETALHAMENTO DE RETENÇÕES (-)*\n-----------------------------------------\n• *Vales e Adiantamentos:* R$ ${periodPendingAdvancesTotal.toFixed(2)} (${advances.length} un)\n\n-----------------------------------------\n*SINALIZAÇÃO DE REPASSE LÍQUIDO*\n-----------------------------------------\n*LÍQUIDO A RECEBER:* R$ ${periodNetTotalToPay.toFixed(2)}\n*Valor por extenso:* _(${extensos(periodNetTotalToPay)})_\n\n-----------------------------------------\n*Declaro que recebi do estabelecimento ${company} o valor líquido correspondente descrito acima.*\n\n_Gerado em alta velocidade por BarberElite Pro._`;
+                            const formattedMsg = `*RECIBO DE REPASSE FINANCEIRO (HOLERITE)*\n*${company.toUpperCase()}*\n\n*Profissional:* ${professionalName}\n*Período:* ${formatSafeDate(localDateRange.start, 'dd/MM/yyyy')} a ${formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}\n*Emissão:* ${new Date().toLocaleDateString('pt-BR')}\n\n-----------------------------------------\n*DETALHAMENTO DE PROVENTOS (+)*\n-----------------------------------------\n• *Serviços Executados:* R$ ${pendingServicosTotal.toFixed(2)} (${pendingServicos.length} un)\n• *Vendas de Balcão:* R$ ${pendingVendasTotal.toFixed(2)} (${pendingVendas.length} un)\n• *Gorjetas Especiais:* R$ ${pendingGorjetasTotal.toFixed(2)} (${pendingGorjetas.length} un)\n• *Planos / Assinaturas:* R$ ${pendingAssinaturasTotal.toFixed(2)} (${pendingAssinaturas.length} un)\n\n*TOTAL BRUTO DE PROVENTOS:* R$ ${totals.pending.toFixed(2)}\n\n-----------------------------------------\n*DETALHAMENTO DE RETENÇÕES (-)*\n-----------------------------------------\n• *Vales e Adiantamentos:* R$ ${periodPendingAdvancesTotal.toFixed(2)} (${advances.length} un)\n\n-----------------------------------------\n*SINALIZAÇÃO DE REPASSE LÍQUIDO*\n-----------------------------------------\n*LÍQUIDO A RECEBER:* R$ ${periodNetTotalToPay.toFixed(2)}\n*Valor por extenso:* _(${extensos(periodNetTotalToPay)})_\n\n-----------------------------------------\n*Declaro que recebi do estabelecimento ${company} o valor líquido correspondente descrito acima.*\n\n_Gerado em alta velocidade por BarberElite Pro._`;
                             const encodedTxt = encodeURIComponent(formattedMsg);
                             
                             // Copy to clipboard
-                            navigator.clipboard.writeText(`RECIBO DE FECHAMENTO FINANCEIRO\n\nProfissional: ${professionalName}\nPeríodo: ${format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a ${format(parseISO(localDateRange.end), 'dd/MM/yyyy')}\n\nLíquido a receber: R$ ${periodNetTotalToPay.toFixed(2)}\n\n(${extensos(periodNetTotalToPay)})`);
+                            navigator.clipboard.writeText(`RECIBO DE FECHAMENTO FINANCEIRO\n\nProfissional: ${professionalName}\nPeríodo: ${formatSafeDate(localDateRange.start, 'dd/MM/yyyy')} a ${formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}\n\nLíquido a receber: R$ ${periodNetTotalToPay.toFixed(2)}\n\n(${extensos(periodNetTotalToPay)})`);
                             toast.success("Recibo copiado para a área de transferência!");
 
                             window.open(`https://api.whatsapp.com/send?text=${encodedTxt}`, '_blank');
@@ -2139,7 +2216,7 @@ Assinatura: _______________________________
                       <div className="max-h-28 overflow-y-auto bg-slate-50 border border-slate-150 rounded-2xl p-2.5 space-y-1.5 no-scrollbar">
                         {periodPendingAdvances.map((adv, idx) => (
                           <div key={`chk-adv-${adv.id || 'adv'}-${idx}`} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-2 rounded-xl border border-slate-150 shadow-sm animate-in fade-in">
-                            <span className="font-bold text-slate-700">{adv.description} ({format(parseISO(adv.date), 'dd/MM/yyyy')})</span>
+                            <span className="font-bold text-slate-700">{adv.description} ({formatSafeDate(adv.date || (adv as any).createdAt, 'dd/MM/yyyy')})</span>
                             <span className="font-black text-red-500">- R$ {adv.amount.toFixed(2)}</span>
                           </div>
                         ))}
@@ -2684,7 +2761,7 @@ Assinatura: _______________________________
         {/* Dados */}
         <div className="space-y-1 text-xs pb-4 border-b border-dashed border-slate-400 mb-4">
           <p><strong>Profissional:</strong> {professionalName}</p>
-          <p><strong>Período:</strong> {format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a {format(parseISO(localDateRange.end), 'dd/MM/yyyy')}</p>
+          <p><strong>Período:</strong> {formatSafeDate(localDateRange.start, 'dd/MM/yyyy')} a {formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}</p>
         </div>
 
         {/* Breakdown */}
@@ -2782,7 +2859,7 @@ Assinatura: _______________________________
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Período de Consolidação</p>
-            <p className="text-base font-black">{format(parseISO(localDateRange.start), 'dd/MM/yyyy')} a {format(parseISO(localDateRange.end), 'dd/MM/yyyy')}</p>
+            <p className="text-base font-black">{formatSafeDate(localDateRange.start, 'dd/MM/yyyy')} a {formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}</p>
             <p className="text-xs font-bold text-slate-500 mt-1">Status: Concluído / Pronto para repasse</p>
           </div>
         </div>
@@ -2805,7 +2882,7 @@ Assinatura: _______________________________
             <tbody className="divide-y divide-slate-100">
               {commissions.map((c, idx) => (
                 <tr key={`print-comm-${idx}`} className="align-middle">
-                  <td className="py-2.5">{format(parseISO(c.date), 'dd/MM/yyyy')}</td>
+                  <td className="py-2.5">{formatSafeDate(c.date || (c as any).createdAt, 'dd/MM/yyyy')}</td>
                   <td className="py-2.5 font-bold">#{c.comanda_number}</td>
                   <td className="py-2.5">{c.servico_name}</td>
                   <td className="py-2.5 text-slate-600 font-medium">{c.cliente_name || 'Consumidor'}</td>
@@ -2834,7 +2911,7 @@ Assinatura: _______________________________
               <tbody className="divide-y divide-slate-100">
                 {advances.map((a, idx) => (
                   <tr key={`print-adv-${idx}`}>
-                    <td className="py-2.5">{format(parseISO(a.date), 'dd/MM/yyyy')}</td>
+                    <td className="py-2.5">{formatSafeDate(a.date || (a as any).createdAt, 'dd/MM/yyyy')}</td>
                     <td className="py-2.5">{a.description}</td>
                     <td className="py-2.5 text-slate-600">{a.responsible_name || 'Admin'}</td>
                     <td className="py-2.5 text-right font-bold text-red-600">-R$ {a.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
@@ -2891,7 +2968,7 @@ Assinatura: _______________________________
         <div className="mb-12 p-6 bg-slate-50 border border-slate-300 rounded-2xl page-break-inside-avoid">
           <h3 className="text-xs font-black uppercase tracking-wider mb-3 border-b border-slate-400 pb-1.5">4. Recibo de Quitação de Repasse (Valor Escrito de Recebimento)</h3>
           <p className="text-xs text-slate-800 leading-relaxed font-serif italic">
-            Declaro para os devidos fins que recebi a importância líquida de <strong className="font-sans font-bold">R$ {Math.max(0, (totals.commission - totals.advances - totals.paid)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> (<span className="font-sans font-bold uppercase text-[10px] bg-slate-200/60 px-1.5 py-0.5 rounded tracking-wide">{extensos(Math.max(0, (totals.commission - totals.advances - totals.paid)))}</span>) referente ao repasse de comissões de serviços, produtos e gorjetas consolidado no período de <strong className="font-sans font-bold">{format(parseISO(localDateRange.start), 'dd/MM/yyyy')}</strong> a <strong className="font-sans font-bold">{format(parseISO(localDateRange.end), 'dd/MM/yyyy')}</strong>, deduzidos todos os vales adiantados listados nesta ficha, dando plena quitação.
+            Declaro para os devidos fins que recebi a importância líquida de <strong className="font-sans font-bold">R$ {Math.max(0, (totals.commission - totals.advances - totals.paid)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> (<span className="font-sans font-bold uppercase text-[10px] bg-slate-200/60 px-1.5 py-0.5 rounded tracking-wide">{extensos(Math.max(0, (totals.commission - totals.advances - totals.paid)))}</span>) referente ao repasse de comissões de serviços, produtos e gorjetas consolidado no período de <strong className="font-sans font-bold">{formatSafeDate(localDateRange.start, 'dd/MM/yyyy')}</strong> a <strong className="font-sans font-bold">{formatSafeDate(localDateRange.end, 'dd/MM/yyyy')}</strong>, deduzidos todos os vales adiantados listados nesta ficha, dando plena quitação.
           </p>
         </div>
 

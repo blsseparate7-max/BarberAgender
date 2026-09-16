@@ -12,6 +12,7 @@ import { AccountReceivable, PaymentMethodConfig, DailyCash } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getActiveTenantId } from '../services/tenantService';
 
 interface AccountsReceivableManagerProps {
   userId: string;
@@ -71,7 +72,12 @@ export const AccountsReceivableManager: React.FC<AccountsReceivableManagerProps>
 
   useEffect(() => {
     setLoading(true);
-    let q = query(collection(db, 'accounts_receivable'), orderBy('dueDate', 'asc'));
+    const activeTenantId = getActiveTenantId();
+    let q = query(
+      collection(db, 'accounts_receivable'), 
+      where('tenantId', '==', activeTenantId), 
+      orderBy('dueDate', 'asc')
+    );
     
     if (dateRange.start && dateRange.end) {
       q = query(q, where('dueDate', '>=', dateRange.start), where('dueDate', '<=', dateRange.end));

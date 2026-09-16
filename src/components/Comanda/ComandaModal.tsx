@@ -338,7 +338,12 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         batch.delete(docSnap.ref);
       });
 
-      const cashQuery = query(collection(db, 'cash_sessions'), where('status', 'in', ['open', 'reopened']));
+      const activeTenant = getActiveTenantId();
+      const cashQuery = query(
+        collection(db, 'cash_sessions'), 
+        where('tenantId', '==', activeTenant),
+        where('status', 'in', ['open', 'reopened'])
+      );
       const cashDocs = await getDocs(cashQuery);
       if (!cashDocs.empty) {
         const cashDoc = cashDocs.docs[0];

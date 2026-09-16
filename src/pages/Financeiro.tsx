@@ -4156,7 +4156,30 @@ function ProfessionalAccountDetailsModal({
                         <p className="text-xs font-bold text-primary">{a.description || 'Vale / Adiantamento avulso'}</p>
                         <p className="text-[10px] text-muted font-bold">Lançador: {a.authorName || 'Sistema'} • {a.date ? format(new Date(a.date + 'T00:00:00'), 'dd/MM/yyyy') : '---'}</p>
                       </div>
-                      <p className="text-sm font-black text-red-500">- R$ {(a.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      <div className="flex items-center gap-4">
+                        <p className="text-sm font-black text-red-500">- R$ {(a.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        {a.status !== 'pago' && a.id && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (window.confirm(`Tem certeza que deseja cancelar e excluir o vale "${a.description || 'Adiantamento'}" no valor de R$ ${(a.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?\n\nEsta ação estornará a despesa do financeiro e da gaveta do caixa de forma unificada.`)) {
+                                try {
+                                  await commissionService.deleteAdvance(a.id);
+                                  toast.success("Vale excluído e estornado com sucesso!");
+                                  loadInfo();
+                                  onSuccess();
+                                } catch (err: any) {
+                                  toast.error(err.message || "Erro ao excluir vale.");
+                                }
+                              }
+                            }}
+                            title="Excluir vale e estornar despesa"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {advances.length === 0 && (

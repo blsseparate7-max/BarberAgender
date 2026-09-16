@@ -373,7 +373,7 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
       return;
     }
 
-    if (linkClientId && confirmPassword && password !== confirmPassword) {
+    if (password !== confirmPassword) {
       setError('As senhas digitadas não coincidem. Por favor, confira a senha.');
       setLoading(false);
       return;
@@ -952,91 +952,6 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
               </div>
             </div>
 
-            {/* COMPLETION FIELDS FOR CLIENTS: Aniversário, Preferências, CPF */}
-            {role === 'cliente' && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="space-y-4 pt-2 border-t border-zinc-800/60"
-              >
-                {/* Data de Aniversário */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between ml-1">
-                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Cake size={13} className="text-emerald-400" />
-                      Data de Nascimento / Aniversário
-                    </label>
-                    <span className="text-[9px] text-zinc-500">Para mimos e descontos</span>
-                  </div>
-                  <div className="relative">
-                    <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
-                    <input 
-                      type="date" 
-                      value={birthDate}
-                      onChange={(e) => setBirthDate(e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Preferências de Corte & Atendimento */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between ml-1">
-                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Tag size={13} className="text-emerald-400" />
-                      Suas Preferências de Corte & Estilo
-                    </label>
-                    <span className="text-[9px] text-zinc-500">Opcional</span>
-                  </div>
-                  
-                  {/* Quick Tags */}
-                  <div className="flex flex-wrap gap-1.5">
-                    {PREFERENCE_SUGGESTIONS.map((tag) => {
-                      const isSelected = preferences.toLowerCase().includes(tag.toLowerCase());
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => togglePreferenceTag(tag)}
-                          className={`text-[10px] px-2.5 py-1 rounded-lg font-semibold transition-all border ${
-                            isSelected 
-                              ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300' 
-                              : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {isSelected ? '✓ ' : '+ '}{tag}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <input 
-                    type="text" 
-                    value={preferences}
-                    onChange={(e) => setPreferences(e.target.value)}
-                    placeholder="Ex: Degradê navalhado, barba desenhada, corte na tesoura..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white"
-                  />
-                </div>
-
-                {/* CPF (opcional) */}
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider ml-1 flex items-center justify-between">
-                    <span>CPF</span>
-                    <span className="text-[9px] text-zinc-500">Opcional (para recibos / assinaturas)</span>
-                  </label>
-                  <input 
-                    type="text" 
-                    value={cpf}
-                    onChange={(e) => setCpf(e.target.value)}
-                    placeholder="000.000.000-00"
-                    maxLength={14}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3 text-xs focus:outline-none focus:border-emerald-500/50 transition-colors text-white font-mono"
-                  />
-                </div>
-              </motion.div>
-            )}
-
             {/* Senha e Confirmação */}
             <div className="space-y-3 pt-2 border-t border-zinc-800/60">
               <div className="space-y-1">
@@ -1064,24 +979,22 @@ export function RegisterPage({ onLoginClick, initialRole = 'cliente', onBackToLa
                 </div>
               </div>
 
-              {linkClientId && (
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider ml-1">
-                    Confirme sua Senha
-                  </label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
-                    <input 
-                      type={showPassword ? 'text' : 'password'} 
-                      required
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Repita sua nova senha"
-                      className="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500/50 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none transition-colors text-white"
-                    />
-                  </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider ml-1">
+                  Confirme sua Senha
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+                  <input 
+                    type={showPassword ? 'text' : 'password'} 
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repita sua nova senha"
+                    className="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500/50 rounded-xl py-3 pl-12 pr-4 text-xs focus:outline-none transition-colors text-white"
+                  />
                 </div>
-              )}
+              </div>
             </div>
 
             <button 

@@ -687,7 +687,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     }
 
     if (activationType === 'asaas') {
-      const billingType = (formData.get('billingType') as 'PIX' | 'CREDIT_CARD') || 'PIX';
+      const billingType = (formData.get('billingType') as 'PIX' | 'CREDIT_CARD') || 'CREDIT_CARD';
 
       try {
         const res = await subscriptionService.createAsaasSubscription({
@@ -4643,13 +4643,14 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">Forma de Pagamento</label>
                         <select 
                           name="billingType"
+                          defaultValue="CREDIT_CARD"
                           className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 cursor-pointer"
                         >
-                          {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('PIX')) && (
-                            <option value="PIX">⚡ Pix Instantâneo (QR Code + Copia e Cola)</option>
-                          )}
                           {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('CREDIT_CARD')) && (
                             <option value="CREDIT_CARD">💳 Cartão de Crédito Recorrente (Cobrança Mensal)</option>
+                          )}
+                          {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('PIX')) && (
+                            <option value="PIX">⚡ Pix Instantâneo (QR Code + Copia e Cola)</option>
                           )}
                         </select>
                       </div>

@@ -30,6 +30,7 @@ import { serviceService } from './serviceService';
 import { getActiveTenantId, tenantService } from './tenantService';
 import { comandaService } from './comandaService';
 import { notificationService } from './notificationService';
+import { pushNotificationService } from './pushNotificationService';
 
 const COLLECTION = 'appointments';
 const RECURRING_COLLECTION = 'recurring_appointments';
@@ -228,6 +229,12 @@ export const appointmentService = {
           }
         });
       }
+      // 3. Send Web Push to barber & client screens
+      pushNotificationService.sendAppointmentPush({
+        eventType: 'created',
+        appointment: { id, ...data, tenantId },
+        tenantId
+      }).catch((e) => console.warn('Erro ao disparar push notification:', e));
     } catch (notifErr) {
       console.error('Falha ao enviar notificações de criação de agendamento:', notifErr);
     }
@@ -334,6 +341,12 @@ export const appointmentService = {
             }
           });
         }
+        // 4. Send Web Push to barber & client screens
+        pushNotificationService.sendAppointmentPush({
+          eventType: 'rescheduled',
+          appointment: { id, ...current, ...data, tenantId },
+          tenantId
+        }).catch((e) => console.warn('Erro ao disparar push notification:', e));
       } catch (notifErr) {
         console.error('Falha ao enviar notificações de reagendamento:', notifErr);
       }
@@ -657,6 +670,13 @@ export const appointmentService = {
             }
           }).catch(() => {});
         }
+
+        // Push notification on cancellation
+        pushNotificationService.sendAppointmentPush({
+          eventType: 'cancelled',
+          appointment: { id, ...appointment, tenantId },
+          tenantId
+        }).catch((e) => console.warn('Erro ao disparar push notification:', e));
       }
     } catch (err) {
       console.warn("Could not pre-notify for appointment cancellation:", err);

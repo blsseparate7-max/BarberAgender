@@ -531,6 +531,31 @@ export const comandaService = {
   },
 
   async openComanda(data: Partial<Comanda>, userId: string, userName: string) {
+    const tenantIdValue = getActiveTenantId();
+    if (!tenantIdValue) {
+      throw new Error("Não foi possível identificar a barbearia ativa (tenantId). Por favor, recarregue a página.");
+    }
+
+    const linkedAppId = data.agendamento_id || (data as any).agendamentoId || (data as any).appointment_id || (data as any).appointmentId || '';
+
+    // Evitar que cliques rápidos ou simultâneos criem comandas duplicadas para o mesmo agendamento
+    if (linkedAppId) {
+      try {
+        const existingQuery = query(
+          collection(db, COLLECTION),
+          where('agendamento_id', '==', linkedAppId),
+          where('status', 'in', ['aberta', 'aguardando_pagamento'])
+        );
+        const existingSnap = await getDocs(existingQuery);
+        if (!existingSnap.empty) {
+          console.warn(`Comanda já aberta para o agendamento ${linkedAppId}. Retornando a existente.`);
+          return { id: existingSnap.docs[0].id, ...existingSnap.docs[0].data() } as Comanda;
+        }
+      } catch (checkErr) {
+        console.warn("Erro ao buscar comanda existente para o agendamento:", checkErr);
+      }
+    }
+
     const docRef = doc(collection(db, COLLECTION));
     const number = Math.floor(1000 + Math.random() * 9000).toString();
     
@@ -638,12 +663,11 @@ export const comandaService = {
 
     const totalAmount = subtotalServices + subtotalProducts;
 
-    const linkedAppId = data.agendamento_id || (data as any).agendamentoId || (data as any).appointment_id || (data as any).appointmentId || '';
     const linkedDailyFlowId = (data as any).daily_flow_id || (data as any).dailyFlowId || '';
 
     const newComanda: Comanda = {
       id: docRef.id,
-      tenantId: getActiveTenantId(),
+      tenantId: tenantIdValue,
       number,
       cliente_id: data.cliente_id || '',
       cliente_name: data.cliente_name || '',
@@ -827,7 +851,18 @@ export const comandaService = {
         return tB - tA;
       });
       cashDoc = sortedDocs[0];
-    }    await runTransaction(db, async (transaction) => {
+    }
+
+    // Pre-fetch de comissões já existentes/pagas para evitar duplicações retroativas
+    let existingCommissions: any[] = [];
+    try {
+      const commissionsSnap = await getDocs(query(collection(db, 'commissions'), where('comanda_id', '==', id)));
+      existingCommissions = commissionsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (commErr) {
+      console.warn("Could not pre-fetch existing commissions for comanda closure check:", commErr);
+    }
+
+    await runTransaction(db, async (transaction) => {
       // 2. Transactional Reads
       const comandaSnap = await transaction.get(docRef);
       if (!comandaSnap.exists()) throw new Error("Comanda não encontrada");
@@ -1149,7 +1184,9 @@ export const comandaService = {
           productExistsMap,
           servicesMap,
           productsMap,
-          plansMap
+          plansMap,
+          undefined,
+          existingCommissions
         );
       }
     });
@@ -1442,11 +1479,14 @@ export const comandaService = {
       const cDate = cData?.date || (cData?.createdAt?.seconds ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
 
       if (tenantId && normClient && normClient.length > 2 && normClient !== 'consumidor final' && normClient !== 'avulso' && normClient !== 'cliente avulso') {
-        const tenantAppsSnap = await getDocs(query(
+        let apptsQ = query(
           collection(db, 'appointments'),
-          where('tenantId', '==', tenantId),
-          limit(50)
-        ));
+          where('tenantId', '==', tenantId)
+        );
+        if (cDate) {
+          apptsQ = query(apptsQ, where('date', '==', cDate));
+        }
+        const tenantAppsSnap = await getDocs(query(apptsQ, limit(150)));
         tenantAppsSnap.forEach((docSnap) => {
           const aData = docSnap.data();
           const normAppClient = (aData.cliente_name || aData.cliente_nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -1691,7 +1731,8 @@ export const comandaService = {
     servicesMap: Record<string, any> = {},
     productsMap: Record<string, any> = {},
     plansMap: Record<string, any> = {},
-    subscriptionsMap: Record<string, any> = {}
+    subscriptionsMap: Record<string, any> = {},
+    existingCommissions: any[] = []
   ) {
     // 1. Update Appointment if exists
     const apptId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
@@ -1728,10 +1769,25 @@ export const comandaService = {
       const targetBarberName = item.profissional_name || comanda.profissional_name;
 
       if (item.generateCommission && targetBarberId && item.deductType !== 'assinatura') {
-        const barberData = barberDataMap[targetBarberId];
+        // Evitar duplicar comissão se o profissional já recebeu (com status pago) para este item nesta comanda
+        const alreadyPaid = existingCommissions && existingCommissions.some(ec => 
+          ec.profissional_id === targetBarberId && 
+          ec.servico_name === item.name &&
+          ec.status === 'pago'
+        );
+        if (alreadyPaid) {
+          console.log(`Professional ${targetBarberName} already has a paid commission for ${item.name} in comanda #${comanda.number}. Skipping duplicate commission generation.`);
+          continue;
+        }
+        let barberData = barberDataMap[targetBarberId];
+        if (!barberData && targetBarberName) {
+          const bNorm = targetBarberName.toLowerCase().trim();
+          const matchKey = Object.keys(barberDataMap).find(k => (barberDataMap[k]?.nome || '').toLowerCase().trim() === bNorm);
+          if (matchKey) barberData = barberDataMap[matchKey];
+        }
         const defaultPercentage = (item.type === 'produto' || item.type === 'product')
-          ? (barberData?.percentual_comissao_produtos ?? barberData?.product_commission_percentage ?? barberData?.percentual_comissao ?? barberData?.commission_percentage ?? 0)
-          : (barberData?.percentual_comissao ?? barberData?.commission_percentage ?? 0);
+          ? (barberData?.percentual_comissao_produtos ?? barberData?.product_commission_percentage ?? barberData?.percentual_comissao ?? barberData?.commission_percentage ?? 50)
+          : (barberData?.percentual_comissao ?? barberData?.commission_percentage ?? 50);
 
         const itemData = (item.type === 'produto' || item.type === 'product') 
           ? (productsMap[item.referencia_id] || {})
@@ -1948,6 +2004,15 @@ export const comandaService = {
     }
   ) {
     const docRef = doc(db, COLLECTION, id);
+
+    // Pre-fetch de comissões já existentes/pagas para evitar duplicações retroativas ao fechar a comanda
+    let existingCommissions: any[] = [];
+    try {
+      const commissionsSnap = await getDocs(query(collection(db, 'commissions'), where('comanda_id', '==', id)));
+      existingCommissions = commissionsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (commErr) {
+      console.warn("Could not pre-fetch existing commissions for comanda closure check:", commErr);
+    }
     
     await runTransaction(db, async (transaction) => {
       // 1. Transactional Reads
@@ -2061,7 +2126,11 @@ export const comandaService = {
           remainingAmount: pending,
           status: 'pendente',
           date: new Date().toISOString().split('T')[0],
-          dueDate: dueDate || (comanda as any).fiadoDueDate || '',
+          dueDate: dueDate || (comanda as any).fiadoDueDate || (() => {
+            const date = new Date();
+            date.setDate(date.getDate() + 30);
+            return date.toISOString().split('T')[0];
+          })(),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -2110,7 +2179,8 @@ export const comandaService = {
           servicesMap,
           productsMap,
           plansMap,
-          subscriptionsMap
+          subscriptionsMap,
+          existingCommissions
         );
       } else if (finalStatus === 'cancelada' || finalStatus === 'ausente') {
         const linkedAppId = comanda.agendamento_id || (comanda as any).agendamentoId || (comanda as any).appointment_id || (comanda as any).appointmentId;
@@ -2380,6 +2450,18 @@ export const comandaService = {
     // We get the date from createdAt (Firestore Timestamp) or openedAt
     const comandaDate = initialComanda.createdAt?.toDate ? initialComanda.createdAt.toDate() : new Date();
     const dateStr = comandaDate.toISOString().split('T')[0];
+
+    // Verificar se existe um caixa fechado/encerrado para a data desta comanda. Se sim, bloqueia reabertura retroativa direta.
+    const comandaCashSessionsQuery = query(
+      collection(db, 'cash_sessions'),
+      where('tenantId', '==', initialComanda.tenantId || getActiveTenantId()),
+      where('date', '==', dateStr)
+    );
+    const comandaCashSessionsSnap = await getDocs(comandaCashSessionsQuery);
+    const hasClosedSession = comandaCashSessionsSnap.docs.some(d => d.data().status === 'closed');
+    if (hasClosedSession) {
+      throw new Error(`Esta comanda é retroativa (do dia ${dateStr}) e o caixa desta data já está encerrado/fechado. Para reabrir a comanda, é necessário reabrir o caixa correspondente primeiro.`);
+    }
 
     // RULE: Check if there is any open cash session or session for the comanda date
     const cashQuery = query(

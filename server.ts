@@ -5,6 +5,7 @@ import { GoogleGenAI } from "@google/genai";
 import { initializeApp, getApps, App, cert, applicationDefault } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import webpush from "web-push";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -6654,78 +6655,279 @@ function encodeFirestoreFields(data: any): any {
     });
   });
 
-  app.get("/api/debug/luiz-commissions", async (req, res) => {
-    try {
-      const dbAdmin = getAdminDb();
-      if (!dbAdmin) {
-        return res.json({ error: "Firebase Admin not initialized" });
+  // ==========================================
+  // WEB PUSH NOTIFICATIONS (VAPID)
+  // ==========================================
+  const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "BLfGfKd2uVedpfqPQj7MsuiTTUIyjZvkcTvXkAWIvAtslPvCYE4akqbUSxZnbvGVwzWXLhplXU6di1C6-F0rcAE";
+  const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "q0BSOks4u-CN0SLmtTy8knCjVnYVvrF2ieahr0CpVLA";
+  const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:admin@barbearia.com";
+
+  try {
+    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    console.log("🔔 [Web Push] VAPID configurado com sucesso.");
+  } catch (vapidErr) {
+    console.warn("⚠️ [Web Push] Erro ao configurar VAPID:", vapidErr);
+  }
+
+  interface StoredPushSub {
+    id: string;
+    userId: string;
+    userRole?: string;
+    tenantId?: string;
+    subscription: webpush.PushSubscription;
+    userAgent?: string;
+    updatedAt?: string;
+  }
+  const localPushSubs = new Map<string, StoredPushSub>();
+
+  async function sendPushToUser(userId: string, payload: { title: string; body: string; url?: string; icon?: string }) {
+    const jsonPayload = JSON.stringify({
+      title: payload.title,
+      body: payload.body,
+      icon: payload.icon || "/icon-192.png",
+      url: payload.url || "/"
+    });
+
+    const subsToSend: StoredPushSub[] = [];
+    for (const [_, sub] of localPushSubs.entries()) {
+      if (sub.userId === userId) {
+        subsToSend.push(sub);
       }
-      const commsSnap = await dbAdmin.collection('commissions')
-        .where('tenantId', '==', 'gbcortes7')
-        .get();
-      
-      const comandasSnap = await dbAdmin.collection('comandas')
-        .where('tenantId', '==', 'gbcortes7')
-        .get();
+    }
 
-      const results: any[] = [];
-      commsSnap.forEach(doc => {
-        const d = doc.id;
-        const data = doc.data();
-        const proName = (data.profissional_name || '').toLowerCase();
-        if (proName.includes('luiz') || proName.includes('miguel')) {
-          let createdAtIso = null;
-          if (data.createdAt && data.createdAt.toDate) {
-            createdAtIso = data.createdAt.toDate().toISOString();
-          } else if (data.createdAt && data.createdAt.seconds) {
-            createdAtIso = new Date(data.createdAt.seconds * 1000).toISOString();
+    try {
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin) {
+        const db = getFirestore(fbAdmin);
+        const snap = await db.collection("push_subscriptions").where("userId", "==", userId).get();
+        snap.docs.forEach(d => {
+          const dData = d.data() as StoredPushSub;
+          if (dData.subscription?.endpoint && !subsToSend.some(s => s.subscription?.endpoint === dData.subscription?.endpoint)) {
+            subsToSend.push(dData);
           }
-          results.push({
-            id: d,
-            cliente_name: data.cliente_name,
-            servico_name: data.servico_name,
-            commission_value: data.commission_value,
-            base_value: data.base_value,
-            status: data.status,
-            date: data.date,
-            createdAt: createdAtIso,
-            comanda_id: data.comanda_id
-          });
-        }
-      });
+        });
+      }
+    } catch (_) {}
 
-      const comandasResults: any[] = [];
-      comandasSnap.forEach(doc => {
-        const d = doc.id;
-        const data = doc.data();
-        const proName = (data.profissional_name || '').toLowerCase();
-        if (proName.includes('luiz') || proName.includes('miguel')) {
-          let closedAtIso = null;
-          if (data.closedAt && data.closedAt.toDate) {
-            closedAtIso = data.closedAt.toDate().toISOString();
-          } else if (data.closedAt && data.closedAt.seconds) {
-            closedAtIso = new Date(data.closedAt.seconds * 1000).toISOString();
+    for (const s of subsToSend) {
+      try {
+        if (s.subscription && s.subscription.endpoint) {
+          await webpush.sendNotification(s.subscription, jsonPayload);
+        }
+      } catch (err: any) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          localPushSubs.delete(s.id);
+          const fbAdmin = getFirebaseAdmin();
+          if (fbAdmin && s.id) {
+            getFirestore(fbAdmin).collection("push_subscriptions").doc(s.id).delete().catch(() => {});
           }
-          comandasResults.push({
-            id: d,
-            cliente_name: data.cliente_name,
-            status: data.status,
-            total: data.total || data.totalAmount,
-            closedAt: closedAtIso,
-            items: data.items
-          });
         }
-      });
+      }
+    }
+  }
 
-      res.json({
-        success: true,
-        commissions: results,
-        comandas: comandasResults
-      });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message || String(e) });
+  // Obter chave pública VAPID
+  app.get("/api/notifications/vapid-public-key", (req, res) => {
+    return res.json({ publicKey: VAPID_PUBLIC_KEY });
+  });
+
+  // Salvar inscrição de push do navegador/celular
+  app.post("/api/notifications/subscribe", async (req, res) => {
+    try {
+      const { userId, userRole, tenantId, subscription, userAgent } = req.body;
+      if (!subscription || !subscription.endpoint || !subscription.keys) {
+        return res.status(400).json({ error: "Objeto de subscrição push inválido." });
+      }
+
+      const endpointStr = String(subscription.endpoint);
+      const subKey = `${userId || 'anon'}_${Buffer.from(endpointStr).toString('base64').replace(/[/+=]/g, '').slice(-24)}`;
+      const subRecord: StoredPushSub = {
+        id: subKey,
+        userId: userId || '',
+        userRole: userRole || 'cliente',
+        tenantId: tenantId || '',
+        subscription,
+        userAgent: userAgent || '',
+        updatedAt: new Date().toISOString()
+      };
+
+      localPushSubs.set(subKey, subRecord);
+
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin) {
+        const db = getFirestore(fbAdmin);
+        await db.collection("push_subscriptions").doc(subKey).set({
+          ...subRecord,
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+
+      return res.json({ success: true, message: "Inscrição push salva com sucesso!" });
+    } catch (err: any) {
+      console.error("Erro ao salvar inscrição push:", err);
+      return res.status(500).json({ error: err.message || "Erro ao salvar subscrição push." });
     }
   });
+
+  // Testar envio de notificação na tela do celular
+  app.post("/api/notifications/test-push", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      const subsToSend: StoredPushSub[] = [];
+
+      for (const [_, sub] of localPushSubs.entries()) {
+        if (!userId || sub.userId === userId) {
+          subsToSend.push(sub);
+        }
+      }
+
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin && subsToSend.length === 0) {
+        const db = getFirestore(fbAdmin);
+        let q: any = db.collection("push_subscriptions");
+        if (userId) {
+          q = q.where("userId", "==", userId);
+        }
+        const snap = await q.get();
+        snap.docs.forEach((d: any) => subsToSend.push(d.data()));
+      }
+
+      if (subsToSend.length === 0) {
+        return res.status(404).json({ error: "Nenhum dispositivo cadastrado para este usuário ainda. Ative as notificações no navegador primeiro." });
+      }
+
+      let sentCount = 0;
+      const testPayload = JSON.stringify({
+        title: "💈 Notificação Rull Ativa!",
+        body: "Parabéns! O seu celular está configurado para receber lembretes e avisos de agendamentos em tempo real.",
+        icon: "/icon-192.png",
+        url: "/"
+      });
+
+      for (const s of subsToSend) {
+        try {
+          await webpush.sendNotification(s.subscription, testPayload);
+          sentCount++;
+        } catch (pushErr: any) {
+          if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
+            localPushSubs.delete(s.id);
+          }
+        }
+      }
+
+      return res.json({ success: true, sentCount, message: `Teste enviado para ${sentCount} dispositivo(s)!` });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Falha ao enviar push de teste." });
+    }
+  });
+
+  // Disparar push de agendamento (novo, reagendado ou cancelado)
+  app.post("/api/notifications/send-appointment-push", async (req, res) => {
+    try {
+      const { eventType, appointment } = req.body;
+      if (!appointment) return res.status(400).json({ error: "Dados do agendamento ausentes." });
+
+      const clientName = appointment.cliente_name || "Cliente";
+      const barberName = appointment.profissional_name || "Barbeiro";
+      const serviceName = appointment.servico_name || "Serviço";
+      const dateStr = appointment.date || "";
+      const timeStr = appointment.startTime || "";
+      const barberId = appointment.profissional_id;
+      const clientId = appointment.cliente_id;
+
+      let barberTitle = "🔔 Atualização na sua Agenda";
+      let barberBody = `${clientName} tem uma atualização no agendamento às ${timeStr}.`;
+      let clientTitle = "📅 Seu Agendamento";
+      let clientBody = `Seu horário com ${barberName} para ${serviceName} foi atualizado.`;
+
+      if (eventType === 'created') {
+        barberTitle = "📅 Novo Agendamento Recebido!";
+        barberBody = `${clientName} agendou ${serviceName} para o dia ${dateStr} às ${timeStr}.`;
+        clientTitle = "✅ Agendamento Confirmado!";
+        clientBody = `Seu horário de ${serviceName} com ${barberName} está marcado para ${dateStr} às ${timeStr}.`;
+      } else if (eventType === 'rescheduled') {
+        barberTitle = "🔄 Horário Reagendado!";
+        barberBody = `O horário de ${clientName} foi alterado para ${dateStr} às ${timeStr}.`;
+        clientTitle = "🔄 Horário Alterado!";
+        clientBody = `Seu agendamento com ${barberName} foi alterado para ${dateStr} às ${timeStr}.`;
+      } else if (eventType === 'cancelled') {
+        barberTitle = "🚨 Agendamento Cancelado";
+        barberBody = `O agendamento de ${clientName} às ${timeStr} do dia ${dateStr} foi cancelado.`;
+        clientTitle = "🚨 Horário Cancelado";
+        clientBody = `Seu agendamento com ${barberName} do dia ${dateStr} às ${timeStr} foi cancelado.`;
+      }
+
+      if (barberId && barberId !== 'admin') {
+        await sendPushToUser(barberId, { title: barberTitle, body: barberBody, url: '/portal-barbeiro' });
+      }
+      if (clientId) {
+        await sendPushToUser(clientId, { title: clientTitle, body: clientBody, url: '/portal' });
+      }
+
+      return res.json({ success: true, message: "Push disparado com sucesso." });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro ao disparar push de agendamento." });
+    }
+  });
+
+  // Rotina de Lembrete Automático de Agendamento (a cada 10 minutos)
+  setInterval(async () => {
+    try {
+      const fbAdmin = getFirebaseAdmin();
+      if (!fbAdmin) return;
+      const db = getFirestore(fbAdmin);
+
+      const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+      const snap = await db.collection("appointments")
+        .where("date", "==", todayStr)
+        .get();
+
+      for (const docSnap of snap.docs) {
+        const appData = docSnap.data();
+        if (appData.status === 'cancelado' || appData.status === 'concluído') continue;
+        if (appData.reminderPushSent) continue;
+        if (!appData.startTime || !appData.startTime.includes(':')) continue;
+
+        const [hStr, mStr] = appData.startTime.split(':');
+        const appMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
+        const diffMinutes = appMinutes - currentMinutes;
+
+        // Avisar com antecedência de 45 a 120 minutos (janela de 1 a 2 horas antes)
+        if (diffMinutes >= 45 && diffMinutes <= 120) {
+          const clientName = appData.cliente_name || "Cliente";
+          const barberName = appData.profissional_name || "seu barbeiro";
+          const serviceName = appData.servico_name || "serviço";
+
+          if (appData.cliente_id) {
+            await sendPushToUser(appData.cliente_id, {
+              title: "⏰ Lembrete de Agendamento!",
+              body: `Olá, ${clientName}! Seu horário de ${serviceName} com ${barberName} é hoje às ${appData.startTime}. Te esperamos!`,
+              url: "/portal"
+            });
+          }
+
+          if (appData.profissional_id && appData.profissional_id !== 'admin') {
+            await sendPushToUser(appData.profissional_id, {
+              title: "⏰ Próximo Cliente em Breve!",
+              body: `Seu cliente ${clientName} (${serviceName}) tem horário marcado para às ${appData.startTime}.`,
+              url: "/portal-barbeiro"
+            });
+          }
+
+          await docSnap.ref.update({
+            reminderPushSent: true,
+            reminderPushSentAt: FieldValue.serverTimestamp()
+          });
+          console.log(`[Auto Reminder] Lembrete push enviado com sucesso para ${docSnap.id} (${appData.startTime})`);
+        }
+      }
+    } catch (cronErr) {
+      console.warn("[Auto Reminder Cron] Erro na verificação de lembretes automáticos:", cronErr);
+    }
+  }, 10 * 60 * 1000);
 
   // Fallback para rotas de API não encontradas
   app.use((req, res, next) => {

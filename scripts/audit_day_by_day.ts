@@ -130,8 +130,8 @@ async function run() {
     log(`-> Total Caixa Entradas: R$ ${cashEntradas.toFixed(2)} | Saídas: R$ ${cashSaidas.toFixed(2)}`);
   }
 
-  fs.writeFileSync('/tmp/audit_out.txt', outputStr);
-  console.log('Salvo em /tmp/audit_out.txt');
+  fs.writeFileSync('./audit_out.txt', outputStr);
+  console.log('Salvo em ./audit_out.txt');
   process.exit(0);
 }
 

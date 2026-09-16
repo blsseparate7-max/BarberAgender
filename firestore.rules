@@ -175,7 +175,8 @@ service cloud.firestore {
       allow get: if isStaff() || 
                     isSaaSAdmin() || 
                     isBarbeiro() ||
-                    (resource != null && resource.data.tipo in ['barbeiro', 'gerente', 'admin'] && resource.data.ativo == true);
+                    (resource != null && resource.data.tipo in ['barbeiro', 'gerente', 'admin'] && resource.data.ativo == true) ||
+                    (resource != null && resource.data.tipo == 'cliente' && (resource.data.isLinked == false || resource.data.hasLogin == false || resource.data.isPreRegistered == true));
       allow list: if isStaff() || 
                      isSaaSAdmin() || 
                      isBarbeiro() ||
@@ -302,58 +303,65 @@ service cloud.firestore {
 
     // Rules for Comandas
     match /comandas/{comandaId} {
-      allow read: if isAuthenticated() && (
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (
         isStaff() || 
         isBarbeiro() || 
         (resource != null && resource.data.cliente_id == request.auth.uid)
       );
-      allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || hasRolePermission("reopen_comanda");
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isAdmin() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
     }
 
     // --- Financeiro ---
     match /financial_transactions/{transactionId} {
-      allow read: if isAuthenticated() && (isStaff() || isBarbeiro() || isSaaSAdmin());
-      allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || isSaaSAdmin() || hasRolePermission("reopen_comanda");
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (isStaff() || isBarbeiro() || isSaaSAdmin());
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isAdmin() || isSaaSAdmin() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
     }
     
     match /cash_sessions/{sessionId} {
-      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || isStaff() || hasRolePermission("manage_cash");
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (isStaff() || isBarbeiro());
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isAdmin() || isStaff() || hasRolePermission("manage_cash")) && isTenantMember(resource.data);
     }
 
     match /professional_advances/{advanceId} {
-      allow read: if isAuthenticated() && (
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (
         isStaff() || 
         isBarbeiro() ||
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
-      allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
     }
 
     match /professional_payments/{paymentId} {
-      allow read: if isAuthenticated() && (
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (
         isStaff() || 
         isBarbeiro() ||
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
-      allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
     }
 
     match /inconsistency_logs/{logId} {
-      allow read: if isStaff();
-      allow create: if isStaff() || isBarbeiro();
-      allow update, delete: if isStaff() || isBarbeiro();
+      allow read: if isStaff() && isTenantMember(resource.data);
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data);
     }
 
     match /cash_movements/{movementId} {
-      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (isStaff() || isBarbeiro());
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
     }
 
     match /professional_schedules/{barberId} {
@@ -362,27 +370,37 @@ service cloud.firestore {
     }
     
     match /financial_categories/{categoryId} {
-      allow read: if isAuthenticated();
-      allow write: if isStaff();
+      allow read: if isAuthenticated() && isTenantMember(resource.data);
+      allow create: if isStaff() && isTenantMember(request.resource.data);
+      allow update: if isStaff() && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if isStaff() && isTenantMember(resource.data);
     }
 
     match /commissions/{commissionId} {
-      allow read: if isAuthenticated() && (
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (
         isStaff() || 
         isBarbeiro() ||
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
-      allow create, update: if isStaff() || isBarbeiro();
-      allow delete: if isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isAdmin() || isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
+    }
+
+    match /audit_snapshots/{snapshotId} {
+      allow read: if isAuthenticated() && isTenantMember(resource.data);
+      allow create, update: if isStaff() && isTenantMember(request.resource.data);
+      allow delete: if isAdmin() && isTenantMember(resource.data);
     }
 
     match /commission_payouts/{payoutId} {
-      allow read: if isAuthenticated() && (
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (
         isStaff() || 
         (resource != null && resource.data.profissional_id == request.auth.uid)
       );
-      allow create, update: if isStaff();
-      allow delete: if isAdmin() || isStaff() || hasRolePermission("reopen_comanda");
+      allow create: if isStaff() && isTenantMember(request.resource.data);
+      allow update: if isStaff() && isTenantMember(resource.data) && isTenantMember(request.resource.data);
+      allow delete: if (isAdmin() || isStaff() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
     }
 
     // --- Estoque ---

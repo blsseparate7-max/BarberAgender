@@ -70,6 +70,7 @@ import { toast } from 'sonner';
 import { Appointment, FinancialTransaction, Commission, UserProfile, TabId } from '../types';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
 
 export function Dashboard({ stats: initialStats, setActiveTab, activeSubTab }: { stats: any, setActiveTab: (tab: TabId) => void, activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
@@ -183,6 +184,7 @@ export function Dashboard({ stats: initialStats, setActiveTab, activeSubTab }: {
 
 // --- ADMIN / MANAGER DASHBOARD ---
 function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, activeTab = 'overview' }: any) {
+  const { user, isAdmin, isGerente } = useAuth();
   const { tenantId, tenant, updateTenantProfile } = useTenant();
   const [isEditingGoal, setIsEditingGoal] = useState(false);
   const [newGoal, setNewGoal] = useState('');
@@ -479,6 +481,14 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
           </button>
         </div>
       </header>
+
+      {/* Web Push Notification Activation for Admin */}
+      <PushNotificationPrompt 
+        userId={user?.uid || ''} 
+        userRole={isAdmin ? 'admin' : (isGerente ? 'gerente' : 'barbeiro')} 
+        tenantId={tenantId || 'default'}
+        variant="card"
+      />
 
       <AnimatePresence mode="wait">
         <motion.div

@@ -91,8 +91,31 @@ export const userService = {
       if (onlyActive) {
         users = users.filter(u => u.ativo !== false);
       }
-      const sorted = users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
-      callback(sorted);
+
+      // Deduplicate barbers by normalized name
+      users.sort((a, b) => {
+        const aT = (a.tenantId || '').trim().toLowerCase();
+        const bT = (b.tenantId || '').trim().toLowerCase();
+        if (aT === tid && bT !== tid) return -1;
+        if (aT !== tid && bT === tid) return 1;
+        if (a.ativo !== false && b.ativo === false) return -1;
+        if (a.ativo === false && b.ativo !== false) return 1;
+        return (a.nome || '').localeCompare(b.nome || '');
+      });
+
+      const seen = new Set<string>();
+      const unique: UserProfile[] = [];
+      for (const u of users) {
+        const rawName = u.nome || (u as any).name || '';
+        const normName = rawName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        if (!normName) continue;
+        if (!seen.has(normName)) {
+          seen.add(normName);
+          unique.push(u);
+        }
+      }
+
+      callback(unique);
     });
   },
 
@@ -121,7 +144,31 @@ export const userService = {
     if (onlyActive) {
       users = users.filter(u => u.ativo !== false);
     }
-    return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+
+    // Deduplicate barbers by normalized name
+    users.sort((a, b) => {
+      const aT = (a.tenantId || '').trim().toLowerCase();
+      const bT = (b.tenantId || '').trim().toLowerCase();
+      if (aT === tid && bT !== tid) return -1;
+      if (aT !== tid && bT === tid) return 1;
+      if (a.ativo !== false && b.ativo === false) return -1;
+      if (a.ativo === false && b.ativo !== false) return 1;
+      return (a.nome || '').localeCompare(b.nome || '');
+    });
+
+    const seen = new Set<string>();
+    const unique: UserProfile[] = [];
+    for (const u of users) {
+      const rawName = u.nome || (u as any).name || '';
+      const normName = rawName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      if (!normName) continue;
+      if (!seen.has(normName)) {
+        seen.add(normName);
+        unique.push(u);
+      }
+    }
+
+    return unique;
   },
 
   async getAllClients(onlyActive = true) {

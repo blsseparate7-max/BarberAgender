@@ -105,13 +105,39 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     end: dateRange.end
   });
 
-  // Compute filtered period lists and all-time ledger totals reactively
+  const extractDateOnly = (val: any): string => {
+    if (!val) return '';
+    if (typeof val === 'string') return val.substring(0, 10);
+    if (val.seconds) {
+      const d = new Date(val.seconds * 1000);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    if (typeof val.toDate === 'function') {
+      const d = val.toDate();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    return '';
+  };
+
+  // Compute filtered period lists and all-time ledger totals reactively direto do Firestore
   const commissions = React.useMemo(() => {
-    return allCommissions.filter(c => c.date >= localDateRange.start && c.date <= localDateRange.end && c.status !== 'cancelado' && c.status !== 'estornado');
+    return allCommissions.filter(c => {
+      const d = extractDateOnly(c.date || c.createdAt);
+      return d >= localDateRange.start && d <= localDateRange.end && c.status !== 'cancelado' && c.status !== 'estornado';
+    });
   }, [allCommissions, localDateRange.start, localDateRange.end]);
 
   const advances = React.useMemo(() => {
-    return allAdvances.filter(a => a.date >= localDateRange.start && a.date <= localDateRange.end && a.status !== 'cancelado');
+    return allAdvances.filter(a => {
+      const d = extractDateOnly(a.date || a.createdAt);
+      return d >= localDateRange.start && d <= localDateRange.end && a.status !== 'cancelado';
+    });
   }, [allAdvances, localDateRange.start, localDateRange.end]);
 
   const allTimePendingCommissions = React.useMemo(() => {
@@ -241,10 +267,11 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       setLoading(false);
     });
 
-    // Reactive listeners for advances, payables, and cash movements
+    // Reactive listeners for advances, payables, cash movements, and financial transactions
     let rawAdvs: any[] = [];
     let rawPayables: any[] = [];
     let rawCashMovs: any[] = [];
+    let rawFinTxs: any[] = [];
 
     const mergeAdvances = () => {
       const merged: any[] = [...rawAdvs];
@@ -260,8 +287,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         if (proNameLower && t.includes(proNameLower)) return true;
         if (isGabriel && t.includes('gabriel')) return true;
         if (isMateus && (t.includes('mateus') || t.includes('matheus'))) return true;
-        if (isLuizMiguel && t.includes('luiz miguel')) return true;
-        if (isLuizHenrique && (t.includes('luiz henrique') || t.includes('rick'))) return true;
+        if (isLuizMiguel && (t.includes('luiz miguel') || t.includes('miguel'))) return true;
+        if (isLuizHenrique && (t.includes('luiz henrique') || t.includes('henrique') || t.includes('rick'))) return true;
         if (proNameLower.startsWith('moises') && t.includes('moises')) return true;
         if (proNameLower.startsWith('bryan') && t.includes('bryan')) return true;
         return false;
@@ -339,6 +366,41 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         }
       });
 
+      // Merge matching financial_transactions
+      rawFinTxs.forEach(t => {
+        const desc = (t.description || '').toLowerCase();
+        const category = (t.category || '').toLowerCase();
+        const isRepasse = desc.includes('repasse') || desc.includes('payout') || desc.includes('pagamento de comiss');
+        const isVale = (desc.includes('vale') || desc.includes('adiantamento') || category.includes('vale') || category.includes('adiantamento')) && !isRepasse;
+
+        let matchesPro = t.profissional_id === professionalId || t.barber_id === professionalId;
+        if (!matchesPro && proNameLower) {
+          matchesPro = matchesProText(t.profissional_name) || matchesProText(desc);
+        }
+
+        if (isVale && matchesPro) {
+          const tDate = t.date ? t.date.substring(0, 10) : '';
+          const tAmount = Number(t.amount) || 0;
+          const isDup = merged.some(m => m.id === t.id || (Math.abs(m.amount - tAmount) < 0.01 && (m.date || '').substring(0, 10) === tDate));
+          if (!isDup) {
+            merged.push({
+              id: t.id,
+              tenantId: t.tenantId,
+              profissional_id: t.profissional_id || professionalId,
+              profissional_name: t.profissional_name || professionalName,
+              amount: tAmount,
+              date: tDate || new Date().toISOString().split('T')[0],
+              description: t.description || 'Vale / Adiantamento',
+              status: 'pendente',
+              responsible_id: '',
+              responsible_name: '',
+              createdAt: t.createdAt,
+              updatedAt: t.updatedAt
+            } as unknown as ProfessionalAdvance);
+          }
+        }
+      });
+
       setAllAdvances(merged);
     };
 
@@ -353,19 +415,43 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       const isLuizMiguel = proNameLower.startsWith('luiz miguel');
       const isLuizHenrique = proNameLower.startsWith('luiz henrique');
 
+      const ADVANCE_DOC_BARBER_MAP: Record<string, string> = {
+        'nfPj2ylUxGzacZMZLOLx': 'K2TXxyN75MZj4s6euPw2POZLNbt2',
+        'tnX3dsrbDWcSXIF5p0m6': 'K2TXxyN75MZj4s6euPw2POZLNbt2',
+        'qMHYpIZ7VvBmDE5DSqme': 'K2TXxyN75MZj4s6euPw2POZLNbt2',
+        'ibzgXpwoXTgMjJBfp1uy': 'XpDGfA241JOx7dzoAgKugo86ld62',
+        'LE0x4KcjHzvlCK5q6Lp6': 'XpDGfA241JOx7dzoAgKugo86ld62',
+        'OhtjdOWrpOuOMfi3Iv7n': 'XpDGfA241JOx7dzoAgKugo86ld62',
+        'MlrpeeIPfjx248iNlwO5': 'XpDGfA241JOx7dzoAgKugo86ld62',
+        'nn8PR2vd5kUBNsvN3fmk': 'XpDGfA241JOx7dzoAgKugo86ld62',
+        'SrCChNgSchQecgRutyZZ': 'XpDGfA241JOx7dzoAgKugo86ld62',
+        'VzBWK8aiN5NBWtFzoTTs': 'XpDGfA241JOx7dzoAgKugo86ld62',
+        'qcqXmSxz696uur2He8fP': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
+        'aciD1nGVcmx8NUeK18M3': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
+        'sJTwq5d39BuyZRKGcA3Z': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
+        '4fDeBay9EYcqYfMT4KOf': '3Xxfoflp1aW5gAutZ2MuDW0jjDF3',
+      };
+
       rawAdvs = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance))
         .filter(a => {
-          if (a.profissional_id === professionalId || (a as any).barber_id === professionalId) return true;
-          const aNameLower = (a.profissional_name || '').toLowerCase().trim();
+          if (ADVANCE_DOC_BARBER_MAP[a.id]) {
+            return ADVANCE_DOC_BARBER_MAP[a.id] === professionalId;
+          }
+          if (a.profissional_id === professionalId || (a as any).barber_id === professionalId) {
+            // Se o item estiver nos IDs remapeados para outro barbeiro, ignora aqui
+            if (ADVANCE_DOC_BARBER_MAP[a.id] && ADVANCE_DOC_BARBER_MAP[a.id] !== professionalId) return false;
+            return true;
+          }
+          const aNameLower = (a.profissional_name || (a as any).motivo || a.description || '').toLowerCase().trim();
           if (proNameLower && aNameLower) {
             if (proNameLower === aNameLower) return true;
-            if (isGabriel && aNameLower.startsWith('gabriel')) return true;
-            if (isMateus && (aNameLower.startsWith('mateus') || aNameLower.startsWith('matheus'))) return true;
-            if (isLuizMiguel && aNameLower.startsWith('luiz miguel')) return true;
-            if (isLuizHenrique && aNameLower.startsWith('luiz henrique')) return true;
-            if (proNameLower.startsWith('moises') && aNameLower.startsWith('moises')) return true;
-            if (proNameLower.startsWith('bryan') && aNameLower.startsWith('bryan')) return true;
+            if (isGabriel && aNameLower.includes('gabriel')) return true;
+            if (isMateus && (aNameLower.includes('mateus') || aNameLower.includes('matheus'))) return true;
+            if (isLuizMiguel && aNameLower.includes('luiz miguel')) return true;
+            if (isLuizHenrique && (aNameLower.includes('luiz henrique') || aNameLower.includes('rick'))) return true;
+            if (proNameLower.startsWith('moises') && aNameLower.includes('moises')) return true;
+            if (proNameLower.startsWith('bryan') && aNameLower.includes('bryan')) return true;
           }
           return false;
         });
@@ -390,6 +476,17 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       console.error("Erro ao escutar movimentacoes para vales detalhados:", error);
     });
 
+    const finTxsConstraints = tenantId === 'gbcortes7' 
+      ? [where('tenantId', 'in', [tenantId, ''])] 
+      : [where('tenantId', '==', tenantId)];
+    const finTxsQuery = query(collection(db, 'financial_transactions'), ...finTxsConstraints);
+    const unsubFinTxs = onSnapshot(finTxsQuery, (snapshot) => {
+      rawFinTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      mergeAdvances();
+    }, (error) => {
+      console.error("Erro ao escutar transações financeiras para vales detalhados:", error);
+    });
+
     const payoutsQuery = query(collection(db, 'professional_payments'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId));
     const unsubPayouts = onSnapshot(payoutsQuery, (snapshot) => {
       const payoutsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
@@ -412,6 +509,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       unsubAdvs();
       unsubPayables();
       unsubCashMovs();
+      unsubFinTxs();
       unsubPayouts();
       unsubCash();
     };

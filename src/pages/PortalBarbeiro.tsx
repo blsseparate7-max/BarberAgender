@@ -44,7 +44,7 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, deleteField } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc, deleteField, limit } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
@@ -62,6 +62,7 @@ import { ComandaModal } from '../components/Comanda/ComandaModal';
 import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { NotificationBell } from '../components/NotificationBell';
+import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
 import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock, ProfessionalAdvance, ProfessionalPayment } from '../types';
 import { toast } from 'sonner';
 import { format, parse, addDays, startOfDay, endOfDay, isToday } from 'date-fns';
@@ -338,16 +339,31 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
       refreshAllFinancial();
 
-      // Lightweight Realtime listener for tenant commissions
-      const qComms = proTenant ? query(collection(db, 'commissions'), where('tenantId', '==', proTenant)) : collection(db, 'commissions');
+      // Lightweight Realtime listener for barber's commissions
+      const qComms = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', proTenant),
+        where('barbeiro_id', '==', activeBarberId),
+        limit(100)
+      );
       const unsubComms = onSnapshot(qComms, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
-      // Lightweight Realtime listener for tenant advances
-      const qAdvs = proTenant ? query(collection(db, 'professional_advances'), where('tenantId', '==', proTenant)) : collection(db, 'professional_advances');
+      // Lightweight Realtime listener for barber's advances
+      const qAdvs = query(
+        collection(db, 'professional_advances'),
+        where('tenantId', '==', proTenant),
+        where('profissional_id', '==', activeBarberId),
+        limit(100)
+      );
       const unsubAdvs = onSnapshot(qAdvs, () => { refreshAllFinancial(); }, (e) => console.warn(e));
 
-      // Realtime listener for tenant comandas to reconcile gross revenue
-      const qCmds = proTenant ? query(collection(db, 'comandas'), where('tenantId', '==', proTenant)) : collection(db, 'comandas');
+      // Realtime listener for barber's comandas to reconcile gross revenue
+      const qCmds = query(
+        collection(db, 'comandas'),
+        where('tenantId', '==', proTenant),
+        where('profissional_id', '==', activeBarberId),
+        limit(100)
+      );
       const unsubCmds = onSnapshot(qCmds, (snap) => {
         setComandas(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       }, (e) => console.warn(e));
@@ -828,6 +844,16 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
       {/* Main Content Area - Full screen space optimized */}
       <main className="flex-1 w-full mx-auto px-4 relative z-10 max-w-4xl pb-24 pt-4">
+        
+        {/* Banner de Notificações Push no Celular */}
+        <div className="mb-4">
+          <PushNotificationPrompt 
+            userId={profile.uid} 
+            userRole="barbeiro" 
+            tenantId={profile.tenantId} 
+            variant="card" 
+          />
+        </div>
         
         {/* AGENDA TAB */}
         {activeTab === 'agenda' && (() => {

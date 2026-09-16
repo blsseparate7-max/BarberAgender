@@ -50,6 +50,7 @@ export interface UserProfile {
   // Profissional specific
   commission_percentage?: number;
   percentual_comissao?: number; // Nova nomenclatura
+  percentual_produto?: number;
   remuneracao_fixa?: number; // Salário Fixo / Remuneração do Dono/Profissional
   specialty?: string;
   especialidade?: string; // Nova nomenclatura

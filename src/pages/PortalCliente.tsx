@@ -61,6 +61,7 @@ import { UserProfile, UserRole, Appointment, Service, Product, LoyaltyPoints, Lo
 import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { isDateAllowedForPlan, formatAllowedDays, isDateWithinSubscriptionCycle } from '../utils/subscriptionDays';
+import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, '').slice(0, 11);
@@ -2390,6 +2391,18 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
               ) : (
                 /* EXISTING LOGGED-IN CUSTOMER HOME STATE */
                 <>
+                  {/* Push Notification Banner */}
+                  {profile && (
+                    <div className="mb-2">
+                      <PushNotificationPrompt
+                        userId={profile.uid}
+                        userRole="cliente"
+                        tenantId={tenantInfo?.id || getActiveTenantId() || profile.tenantId}
+                        variant="card"
+                      />
+                    </div>
+                  )}
+
                   {/* Notícias & Promoções Banner Widget */}
                   {announcements.length > 0 && (
                     <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-3.5">
@@ -5142,6 +5155,16 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     <h3 className="text-xl font-black text-slate-800 tracking-tight mt-1">{profile.nome}</h3>
                     <p className="text-xs font-semibold text-slate-450">{profile.email}</p>
                   </div>
+                </div>
+
+                {/* Notificações no Celular */}
+                <div className="mt-6">
+                  <PushNotificationPrompt
+                    userId={profile.uid}
+                    userRole="cliente"
+                    tenantId={tenantInfo?.id || getActiveTenantId() || profile.tenantId}
+                    variant="card"
+                  />
                 </div>
 
                 <form onSubmit={handleSaveProfile} className="space-y-6 mt-6">

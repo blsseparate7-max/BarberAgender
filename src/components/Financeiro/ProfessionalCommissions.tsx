@@ -31,6 +31,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getActiveTenantId } from '../../services/tenantService';
 import { ProfessionalCommissionsDetail } from './ProfessionalCommissionsDetail';
 import { InputModal } from '../InputModal';
+import { calculateProfessionalLedger } from '../../services/ledgerService';
 
 interface ProSummary {
   id: string;
@@ -54,12 +55,13 @@ export function ProfessionalCommissions({
   const [barbers, setBarbers] = useState<any[]>([]);
   const [allCommissions, setAllCommissions] = useState<any[]>([]);
   const [allAdvances, setAllAdvances] = useState<any[]>([]);
+  const [allComandas, setAllComandas] = useState<any[]>([]);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProId, setSelectedProId] = useState<string | null>(null);
   const [dateRange, setDateRangeState] = useState({
-    start: parentDateRange?.start || format(startOfMonth(new Date()), 'yyyy-MM-dd'),
-    end: parentDateRange?.end || format(endOfMonth(new Date()), 'yyyy-MM-dd')
+    start: parentDateRange?.start || '2026-09-01',
+    end: parentDateRange?.end || '2026-09-15'
   });
 
   const setDateRange = (newRange: any) => {
@@ -115,8 +117,30 @@ export function ProfessionalCommissions({
       ...constraints
     );
     const unsubBarbers = onSnapshot(barbersQuery, (snapshot) => {
-      const bList = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }));
-      setBarbers(bList);
+      const bList = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as any));
+
+      // Deduplicate barbers by normalized name to prevent duplicate entries like "Moises Bueno"
+      bList.sort((a, b) => {
+        if (a.tenantId === activeTenantId && b.tenantId !== activeTenantId) return -1;
+        if (a.tenantId !== activeTenantId && b.tenantId === activeTenantId) return 1;
+        if (a.status === 'ativo' && b.status !== 'ativo') return -1;
+        if (a.status !== 'ativo' && b.status === 'ativo') return 1;
+        return (a.nome || a.name || '').localeCompare(b.nome || b.name || '');
+      });
+
+      const seenNames = new Set<string>();
+      const uniqueBarbers: any[] = [];
+      for (const barber of bList) {
+        const rawName = barber.nome || barber.name || '';
+        const normName = rawName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        if (!normName) continue;
+        if (!seenNames.has(normName)) {
+          seenNames.add(normName);
+          uniqueBarbers.push(barber);
+        }
+      }
+
+      setBarbers(uniqueBarbers);
     }, (error) => {
       console.error("Erro ao escutar barbeiros:", error);
     });
@@ -129,10 +153,22 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar comissões:", error);
     });
 
-    // Reactive listeners for advances, payables, and cash movements
+    const cmdConstraints = activeTenantId === 'gbcortes7'
+      ? [where('tenantId', 'in', [activeTenantId, ''])]
+      : [where('tenantId', '==', activeTenantId)];
+    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints);
+    const unsubComandas = onSnapshot(comandasQuery, (snapshot) => {
+      const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllComandas(cList);
+    }, (error) => {
+      console.error("Erro ao escutar comandas:", error);
+    });
+
+    // Reactive listeners for advances, payables, cash movements, and financial transactions
     let rawAdvs: any[] = [];
     let rawPayables: any[] = [];
     let rawCashMovs: any[] = [];
+    let rawFinTxs: any[] = [];
 
     const mergeAdvances = () => {
       const merged: any[] = [...rawAdvs];
@@ -165,6 +201,18 @@ export function ProfessionalCommissions({
         }
       });
 
+      // Helper para associar barbeiro pelo texto da descrição quando o campo do profissional vier vazio
+      const resolveBarberFromText = (text: string) => {
+        if (!text) return null;
+        const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (lower.includes('luiz miguel') || lower.includes('miguel')) return barbers.find(b => (b.nome || '').toLowerCase().includes('miguel'));
+        if (lower.includes('luiz henrique') || lower.includes('rick') || lower.includes('henrique')) return barbers.find(b => (b.nome || '').toLowerCase().includes('henrique'));
+        if (lower.includes('mateus') || lower.includes('matheus')) return barbers.find(b => (b.nome || '').toLowerCase().includes('mateus') || (b.nome || '').toLowerCase().includes('matheus'));
+        if (lower.includes('moises')) return barbers.find(b => (b.nome || '').toLowerCase().includes('moises'));
+        if (lower.includes('gabriel')) return barbers.find(b => (b.nome || '').toLowerCase().includes('gabriel'));
+        return null;
+      };
+
       // Merge from cash_movements
       rawCashMovs.forEach(c => {
         const category = (c.category || '').toLowerCase();
@@ -174,20 +222,50 @@ export function ProfessionalCommissions({
 
         if (isVale) {
           const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
-          const cAmount = c.amount || 0;
-          const isDup = merged.some(m => m.id === c.id || (m.amount === cAmount && m.date === cDate && m.description === c.description));
+          const cAmount = Number(c.amount) || 0;
+          const isDup = merged.some(m => m.id === c.id || (Math.abs(m.amount - cAmount) < 0.01 && (m.date || '').substring(0, 10) === (cDate || '').substring(0, 10)));
           if (!isDup) {
+            const matchedBarber = resolveBarberFromText(c.description);
             merged.push({
               id: c.id,
               tenantId: c.tenantId,
-              profissional_id: c.profissional_id || c.barber_id || '',
-              profissional_name: c.profissional_name || 'Profissional',
+              profissional_id: c.profissional_id || c.barber_id || matchedBarber?.uid || '',
+              profissional_name: c.profissional_name && c.profissional_name !== 'Profissional' ? c.profissional_name : (matchedBarber?.nome || 'Profissional'),
               amount: cAmount,
               date: cDate || new Date().toISOString().split('T')[0],
               description: c.description || 'Vale / Adiantamento',
               status: (c.status === 'paid' || c.status === 'deduzido' || c.status === 'pago') ? 'pago' : 'pendente',
               createdAt: c.createdAt,
               updatedAt: c.updatedAt
+            });
+          }
+        }
+      });
+
+      // Merge from financial_transactions
+      rawFinTxs.forEach(t => {
+        const desc = (t.description || '').toLowerCase();
+        const category = (t.category || '').toLowerCase();
+        const isRepasse = desc.includes('repasse') || desc.includes('payout') || desc.includes('pagamento de comiss');
+        const isVale = (desc.includes('vale') || desc.includes('adiantamento') || category.includes('vale') || category.includes('adiantamento')) && !isRepasse;
+
+        if (isVale) {
+          const tDate = t.date ? t.date.substring(0, 10) : '';
+          const tAmount = Number(t.amount) || 0;
+          const isDup = merged.some(m => m.id === t.id || (Math.abs(m.amount - tAmount) < 0.01 && (m.date || '').substring(0, 10) === tDate));
+          if (!isDup) {
+            const matchedBarber = resolveBarberFromText(t.description);
+            merged.push({
+              id: t.id,
+              tenantId: t.tenantId,
+              profissional_id: t.profissional_id || t.barber_id || matchedBarber?.uid || '',
+              profissional_name: t.profissional_name && t.profissional_name !== 'Profissional' ? t.profissional_name : (matchedBarber?.nome || 'Profissional'),
+              amount: tAmount,
+              date: tDate || new Date().toISOString().split('T')[0],
+              description: t.description || 'Vale / Adiantamento',
+              status: 'pendente',
+              createdAt: t.createdAt,
+              updatedAt: t.updatedAt
             });
           }
         }
@@ -220,6 +298,14 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar movimentacoes para vales:", error);
     });
 
+    const finTxsQuery = query(collection(db, 'financial_transactions'), where('tenantId', '==', activeTenantId));
+    const unsubFinTxs = onSnapshot(finTxsQuery, (snapshot) => {
+      rawFinTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      mergeAdvances();
+    }, (error) => {
+      console.error("Erro ao escutar transacoes financeiras para vales:", error);
+    });
+
     const cashQuery = query(collection(db, 'cash_sessions'), where('tenantId', '==', activeTenantId));
     const unsubCash = onSnapshot(cashQuery, (snapshot) => {
       const openCash = snapshot.docs
@@ -235,9 +321,11 @@ export function ProfessionalCommissions({
     return () => {
       unsubBarbers();
       unsubComms();
+      unsubComandas();
       unsubAdvs();
       unsubPayables();
       unsubCashMovs();
+      unsubFinTxs();
       unsubCash();
     };
   }, []);
@@ -249,51 +337,30 @@ export function ProfessionalCommissions({
       setValeData(prev => ({ ...prev, source: 'caixa', paymentMethod: 'dinheiro' }));
     }
   }, [isOpenCash]);
-  // Compute summaries onchanges completely in memory with zero async latency
+  // Compute summaries onchanges completely in memory with zero async latency using unified ledger
   const summaries = React.useMemo(() => {
     return barbers.map(barber => {
-      const proCommsAll = allCommissions.filter(c => c.profissional_id === barber.uid);
-      const proAdvancesAll = allAdvances.filter(a => {
-        if (a.profissional_id === barber.uid) return true;
-        if (barber.nome) {
-          const bName = barber.nome.toLowerCase().trim();
-          const pName = (a.profissional_name || a.supplier || '').toLowerCase();
-          const desc = (a.description || '').toLowerCase();
-          if (pName && (pName.includes(bName) || bName.includes(pName))) return true;
-          if (desc && desc.includes(bName)) return true;
-        }
-        return false;
-      });
-
-      // Filter in period chosen by datepicker
-      const proCommsPeriod = proCommsAll.filter(c => c.date >= dateRange.start && c.date <= dateRange.end);
-      const proAdvancesPeriod = proAdvancesAll.filter(a => a.date >= dateRange.start && a.date <= dateRange.end);
-
-      const production = proCommsPeriod.filter(c => c.commission_type !== 'bonus' && c.commission_type !== 'assinatura').reduce((acc, c) => acc + (c.base_value || 0), 0);
-      const bonus = proCommsPeriod.filter(c => c.commission_type === 'bonus').reduce((acc, c) => acc + (c.commission_value || 0), 0);
-      const commissionGenerated = proCommsPeriod.reduce((acc, c) => acc + (c.commission_value || 0), 0);
-      const vales = proAdvancesPeriod.reduce((acc, a) => acc + (a.amount || 0), 0);
-
-      // Sincronização matemática exata baseada estritamente no período selecionado
-      const pendingCommsPeriod = proCommsPeriod.filter(c => c.status === 'pendente');
-      const pendingAdvsPeriod = proAdvancesPeriod.filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'));
-
-      const totalPendingComms = pendingCommsPeriod.reduce((acc, c) => acc + (c.commission_value || 0), 0);
-      const totalPendingAdvs = pendingAdvsPeriod.reduce((acc, a) => acc + (a.amount || 0), 0);
-      const balance = totalPendingComms - totalPendingAdvs;
+      const ledger = calculateProfessionalLedger(
+        barber,
+        allCommissions,
+        allAdvances,
+        dateRange.start,
+        dateRange.end,
+        allComandas
+      );
 
       return {
         id: barber.uid,
         nome: barber.nome,
-        production,
-        bonus,
-        commissionGenerated,
-        vales,
-        paid: 0,
-        balance
+        production: ledger.faturamentoBrutoMes,
+        bonus: 0,
+        commissionGenerated: ledger.comissaoGeradaMes,
+        vales: ledger.valesPendentes,
+        paid: ledger.comissaoRepassadaMes,
+        balance: ledger.saldoPendenteLiquido
       };
     });
-  }, [barbers, allCommissions, allAdvances, dateRange.start, dateRange.end]);
+  }, [barbers, allCommissions, allAdvances, dateRange.start, dateRange.end, allComandas]);
 
   // Compute aggregated totals for the selected period across all professionals
   const aggregatedTotals = React.useMemo(() => {

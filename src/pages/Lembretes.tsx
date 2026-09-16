@@ -45,6 +45,7 @@ import { useTenant } from '../contexts/TenantContext';
 import { getActiveTenantId } from '../services/tenantService';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
+import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
 
 enum OperationType {
   CREATE = 'create',
@@ -353,6 +354,14 @@ export function Lembretes() {
           )}
         </div>
       </header>
+
+      {/* Web Push Notification on Mobile Activation */}
+      <PushNotificationPrompt 
+        userId={profile?.uid || ''} 
+        userRole={isAdmin ? 'admin' : (isGerente ? 'gerente' : 'barbeiro')} 
+        tenantId={currentTenantId}
+        variant="card"
+      />
 
       {/* Analytical Badges Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

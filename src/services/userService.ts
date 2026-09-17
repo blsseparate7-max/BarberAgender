@@ -124,7 +124,10 @@ export const userService = {
   },
 
   async getAllBarbers(onlyActive = true, tenantId?: string) {
-    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const storedTenant = typeof window !== 'undefined' 
+      ? (localStorage.getItem('barberelite_tenant_id') || localStorage.getItem('tenantId') || '') 
+      : '';
+    const tid = (tenantId || getActiveTenantId() || storedTenant).trim().toLowerCase();
     const q = query(
       collection(db, COLLECTION),
       where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
@@ -138,14 +141,17 @@ export const userService = {
       if (tid && tid !== 'gbcortes7') {
         return uTenant === tid;
       }
-      return uTenant === 'gbcortes7' || uTenant === '';
+      if (tid === 'gbcortes7') {
+        return uTenant === 'gbcortes7' || uTenant === '';
+      }
+      return true;
     });
 
     if (onlyActive) {
       users = users.filter(u => u.ativo !== false);
     }
 
-    // Deduplicate barbers by normalized name
+    // Deduplicate barbers per tenant
     users.sort((a, b) => {
       const aT = (a.tenantId || '').trim().toLowerCase();
       const bT = (b.tenantId || '').trim().toLowerCase();
@@ -162,8 +168,11 @@ export const userService = {
       const rawName = u.nome || (u as any).name || '';
       const normName = rawName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       if (!normName) continue;
-      if (!seen.has(normName)) {
-        seen.add(normName);
+      // Key deduplication per tenant so barbers in different tenants never collide
+      const uTenant = (u.tenantId || '').trim().toLowerCase();
+      const dedupeKey = `${uTenant}_${normName}`;
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
         unique.push(u);
       }
     }

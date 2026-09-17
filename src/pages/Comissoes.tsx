@@ -75,9 +75,12 @@ export function Comissoes() {
   // Filters
   const [selectedBarber, setSelectedBarber] = useState(profile?.tipo === 'barbeiro' ? user?.uid : '');
   const [selectedStatus, setSelectedStatus] = useState<CommissionStatus | ''>('');
-  const [dateRange, setDateRange] = useState({
-    start: '2026-09-01',
-    end: '2026-09-16'
+  const [dateRange, setDateRange] = useState(() => {
+    const today = new Date();
+    return {
+      start: format(startOfMonth(today), 'yyyy-MM-dd'),
+      end: format(today, 'yyyy-MM-dd')
+    };
   });
 
   // Modal states
@@ -123,14 +126,38 @@ export function Comissoes() {
     }
   };
 
+  // Live Subscription for Professionals of the tenant (100% synchronized with Barbeiros.tsx)
   useEffect(() => {
-    loadBarbers();
-    if (tenantId) {
-      commissionService.purgeOrphanedCommissions(tenantId);
-      if (tenantId === 'gbcortes7') {
-        commissionService.purgePreSeptemberData('gbcortes7');
-      }
+    if (!tenantId) {
+      userService.getAllBarbers(false).then(setBarbers).catch(console.error);
+      return;
     }
+    
+    const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
+    if (tenantId === 'gbcortes7') {
+      constraints.push(where('tenantId', 'in', [tenantId, '']));
+    } else {
+      constraints.push(where('tenantId', '==', tenantId));
+    }
+    const q = query(
+      collection(db, 'usuarios'),
+      ...constraints
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+      const sorted = docs.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      setBarbers(sorted);
+    }, (error) => {
+      console.warn("Erro ao assinar barbeiros em Comissões, buscando via serviço:", error);
+      userService.getAllBarbers(false, tenantId).then(setBarbers).catch(console.error);
+    });
+
+    commissionService.purgeOrphanedCommissions(tenantId);
+    if (tenantId === 'gbcortes7') {
+      commissionService.purgePreSeptemberData('gbcortes7');
+    }
+
+    return () => unsubscribe();
   }, [tenantId]);
 
   // Live Subscription for all commissions, advances, comandas and appointments of the tenant
@@ -210,7 +237,7 @@ export function Comissoes() {
 
   const loadBarbers = async () => {
     try {
-      const data = await userService.getAllBarbers();
+      const data = await userService.getAllBarbers(false, tenantId);
       setBarbers(data);
     } catch (error) {
       console.error("Erro ao carregar barbeiros:", error);
@@ -227,13 +254,15 @@ export function Comissoes() {
           profissional_id: barberId, 
           status: selectedStatus || undefined,
           startDate: dateRange.start,
-          endDate: dateRange.end
+          endDate: dateRange.end,
+          tenantId
         }),
         commissionService.getPayouts(barberId),
         commissionService.getAdvances({
           profissional_id: barberId || undefined,
           startDate: dateRange.start,
-          endDate: dateRange.end
+          endDate: dateRange.end,
+          tenantId
         })
       ]);
       
@@ -279,7 +308,47 @@ export function Comissoes() {
   const effectiveAdvances = allAdvancesLive.length > 0 ? allAdvancesLive : advances;
 
   const teamRoster = useMemo(() => {
-    return barbers.map(barber => {
+    // 1. Inicia com a lista de barbeiros cadastrados do tenant
+    const rosterMap = new Map<string, UserProfile>();
+    barbers.forEach(b => {
+      if (b.uid) rosterMap.set(b.uid, b);
+    });
+
+    // 2. Garante inclusão de qualquer profissional com comissões registradas no tenant
+    effectiveCommissions.forEach(c => {
+      const pId = c.profissional_id || (c as any).barbeiro_id;
+      if (pId && !rosterMap.has(pId)) {
+        rosterMap.set(pId, {
+          uid: pId,
+          nome: c.profissional_name || (c as any).barbeiro_nome || 'Profissional',
+          email: '',
+          tipo: 'barbeiro',
+          ativo: true,
+          percentual_comissao: c.commission_percentage ?? 100
+        } as UserProfile);
+      }
+    });
+
+    // 3. Garante inclusão de profissionais com itens em comandas
+    allComandasLive.forEach(cmd => {
+      const items = cmd.items || [];
+      items.forEach((it: any) => {
+        const pId = it.profissional_id || it.barbeiro_id;
+        if (pId && !rosterMap.has(pId)) {
+          rosterMap.set(pId, {
+            uid: pId,
+            nome: it.profissional_name || it.barbeiro_nome || 'Profissional',
+            email: '',
+            tipo: 'barbeiro',
+            ativo: true,
+            percentual_comissao: it.commission_percentage ?? 100
+          } as UserProfile);
+        }
+      });
+    });
+
+    const fullBarbersList = Array.from(rosterMap.values());
+    return fullBarbersList.map(barber => {
       const ledger = calculateProfessionalLedger(
         barber, 
         effectiveCommissions, 

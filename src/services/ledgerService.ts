@@ -108,16 +108,18 @@ export function calculateProfessionalLedger(
   const isMatchingBarber = (item: any) => {
     if (!item) return false;
 
-    // 1. Se o item possui um ID de profissional/barbeiro definido, ele é a verdade absoluta do Firestore!
+    // 1. Se o item possui um ID de profissional/barbeiro definido
     if (item.profissional_id || item.barbeiro_id) {
       const proId = item.profissional_id || item.barbeiro_id;
-      return proId === barberUid;
+      if (proId === barberUid) return true;
+      if (barberNameNorm && normalizeName(proId) === barberNameNorm) return true;
     }
 
-    // 2. Correspondência por nome do profissional (fallback caso não exista ID definido)
+    // 2. Correspondência por nome do profissional (fallback caso não exista ID idêntico)
     const proNameNorm = normalizeName(item.profissional_name || item.barbeiro_nome || '');
     if (proNameNorm && barberNameNorm) {
       if (proNameNorm === barberNameNorm) return true;
+      if (barberFirstNameNorm === 'joao' && proNameNorm.startsWith('joao')) return true;
       if (barberFirstNameNorm === 'gabriel' && proNameNorm.startsWith('gabriel')) return true;
       if ((barberFirstNameNorm === 'mateus' || barberFirstNameNorm === 'matheus') && (proNameNorm.startsWith('mateus') || proNameNorm.startsWith('matheus'))) return true;
       if (barberNameNorm.startsWith('luiz miguel') && proNameNorm.startsWith('luiz miguel')) return true;
@@ -131,9 +133,10 @@ export function calculateProfessionalLedger(
       return true;
     }
 
-    // 3. Fallback adicional por descrição do vale/adiantamento (ex: "Vale p/ Luiz Miguel...", "Vale: Moises...")
+    // 3. Fallback adicional por descrição do vale/adiantamento (ex: "Vale p/ João...", "Vale: Moises...")
     const descNorm = normalizeName(item.description || '');
     if (descNorm && barberNameNorm) {
+      if (barberFirstNameNorm === 'joao' && (descNorm.includes('joao') || descNorm.includes('joão'))) return true;
       if (barberNameNorm.startsWith('luiz miguel') && (descNorm.includes('miguel') || descNorm.includes('luiz miguel'))) return true;
       if (barberNameNorm.startsWith('luiz henrique') && (descNorm.includes('luiz henrique') || descNorm.includes('henrique') || descNorm.includes('rick'))) return true;
       if (barberFirstNameNorm === 'mateus' && (descNorm.includes('mateus') || descNorm.includes('matheus'))) return true;

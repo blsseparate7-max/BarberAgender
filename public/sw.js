@@ -38,9 +38,17 @@ self.addEventListener('push', (event) => {
     requireInteraction: false
   };
 
-  event.waitUntil(
-    self.registration.showNotification(data.title, notificationOptions)
-  );
+  try {
+    event.waitUntil(
+      self.registration.showNotification(data.title || '💈 Notificação Rull', notificationOptions)
+    );
+  } catch (err) {
+    event.waitUntil(
+      self.registration.showNotification(data.title || '💈 Notificação Rull', {
+        body: data.body || 'Novo aviso recebido'
+      })
+    );
+  }
 });
 
 self.addEventListener('notificationclick', (event) => {

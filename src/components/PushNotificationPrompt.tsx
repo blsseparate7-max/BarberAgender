@@ -68,9 +68,22 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
-      const res = await pushNotificationService.sendTestPush(userId);
+      let res = await pushNotificationService.sendTestPush(userId);
+      
+      // Se não encontrou o dispositivo no servidor, renova a inscrição automaticamente
+      if (!res.success && (res.error?.includes('Nenhum dispositivo') || res.error?.includes('404'))) {
+        const subRes = await pushNotificationService.subscribeUser({
+          userId: userId || 'user-' + Date.now(),
+          userRole,
+          tenantId
+        });
+        if (subRes.success) {
+          res = await pushNotificationService.sendTestPush(userId);
+        }
+      }
+
       if (res.success) {
-        toast.success('Notificação enviada para a tela do seu celular!');
+        toast.success(res.message || 'Notificação enviada para a tela do seu celular!');
       } else {
         toast.error(res.error || 'Falha ao enviar notificação de teste.');
       }

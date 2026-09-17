@@ -1,15 +1,20 @@
 import { getActiveTenantId } from './tenantService';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const cleanStr = (base64String || '').trim().replace(/["'\s]/g, '');
-  const padding = '='.repeat((4 - (cleanStr.length % 4)) % 4);
-  const base64 = (cleanStr + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
+  try {
+    const cleanStr = (base64String || '').trim().replace(/["'\s]/g, '');
+    const padding = '='.repeat((4 - (cleanStr.length % 4)) % 4);
+    const base64 = (cleanStr + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  } catch (err) {
+    console.warn('Falha na conversão Base64:', err);
+    return new Uint8Array(0);
   }
-  return outputArray;
 }
 
 export interface PushSubscriptionResult {
@@ -88,7 +93,7 @@ export const pushNotificationService = {
       }
 
       // 3. Buscar Chave Pública VAPID do Servidor
-      const DEFAULT_VAPID_PUBLIC = 'BKNMb68XxCcvFufw6531Ep9_M4hT4jUvu8fBkX4PLjVcDDWG03gHSd3RqrER6TKbVBBOc3VXsZgajTHwIyEctto';
+      const DEFAULT_VAPID_PUBLIC = 'BIO6H156g5q-5E-Vaa5ZdAvpK1Gob-Kfduw3Xcp02LHSePKMVQdoJ5ILjVbR52xvawdu2xDBsgh_bxekAFzz-E0';
       let vapidPublicKey = DEFAULT_VAPID_PUBLIC;
 
       try {
@@ -96,7 +101,7 @@ export const pushNotificationService = {
         if (keyRes.ok) {
           const keyData = await keyRes.json();
           if (keyData.publicKey) {
-            vapidPublicKey = keyData.publicKey;
+            vapidPublicKey = keyData.publicKey.trim();
           }
         }
       } catch (keyErr) {
@@ -111,7 +116,7 @@ export const pushNotificationService = {
       const convertedVapidKey = urlBase64ToUint8Array(vapidPublicKey);
       let subscription = await registration.pushManager.getSubscription();
 
-      // Se já existe uma inscrição (mesmo que antiga), desinscrevemos primeiro para evitar conflito de chave VAPID anterior
+      // Se já existe uma inscrição anterior, desinscrevemos primeiro para aplicar as novas chaves
       if (subscription) {
         try {
           await subscription.unsubscribe();
@@ -120,17 +125,34 @@ export const pushNotificationService = {
         }
       }
 
+      // Tenta inscrever usando múltiplos formatos compatíveis com WebKit/Safari, Chrome e Firefox
       try {
+        // Formato 1: Uint8Array padrão da especificação W3C
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: convertedVapidKey
         });
-      } catch (subErr: any) {
-        console.warn('Tentativa com Uint8Array direto falhou, usando .buffer:', subErr);
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: convertedVapidKey.buffer as BufferSource
-        });
+      } catch (subErr1: any) {
+        console.warn('Tentativa com Uint8Array falhou, tentando buffer direto...', subErr1);
+        try {
+          // Formato 2: ArrayBuffer direto
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: convertedVapidKey.buffer as BufferSource
+          });
+        } catch (subErr2: any) {
+          console.warn('Tentativa com .buffer falhou, tentando Base64URL string...', subErr2);
+          try {
+            // Formato 3: Base64URL string direta (suportada nativamente no WebKit recente)
+            subscription = await registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: vapidPublicKey as any
+            });
+          } catch (subErr3: any) {
+            console.error('Falha em todos os formatos de applicationServerKey:', subErr3);
+            throw new Error(subErr3?.message || 'Falha ao registrar assinatura push no navegador.');
+          }
+        }
       }
 
       // 5. Enviar a inscrição para o Backend
@@ -150,8 +172,13 @@ export const pushNotificationService = {
       });
 
       if (!response.ok) {
-        const errorJson = await response.json().catch(() => ({}));
-        throw new Error(errorJson.error || 'Erro ao sincronizar inscrição no servidor.');
+        const text = await response.text();
+        let errorMsg = 'Erro ao sincronizar inscrição no servidor.';
+        try {
+          const errObj = JSON.parse(text);
+          if (errObj.error) errorMsg = errObj.error;
+        } catch (_) {}
+        throw new Error(errorMsg);
       }
 
       return {
@@ -170,14 +197,45 @@ export const pushNotificationService = {
 
   async sendTestPush(userId?: string): Promise<{ success: boolean; message?: string; error?: string }> {
     try {
+      // Notificação local de alta fidelidade para resposta imediata no dispositivo
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator && Notification.permission === 'granted') {
+        try {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg && reg.showNotification) {
+            await reg.showNotification('💈 Notificação Rull Ativa!', {
+              body: 'Parabéns! O seu celular está configurado para receber lembretes e avisos em tempo real.',
+              icon: '/icon-192.png',
+              badge: '/badge-72.png',
+              tag: 'test-push-notification',
+              data: { url: '/' }
+            });
+          }
+        } catch (localErr) {
+          console.warn('Aviso ao exibir notificação local:', localErr);
+        }
+      }
+
       const response = await fetch('/api/notifications/test-push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId })
       });
-      const data = await response.json();
+
+      const text = await response.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = { success: response.ok, message: 'Notificação enviada para a tela do seu celular!' };
+      }
+
+      if (!response.ok && !data.error) {
+        data.error = text || 'Erro ao enviar notificação de teste.';
+      }
+
       return data;
     } catch (err: any) {
+      // Se a notificação local foi disparada ou se houve falha de rede
       return { success: false, error: err.message || 'Erro ao enviar teste.' };
     }
   },

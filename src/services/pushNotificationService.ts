@@ -1,8 +1,9 @@
 import { getActiveTenantId } from './tenantService';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const cleanStr = (base64String || '').trim().replace(/["'\s]/g, '');
+  const padding = '='.repeat((4 - (cleanStr.length % 4)) % 4);
+  const base64 = (cleanStr + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; ++i) {
@@ -110,10 +111,25 @@ export const pushNotificationService = {
       const convertedVapidKey = urlBase64ToUint8Array(vapidPublicKey);
       let subscription = await registration.pushManager.getSubscription();
 
-      if (!subscription) {
+      // Se já existe uma inscrição (mesmo que antiga), desinscrevemos primeiro para evitar conflito de chave VAPID anterior
+      if (subscription) {
+        try {
+          await subscription.unsubscribe();
+        } catch (unsubErr) {
+          console.warn('Aviso ao desinscrever chave anterior:', unsubErr);
+        }
+      }
+
+      try {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: convertedVapidKey as BufferSource
+          applicationServerKey: convertedVapidKey
+        });
+      } catch (subErr: any) {
+        console.warn('Tentativa com Uint8Array direto falhou, usando .buffer:', subErr);
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: convertedVapidKey.buffer as BufferSource
         });
       }
 

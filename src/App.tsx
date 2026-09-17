@@ -256,6 +256,80 @@ function MainApp() {
     );
   }
 
+  // Cross-tenant visitor check: If logged into one tenant but accessing a link from another tenant
+  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const urlTenant = (searchParams.get('tenant') || searchParams.get('tenantId') || '').trim().toLowerCase();
+  const userTenant = (profile?.tenantId || '').trim().toLowerCase();
+  const isCrossTenantVisit = Boolean(urlTenant && userTenant && profile?.tipo !== 'saas_admin' && urlTenant !== userTenant);
+  const isSelfBookingPreview = Boolean((searchParams.get('agendar') === 'true' || searchParams.get('booking') === 'true') && (profile?.tipo === 'admin' || profile?.tipo === 'gerente'));
+
+  if (isCrossTenantVisit) {
+    return (
+      <Suspense fallback={<PageLoadingFallback />}>
+        <div className="min-h-screen flex flex-col bg-background">
+          <div className="bg-slate-900 text-slate-200 px-4 py-2 flex items-center justify-between text-xs border-b border-slate-800 z-50 sticky top-0 shadow-md">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>
+                Visualizando <strong>{tenant?.name || urlTenant}</strong> como visitante público (Modo Visitante).
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.setItem('barberelite_tenant_id', userTenant);
+                window.location.href = window.location.origin;
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1 rounded-lg transition-colors text-[11px] shadow-sm cursor-pointer"
+            >
+              Voltar ao Meu Painel ({userTenant})
+            </button>
+          </div>
+          <div className="flex-1">
+            <PortalCliente 
+              profile={null as any}
+              onLoginClick={() => setAuthView('login')}
+              onBackToLanding={() => setShowLanding(true)}
+            />
+          </div>
+        </div>
+      </Suspense>
+    );
+  }
+
+  if (isSelfBookingPreview) {
+    return (
+      <Suspense fallback={<PageLoadingFallback />}>
+        <div className="min-h-screen flex flex-col bg-background">
+          <div className="bg-slate-900 text-slate-200 px-4 py-2 flex items-center justify-between text-xs border-b border-slate-800 z-50 sticky top-0 shadow-md">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span>
+                Pré-visualização do Portal de Agendamento do Cliente (<strong>{tenant?.name || userTenant}</strong>).
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = window.location.origin;
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1 rounded-lg transition-colors text-[11px] shadow-sm cursor-pointer"
+            >
+              Voltar ao Dashboard Admin
+            </button>
+          </div>
+          <div className="flex-1">
+            <PortalCliente 
+              profile={null as any}
+              onLoginClick={() => setAuthView('login')}
+              onBackToLanding={() => setShowLanding(true)}
+            />
+          </div>
+        </div>
+      </Suspense>
+    );
+  }
+
   // Portal do Superadministrador SaaS
   if (profile && profile.tipo === 'saas_admin') {
     return (

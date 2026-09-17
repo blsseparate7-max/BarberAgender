@@ -132,13 +132,13 @@ export const userService = {
     const querySnapshot = await getDocs(q);
     let users = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
 
-    // Filter case-insensitively by tenant ID
+    // Filter case-insensitively by tenant ID (Strict tenant boundary)
     users = users.filter(u => {
       const uTenant = (u.tenantId || '').trim().toLowerCase();
-      if (!tid || tid === 'gbcortes7') {
-        return uTenant === tid || uTenant === '' || uTenant === 'gbcortes7';
+      if (tid && tid !== 'gbcortes7') {
+        return uTenant === tid;
       }
-      return uTenant === tid || uTenant === '';
+      return uTenant === 'gbcortes7' || uTenant === '';
     });
 
     if (onlyActive) {

@@ -221,20 +221,39 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [loadingCommissions, setLoadingCommissions] = useState(true);
   const [showGrossDetailsModal, setShowGrossDetailsModal] = useState(false);
   const [isEditingGoal, setIsEditingGoal] = useState(false);
+
+  const currentBarber = React.useMemo(() => {
+    return barbersList.find(b => b.uid === selectedBarberId) || currentProfile || profile;
+  }, [barbersList, selectedBarberId, currentProfile, profile]);
+
+  const officialMonthlyGoal = Number(
+    currentBarber?.meta_mensal ?? 
+    currentBarber?.monthly_goal ?? 
+    currentProfile?.meta_mensal ?? 
+    currentProfile?.monthly_goal ?? 
+    profile?.meta_mensal ?? 
+    profile?.monthly_goal ?? 
+    0
+  );
+
   const [personalDailyGoal, setPersonalDailyGoal] = useState<number>(() => {
     const saved = localStorage.getItem(`barber_daily_goal_${profile.uid}`);
     return saved ? parseInt(saved, 10) : 5; // Default 5 clients
   });
   const [personalMonthlyGoal, setPersonalMonthlyGoal] = useState<number>(() => {
     const saved = localStorage.getItem(`barber_monthly_goal_${profile.uid}`);
-    return saved ? parseFloat(saved) : 2500; // Default R$ 2500 in commissions
+    if (saved) return parseFloat(saved);
+    return officialMonthlyGoal > 0 ? officialMonthlyGoal : 2500;
   });
   const [newDailyGoal, setNewDailyGoal] = useState<string>('');
   const [newMonthlyGoal, setNewMonthlyGoal] = useState<string>('');
 
-  const currentBarber = React.useMemo(() => {
-    return barbersList.find(b => b.uid === selectedBarberId) || profile;
-  }, [barbersList, selectedBarberId, profile]);
+  // Keep personalMonthlyGoal aligned with official admin goal if user has not manually overwritten or if official goal updates
+  useEffect(() => {
+    if (officialMonthlyGoal > 0) {
+      setPersonalMonthlyGoal(officialMonthlyGoal);
+    }
+  }, [officialMonthlyGoal]);
 
   const isAdminOrOwner = React.useMemo(() => {
     const r = ((profile as any).role || profile.tipo || '').toLowerCase();
@@ -408,13 +427,83 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const [assignedTeamGoals, setAssignedTeamGoals] = useState<TeamGoal[]>([]);
 
   useEffect(() => {
-    if (!profile?.uid) return;
+    const activeBarberId = currentBarber?.uid || profile?.uid;
+    if (!activeBarberId) return;
+
+    const tid = currentProfile?.tenantId || profile?.tenantId || getActiveTenantId();
     const unsubscribe = teamGoalService.subscribeToGoals((goals) => {
-      const mine = goals.filter(g => !g.profissional_id || g.profissional_id === profile.uid);
+      const mine = goals.filter(g => !g.profissional_id || g.profissional_id === activeBarberId || g.profissional_id === profile.uid);
       setAssignedTeamGoals(mine);
-    });
+    }, tid);
     return () => unsubscribe();
-  }, [profile?.uid]);
+  }, [profile?.uid, profile?.tenantId, currentProfile?.tenantId, currentBarber?.uid]);
+
+  // Dynamic progress calculator for any team / individual goal
+  const calculateGoalProgress = (goal: TeamGoal) => {
+    const activeBarberId = currentBarber?.uid || profile.uid;
+    const now = new Date();
+    const todayStr = format(now, 'yyyy-MM-dd');
+    const thisMonthPrefix = format(now, 'yyyy-MM');
+
+    let currentVal = 0;
+
+    if (goal.periodo === 'dia') {
+      if (goal.tipo === 'faturamento') {
+        const todayComandas = comandas.filter(c => (c.date || '').split('T')[0] === todayStr && c.status === 'fechada');
+        const todayComms = commissions.filter(c => (c.date || '').split('T')[0] === todayStr && c.status !== 'cancelado' && c.status !== 'estornado');
+        const revFromCmds = todayComandas.reduce((sum, c) => sum + (c.total || 0), 0);
+        currentVal = revFromCmds > 0 ? revFromCmds : todayComms.reduce((sum, c) => sum + (c.service_price || c.service_value || c.valor_servico || c.commission_value || 0), 0);
+      } else {
+        const todayCompletedApps = appointments.filter(a => a.status === 'concluído' && (a.profissional_id === activeBarberId || (a as any).barbeiro_id === activeBarberId));
+        const todayComms = commissions.filter(c => (c.date || '').split('T')[0] === todayStr && c.status !== 'cancelado' && c.status !== 'estornado');
+        currentVal = Math.max(todayCompletedApps.length, todayComms.length, stats?.servedTodayCount || 0);
+      }
+    } else if (goal.periodo === 'semana') {
+      const startW = startOfDay(addDays(now, -((now.getDay() + 6) % 7))); // Monday
+      const startWStr = format(startW, 'yyyy-MM-dd');
+
+      if (goal.tipo === 'faturamento') {
+        const weekComandas = comandas.filter(c => {
+          const d = (c.date || '').split('T')[0];
+          return d >= startWStr && d <= todayStr && c.status === 'fechada';
+        });
+        const weekComms = commissions.filter(c => {
+          const d = (c.date || '').split('T')[0];
+          return d >= startWStr && d <= todayStr && c.status !== 'cancelado' && c.status !== 'estornado';
+        });
+        const revFromCmds = weekComandas.reduce((sum, c) => sum + (c.total || 0), 0);
+        currentVal = revFromCmds > 0 ? revFromCmds : weekComms.reduce((sum, c) => sum + (c.service_price || c.service_value || c.valor_servico || c.commission_value || 0), 0);
+      } else {
+        const weekComms = commissions.filter(c => {
+          const d = (c.date || '').split('T')[0];
+          return d >= startWStr && d <= todayStr && c.status !== 'cancelado' && c.status !== 'estornado';
+        });
+        currentVal = weekComms.length;
+      }
+    } else {
+      // Mês
+      if (goal.tipo === 'faturamento') {
+        const monthComms = commissions.filter(c => (c.date || '').startsWith(thisMonthPrefix) && c.status !== 'cancelado' && c.status !== 'estornado');
+        currentVal = ledger.faturamentoBrutoMes > 0 
+          ? ledger.faturamentoBrutoMes 
+          : monthComms.reduce((sum, c) => sum + (c.service_price || c.service_value || c.valor_servico || c.commission_value || 0), 0);
+      } else {
+        const monthComms = commissions.filter(c => (c.date || '').startsWith(thisMonthPrefix) && c.status !== 'cancelado' && c.status !== 'estornado');
+        currentVal = monthComms.length;
+      }
+    }
+
+    const targetVal = goal.valorMeta || 1;
+    const percent = Math.min(100, Math.round((currentVal / targetVal) * 100));
+    const isAchieved = currentVal >= goal.valorMeta;
+
+    return {
+      currentVal,
+      targetVal: goal.valorMeta,
+      percent,
+      isAchieved
+    };
+  };
 
   // 4. Fetch Products when entering Estoque tab
   useEffect(() => {
@@ -1207,6 +1296,136 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                 </span>
               </div>
             </div>
+
+            {/* SEÇÃO DE METAS & BÔNUS DA BARBEARIA */}
+            {(assignedTeamGoals.length > 0 || officialMonthlyGoal > 0) && (
+              <div className="bg-white border border-slate-200/80 p-5 rounded-3xl shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-2">
+                    <Target size={16} className="text-indigo-600" />
+                    Metas Ativas & Bônus de Desempenho
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-lg">
+                    Sincronizado em Tempo Real
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {/* Metas de Equipe / Desempenho cadastradas pelo gestor */}
+                  {assignedTeamGoals.map((goal, idx) => {
+                    const prog = calculateGoalProgress(goal);
+                    const isIndiv = Boolean(goal.profissional_id);
+
+                    return (
+                      <div 
+                        key={goal.id || `barber-team-goal-${idx}`}
+                        className={`p-4 rounded-2xl border transition-all space-y-2.5 ${
+                          prog.isAchieved 
+                            ? 'bg-emerald-50/70 border-emerald-200/90 shadow-xs' 
+                            : 'bg-slate-50/70 border-slate-200/80'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-2 py-0.5 bg-indigo-100/80 text-indigo-700 font-black text-[9px] uppercase rounded-md">
+                                {goal.periodo === 'dia' ? 'Hoje' : goal.periodo === 'semana' ? 'Esta Semana' : 'Este Mês'}
+                              </span>
+                              {isIndiv ? (
+                                <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-black text-[9px] uppercase rounded-md">
+                                  🎯 Sua Meta Individual
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-black text-[9px] uppercase rounded-md">
+                                  👥 Meta da Equipe
+                                </span>
+                              )}
+                              {goal.valorBonus > 0 && (
+                                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-black text-[9px] uppercase rounded-md flex items-center gap-1">
+                                  <DollarSign size={10} />
+                                  Bônus: R$ {goal.valorBonus.toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="font-extrabold text-xs text-slate-900 mt-1.5">{goal.titulo}</h4>
+                          </div>
+
+                          <span className={`text-xs font-black ${prog.isAchieved ? 'text-emerald-700' : 'text-indigo-600'}`}>
+                            {prog.percent}%
+                          </span>
+                        </div>
+
+                        {/* Barra de Progresso */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px] font-bold">
+                            <span className="text-slate-500">
+                              {goal.tipo === 'faturamento' ? 'Faturamento Alcançado' : 'Atendimentos Realizados'}
+                            </span>
+                            <span className={prog.isAchieved ? 'text-emerald-700 font-black' : 'text-slate-800 font-black'}>
+                              {goal.tipo === 'faturamento' 
+                                ? `R$ ${prog.currentVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} / R$ ${prog.targetVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                                : `${prog.currentVal} / ${prog.targetVal} cortes`
+                              }
+                            </span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-200/80 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                prog.isAchieved ? 'bg-emerald-500' : 'bg-indigo-600'
+                              }`}
+                              style={{ width: `${prog.percent}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10px] pt-1">
+                          <span className={prog.isAchieved ? 'text-emerald-700 font-black flex items-center gap-1' : 'text-slate-400 font-semibold'}>
+                            {prog.isAchieved ? '✨ Parabéns! Meta Batida com Sucesso!' : `Faltam ${goal.tipo === 'faturamento' ? `R$ ${(Math.max(0, prog.targetVal - prog.currentVal)).toFixed(2)}` : `${Math.max(0, prog.targetVal - prog.currentVal)} atendimento(s)`}`}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Meta Mensal Esperada do Cadastro do Barbeiro */}
+                  {officialMonthlyGoal > 0 && !assignedTeamGoals.some(g => g.periodo === 'mes' && g.tipo === 'faturamento') && (
+                    <div className="p-4 rounded-2xl bg-indigo-50/40 border border-indigo-100 space-y-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 font-black text-[9px] uppercase rounded-md">
+                              Este Mês
+                            </span>
+                            <span className="px-2 py-0.5 bg-slate-200/80 text-slate-700 font-black text-[9px] uppercase rounded-md">
+                              Meta Oficial da Barbearia
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-xs text-slate-900 mt-1.5">Meta de Faturamento Mensal</h4>
+                        </div>
+                        <span className="text-xs font-black text-indigo-600">
+                          {Math.min(100, Math.round(((ledger.faturamentoBrutoMes || 0) / (officialMonthlyGoal || 1)) * 100))}%
+                        </span>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px] font-bold">
+                          <span className="text-slate-500">Produção no Mês</span>
+                          <span className="text-slate-800 font-black">
+                            R$ {(ledger.faturamentoBrutoMes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} / R$ {officialMonthlyGoal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="w-full h-2 bg-indigo-200/50 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-indigo-600 rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(100, Math.round(((ledger.faturamentoBrutoMes || 0) / (officialMonthlyGoal || 1)) * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* AÇÕES SOB DEMANDA (Economia de Leitura) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2229,16 +2448,105 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   </div>
                 </div>
 
-                {/* Seção de Metas */}
-                <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3">
+                {/* Seção de Metas da Barbearia & Pessoais */}
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
                       <Target size={14} className="text-indigo-600" />
-                      Suas Metas Pessoais
+                      Metas & Indicativos de Performance
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingGoal(!isEditingGoal)}
+                      className="text-[10px] font-black uppercase tracking-wider text-indigo-600 hover:text-indigo-800 transition cursor-pointer"
+                    >
+                      {isEditingGoal ? 'Cancelar' : 'Editar Metas Pessoais'}
+                    </button>
                   </div>
 
-                  <div className="space-y-3">
+                  {isEditingGoal && (
+                    <form onSubmit={handleSaveGoals} className="bg-white p-3.5 rounded-xl border border-indigo-100 space-y-3 shadow-xs">
+                      <p className="text-[10px] font-bold text-slate-500">Defina suas metas pessoais de incentivo diário e mensal:</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Meta Diária (Cortes/dia)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={newDailyGoal}
+                            onChange={e => setNewDailyGoal(e.target.value)}
+                            placeholder={personalDailyGoal.toString()}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500 mt-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-slate-400 uppercase">Meta Mensal de Comissão (R$)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="50"
+                            value={newMonthlyGoal}
+                            onChange={e => setNewMonthlyGoal(e.target.value)}
+                            placeholder={personalMonthlyGoal.toString()}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500 mt-1"
+                          />
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <button
+                          type="submit"
+                          className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-black transition cursor-pointer"
+                        >
+                          Salvar Metas
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Metas Ativas da Barbearia */}
+                  {assignedTeamGoals.length > 0 && (
+                    <div className="space-y-2.5 pt-1">
+                      <p className="text-[10px] font-black uppercase text-indigo-700 tracking-wider">Metas Estabelecidas pelo Gestor</p>
+                      <div className="space-y-2">
+                        {assignedTeamGoals.map((goal, gIdx) => {
+                          const prog = calculateGoalProgress(goal);
+                          return (
+                            <div key={`modal-goal-${goal.id || gIdx}`} className="bg-white p-3 rounded-xl border border-slate-200/80 space-y-1.5 shadow-2xs">
+                              <div className="flex items-center justify-between text-xs font-bold">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-slate-800 font-black">{goal.titulo}</span>
+                                  <span className="text-[9px] px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded font-bold uppercase">
+                                    {goal.periodo}
+                                  </span>
+                                </div>
+                                <span className={prog.isAchieved ? 'text-emerald-600 font-black' : 'text-indigo-600 font-black'}>
+                                  {goal.tipo === 'faturamento' 
+                                    ? `R$ ${prog.currentVal.toFixed(2)} / R$ ${prog.targetVal.toFixed(2)}`
+                                    : `${prog.currentVal} / ${prog.targetVal} cortes`
+                                  } ({prog.percent}%)
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full rounded-full transition-all ${prog.isAchieved ? 'bg-emerald-500' : 'bg-indigo-600'}`}
+                                  style={{ width: `${prog.percent}%` }}
+                                />
+                              </div>
+                              {goal.valorBonus > 0 && (
+                                <p className="text-[9px] text-emerald-600 font-bold">
+                                  Bônus de desempenho: R$ {goal.valorBonus.toFixed(2)} {prog.isAchieved && '• Conquistado!'}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Metas Pessoais e Diárias */}
+                  <div className="space-y-3 pt-2 border-t border-slate-200">
+                    <p className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Acompanhamento Pessoal</p>
                     <div className="space-y-1">
                       <div className="flex justify-between text-xs font-bold">
                         <span>Foco Hoje: Atendimentos</span>

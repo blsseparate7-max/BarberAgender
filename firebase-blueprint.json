@@ -158,6 +158,7 @@
         "email": { "type": "string" },
         "address": { "type": "object" },
         "isActive": { "type": "boolean" },
+        "whatsappReminderTemplate": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

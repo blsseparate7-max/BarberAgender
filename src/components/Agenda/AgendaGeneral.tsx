@@ -43,6 +43,8 @@ import { computeOverlappingLayout, ItemPosition, LayoutItem } from '../../lib/ca
 import { toast } from 'sonner';
 import { format, addDays, subDays, isSameDay, parse, isEqual, isAfter, isBefore, addMinutes } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useTenant } from '../../contexts/TenantContext';
+import { buildAppointmentReminderMessage, getWhatsAppDirectUrl } from '../../utils/whatsappTemplates';
 
 interface AgendaGeneralProps {
   selectedDate: Date;
@@ -77,6 +79,7 @@ export function AgendaGeneral({
   hideManagementMetrics = false,
   customSubscriptionLabel = 'Clube VIP'
 }: AgendaGeneralProps) {
+  const { tenant } = useTenant();
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [nowTime, setNowTime] = useState<Date>(new Date());
   const [servicesList, setServicesList] = useState<any[]>([]);
@@ -944,18 +947,31 @@ export function AgendaGeneral({
                                     
                                     <div className="flex items-center gap-1 shrink-0">
                                       {/* WhatsApp Quick Action */}
-                                      {cleanPhone && (
-                                        <a
-                                          href={`https://wa.me/55${cleanPhone}?text=${encodeURIComponent(`Olá, ${app.cliente_name}! Confirmando seu agendamento hoje às ${app.startTime} na barbearia.`)}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          onClick={(e) => e.stopPropagation()}
-                                          title="Mensagem no WhatsApp"
-                                          className="p-1 bg-white/20 hover:bg-white text-white hover:text-emerald-700 rounded-lg transition-colors"
-                                        >
-                                          <MessageCircle size={12} />
-                                        </a>
-                                      )}
+                                      {cleanPhone && (() => {
+                                        const reminderMsg = buildAppointmentReminderMessage({
+                                          template: tenant?.whatsappReminderTemplate || tenant?.whatsapp_reminder_template,
+                                          clientName: app.cliente_name,
+                                          time: app.startTime,
+                                          barberName: app.profissional_name,
+                                          serviceName: app.servico_name,
+                                          barbershopName: tenant?.name,
+                                          date: app.date ? format(new Date(app.date + 'T12:00:00'), 'dd/MM/yyyy') : format(selectedDate, 'dd/MM/yyyy'),
+                                        });
+                                        const whatsappUrl = getWhatsAppDirectUrl(cleanPhone, reminderMsg);
+
+                                        return (
+                                          <a
+                                            href={whatsappUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                            title="Enviar Lembrete no WhatsApp"
+                                            className="p-1 bg-white/20 hover:bg-white text-white hover:text-emerald-700 rounded-lg transition-colors"
+                                          >
+                                            <MessageCircle size={12} />
+                                          </a>
+                                        );
+                                      })()}
 
                                       {/* Atendimento & Comanda Action */}
                                       {['agendado', 'confirmado', 'em_atendimento'].includes(app.status) && (

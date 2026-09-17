@@ -91,6 +91,10 @@ export interface TenantProfile {
   slot_interval?: number; // ex: 15, 30, 45, 60 (padrão é 15)
   slot_calculation_strategy?: 'fixed' | 'dynamic'; // 'fixed' ou 'dynamic'
 
+  // Modelos de Mensagens e WhatsApp
+  whatsappReminderTemplate?: string;
+  whatsapp_reminder_template?: string;
+
   // Conta Bancária Homologada para Saque (Same-Ownership Payout Account)
   payoutAccount?: TenantPayoutAccount;
 }

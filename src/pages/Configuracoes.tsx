@@ -44,8 +44,16 @@ import {
   MessageCircle,
   MessageSquare,
   QrCode,
-  HelpCircle as QuestionIcon
+  HelpCircle as QuestionIcon,
+  RotateCcw,
+  Smartphone
 } from 'lucide-react';
+import { 
+  DEFAULT_WHATSAPP_REMINDER_TEMPLATE, 
+  WHATSAPP_VARIABLES, 
+  buildAppointmentReminderMessage,
+  getWhatsAppDirectUrl 
+} from '../utils/whatsappTemplates';
 import { motion, AnimatePresence } from 'motion/react';
 import { updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../firebase';
@@ -198,6 +206,10 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       if (tenant.openingHours && tenant.openingHours.length > 0) {
         setHours(tenant.openingHours);
       }
+
+      if (tenant.whatsappReminderTemplate || tenant.whatsapp_reminder_template) {
+        setWhatsappReminderTemplate(tenant.whatsappReminderTemplate || tenant.whatsapp_reminder_template || DEFAULT_WHATSAPP_REMINDER_TEMPLATE);
+      }
     }
   }, [tenant]);
 
@@ -223,6 +235,46 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
   const [notifWeb, setNotifWeb] = useState(true);
   const [notifWpp, setNotifWpp] = useState(true);
   const [notifMail, setNotifMail] = useState(false);
+  const [whatsappReminderTemplate, setWhatsappReminderTemplate] = useState<string>(
+    tenant?.whatsappReminderTemplate || tenant?.whatsapp_reminder_template || DEFAULT_WHATSAPP_REMINDER_TEMPLATE
+  );
+  const [savingWhatsappTemplate, setSavingWhatsappTemplate] = useState<boolean>(false);
+  const whatsappTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleInsertTag = (tag: string) => {
+    const textarea = whatsappTextareaRef.current;
+    if (!textarea) {
+      setWhatsappReminderTemplate(prev => prev + ' ' + tag);
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = whatsappReminderTemplate;
+    const newText = text.substring(0, start) + tag + text.substring(end);
+    setWhatsappReminderTemplate(newText);
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + tag.length, start + tag.length);
+    }, 0);
+  };
+
+  const handleSaveWhatsappTemplateOnly = async () => {
+    if (!updateTenantProfile) return;
+    setSavingWhatsappTemplate(true);
+    try {
+      const finalTemplate = whatsappReminderTemplate.trim() || DEFAULT_WHATSAPP_REMINDER_TEMPLATE;
+      await updateTenantProfile({
+        whatsappReminderTemplate: finalTemplate,
+        whatsapp_reminder_template: finalTemplate
+      });
+      toast.success("Modelo de mensagem do WhatsApp atualizado com sucesso!");
+    } catch (err: any) {
+      toast.error(`Erro ao salvar: ${err.message || err}`);
+    } finally {
+      setSavingWhatsappTemplate(false);
+    }
+  };
+
   const [selectedPlan, setSelectedPlan] = useState('elite');
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMsg, setTicketMsg] = useState('');
@@ -730,9 +782,23 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
     }
   });
 
-  const handleSaveNotifications = (e: React.FormEvent) => {
+  const handleSaveNotifications = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success("Preferências de notificações aplicadas com sucesso!");
+    setSavingWhatsappTemplate(true);
+    try {
+      if (updateTenantProfile) {
+        const finalTemplate = whatsappReminderTemplate.trim() || DEFAULT_WHATSAPP_REMINDER_TEMPLATE;
+        await updateTenantProfile({
+          whatsappReminderTemplate: finalTemplate,
+          whatsapp_reminder_template: finalTemplate
+        });
+      }
+      toast.success("Preferências de notificações e modelo de mensagem salvos com sucesso!");
+    } catch (err: any) {
+      toast.error(`Erro ao salvar preferências: ${err.message || err}`);
+    } finally {
+      setSavingWhatsappTemplate(false);
+    }
   };
 
   const handleSaveBusinessSettings = async (e: React.FormEvent) => {
@@ -2421,6 +2487,137 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
                       )}
                     </div>
                   )}
+                </div>
+
+                {/* Personalização da Mensagem de WhatsApp (Agenda e Comanda) */}
+                <div id="whatsapp-template-card" className="bg-white border border-slate-200/80 rounded-[2.5rem] p-6 md:p-8 shadow-xs space-y-6">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
+                        <MessageSquare size={24} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-xl font-black text-slate-900 tracking-tight">Modelo de Mensagem de Lembrete no WhatsApp</h3>
+                          <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                            Agenda & Comanda
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 font-semibold mt-1">
+                          Personalize o texto automático aberto quando você ou o barbeiro clica no botão de WhatsApp do agendamento ou comanda.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end md:self-auto">
+                      <button
+                        id="btn-restore-wpp-template"
+                        type="button"
+                        onClick={() => setWhatsappReminderTemplate(DEFAULT_WHATSAPP_REMINDER_TEMPLATE)}
+                        className="px-3 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                        title="Restaurar texto padrão original"
+                      >
+                        <RotateCcw size={14} />
+                        <span>Restaurar Padrão</span>
+                      </button>
+
+                      <button
+                        id="btn-save-wpp-template-direct"
+                        type="button"
+                        onClick={handleSaveWhatsappTemplateOnly}
+                        disabled={savingWhatsappTemplate}
+                        className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl transition shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        {savingWhatsappTemplate ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        <span>Salvar Modelo</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Variáveis Dinâmicas */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>Variáveis Dinâmicas Disponíveis</span>
+                        <span className="text-[10px] text-slate-400 font-normal lowercase">(clique para inserir no texto)</span>
+                      </label>
+                      <span className="text-[10px] font-bold text-slate-400 font-mono">
+                        {whatsappReminderTemplate.length} caracteres
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {WHATSAPP_VARIABLES.map(v => (
+                        <button
+                          key={v.key}
+                          id={`btn-tag-${v.key.replace(/[{}]/g, '')}`}
+                          type="button"
+                          onClick={() => handleInsertTag(v.key)}
+                          className="group px-3 py-1.5 bg-slate-50 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                          title={`${v.label} (Exemplo: ${v.example}) - ${v.description}`}
+                        >
+                          <span className="text-emerald-600 font-black">+</span>
+                          <span>{v.key}</span>
+                          <span className="text-[10px] text-slate-400 group-hover:text-emerald-600 font-sans font-normal ml-0.5">
+                            ({v.label})
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Textarea Editor */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-700 uppercase tracking-wider block">
+                      Texto da Mensagem
+                    </label>
+                    <textarea
+                      id="input-whatsapp-reminder-template"
+                      ref={whatsappTextareaRef}
+                      value={whatsappReminderTemplate}
+                      onChange={(e) => setWhatsappReminderTemplate(e.target.value)}
+                      rows={4}
+                      placeholder="Escreva sua mensagem personalizada usando as variáveis acima..."
+                      className="w-full bg-slate-50/70 border border-slate-200 rounded-2xl p-4 text-sm font-medium text-slate-800 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition custom-scrollbar"
+                    />
+                  </div>
+
+                  {/* Simulação / Prévia em Tempo Real */}
+                  <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 md:p-5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-slate-600 tracking-wider flex items-center gap-1.5">
+                        <Smartphone size={14} className="text-emerald-600" />
+                        Prévia no WhatsApp (Simulação com Dados Reais)
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-400">
+                        Como o seu cliente receberá
+                      </span>
+                    </div>
+
+                    <div className="bg-[#EFEAE2] p-4 rounded-xl border border-slate-300/50 flex flex-col gap-2">
+                      <div className="self-end max-w-[95%] md:max-w-[80%] bg-[#E7FFDB] text-slate-900 rounded-2xl rounded-tr-xs p-3.5 shadow-xs border border-emerald-200/50 text-xs font-medium space-y-1 relative">
+                        <p className="whitespace-pre-wrap leading-relaxed text-slate-800">
+                          {buildAppointmentReminderMessage({
+                            template: whatsappReminderTemplate,
+                            clientName: 'Carlos Silva',
+                            time: '15:30',
+                            barberName: profile?.nome || 'Lucas Barbeiro',
+                            serviceName: 'Cabelo + Barba',
+                            barbershopName: tenant?.name || 'Rull Barbearia',
+                            date: 'Hoje',
+                          })}
+                        </p>
+                        <div className="flex items-center justify-end gap-1 text-[9px] text-slate-400 pt-1 font-mono">
+                          <span>15:30</span>
+                          <span className="text-emerald-600 font-bold">✓✓</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      💡 <strong>Onde isso aparece?</strong> Na <strong>Agenda Geral</strong> e no <strong>Portal do Barbeiro</strong>: ao clicar no ícone verde de WhatsApp presente no card do agendamento ou comanda, o sistema já abre a conversa no WhatsApp com esta mensagem formatada e os dados do cliente e horário preenchidos automaticamente.
+                    </p>
+                  </div>
                 </div>
 
                 <form onSubmit={handleSaveNotifications} className="space-y-8">

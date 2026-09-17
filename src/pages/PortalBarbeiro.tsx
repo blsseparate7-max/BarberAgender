@@ -63,6 +63,8 @@ import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { NotificationBell } from '../components/NotificationBell';
 import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
+import { useTenant } from '../contexts/TenantContext';
+import { buildAppointmentReminderMessage, getWhatsAppDirectUrl } from '../utils/whatsappTemplates';
 import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock, ProfessionalAdvance, ProfessionalPayment } from '../types';
 import { toast } from 'sonner';
 import { format, parse, addDays, startOfDay, endOfDay, isToday } from 'date-fns';
@@ -150,6 +152,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   
   // Tab states: Agenda
   const { isSaaSAdminUser, setOverrideRole } = useAuth();
+  const { tenant } = useTenant();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
@@ -963,12 +966,18 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
           const completedCount = appointments.filter(a => a.status === 'concluído').length;
 
-          const getWhatsAppUrl = (phone?: string, clientName?: string, time?: string) => {
+          const getWhatsAppUrl = (phone?: string, clientName?: string, time?: string, serviceName?: string) => {
             if (!phone) return null;
-            const cleanPhone = phone.replace(/\D/g, '');
-            const fullPhone = cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
-            const msg = encodeURIComponent(`Olá, ${clientName || 'amigo'}! Tudo bem? Passando para confirmar seu horário hoje às ${time || ''} aqui na barbearia.`);
-            return `https://wa.me/${fullPhone}?text=${msg}`;
+            const msg = buildAppointmentReminderMessage({
+              template: tenant?.whatsappReminderTemplate || tenant?.whatsapp_reminder_template,
+              clientName,
+              time,
+              barberName: currentBarber?.nome || profile?.nome || 'Barbeiro',
+              serviceName,
+              barbershopName: tenant?.name,
+              date: selectedDate ? format(selectedDate, 'dd/MM/yyyy') : 'hoje',
+            });
+            return getWhatsAppDirectUrl(phone, msg);
           };
 
           return (
@@ -1067,7 +1076,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                     <div className="flex items-center gap-2">
                       {nextUpcomingApp.cliente_telefone && (
                         <a
-                          href={getWhatsAppUrl(nextUpcomingApp.cliente_telefone, nextUpcomingApp.cliente_name, nextUpcomingApp.startTime) || '#'}
+                          href={getWhatsAppUrl(nextUpcomingApp.cliente_telefone, nextUpcomingApp.cliente_name, nextUpcomingApp.startTime, nextUpcomingApp.servico_name) || '#'}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-2xl transition active:scale-95 flex items-center justify-center"

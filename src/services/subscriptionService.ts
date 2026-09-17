@@ -582,7 +582,7 @@ export const subscriptionService = {
       newStartDateStr = todayStr;
     }
     const newStartDate = new Date(newStartDateStr + 'T12:00:00');
-    const newEndDate = addMonths(newStartDate, 1);
+    const newEndDate = addDays(newStartDate, 30);
     const newEndDateStr = format(newEndDate, 'yyyy-MM-dd');
 
     return await runTransaction(db, async (transaction) => {
@@ -661,7 +661,7 @@ export const subscriptionService = {
 
     const startDate = new Date();
     const startDateStr = format(startDate, 'yyyy-MM-dd');
-    const endDate = addMonths(startDate, 1);
+    const endDate = addDays(startDate, 30);
     const endDateStr = format(endDate, 'yyyy-MM-dd');
 
     // Clean up or cancel old pending subscriptions for this client and tenant to prevent duplicate rows

@@ -12,10 +12,11 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { ClientDebt, DebtPayment, PaymentMethodConfig } from '../../types';
+import { ClientDebt, DebtPayment, PaymentMethodConfig, DailyCash } from '../../types';
 import { userService } from '../../services/userService';
 import { debtService } from '../../services/debtService';
 import { comandaService } from '../../services/comandaService';
+import { cashService } from '../../services/cashService';
 import { paymentMethodService } from '../../services/paymentMethodService';
 import { getActiveTenantId } from '../../services/tenantService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -58,6 +59,9 @@ export function ClientAccountDetailsModal({
   onPaymentSuccess?: () => void;
   paymentMethods?: PaymentMethodConfig[];
 }) {
+  const { user } = useAuth();
+  const { tenant } = useTenant();
+  const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
   const [client, setClient] = useState<any>(null);
   const [debts, setDebts] = useState<ClientDebt[]>([]);
   const [payments, setPayments] = useState<DebtPayment[]>([]);
@@ -66,6 +70,13 @@ export function ClientAccountDetailsModal({
   const [newNoteVal, setNewNoteVal] = useState('');
   const [newNoteType, setNewNoteType] = useState<'neutral' | 'credit' | 'debit'>('neutral');
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = cashService.subscribeToCurrentCash((cash) => {
+      setCurrentCash(cash);
+    });
+    return () => unsub();
+  }, []);
   const [activeTab, setActiveTab] = useState<'debts' | 'payments' | 'notes'>('debts');
   const [isPaying, setIsPaying] = useState(false);
   const [isGlobalPaymentModalOpen, setIsGlobalPaymentModalOpen] = useState(false);
@@ -213,9 +224,6 @@ export function ClientAccountDetailsModal({
       setSubmittingCorrection(false);
     }
   };
-
-  const { user } = useAuth();
-  const { tenant } = useTenant();
 
   const handleSendWhatsAppDebtReminder = (
     clientName: string,
@@ -440,26 +448,21 @@ export function ClientAccountDetailsModal({
       const method = loadedMethods.find(m => m.id === selectedMethod);
       if (!method) throw new Error("Método de pagamento inválido");
 
-      if (selectedDebt) {
-        await comandaService.payDebt(
-          selectedDebt.id,
-          amount,
-          (method.tipo || method.type || 'dinheiro') as any,
-          method.id,
-          user?.uid || '',
-          user?.displayName || 'Sistema'
-        );
-        toast.success(`Pagamento de R$ ${amount.toFixed(2)} registrado para a dívida selecionada!`);
+      const result = await debtService.settleClientDebtsGlobal({
+        cliente_id,
+        divida_id: selectedDebt ? selectedDebt.id : undefined,
+        amount,
+        paymentMethod: (method.tipo || method.type || 'dinheiro') as any,
+        methodId: method.id,
+        methodName: method.nome || method.name,
+        userId: user?.uid || '',
+        userName: user?.displayName || 'Sistema'
+      });
+
+      if (result.cashUpdated) {
+        toast.success(`Recebimento de R$ ${amount.toFixed(2)} registrado e lançado no Caixa Diário!`);
       } else {
-        await debtService.settleClientDebtsGlobal({
-          cliente_id,
-          amount,
-          paymentMethod: (method.tipo || method.type || 'dinheiro') as any,
-          methodId: method.id,
-          userId: user?.uid || '',
-          userName: user?.displayName || 'Sistema'
-        });
-        toast.success(`Quitação de R$ ${amount.toFixed(2)} lançada com sucesso no caixa e na conta!`);
+        toast.success(`Recebimento de R$ ${amount.toFixed(2)} registrado na conta do cliente! (Aviso: Caixa Diário fechado)`);
       }
 
       await loadInfo();
@@ -1071,6 +1074,25 @@ export function ClientAccountDetailsModal({
                   </button>
                 </div>
                 <div className="p-8 space-y-6">
+                  {/* Status do Caixa Diário */}
+                  {currentCash ? (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center gap-3">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                      <div className="text-xs">
+                        <p className="font-bold text-emerald-800">Caixa Diário Aberto (#{currentCash.id.substring(0, 6)})</p>
+                        <p className="text-[11px] text-emerald-600">Este recebimento será computado automaticamente no caixa de hoje.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex items-start gap-2.5">
+                      <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                      <div className="text-xs">
+                        <p className="font-bold text-amber-800">Caixa Diário Fechado</p>
+                        <p className="text-[11px] text-amber-700">O pagamento abaterá o débito do cliente. Para que conste no relatório de fechamento do dia, certifique-se de abrir o caixa na aba Caixa Diário.</p>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Valor do Pagamento</label>

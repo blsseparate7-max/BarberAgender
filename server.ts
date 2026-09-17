@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
-import { initializeApp, getApps, App, cert, applicationDefault } from "firebase-admin/app";
+import { initializeApp, getApps, cert, applicationDefault, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import webpush from "web-push";
@@ -6302,13 +6302,13 @@ function encodeFirestoreFields(data: any): any {
           const isInitialActivation = subData.status === 'pending' || !subData.lastRenewalDate;
 
           if (isInitialActivation) {
-            // For initial subscription creation, strictly respect contract startDate & exact 30-day / 1-month duration
+            // For initial subscription creation, strictly respect contract startDate & exact 30-day duration
             newStartStr = subData.startDate || todayStr;
             if (subData.endDate) {
               newEndStr = subData.endDate;
             } else {
               const baseD = new Date(newStartStr + 'T12:00:00');
-              baseD.setMonth(baseD.getMonth() + 1);
+              baseD.setDate(baseD.getDate() + 30);
               newEndStr = baseD.toISOString().split('T')[0];
             }
           } else {
@@ -6335,9 +6335,9 @@ function encodeFirestoreFields(data: any): any {
             }
 
             if (!newEndStr) {
-              const nextMonth = new Date(baseDate);
-              nextMonth.setMonth(nextMonth.getMonth() + 1);
-              newEndStr = nextMonth.toISOString().split('T')[0];
+              const nextCycle = new Date(baseDate);
+              nextCycle.setDate(nextCycle.getDate() + 30);
+              newEndStr = nextCycle.toISOString().split('T')[0];
             }
           }
 
@@ -6892,64 +6892,66 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
-  // Rotina de Lembrete Automático de Agendamento (a cada 10 minutos)
-  setInterval(async () => {
-    try {
-      const fbAdmin = getFirebaseAdmin();
-      if (!fbAdmin) return;
-      const db = getFirestore(fbAdmin);
+  // Rotina de Lembrete Automático de Agendamento (a cada 10 minutos - apenas em container ou servidor contínuo)
+  if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    setInterval(async () => {
+      try {
+        const fbAdmin = getFirebaseAdmin();
+        if (!fbAdmin) return;
+        const db = getFirestore(fbAdmin);
 
-      const now = new Date();
-      const todayStr = now.toISOString().split('T')[0];
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-      const snap = await db.collection("appointments")
-        .where("date", "==", todayStr)
-        .get();
+        const snap = await db.collection("appointments")
+          .where("date", "==", todayStr)
+          .get();
 
-      for (const docSnap of snap.docs) {
-        const appData = docSnap.data();
-        if (appData.status === 'cancelado' || appData.status === 'concluído') continue;
-        if (appData.reminderPushSent) continue;
-        if (!appData.startTime || !appData.startTime.includes(':')) continue;
+        for (const docSnap of snap.docs) {
+          const appData = docSnap.data();
+          if (appData.status === 'cancelado' || appData.status === 'concluído') continue;
+          if (appData.reminderPushSent) continue;
+          if (!appData.startTime || !appData.startTime.includes(':')) continue;
 
-        const [hStr, mStr] = appData.startTime.split(':');
-        const appMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
-        const diffMinutes = appMinutes - currentMinutes;
+          const [hStr, mStr] = appData.startTime.split(':');
+          const appMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
+          const diffMinutes = appMinutes - currentMinutes;
 
-        // Avisar com antecedência de 45 a 120 minutos (janela de 1 a 2 horas antes)
-        if (diffMinutes >= 45 && diffMinutes <= 120) {
-          const clientName = appData.cliente_name || "Cliente";
-          const barberName = appData.profissional_name || "seu barbeiro";
-          const serviceName = appData.servico_name || "serviço";
+          // Avisar com antecedência de 45 a 120 minutos (janela de 1 a 2 horas antes)
+          if (diffMinutes >= 45 && diffMinutes <= 120) {
+            const clientName = appData.cliente_name || "Cliente";
+            const barberName = appData.profissional_name || "seu barbeiro";
+            const serviceName = appData.servico_name || "serviço";
 
-          if (appData.cliente_id) {
-            await sendPushToUser(appData.cliente_id, {
-              title: "⏰ Lembrete de Agendamento!",
-              body: `Olá, ${clientName}! Seu horário de ${serviceName} com ${barberName} é hoje às ${appData.startTime}. Te esperamos!`,
-              url: "/portal"
+            if (appData.cliente_id) {
+              await sendPushToUser(appData.cliente_id, {
+                title: "⏰ Lembrete de Agendamento!",
+                body: `Olá, ${clientName}! Seu horário de ${serviceName} com ${barberName} é hoje às ${appData.startTime}. Te esperamos!`,
+                url: "/portal"
+              });
+            }
+
+            if (appData.profissional_id && appData.profissional_id !== 'admin') {
+              await sendPushToUser(appData.profissional_id, {
+                title: "⏰ Próximo Cliente em Breve!",
+                body: `Seu cliente ${clientName} (${serviceName}) tem horário marcado para às ${appData.startTime}.`,
+                url: "/portal-barbeiro"
+              });
+            }
+
+            await docSnap.ref.update({
+              reminderPushSent: true,
+              reminderPushSentAt: FieldValue.serverTimestamp()
             });
+            console.log(`[Auto Reminder] Lembrete push enviado com sucesso para ${docSnap.id} (${appData.startTime})`);
           }
-
-          if (appData.profissional_id && appData.profissional_id !== 'admin') {
-            await sendPushToUser(appData.profissional_id, {
-              title: "⏰ Próximo Cliente em Breve!",
-              body: `Seu cliente ${clientName} (${serviceName}) tem horário marcado para às ${appData.startTime}.`,
-              url: "/portal-barbeiro"
-            });
-          }
-
-          await docSnap.ref.update({
-            reminderPushSent: true,
-            reminderPushSentAt: FieldValue.serverTimestamp()
-          });
-          console.log(`[Auto Reminder] Lembrete push enviado com sucesso para ${docSnap.id} (${appData.startTime})`);
         }
+      } catch (cronErr) {
+        console.warn("[Auto Reminder Cron] Erro na verificação de lembretes automáticos:", cronErr);
       }
-    } catch (cronErr) {
-      console.warn("[Auto Reminder Cron] Erro na verificação de lembretes automáticos:", cronErr);
-    }
-  }, 10 * 60 * 1000);
+    }, 10 * 60 * 1000);
+  }
 
   // Fallback para rotas de API não encontradas
   app.use((req, res, next) => {

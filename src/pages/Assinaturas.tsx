@@ -3542,7 +3542,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                             if (!newSubStartDate) return;
                             try {
                               const s = parseISO(newSubStartDate);
-                              const e = addMonths(s, 1);
+                              const e = addDays(s, 30);
                               setNewSubEndDate(format(e, 'yyyy-MM-dd'));
                             } catch (err) {
                               console.error(err);
@@ -3550,20 +3550,20 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                           }}
                           className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-slate-200 rounded-lg text-[10px] font-extrabold text-slate-600 transition-all text-center cursor-pointer"
                         >
-                          +1 Mês (Mesmo Dia)
+                          +30 Dias (Padrão)
                         </button>
                         <button
                           type="button"
                           onClick={() => {
                             const today = new Date();
                             const sStr = format(today, 'yyyy-MM-dd');
-                            const eStr = format(addMonths(today, 1), 'yyyy-MM-dd');
+                            const eStr = format(addDays(today, 30), 'yyyy-MM-dd');
                             setNewSubStartDate(sStr);
                             setNewSubEndDate(eStr);
                           }}
                           className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 rounded-lg text-[10px] font-extrabold text-slate-600 transition-all text-center cursor-pointer"
                         >
-                          Início Hoje (+1 Mês)
+                          Início Hoje (+30 Dias)
                         </button>
                       </div>
 
@@ -3576,12 +3576,12 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                             onChange={(e) => {
                               const val = e.target.value;
                               setNewSubStartDate(val);
-                              // Auto-recalculate 1 month (same day of month) if valid date
+                              // Auto-recalculate 30 days cycle if valid date
                               if (val) {
                                 try {
                                   const s = parseISO(val);
-                                  const endM = addMonths(s, 1);
-                                  setNewSubEndDate(format(endM, 'yyyy-MM-dd'));
+                                  const endD = addDays(s, 30);
+                                  setNewSubEndDate(format(endD, 'yyyy-MM-dd'));
                                 } catch { /* ignore */ }
                               }
                             }}

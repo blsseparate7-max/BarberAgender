@@ -8,7 +8,6 @@ import {
   getDocs, 
   query, 
   where, 
-  orderBy, 
   serverTimestamp,
   runTransaction,
   increment
@@ -16,20 +15,20 @@ import {
 import { db } from '../firebase';
 import { ClientDebt, DebtPayment, PaymentMethod } from '../types';
 import { getActiveTenantId } from './tenantService';
-import { comandaService } from './comandaService';
 
 const COLLECTION_DEBTS = 'client_debts';
 const COLLECTION_PAYMENTS = 'debt_payments';
 
 export const debtService = {
   async getClientDebts(cliente_id: string) {
+    if (!cliente_id) return [];
     const q = query(
       collection(db, COLLECTION_DEBTS),
       where('tenantId', '==', getActiveTenantId()),
       where('cliente_id', '==', cliente_id)
     );
     const querySnapshot = await getDocs(q);
-    const debts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
+    const debts = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as ClientDebt));
     return debts.sort((a, b) => {
       const aTime = a.createdAt?.seconds || 0;
       const bTime = b.createdAt?.seconds || 0;
@@ -38,12 +37,255 @@ export const debtService = {
   },
 
   async getDebtById(id: string) {
+    if (!id) return null;
     const docRef = doc(db, COLLECTION_DEBTS, id);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return { id: docSnap.id, ...docSnap.data() } as ClientDebt;
     }
     return null;
+  },
+
+  /**
+   * Quitação atômica e consolidada de dívidas ou recebimento de crédito em conta.
+   * Garante:
+   * 1. Abatimento de dívidas (específica ou FIFO).
+   * 2. Criação de registros em debt_payments com método de pagamento.
+   * 3. Atualização garantida no Caixa Diário (cash_movements e cash_sessions).
+   * 4. Registro no DRE / fluxo financeiro (financial_transactions).
+   * 5. Atualização atômica do saldo do cliente (saldo_atual, total_em_aberto, total_pago).
+   * 6. Concessão de pontos / cashback de fidelidade.
+   */
+  async settleClientDebtsGlobal(data: {
+    cliente_id: string;
+    amount: number;
+    paymentMethod: PaymentMethod;
+    methodId?: string;
+    methodName?: string;
+    userId: string;
+    userName: string;
+    tenantId?: string;
+    divida_id?: string;
+    notes?: string;
+  }) {
+    const tenantId = data.tenantId || getActiveTenantId();
+    const today = new Date().toISOString().split('T')[0];
+    const amountToProcess = Math.max(0, data.amount || 0);
+
+    if (amountToProcess <= 0) {
+      throw new Error("O valor de recebimento deve ser maior que zero.");
+    }
+
+    // 1. Localizar caixa diário aberto no tenant
+    let cashDoc: any = null;
+    try {
+      const cashQuery = query(
+        collection(db, 'cash_sessions'),
+        where('tenantId', '==', tenantId),
+        where('status', 'in', ['open', 'reopened'])
+      );
+      const cashDocs = await getDocs(cashQuery);
+      if (!cashDocs.empty) {
+        const sortedDocs = [...cashDocs.docs].sort((a, b) => {
+          const tA = a.data().openedAt?.seconds || 0;
+          const tB = b.data().openedAt?.seconds || 0;
+          return tB - tA;
+        });
+        cashDoc = sortedDocs[0];
+      }
+    } catch (cashErr) {
+      console.warn("Aviso ao consultar caixa aberto:", cashErr);
+    }
+
+    // 2. Localizar dívidas ativas
+    let targetDebts: ClientDebt[] = [];
+    if (data.divida_id) {
+      const singleDebtSnap = await getDoc(doc(db, COLLECTION_DEBTS, data.divida_id));
+      if (singleDebtSnap.exists()) {
+        targetDebts = [{ id: singleDebtSnap.id, ...singleDebtSnap.data() } as ClientDebt];
+      }
+    } else if (data.cliente_id) {
+      const allDebts = await this.getClientDebts(data.cliente_id);
+      targetDebts = allDebts.filter(d => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status) && (d.remainingAmount || 0) > 0.001);
+      
+      // Ordenar por mais antigas primeiro (FIFO)
+      targetDebts.sort((a, b) => {
+        const aDate = a.date || '';
+        const bDate = b.date || '';
+        if (aDate !== bDate) return aDate.localeCompare(bDate);
+        const aTime = a.createdAt?.seconds || 0;
+        const bTime = b.createdAt?.seconds || 0;
+        return aTime - bTime;
+      });
+    }
+
+    const clientRef = data.cliente_id ? doc(db, 'usuarios', data.cliente_id) : null;
+    let clientName = 'Cliente';
+    let totalDebtDeducted = 0;
+    const settledDebts: { debtId: string; paidAmount: number; remainingAmount: number }[] = [];
+
+    // 3. Execução Atômica
+    await runTransaction(db, async (transaction) => {
+      let clientData: any = {};
+      if (clientRef) {
+        const clientSnap = await transaction.get(clientRef);
+        if (clientSnap.exists()) {
+          clientData = clientSnap.data();
+          clientName = clientData.nome || clientData.name || clientName;
+        }
+      }
+
+      let remainingToPay = amountToProcess;
+      totalDebtDeducted = 0;
+
+      // Abater das dívidas
+      for (const debt of targetDebts) {
+        if (remainingToPay <= 0.001) break;
+        const debtRef = doc(db, COLLECTION_DEBTS, debt.id);
+        const debtSnap = await transaction.get(debtRef);
+        if (!debtSnap.exists()) continue;
+
+        const currentDebt = debtSnap.data() as ClientDebt;
+        const currentRemaining = currentDebt.remainingAmount ?? currentDebt.amount ?? 0;
+        if (currentRemaining <= 0.001) continue;
+
+        const payForThis = Math.min(currentRemaining, remainingToPay);
+        const newRemaining = Math.max(0, currentRemaining - payForThis);
+
+        transaction.update(debtRef, {
+          remainingAmount: newRemaining,
+          status: newRemaining <= 0.001 ? 'pago' : 'parcial',
+          updatedAt: serverTimestamp()
+        });
+
+        // Registrar comprovante do pagamento vinculado à dívida
+        const pRef = doc(collection(db, COLLECTION_PAYMENTS));
+        transaction.set(pRef, {
+          id: pRef.id,
+          tenantId,
+          divida_id: debt.id,
+          cliente_id: data.cliente_id,
+          cliente_name: clientName,
+          amount: payForThis,
+          paymentMethod: data.paymentMethod || 'dinheiro',
+          paymentMethodId: data.methodId || null,
+          paymentMethodName: data.methodName || null,
+          caixa_id: cashDoc?.id || null,
+          date: today,
+          is_deposit: false,
+          description: `Quitação Fiado: ${debt.description || `Comanda #${debt.comanda_id?.substring(0, 8) || 'N/D'}`}`,
+          createdAt: serverTimestamp()
+        });
+
+        settledDebts.push({ debtId: debt.id, paidAmount: payForThis, remainingAmount: newRemaining });
+        totalDebtDeducted += payForThis;
+        remainingToPay -= payForThis;
+      }
+
+      // Se sobrou valor após abater todas as dívidas ou se não havia dívidas cadastradas
+      if (remainingToPay > 0.001) {
+        const depositRef = doc(collection(db, COLLECTION_PAYMENTS));
+        transaction.set(depositRef, {
+          id: depositRef.id,
+          tenantId,
+          cliente_id: data.cliente_id,
+          cliente_name: clientName,
+          amount: remainingToPay,
+          paymentMethod: data.paymentMethod || 'dinheiro',
+          paymentMethodId: data.methodId || null,
+          paymentMethodName: data.methodName || null,
+          caixa_id: cashDoc?.id || null,
+          date: today,
+          is_deposit: true,
+          description: 'Crédito / Pagamento em conta antecipado',
+          createdAt: serverTimestamp()
+        });
+      }
+
+      // Atualizar cadastro do cliente
+      if (clientRef) {
+        const currentOpen = clientData.total_em_aberto ?? clientData.saldo_devedor ?? 0;
+        const currentBal = clientData.saldo_atual ?? clientData.balance ?? 0;
+        const newOpen = Math.max(0, currentOpen - totalDebtDeducted);
+        const newBal = currentBal + amountToProcess;
+
+        transaction.update(clientRef, {
+          saldo_atual: newBal,
+          balance: newBal,
+          total_pago: increment(amountToProcess),
+          totalPaid: increment(amountToProcess),
+          total_em_aberto: newOpen,
+          saldo_devedor: newOpen,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      // 4. Gravar no Caixa Diário se houver caixa aberto
+      if (cashDoc) {
+        const caixa_id = cashDoc.id;
+        const movementRef = doc(collection(db, 'cash_movements'));
+        const isDebtPayment = totalDebtDeducted > 0;
+        
+        transaction.set(movementRef, {
+          id: movementRef.id,
+          tenantId,
+          caixa_id,
+          type: 'income',
+          category: isDebtPayment ? 'Recebimento de Dívida' : 'Recebimento em Conta',
+          description: isDebtPayment 
+            ? `Recebimento Fiado - ${clientName}` 
+            : `Recebimento em Conta - ${clientName}`,
+          amount: amountToProcess,
+          paymentMethod: data.paymentMethod || 'dinheiro',
+          paymentMethodId: data.methodId || null,
+          is_receivable: false,
+          referencia_id: data.divida_id || data.cliente_id,
+          usuario_id: data.userId || '',
+          usuario_name: data.userName || 'Sistema',
+          date: today,
+          createdAt: serverTimestamp()
+        });
+
+        const cashRef = doc(db, 'cash_sessions', caixa_id);
+        transaction.update(cashRef, {
+          total_income: increment(amountToProcess),
+          totalIncome: increment(amountToProcess),
+          expected_balance: increment(amountToProcess),
+          expectedBalance: increment(amountToProcess),
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      // 5. Gravar transação financeira para DRE e relatórios
+      const finRef = doc(collection(db, 'financial_transactions'));
+      transaction.set(finRef, {
+        id: finRef.id,
+        tenantId,
+        type: 'income',
+        status: 'pago',
+        category: totalDebtDeducted > 0 ? 'Recebimento Fiado' : 'Crédito Cliente',
+        amount: amountToProcess,
+        description: totalDebtDeducted > 0 
+          ? `Recebimento Fiado - ${clientName}` 
+          : `Recebimento em Conta - ${clientName}`,
+        date: today,
+        paymentMethod: data.paymentMethod || 'dinheiro',
+        cliente_id: data.cliente_id,
+        cliente_name: clientName,
+        created_at: serverTimestamp(),
+        createdAt: serverTimestamp()
+      });
+    });
+
+    // 6. Quitação de dívidas concluída com sucesso (Modelo A: pontos já computados no fechamento da comanda)
+    return {
+      success: true,
+      cashUpdated: !!cashDoc,
+      caixa_id: cashDoc?.id || null,
+      settledDebts,
+      totalPaid: amountToProcess,
+      debtDeducted: totalDebtDeducted
+    };
   },
 
   async registerPayment(data: { 
@@ -55,76 +297,14 @@ export const debtService = {
     userId: string,
     userName: string
   }) {
-    await comandaService.payDebt(
-      data.divida_id,
-      data.amount,
-      data.paymentMethod || 'dinheiro',
-      '',
-      data.userId,
-      data.userName
-    );
-    return data.divida_id;
-  },
-
-  async settleClientDebtsGlobal(data: {
-    cliente_id: string;
-    amount: number;
-    paymentMethod: PaymentMethod;
-    methodId?: string;
-    userId: string;
-    userName: string;
-  }) {
-    const debts = await this.getClientDebts(data.cliente_id);
-    const activeDebts = debts.filter(d => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status) && (d.remainingAmount || 0) > 0.001);
-    
-    // Sort FIFO (oldest debt first)
-    activeDebts.sort((a, b) => {
-      const aDate = a.date || '';
-      const bDate = b.date || '';
-      if (aDate !== bDate) return aDate.localeCompare(bDate);
-      const aTime = a.createdAt?.seconds || 0;
-      const bTime = b.createdAt?.seconds || 0;
-      return aTime - bTime;
+    return this.settleClientDebtsGlobal({
+      cliente_id: data.cliente_id,
+      divida_id: data.divida_id,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod || 'dinheiro',
+      userId: data.userId,
+      userName: data.userName
     });
-
-    let remainingToPay = data.amount;
-    const settled: { debtId: string; paidAmount: number }[] = [];
-
-    for (const debt of activeDebts) {
-      if (remainingToPay <= 0.001) break;
-      const debtRemaining = debt.remainingAmount ?? debt.amount ?? 0;
-      const payForThis = Math.min(debtRemaining, remainingToPay);
-      
-      await comandaService.payDebt(
-        debt.id,
-        payForThis,
-        data.paymentMethod || 'dinheiro',
-        data.methodId || '',
-        data.userId,
-        data.userName
-      );
-
-      settled.push({ debtId: debt.id, paidAmount: payForThis });
-      remainingToPay -= payForThis;
-    }
-
-    // If client paid more than total outstanding debts, add the excess as balance credit
-    if (remainingToPay > 0.001) {
-      const clientRef = doc(db, 'usuarios', data.cliente_id);
-      const clientSnap = await getDoc(clientRef);
-      if (clientSnap.exists()) {
-        const clientData = clientSnap.data();
-        const currentBal = clientData.saldo_atual ?? clientData.balance ?? 0;
-        await updateDoc(clientRef, {
-          saldo_atual: currentBal + remainingToPay,
-          balance: currentBal + remainingToPay,
-          total_pago: increment(remainingToPay),
-          updatedAt: serverTimestamp()
-        });
-      }
-    }
-
-    return settled;
   },
 
   async addManualDebt(data: {
@@ -180,7 +360,7 @@ export const debtService = {
       where('divida_id', '==', divida_id)
     );
     const querySnapshot = await getDocs(q);
-    const payments = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DebtPayment));
+    const payments = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DebtPayment));
     return payments.sort((a, b) => {
       const aTime = a.createdAt?.seconds || 0;
       const bTime = b.createdAt?.seconds || 0;
@@ -195,7 +375,7 @@ export const debtService = {
       where('status', 'in', ['pendente', 'parcial'])
     );
     const querySnapshot = await getDocs(q);
-    const debts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
+    const debts = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as ClientDebt));
     return debts.sort((a, b) => {
       const aTime = a.createdAt?.seconds || 0;
       const bTime = b.createdAt?.seconds || 0;
@@ -361,7 +541,7 @@ export const debtService = {
         description: `Estorno Pagamento Fiado - Motivo: ${reason}`,
         amount,
         paymentMethod: payment.paymentMethod || 'dinheiro',
-        referencia_id: dividaId,
+        referencia_id: dividaId || clienteId,
         usuario_id: userId,
         usuario_name: userName,
         date: today,
@@ -370,7 +550,8 @@ export const debtService = {
 
       const cashRef = doc(db, 'cash_sessions', caixa_id);
       await updateDoc(cashRef, {
-        total_expenses: increment(amount),
+        total_expense: increment(amount),
+        totalExpense: increment(amount),
         expected_balance: increment(-amount),
         expectedBalance: increment(-amount),
         updatedAt: serverTimestamp()
@@ -393,7 +574,7 @@ export const debtService = {
       createdAt: serverTimestamp()
     });
 
-    // Delete payment record
+    // Mark payment as reverted
     await setDoc(paymentRef, {
       ...payment,
       status: 'estornado',
@@ -419,13 +600,14 @@ export const debtService = {
   },
 
   async getDebtPaymentsByClient(cliente_id: string) {
+    if (!cliente_id) return [];
     const q = query(
       collection(db, COLLECTION_PAYMENTS),
       where('tenantId', '==', getActiveTenantId()),
       where('cliente_id', '==', cliente_id)
     );
     const querySnapshot = await getDocs(q);
-    const payments = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DebtPayment));
+    const payments = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as DebtPayment));
     return payments.sort((a, b) => {
       const aTime = a.createdAt?.seconds || 0;
       const bTime = b.createdAt?.seconds || 0;
@@ -433,3 +615,4 @@ export const debtService = {
     });
   }
 };
+

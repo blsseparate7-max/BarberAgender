@@ -41,6 +41,7 @@ import {
   Printer,
   Eye,
   BarChart3,
+  Bell,
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -151,7 +152,8 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   };
   
   // Tab states: Agenda
-  const { isSaaSAdminUser, setOverrideRole } = useAuth();
+  const { user, isSaaSAdminUser, setOverrideRole } = useAuth();
+  const effectiveUserId = user?.uid || profile.uid || (profile as any).id || '';
   const { tenant } = useTenant();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -940,9 +942,9 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         {/* Banner de Notificações Push no Celular */}
         <div className="mb-4">
           <PushNotificationPrompt 
-            userId={profile.uid} 
+            userId={effectiveUserId} 
             userRole="barbeiro" 
-            tenantId={profile.tenantId} 
+            tenantId={profile.tenantId || tenant?.id} 
             variant="card" 
           />
         </div>
@@ -1775,6 +1777,20 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Configurações de Notificações Push no Celular */}
+            <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm space-y-3">
+              <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5 mb-2">
+                <Bell size={14} className="text-indigo-600" />
+                Notificações & Lembretes no Celular
+              </h4>
+              <PushNotificationPrompt 
+                userId={effectiveUserId} 
+                userRole="barbeiro" 
+                tenantId={profile.tenantId || tenant?.id} 
+                variant="card" 
+              />
             </div>
 
             {/* Working hours scale summary */}

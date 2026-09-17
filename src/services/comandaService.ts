@@ -27,6 +27,7 @@ import { commissionService } from './commissionService';
 import { inventoryService } from './inventoryService';
 import { userService } from './userService';
 import { loyaltyService } from './loyaltyService';
+import { debtService } from './debtService';
 import { getActiveTenantId } from './tenantService';
 
 const COLLECTION = 'comandas';
@@ -2253,139 +2254,17 @@ export const comandaService = {
   },
 
   async payDebt(debtId: string, amount: number, method: PaymentMethod, methodId: string, userId: string, userName: string) {
-    const debtRef = doc(db, 'client_debts', debtId);
-    
-    // 1. Pre-fetch non-transactional data
-    const today = new Date().toISOString().split('T')[0];
-    const cashQuery = query(
-      collection(db, 'cash_sessions'),
-      where('tenantId', '==', getActiveTenantId()),
-      where('status', 'in', ['open', 'reopened'])
-    );
-    const cashDocs = await getDocs(cashQuery);
-    let cashDoc = null;
-    if (!cashDocs.empty) {
-      const sortedDocs = [...cashDocs.docs].sort((a, b) => {
-        const tA = a.data().openedAt?.seconds || 0;
-        const tB = b.data().openedAt?.seconds || 0;
-        return tB - tA;
-      });
-      cashDoc = sortedDocs[0];
-    }
-
-    await runTransaction(db, async (transaction) => {
-      // 2. Transactional Reads
-      const debtSnap = await transaction.get(debtRef);
-      if (!debtSnap.exists()) throw new Error("Dívida não encontrada");
-      const debt = debtSnap.data() as ClientDebt;
-
-      const clientRef = doc(db, 'usuarios', debt.cliente_id);
-      const clientSnapOnPay = await transaction.get(clientRef);
-
-      const newRemaining = Math.max(0, debt.remainingAmount - amount);
-      
-      // 3. Transactional Writes
-      transaction.update(debtRef, {
-        remainingAmount: newRemaining,
-        status: newRemaining <= 0.001 ? 'pago' : 'parcial',
-        updatedAt: serverTimestamp()
-      });
-
-      if (clientSnapOnPay.exists()) {
-        const clientData = clientSnapOnPay.data();
-        const currentEmAberto = clientData.total_em_aberto ?? clientData.saldo_devedor ?? 0;
-        const newEmAberto = Math.max(0, currentEmAberto - amount);
-
-        transaction.update(clientRef, {
-          saldo_atual: increment(amount),
-          balance: increment(amount), // Legacy
-          total_pago: increment(amount),
-          totalPaid: increment(amount), // Legacy
-          total_em_aberto: newEmAberto,
-          saldo_devedor: newEmAberto,
-          updatedAt: serverTimestamp()
-        });
-      }
-
-      const paymentRef = doc(collection(db, 'debt_payments'));
-      transaction.set(paymentRef, {
-        id: paymentRef.id,
-        tenantId: getActiveTenantId(),
-        divida_id: debtId,
-        cliente_id: debt.cliente_id,
-        amount,
-        paymentMethod: method,
-        date: today,
-        createdAt: serverTimestamp()
-      });
-
-      if (cashDoc) {
-        const caixa_id = cashDoc.id;
-        const movementRef = doc(collection(db, 'cash_movements'));
-        transaction.set(movementRef, {
-          id: movementRef.id,
-          tenantId: getActiveTenantId(),
-          caixa_id,
-          type: 'income',
-          category: 'Recebimento de Dívida',
-          description: `Recebimento Dívida - ${debt.cliente_name}`,
-          amount: amount,
-          paymentMethod: method,
-          is_receivable: false,
-          referencia_id: debt.id,
-          usuario_id: userId,
-          usuario_name: userName,
-          date: today,
-          createdAt: serverTimestamp()
-        });
-        
-        const cashRef = doc(db, 'cash_sessions', caixa_id);
-        transaction.update(cashRef, {
-          total_income: increment(amount),
-          totalIncome: increment(amount),
-          expected_balance: increment(amount),
-          expectedBalance: increment(amount),
-          updatedAt: serverTimestamp()
-        });
-      }
-
-      // Also create financial_transaction entry for accounting
-      const finRef = doc(collection(db, 'financial_transactions'));
-      transaction.set(finRef, {
-        id: finRef.id,
-        tenantId: getActiveTenantId(),
-        type: 'income',
-        status: 'pago',
-        category: 'Recebimento Fiado',
-        amount: amount,
-        description: `Recebimento Fiado - ${debt.cliente_name}`,
-        date: today,
-        paymentMethod: method,
-        cliente_id: debt.cliente_id,
-        cliente_name: debt.cliente_name,
-        created_at: serverTimestamp(),
-        createdAt: serverTimestamp()
-      });
+    const debtSnap = await getDoc(doc(db, 'client_debts', debtId));
+    const cliente_id = debtSnap.exists() ? (debtSnap.data().cliente_id || '') : '';
+    return debtService.settleClientDebtsGlobal({
+      cliente_id,
+      divida_id: debtId,
+      amount,
+      paymentMethod: method,
+      methodId,
+      userId,
+      userName
     });
-
-    // Creditar pontos / cashback após a quitação com sucesso
-    try {
-      const debtSnap = await getDoc(debtRef);
-      if (debtSnap.exists()) {
-        const debt = debtSnap.data() as ClientDebt;
-        if (debt.cliente_id && amount > 0) {
-          await loyaltyService.addPoints(
-            debt.cliente_id,
-            0,
-            amount,
-            `Pontos por Recebimento Fiado - Dívida quitada`,
-            'appointment'
-          );
-        }
-      }
-    } catch (loyaltyErr) {
-      console.warn("Could not calculate/credit cashback for debt payment:", loyaltyErr);
-    }
   },
 
   async updateComandaClient(id: string, clientData: { id: string, name: string }, userId: string, userName: string) {

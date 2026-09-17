@@ -26,7 +26,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 
 export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
-  const { profile, isBarbeiro } = useAuth();
+  const { profile, isBarbeiro, isAdmin, isGerente } = useAuth();
   const [activeTab, setActiveTab] = useState<'abertas' | 'historico' | 'fiadas' | 'nova'>('abertas');
   const [comandas, setComandas] = useState<Comanda[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,10 +106,17 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
   };
 
   const currentComandas = comandas.filter(c => {
-    if (isBarbeiro && profile) {
-      const isMyComanda = c.profissional_id === profile.uid || 
-                          (c.profissional_name && profile.nome && c.profissional_name.toLowerCase().includes(profile.nome.toLowerCase())) ||
-                          (c as any).items?.some((item: any) => item.profissional_id === profile.uid);
+    // Apenas restringe a visão se for exclusivamente barbeiro comum (sem papel de gerente ou admin)
+    const isPureBarbeiro = isBarbeiro && !isAdmin && !isGerente;
+    if (isPureBarbeiro && profile) {
+      const pUid = profile.uid;
+      const pEmail = (profile.email || '').toLowerCase().trim();
+      const pNome = (profile.nome || '').toLowerCase().trim();
+      const isMyComanda = c.profissional_id === pUid || 
+                          (c as any).barbeiro_id === pUid ||
+                          (c as any).items?.some((item: any) => item.profissional_id === pUid || item.barbeiro_id === pUid) ||
+                          (pEmail && ((c as any).profissional_email || '').toLowerCase().trim() === pEmail) ||
+                          (pNome && (c.profissional_name || '').toLowerCase().trim() === pNome);
       if (!isMyComanda) return false;
     }
 

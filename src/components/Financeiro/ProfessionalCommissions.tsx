@@ -205,8 +205,12 @@ export function ProfessionalCommissions({
       const resolveBarberFromText = (text: string) => {
         if (!text) return null;
         const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (lower.includes('luiz miguel') || lower.includes('miguel')) return barbers.find(b => (b.nome || '').toLowerCase().includes('miguel'));
-        if (lower.includes('luiz henrique') || lower.includes('rick') || lower.includes('henrique')) return barbers.find(b => (b.nome || '').toLowerCase().includes('henrique'));
+        if (lower.includes('luiz miguel') || (lower.includes('miguel') && !lower.includes('henrique') && !lower.includes('rick'))) {
+          return barbers.find(b => (b.nome || '').toLowerCase().includes('miguel') || (b.email || '').toLowerCase().includes('luizmiguel'));
+        }
+        if (lower.includes('luiz henrique') || lower.includes('rick') || lower.includes('henrique')) {
+          return barbers.find(b => (b.nome || '').toLowerCase().includes('henrique') || (b.nome || '').toLowerCase().includes('rick') || (b.email || '').toLowerCase().includes('rickbolado'));
+        }
         if (lower.includes('mateus') || lower.includes('matheus')) return barbers.find(b => (b.nome || '').toLowerCase().includes('mateus') || (b.nome || '').toLowerCase().includes('matheus'));
         if (lower.includes('moises')) return barbers.find(b => (b.nome || '').toLowerCase().includes('moises'));
         if (lower.includes('gabriel')) return barbers.find(b => (b.nome || '').toLowerCase().includes('gabriel'));

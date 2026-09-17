@@ -119,14 +119,23 @@ export function calculateProfessionalLedger(
     const proNameNorm = normalizeName(item.profissional_name || item.barbeiro_nome || '');
     if (proNameNorm && barberNameNorm) {
       if (proNameNorm === barberNameNorm) return true;
-      if (barberFirstNameNorm === 'joao' && proNameNorm.startsWith('joao')) return true;
-      if (barberFirstNameNorm === 'gabriel' && proNameNorm.startsWith('gabriel')) return true;
-      if ((barberFirstNameNorm === 'mateus' || barberFirstNameNorm === 'matheus') && (proNameNorm.startsWith('mateus') || proNameNorm.startsWith('matheus'))) return true;
-      if (barberNameNorm.startsWith('luiz miguel') && proNameNorm.startsWith('luiz miguel')) return true;
-      if (barberNameNorm.startsWith('luiz henrique') && proNameNorm.startsWith('luiz henrique')) return true;
-      if (barberFirstNameNorm === 'moises' && proNameNorm.startsWith('moises')) return true;
-      if (barberFirstNameNorm === 'bryan' && proNameNorm.startsWith('bryan')) return true;
-      if (barberNameNorm.length > 5 && proNameNorm.includes(barberNameNorm)) return true;
+      if (barberNameNorm.includes('luiz miguel') || barberEmail.includes('luizmiguel')) {
+        if ((proNameNorm.includes('luiz miguel') || proNameNorm.includes('miguel')) && !proNameNorm.includes('henrique') && !proNameNorm.includes('rick')) return true;
+      } else if (barberNameNorm.includes('luiz henrique') || barberEmail.includes('rickbolado')) {
+        if ((proNameNorm.includes('luiz henrique') || proNameNorm.includes('henrique') || proNameNorm.includes('rick')) && !proNameNorm.includes('miguel')) return true;
+      } else if (barberFirstNameNorm === 'joao' && proNameNorm.startsWith('joao')) {
+        return true;
+      } else if (barberFirstNameNorm === 'gabriel' && proNameNorm.startsWith('gabriel')) {
+        return true;
+      } else if ((barberFirstNameNorm === 'mateus' || barberFirstNameNorm === 'matheus') && (proNameNorm.startsWith('mateus') || proNameNorm.startsWith('matheus'))) {
+        return true;
+      } else if (barberFirstNameNorm === 'moises' && proNameNorm.startsWith('moises')) {
+        return true;
+      } else if (barberFirstNameNorm === 'bryan' && proNameNorm.startsWith('bryan')) {
+        return true;
+      } else if (barberFirstNameNorm !== 'luiz' && barberNameNorm.length > 5 && proNameNorm.includes(barberNameNorm)) {
+        return true;
+      }
     }
 
     if (barberEmail && item.profissional_email && item.profissional_email.toLowerCase().trim() === barberEmail) {
@@ -136,12 +145,19 @@ export function calculateProfessionalLedger(
     // 3. Fallback adicional por descrição do vale/adiantamento (ex: "Vale p/ João...", "Vale: Moises...")
     const descNorm = normalizeName(item.description || '');
     if (descNorm && barberNameNorm) {
-      if (barberFirstNameNorm === 'joao' && (descNorm.includes('joao') || descNorm.includes('joão'))) return true;
-      if (barberNameNorm.startsWith('luiz miguel') && (descNorm.includes('miguel') || descNorm.includes('luiz miguel'))) return true;
-      if (barberNameNorm.startsWith('luiz henrique') && (descNorm.includes('luiz henrique') || descNorm.includes('henrique') || descNorm.includes('rick'))) return true;
-      if (barberFirstNameNorm === 'mateus' && (descNorm.includes('mateus') || descNorm.includes('matheus'))) return true;
-      if (barberFirstNameNorm === 'moises' && descNorm.includes('moises')) return true;
-      if (barberFirstNameNorm === 'gabriel' && descNorm.includes('gabriel')) return true;
+      if (barberNameNorm.includes('luiz miguel') || barberEmail.includes('luizmiguel')) {
+        if ((descNorm.includes('luiz miguel') || descNorm.includes('miguel')) && !descNorm.includes('henrique') && !descNorm.includes('rick')) return true;
+      } else if (barberNameNorm.includes('luiz henrique') || barberEmail.includes('rickbolado')) {
+        if ((descNorm.includes('luiz henrique') || descNorm.includes('henrique') || descNorm.includes('rick')) && !descNorm.includes('miguel')) return true;
+      } else if (barberFirstNameNorm === 'joao' && (descNorm.includes('joao') || descNorm.includes('joão'))) {
+        return true;
+      } else if ((barberFirstNameNorm === 'mateus' || barberFirstNameNorm === 'matheus') && (descNorm.includes('mateus') || descNorm.includes('matheus'))) {
+        return true;
+      } else if (barberFirstNameNorm === 'moises' && descNorm.includes('moises')) {
+        return true;
+      } else if (barberFirstNameNorm === 'gabriel' && descNorm.includes('gabriel')) {
+        return true;
+      }
     }
 
     return false;
@@ -280,9 +296,19 @@ export function calculateProfessionalLedger(
         if (itemProfId && itemProfId === barberUid) {
           matchesThisBarber = true;
         } else if (itemProfNameNorm && barberNameNorm) {
-          if (itemProfNameNorm === barberNameNorm) matchesThisBarber = true;
-          else if (barberFirstNameNorm && itemProfNameNorm.includes(barberFirstNameNorm)) matchesThisBarber = true;
-          else if (barberFirstNameNorm === 'moises' && itemProfNameNorm.includes('moises')) matchesThisBarber = true;
+          if (itemProfNameNorm === barberNameNorm) {
+            matchesThisBarber = true;
+          } else if (barberNameNorm.includes('luiz miguel') || barberEmail.includes('luizmiguel')) {
+            if ((itemProfNameNorm.includes('luiz miguel') || itemProfNameNorm.includes('miguel')) && !itemProfNameNorm.includes('henrique') && !itemProfNameNorm.includes('rick')) {
+              matchesThisBarber = true;
+            }
+          } else if (barberNameNorm.includes('luiz henrique') || barberEmail.includes('rickbolado')) {
+            if ((itemProfNameNorm.includes('luiz henrique') || itemProfNameNorm.includes('henrique') || itemProfNameNorm.includes('rick')) && !itemProfNameNorm.includes('miguel')) {
+              matchesThisBarber = true;
+            }
+          } else if (barberFirstNameNorm && barberFirstNameNorm !== 'luiz' && itemProfNameNorm.startsWith(barberFirstNameNorm)) {
+            matchesThisBarber = true;
+          }
         } else if (!itemProfId && mainBarberId === barberUid) {
           matchesThisBarber = true;
         }

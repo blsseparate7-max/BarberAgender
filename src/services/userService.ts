@@ -92,7 +92,7 @@ export const userService = {
         users = users.filter(u => u.ativo !== false);
       }
 
-      // Deduplicate barbers by normalized name
+      // Deduplicate barbers strictly by UID and unique email (prevent merging distinct barbers with similar names)
       users.sort((a, b) => {
         const aT = (a.tenantId || '').trim().toLowerCase();
         const bT = (b.tenantId || '').trim().toLowerCase();
@@ -106,11 +106,12 @@ export const userService = {
       const seen = new Set<string>();
       const unique: UserProfile[] = [];
       for (const u of users) {
-        const rawName = u.nome || (u as any).name || '';
-        const normName = rawName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-        if (!normName) continue;
-        if (!seen.has(normName)) {
-          seen.add(normName);
+        const uid = u.uid || (u as any).id;
+        const email = (u.email || '').toLowerCase().trim();
+        const dedupeKey = uid || (email ? `${u.tenantId || tid}_${email}` : null);
+        if (!dedupeKey) continue;
+        if (!seen.has(dedupeKey)) {
+          seen.add(dedupeKey);
           unique.push(u);
         }
       }
@@ -151,7 +152,7 @@ export const userService = {
       users = users.filter(u => u.ativo !== false);
     }
 
-    // Deduplicate barbers per tenant
+    // Deduplicate barbers strictly by UID and email per tenant
     users.sort((a, b) => {
       const aT = (a.tenantId || '').trim().toLowerCase();
       const bT = (b.tenantId || '').trim().toLowerCase();
@@ -165,12 +166,11 @@ export const userService = {
     const seen = new Set<string>();
     const unique: UserProfile[] = [];
     for (const u of users) {
-      const rawName = u.nome || (u as any).name || '';
-      const normName = rawName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-      if (!normName) continue;
-      // Key deduplication per tenant so barbers in different tenants never collide
+      const uid = u.uid || (u as any).id;
+      const email = (u.email || '').toLowerCase().trim();
       const uTenant = (u.tenantId || '').trim().toLowerCase();
-      const dedupeKey = `${uTenant}_${normName}`;
+      const dedupeKey = uid || (email ? `${uTenant}_${email}` : null);
+      if (!dedupeKey) continue;
       if (!seen.has(dedupeKey)) {
         seen.add(dedupeKey);
         unique.push(u);

@@ -191,13 +191,40 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
   const detectBarberForText = (text: string, activeBarbers: UserProfile[]): UserProfile | null => {
     const norm = normalizeStr(text);
     if (!norm) return null;
+
+    // Prioridade 1: Casamento específico para Luiz Miguel vs Luiz Henrique
+    if (norm.includes('luiz miguel') || (norm.includes('miguel') && !norm.includes('henrique') && !norm.includes('rick'))) {
+      const miguel = activeBarbers.find(b => {
+        const bNorm = normalizeStr(b.nome);
+        const bEmail = (b.email || '').toLowerCase();
+        return bNorm.includes('miguel') || bEmail.includes('luizmiguel');
+      });
+      if (miguel) return miguel;
+    }
+
+    if (norm.includes('luiz henrique') || norm.includes('henrique') || norm.includes('rick')) {
+      const henrique = activeBarbers.find(b => {
+        const bNorm = normalizeStr(b.nome);
+        const bEmail = (b.email || '').toLowerCase();
+        return bNorm.includes('henrique') || bNorm.includes('rick') || bEmail.includes('rickbolado');
+      });
+      if (henrique) return henrique;
+    }
+
+    // Prioridade 2: Casamento por nome completo ou email
+    for (const b of activeBarbers) {
+      const bNorm = normalizeStr(b.nome);
+      const bEmail = (b.email || '').toLowerCase().trim();
+      if (bNorm && norm === bNorm) return b;
+      if (bNorm && bNorm.length > 5 && norm.includes(bNorm)) return b;
+      if (bEmail && norm.includes(bEmail)) return b;
+    }
+
+    // Prioridade 3: Primeiro nome único (exceto nomes comuns com múltiplos barbeiros como "luiz")
     for (const b of activeBarbers) {
       const bNorm = normalizeStr(b.nome);
       const bFirst = bNorm.split(' ')[0] || '';
-      if (bNorm && norm.includes(bNorm)) return b;
-      if (bFirst.length >= 4 && norm.includes(bFirst)) return b;
-      if (bNorm.startsWith('luiz miguel') && (norm.includes('luiz miguel') || norm.includes('miguel'))) return b;
-      if (bNorm.startsWith('luiz henrique') && (norm.includes('luiz henrique') || norm.includes('rick') || norm.includes('henrique'))) return b;
+      if (bFirst.length >= 4 && bFirst !== 'luiz' && norm.includes(bFirst)) return b;
     }
     return null;
   };

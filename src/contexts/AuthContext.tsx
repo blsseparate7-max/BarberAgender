@@ -314,8 +314,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [serverIsSaaSAdmin, setServerIsSaaSAdmin] = useState(false);
 
   const isSaaSAdminUser = (profile?.tipo === 'saas_admin' && (profile?.tenantId === 'saas' || !profile?.tenantId)) || serverIsSaaSAdmin;
+  
+  const userEmailNorm = (profile?.email || user?.email || '').toLowerCase().trim();
+  const isGestorProfile = profile?.tipo === 'gerente' || 
+                          profile?.is_gestor === true || 
+                          profile?.is_manager === true || 
+                          userEmailNorm === 'eufixo@gbcortes7.com';
+  
+  const defaultRole = profile?.tipo === 'admin' 
+    ? 'admin' 
+    : (isGestorProfile ? 'gerente' : (profile?.tipo || 'cliente'));
+
   const activeRole = (isSaaSAdminUser && overrideRole) || 
-    (isSaaSAdminUser ? 'saas_admin' : (profile?.tipo || 'cliente'));
+    (isSaaSAdminUser ? 'saas_admin' : defaultRole);
 
   const adjustedProfile = React.useMemo(() => {
     if (profile) {
@@ -349,7 +360,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loading,
       isAdmin: activeRole === 'admin',
       isGerente: activeRole === 'gerente',
-      isBarbeiro: activeRole === 'barbeiro',
+      isBarbeiro: activeRole === 'barbeiro' || activeRole === 'gerente' || profile?.tipo === 'barbeiro',
       isCliente: activeRole === 'cliente',
       isSaaSAdmin: activeRole === 'saas_admin',
       isSaaSAdminUser,
@@ -357,7 +368,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setOverrideRole,
       signOut,
     };
-  }, [user, adjustedProfile, loading, overrideRole, activeRole, isSaaSAdminUser]);
+  }, [user, adjustedProfile, loading, overrideRole, activeRole, isSaaSAdminUser, profile?.tipo]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

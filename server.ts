@@ -6753,13 +6753,17 @@ function encodeFirestoreFields(data: any): any {
 
       localPushSubs.set(subKey, subRecord);
 
-      const fbAdmin = getFirebaseAdmin();
-      if (fbAdmin) {
-        const db = getFirestore(fbAdmin);
-        await db.collection("push_subscriptions").doc(subKey).set({
-          ...subRecord,
-          updatedAt: FieldValue.serverTimestamp()
-        }, { merge: true });
+      try {
+        const fbAdmin = getFirebaseAdmin();
+        if (fbAdmin) {
+          const db = getFirestore(fbAdmin);
+          await db.collection("push_subscriptions").doc(subKey).set({
+            ...subRecord,
+            updatedAt: FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+      } catch (fsErr) {
+        console.warn("Aviso ao persisitr push_subscription no Firestore:", fsErr);
       }
 
       return res.json({ success: true, message: "Inscrição push salva com sucesso!" });
@@ -6781,15 +6785,19 @@ function encodeFirestoreFields(data: any): any {
         }
       }
 
-      const fbAdmin = getFirebaseAdmin();
-      if (fbAdmin && subsToSend.length === 0) {
-        const db = getFirestore(fbAdmin);
-        let q: any = db.collection("push_subscriptions");
-        if (userId) {
-          q = q.where("userId", "==", userId);
+      try {
+        const fbAdmin = getFirebaseAdmin();
+        if (fbAdmin && subsToSend.length === 0) {
+          const db = getFirestore(fbAdmin);
+          let q: any = db.collection("push_subscriptions");
+          if (userId) {
+            q = q.where("userId", "==", userId);
+          }
+          const snap = await q.get();
+          snap.docs.forEach((d: any) => subsToSend.push(d.data()));
         }
-        const snap = await q.get();
-        snap.docs.forEach((d: any) => subsToSend.push(d.data()));
+      } catch (fsErr) {
+        console.warn("Aviso ao buscar inscrições do Firestore:", fsErr);
       }
 
       if (subsToSend.length === 0) {

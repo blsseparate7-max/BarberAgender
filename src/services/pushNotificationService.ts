@@ -87,15 +87,23 @@ export const pushNotificationService = {
       }
 
       // 3. Buscar Chave Pública VAPID do Servidor
-      const keyRes = await fetch('/api/notifications/vapid-public-key');
-      if (!keyRes.ok) {
-        throw new Error('Não foi possível obter a chave VAPID do servidor.');
+      const DEFAULT_VAPID_PUBLIC = 'BKNMb68XxCcvFufw6531Ep9_M4hT4jUvu8fBkX4PLjVcDDWG03gHSd3RqrER6TKbVBBOc3VXsZgajTHwIyEctto';
+      let vapidPublicKey = DEFAULT_VAPID_PUBLIC;
+
+      try {
+        const keyRes = await fetch('/api/notifications/vapid-public-key');
+        if (keyRes.ok) {
+          const keyData = await keyRes.json();
+          if (keyData.publicKey) {
+            vapidPublicKey = keyData.publicKey;
+          }
+        }
+      } catch (keyErr) {
+        console.warn('Usando chave VAPID pública padrão configurada:', keyErr);
       }
-      const keyData = await keyRes.json();
-      const vapidPublicKey = keyData.publicKey;
 
       if (!vapidPublicKey) {
-        throw new Error('Chave VAPID pública vazia no servidor.');
+        throw new Error('Chave VAPID pública vazia.');
       }
 
       // 4. Inscrever no PushManager

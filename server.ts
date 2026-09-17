@@ -6658,7 +6658,7 @@ function encodeFirestoreFields(data: any): any {
   // ==========================================
   // WEB PUSH NOTIFICATIONS (VAPID)
   // ==========================================
-  const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "BLfGfKd2uVedpfqPQj7MsuiTTUIyjZvkcTvXkAWIvAtslPvCYE4akqbUSxZnbvGVwzWXLhplXU6di1C6-F0rcAE";
+  const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "BKNMb68XxCcvFufw6531Ep9_M4hT4jUvu8fBkX4PLjVcDDWG03gHSd3RqrER6TKbVBBOc3VXsZgajTHwIyEctto";
   const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "q0BSOks4u-CN0SLmtTy8knCjVnYVvrF2ieahr0CpVLA";
   const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:admin@barbearia.com";
 

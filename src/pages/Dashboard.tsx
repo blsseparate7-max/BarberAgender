@@ -334,18 +334,20 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
             isInactive: true
           };
         }
-        performanceMap[bUid].revenue += app.price || 0;
+        const appRev = (app as any).finalPrice ?? (app as any).comandaTotal ?? app.price ?? 0;
+        performanceMap[bUid].revenue += appRev;
         performanceMap[bUid].count += 1;
       } else if (bName) {
         const existing = Object.values(performanceMap).find(p => p.name.toLowerCase() === bName.toLowerCase());
+        const appRev = (app as any).finalPrice ?? (app as any).comandaTotal ?? app.price ?? 0;
         if (existing) {
-          existing.revenue += app.price || 0;
+          existing.revenue += appRev;
           existing.count += 1;
         } else {
           performanceMap[bName] = {
             uid: bName,
             name: bName,
-            revenue: app.price || 0,
+            revenue: appRev,
             count: 1,
             isInactive: true
           };

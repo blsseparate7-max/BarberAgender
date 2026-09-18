@@ -488,11 +488,15 @@ export const comandaService = {
     }
   },
 
-  async getComandas(status?: ComandaStatus) {
-    let q = query(collection(db, COLLECTION), where('tenantId', '==', getActiveTenantId()));
+  async getComandas(status?: ComandaStatus, maxLimit = 150) {
+    let q = query(
+      collection(db, COLLECTION), 
+      where('tenantId', '==', getActiveTenantId())
+    );
     if (status) {
       q = query(q, where('status', '==', status));
     }
+    q = query(q, limit(maxLimit));
     const querySnapshot = await getDocs(q);
     const comandas = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comanda));
     return comandas.sort((a, b) => {

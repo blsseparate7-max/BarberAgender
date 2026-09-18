@@ -35,8 +35,28 @@ export const commissionService = {
       queryConstraints.push(where('tenantId', '==', activeTenant));
     }
 
-    let querySnapshot = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
-    let results = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+    if (filters.startDate && filters.endDate) {
+      queryConstraints.push(where('date', '>=', filters.startDate));
+      queryConstraints.push(where('date', '<=', filters.endDate));
+    } else {
+      queryConstraints.push(limit(300));
+    }
+
+    let querySnapshot: any;
+    try {
+      querySnapshot = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...queryConstraints));
+    } catch (err) {
+      // Fallback if index missing
+      const fallbackConstraints: any[] = [];
+      if (activeTenant === 'gbcortes7') {
+        fallbackConstraints.push(where('tenantId', 'in', [activeTenant, '']));
+      } else if (activeTenant) {
+        fallbackConstraints.push(where('tenantId', '==', activeTenant));
+      }
+      fallbackConstraints.push(limit(300));
+      querySnapshot = await getDocs(query(collection(db, COMMISSIONS_COLLECTION), ...fallbackConstraints));
+    }
+    let results = querySnapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...docSnap.data() } as Commission));
 
     // Tolerant professional filter in memory (matches UID, barbeiro_id, email, and name variations)
     if (filters.profissional_id || filters.profissional_name) {

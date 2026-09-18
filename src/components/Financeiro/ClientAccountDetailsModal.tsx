@@ -302,6 +302,7 @@ export function ClientAccountDetailsModal({
   const loadInfo = async () => {
     setLoading(true);
     try {
+      await debtService.reconcileClientAccount(cliente_id);
       const [u, d, p] = await Promise.all([
         userService.getUserProfile(cliente_id),
         debtService.getClientDebts(cliente_id),
@@ -318,6 +319,11 @@ export function ClientAccountDetailsModal({
   };
 
   const totalOutstanding = debts.reduce((acc, d) => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status) ? acc + (d.remainingAmount || 0) : acc, 0);
+  const creditBalance = Math.max(0, client?.credit_balance || 0);
+  const netBalance = creditBalance - totalOutstanding;
+  const totalPaidPayments = payments.reduce((acc, p) => acc + (p.amount || 0), 0);
+  const totalPaidVal = (client?.total_pago ?? client?.totalPaid) || totalPaidPayments;
+  const totalSpentVal = (client?.total_gasto ?? client?.totalSpent) || (totalPaidVal + totalOutstanding);
 
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -597,10 +603,30 @@ export function ClientAccountDetailsModal({
         <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
           {/* Summary Stats */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-slate-50 border border-slate-100 p-5 rounded-3xl space-y-1 shadow-sm">
-              <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Saldo do Cliente</p>
-              <p className={`text-xl font-black ${(client?.balance || 0) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                R$ {(client?.balance || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            <div className="bg-slate-50 border border-slate-100 p-5 rounded-3xl space-y-2 shadow-sm flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Saldo da Conta</p>
+                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                    netBalance < -0.001 
+                      ? 'bg-rose-100 text-rose-700' 
+                      : netBalance > 0.001 
+                        ? 'bg-emerald-100 text-emerald-700' 
+                        : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    {netBalance < -0.001 ? 'Em Débito' : netBalance > 0.001 ? 'Crédito' : 'Em Dia'}
+                  </span>
+                </div>
+                <p className={`text-xl font-black mt-1 ${
+                  netBalance < -0.001 ? 'text-rose-600' : netBalance > 0.001 ? 'text-emerald-600' : 'text-slate-800'
+                }`}>
+                  {netBalance < -0.001 
+                    ? `- R$ ${Math.abs(netBalance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` 
+                    : `R$ ${netBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                </p>
+              </div>
+              <p className="text-[10px] text-muted font-medium">
+                {netBalance < -0.001 ? 'Valor pendente de acerto' : netBalance > 0.001 ? 'Crédito em haver no estabelecimento' : 'Conta quitada sem pendências'}
               </p>
             </div>
             <div className="bg-amber-50/50 border border-amber-100 p-5 rounded-3xl space-y-1 shadow-sm flex flex-col justify-between">
@@ -627,16 +653,18 @@ export function ClientAccountDetailsModal({
               )}
             </div>
             <div className="bg-slate-50 border border-slate-100 p-5 rounded-3xl space-y-1 shadow-sm">
-              <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Total Gasto</p>
+              <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Total Gasto (Consumo)</p>
               <p className="text-xl font-black text-primary">
-                R$ {(client?.totalSpent || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                R$ {totalSpentVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
+              <p className="text-[10px] text-muted font-medium">Consumo total acumulado</p>
             </div>
             <div className="bg-slate-50 border border-slate-100 p-5 rounded-3xl space-y-1 shadow-sm">
-              <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Total Pago</p>
-              <p className="text-xl font-black text-primary">
-                R$ {(client?.totalPaid || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Total Pago (Quitado)</p>
+              <p className="text-xl font-black text-emerald-600">
+                R$ {totalPaidVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
+              <p className="text-[10px] text-muted font-medium">Total de pagamentos efetuados</p>
             </div>
           </div>
 

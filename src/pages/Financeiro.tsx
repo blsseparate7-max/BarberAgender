@@ -2381,15 +2381,15 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 {/* Summary Metrics for Fiados / Client Accounts */}
                 {(() => {
                   const debtorClients = clients.filter(c => {
-                    const debt = (c.total_em_aberto ?? c.saldo_devedor ?? (c.balance && c.balance < 0 ? Math.abs(c.balance) : 0)) || 0;
+                    const debt = (c.total_em_aberto ?? c.saldo_devedor ?? 0) || 0;
                     return debt > 0.001;
                   });
                   const totalFiados = clients.reduce((acc, c) => {
-                    const debt = (c.total_em_aberto ?? c.saldo_devedor ?? (c.balance && c.balance < 0 ? Math.abs(c.balance) : 0)) || 0;
+                    const debt = (c.total_em_aberto ?? c.saldo_devedor ?? 0) || 0;
                     return acc + debt;
                   }, 0);
                   const totalCredito = clients.reduce((acc, c) => {
-                    const cred = (c.saldo_atual ?? (c.balance && c.balance > 0 ? c.balance : 0)) || 0;
+                    const cred = (c.credit_balance ?? (c.saldo_atual && c.saldo_atual > 0 ? c.saldo_atual : 0)) || 0;
                     return acc + cred;
                   }, 0);
 
@@ -2491,8 +2491,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                           .filter(c => {
                             const nameMatch = c.nome.toLowerCase().includes(clientSearchTerm.toLowerCase()) || 
                               (c.phone && c.phone.includes(clientSearchTerm));
-                            const debt = (c.total_em_aberto ?? c.saldo_devedor ?? (c.balance && c.balance < 0 ? Math.abs(c.balance) : 0)) || 0;
-                            const cred = (c.saldo_atual ?? (c.balance && c.balance > 0 ? c.balance : 0)) || 0;
+                            const debt = (c.total_em_aberto ?? c.saldo_devedor ?? 0) || 0;
+                            const cred = (c.credit_balance ?? (c.saldo_atual && c.saldo_atual > 0 ? c.saldo_atual : 0)) || 0;
 
                             if (!nameMatch) return false;
                             if (clientFilter === 'debtors') return debt > 0.001;
@@ -2501,8 +2501,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                           })
                           .slice((clientCurrentPage - 1) * clientPageSize, clientCurrentPage * clientPageSize)
                           .map((client, index) => {
-                            const totalDebt = (client.total_em_aberto ?? client.saldo_devedor ?? (client.balance && client.balance < 0 ? Math.abs(client.balance) : 0)) || 0;
-                            const totalCredit = (client.saldo_atual ?? (client.balance && client.balance > 0 ? client.balance : 0)) || 0;
+                            const totalDebt = (client.total_em_aberto ?? client.saldo_devedor ?? 0) || 0;
+                            const totalCredit = (client.credit_balance ?? (client.saldo_atual && client.saldo_atual > 0 ? client.saldo_atual : 0)) || 0;
                             const totalSpent = client.total_gasto || client.totalSpent || 0;
                             const totalPaid = client.total_pago || client.totalPaid || 0;
 

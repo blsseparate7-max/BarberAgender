@@ -205,13 +205,18 @@ export const debtService = {
       // Atualizar cadastro do cliente
       if (clientRef) {
         const currentOpen = clientData.total_em_aberto ?? clientData.saldo_devedor ?? 0;
-        const currentBal = clientData.saldo_atual ?? clientData.balance ?? 0;
         const newOpen = Math.max(0, currentOpen - totalDebtDeducted);
-        const newBal = currentBal + amountToProcess;
+
+        // Apenas o troco/excedente que sobrou gera incremento em saldo de crédito positivo
+        const creditIncrease = remainingToPay > 0.001 ? remainingToPay : 0;
+        const currentCredit = Math.max(0, clientData.credit_balance || 0);
+        const newCredit = currentCredit + creditIncrease;
+        const newNetBalance = newCredit - newOpen;
 
         transaction.update(clientRef, {
-          saldo_atual: newBal,
-          balance: newBal,
+          credit_balance: newCredit,
+          saldo_atual: newNetBalance,
+          balance: newNetBalance,
           total_pago: increment(amountToProcess),
           totalPaid: increment(amountToProcess),
           total_em_aberto: newOpen,
@@ -613,6 +618,51 @@ export const debtService = {
       const bTime = b.createdAt?.seconds || 0;
       return bTime - aTime;
     });
+  },
+
+  async reconcileClientAccount(cliente_id: string) {
+    if (!cliente_id) return null;
+    try {
+      const clientRef = doc(db, 'usuarios', cliente_id);
+      const clientSnap = await getDoc(clientRef);
+      if (!clientSnap.exists()) return null;
+
+      const clientData = clientSnap.data();
+      const debts = await this.getClientDebts(cliente_id);
+      const payments = await this.getDebtPaymentsByClient(cliente_id);
+
+      // 1. Dívidas ativas em aberto
+      const activeDebts = debts.filter(d => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status));
+      const totalOutstanding = activeDebts.reduce((sum, d) => sum + (d.remainingAmount ?? d.amount ?? 0), 0);
+
+      // 2. Total de pagamentos de dívida realizados
+      const totalDebtPayments = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+      // 3. Crédito em haver positivo (se houver)
+      const creditBalance = Math.max(0, clientData.credit_balance || 0);
+
+      // 4. Saldo líquido da conta (positivo = crédito, negativo = débito)
+      const netBalance = creditBalance - totalOutstanding;
+
+      await updateDoc(clientRef, {
+        total_em_aberto: totalOutstanding,
+        saldo_devedor: totalOutstanding,
+        credit_balance: creditBalance,
+        saldo_atual: netBalance,
+        balance: netBalance,
+        updatedAt: serverTimestamp()
+      });
+
+      return {
+        totalOutstanding,
+        creditBalance,
+        netBalance,
+        totalDebtPayments
+      };
+    } catch (err) {
+      console.error("Erro ao reconciliar conta do cliente:", err);
+      return null;
+    }
   }
 };
 

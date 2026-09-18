@@ -326,8 +326,10 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
       setBarbers(data);
     });
 
-    const unsubscribeClients = userService.subscribeToAllClients(true, (data) => {
+    userService.getAllClients(true).then((data) => {
       setClients(data);
+    }).catch(err => {
+      console.error("Error loading clients for Agenda:", err);
     });
     
     // Subscribe to Cash Status for Alert
@@ -341,7 +343,6 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
 
     return () => {
       unsubscribeBarbers();
-      unsubscribeClients();
       unsubscribeCash();
       unsubscribeBlocks();
     };

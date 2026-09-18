@@ -1753,14 +1753,15 @@ function encodeFirestoreFields(data: any): any {
         const isRealCustomerId = customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_');
         const selectedBillingType = (billingType === 'PIX') ? 'PIX' : 'CREDIT_CARD';
 
-        // 1. If CREDIT_CARD, create a recurring MONTHLY subscription in Asaas
-        if (selectedBillingType === 'CREDIT_CARD' && isRealCustomerId) {
+        // 1. Create a recurring MONTHLY subscription in Asaas for subscription requests (PIX, CREDIT_CARD, or UNDEFINED)
+        const isSubReq = req.body?.isSubscription || req.body?.isClientSubscription || req.body?.subscriptionId || true;
+        if (isSubReq && isRealCustomerId) {
           try {
             const createSub = async () => fetchAsaasApi('/subscriptions', {
               method: 'POST',
               body: JSON.stringify({
                 customer: customerId,
-                billingType: 'CREDIT_CARD',
+                billingType: selectedBillingType,
                 value: Number(amount),
                 nextDueDate: dueDateStr,
                 cycle: 'MONTHLY',
@@ -1779,7 +1780,7 @@ function encodeFirestoreFields(data: any): any {
             if (subData && !subData.errors && subData.id) {
               payData = subData;
             } else if (subData?.errors) {
-              console.warn("Retorno de erro ao criar assinatura de cartão no Asaas:", subData.errors);
+              console.warn("Retorno de aviso/erro ao criar assinatura no Asaas:", subData.errors);
               payData = subData;
             }
           } catch (subErr) {
@@ -3775,6 +3776,10 @@ function encodeFirestoreFields(data: any): any {
       let currentAsaasInvoiceId = subDocData.asaasInvoiceId;
       let currentAsaasCustomerId = subDocData.asaasCustomerId || subDocData.asaasCustomer;
 
+      if (asaasApiKey && !currentAsaasSubId && currentAsaasInvoiceId && String(currentAsaasInvoiceId).startsWith('sub_')) {
+        currentAsaasSubId = currentAsaasInvoiceId;
+      }
+
       if (asaasApiKey && !currentAsaasSubId && currentAsaasInvoiceId && String(currentAsaasInvoiceId).startsWith('pay_')) {
         try {
           const checkPayRes = await fetch(`${baseUrl}/payments/${currentAsaasInvoiceId}`, {
@@ -3857,6 +3862,7 @@ function encodeFirestoreFields(data: any): any {
               'access_token': asaasApiKey
             },
             body: JSON.stringify({
+              status: 'ACTIVE',
               nextDueDate: safeAsaasNextDueDate,
               updatePendingPayments: true
             })

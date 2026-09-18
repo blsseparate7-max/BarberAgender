@@ -191,6 +191,13 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const [tenantInfo, setTenantInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Guard activeTab if subscriptions are disabled for current tenant
+  useEffect(() => {
+    if (tenantInfo && tenantInfo.subscriptions_enabled !== true && activeTab === 'assinaturas') {
+      setActiveTab('schedule');
+    }
+  }, [tenantInfo, activeTab]);
+
   // Portfolio / Landing Page States
   const [selectedPortfolioTenant, setSelectedPortfolioTenant] = useState<any | null>(null);
   const [showPortfolioModal, setShowPortfolioModal] = useState(false);
@@ -1729,7 +1736,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const navItems = [
     { id: 'home', label: 'A Barbearia', icon: MapPin },
     { id: 'schedule', label: 'Agendar', icon: Scissors },
-    { id: 'assinaturas', label: tenantInfo?.customSubscriptionLabel || 'Assinaturas', icon: Sparkles },
+    ...(tenantInfo?.subscriptions_enabled === true ? [
+      { id: 'assinaturas', label: tenantInfo?.customSubscriptionLabel || 'Assinaturas', icon: Sparkles }
+    ] : []),
     ...(profile ? [
       { id: 'history', label: 'Histórico', icon: History },
       { id: 'fidelidade', label: 'Fidelidade', icon: Award },
@@ -2711,7 +2720,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="bg-white p-6 md:p-8 rounded-[32px] border border-slate-100 shadow-sm space-y-8"
             >
-              {subscriptions.filter(s => s.status !== 'canceled').length > 0 && !subscriptions.some(s => s.status === 'active') ? (
+              {tenantInfo?.subscriptions_enabled === true && subscriptions.filter(s => s.status !== 'canceled').length > 0 && !subscriptions.some(s => s.status === 'active') ? (
                 <div className="flex flex-col items-center justify-center text-center py-12 px-4 space-y-6">
                   <div className="w-20 h-20 bg-rose-50 border border-rose-100 rounded-3xl flex items-center justify-center text-rose-500 shadow-inner animate-pulse">
                     <AlertCircle size={36} className="text-red-500" />

@@ -7,7 +7,8 @@ import {
   query, 
   where, 
   getDocs, 
-  serverTimestamp
+  serverTimestamp,
+  limit
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FinancialTransaction, FinancialCategory, TransactionType } from '../types';
@@ -21,15 +22,32 @@ export const financialService = {
   // --- Transactions ---
   async getTransactions(startDate?: string, endDate?: string, type?: TransactionType) {
     const activeTenantId = getActiveTenantId();
-    const q = query(collection(db, TRANSACTIONS_COLLECTION), where('tenantId', '==', activeTenantId));
+    let querySnapshot: any;
+    try {
+      const constraints: any[] = [where('tenantId', '==', activeTenantId)];
+      if (startDate && endDate) {
+        constraints.push(where('date', '>=', startDate));
+        constraints.push(where('date', '<=', endDate));
+      } else if (startDate) {
+        constraints.push(where('date', '>=', startDate));
+      } else {
+        constraints.push(limit(250));
+      }
+      const q = query(collection(db, TRANSACTIONS_COLLECTION), ...constraints);
+      querySnapshot = await getDocs(q);
+    } catch (err) {
+      const fallbackQ = query(collection(db, TRANSACTIONS_COLLECTION), where('tenantId', '==', activeTenantId), limit(250));
+      querySnapshot = await getDocs(fallbackQ);
+    }
     
-    const querySnapshot = await getDocs(q);
     let transactions = querySnapshot.docs
-      .map(docSnap => ({ id: docSnap.id, ...(docSnap.data() as any) } as FinancialTransaction))
-      .filter(t => t.tenantId === activeTenantId);
+      .map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() as any) } as FinancialTransaction))
+      .filter((t: any) => t.tenantId === activeTenantId);
 
     if (startDate && endDate) {
       transactions = transactions.filter(t => t.date >= startDate && t.date <= endDate);
+    } else if (startDate) {
+      transactions = transactions.filter(t => t.date >= startDate);
     }
 
     if (type) {

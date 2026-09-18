@@ -434,14 +434,25 @@ export const appointmentService = {
   },
 
   async checkConflict(profissional_id: string, date: string, startTime: string, endTime: string, excludeId?: string) {
-    const q = query(
-      collection(db, COLLECTION),
-      where('tenantId', '==', getActiveTenantId())
-    );
+    const activeTenantId = getActiveTenantId();
+    let querySnapshot: any;
+    try {
+      const q = query(
+        collection(db, COLLECTION),
+        where('tenantId', '==', activeTenantId),
+        where('date', '==', date)
+      );
+      querySnapshot = await getDocs(q);
+    } catch (err) {
+      const fallbackQ = query(
+        collection(db, COLLECTION),
+        where('tenantId', '==', activeTenantId)
+      );
+      querySnapshot = await getDocs(fallbackQ);
+    }
 
-    const querySnapshot = await getDocs(q);
     const appointments = querySnapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
+      .map((docSnap: any) => ({ id: docSnap.id, ...docSnap.data() } as Appointment))
       .filter(app => {
         if (app.id === excludeId) return false;
         if (app.profissional_id !== profissional_id) return false;

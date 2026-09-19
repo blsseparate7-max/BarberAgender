@@ -74,7 +74,7 @@ service cloud.firestore {
         (
           getUserEmail() == "eufixo@gbcortes7.com" ||
           getUserEmail() == "rickbolado@gbcortes7.com" ||
-          (getUserEmail() != "" && getUserEmail().matches('.*@gbcortes7[.]com.*')) ||
+          (getUserEmail() != "" && getUserEmail().matches('^[a-zA-Z0-9._%+-]+@gbcortes7[.]com$')) ||
           (exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
            (get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'barbeiro' ||
             get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'gerente' ||
@@ -278,13 +278,23 @@ service cloud.firestore {
 
     // Rules for Appointments (Slot calculation, authenticated/validated creation)
     match /appointments/{appointmentId} {
-      allow read: if true;
+      allow get: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.client_id == request.auth.uid))
+      );
+      allow list: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.client_id == request.auth.uid)) ||
+        (resource != null && resource.data.tenantId != 'saas')
+      );
       allow create: if isAuthenticated() || (
         request.resource.data.keys().hasAll(['cliente_name', 'data', 'horario', 'tenantId']) &&
         request.resource.data.tenantId != 'saas'
       );
       allow update: if isAuthenticated() && (
-        (resource != null && resource.data.cliente_id == request.auth.uid) ||
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.client_id == request.auth.uid)) ||
         isStaff() || 
         isBarbeiro()
       );

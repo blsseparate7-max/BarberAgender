@@ -161,56 +161,49 @@ async function verifyTenantAdminAuth(req: express.Request, targetTenantId: strin
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
 
-  const adminAuth = getAdminAuth();
-  const dbAdmin = getAdminDb();
-
-  // If Firebase Admin Auth is active and token is provided:
-  if (adminAuth && token) {
-    try {
-      const decoded = await adminAuth.verifyIdToken(token);
-      const uid = decoded.uid;
-      const email = decoded.email || '';
-
-      // Test/Superadmin bypass
-      if (email === 'admin@admin.com' || email === 'gerente@gerente.com') {
-        return { authorized: true, user: { uid, email, role: 'superadmin' } };
-      }
-
-      if (dbAdmin) {
-        const userDoc = await dbAdmin.collection('usuarios').doc(uid).get();
-        if (userDoc.exists) {
-          const uData = userDoc.data() || {};
-          const userTenant = uData.tenantId || 'gbcortes7';
-          const userRole = uData.tipo || uData.role || 'cliente';
-
-          // Must be admin or gerente of this tenant, or saas_admin
-          if (userRole === 'saas_admin') {
-            return { authorized: true, user: { uid, email, role: userRole, tenantId: userTenant } };
-          }
-
-          if ((userRole === 'admin' || userRole === 'gerente') && (userTenant === targetTenantId || !userTenant)) {
-            return { authorized: true, user: { uid, email, role: userRole, tenantId: userTenant } };
-          }
-
-          return { 
-            authorized: false, 
-            error: "Acesso Negado: Apenas administradores autorizados desta barbearia podem realizar movimentações na Conta Digital." 
-          };
-        }
-      }
-      return { authorized: true, user: { uid, email } };
-    } catch (err: any) {
-      console.warn("⚠️ Token de autenticação inválido em operação financeira:", err.message);
-      return { authorized: false, error: "Sessão inválida ou expirada. Faça login novamente para autorizar a operação financeira." };
-    }
-  }
-
-  // Fallback if Admin SDK is active but no token sent
-  if (adminAuth && !token) {
+  if (!token) {
     return { authorized: false, error: "Autenticação obrigatória: Token de segurança não fornecido." };
   }
 
-  return { authorized: true };
+  const adminAuth = getAdminAuth();
+  const dbAdmin = getAdminDb();
+
+  if (!adminAuth) {
+    return { authorized: false, error: "Serviço de autenticação temporariamente indisponível no servidor." };
+  }
+
+  try {
+    const decoded = await adminAuth.verifyIdToken(token);
+    const uid = decoded.uid;
+    const email = decoded.email || '';
+
+    if (dbAdmin) {
+      const userDoc = await dbAdmin.collection('usuarios').doc(uid).get();
+      if (userDoc.exists) {
+        const uData = userDoc.data() || {};
+        const userTenant = uData.tenantId || 'gbcortes7';
+        const userRole = uData.tipo || uData.role || 'cliente';
+
+        // Must be admin or gerente of this tenant, or saas_admin
+        if (userRole === 'saas_admin') {
+          return { authorized: true, user: { uid, email, role: userRole, tenantId: userTenant } };
+        }
+
+        if ((userRole === 'admin' || userRole === 'gerente') && (userTenant === targetTenantId || !userTenant)) {
+          return { authorized: true, user: { uid, email, role: userRole, tenantId: userTenant } };
+        }
+
+        return { 
+          authorized: false, 
+          error: "Acesso Negado: Apenas administradores autorizados desta barbearia podem realizar movimentações na Conta Digital." 
+        };
+      }
+    }
+    return { authorized: true, user: { uid, email } };
+  } catch (err: any) {
+    console.warn("⚠️ Token de autenticação inválido em operação financeira:", err.message);
+    return { authorized: false, error: "Sessão inválida ou expirada. Faça login novamente para autorizar a operação financeira." };
+  }
 }
 
 // Initialize Gemini client lazily
@@ -303,31 +296,25 @@ app.use((req, res, next) => {
       const token = authHeader.split("Bearer ")[1].trim();
       const fbAdmin = getFirebaseAdmin();
       
+      if (!fbAdmin) {
+        return { authorized: false, error: "Serviço de autenticação temporariamente indisponível no servidor." };
+      }
+
       let decodedToken: any = null;
-      if (fbAdmin) {
-        try {
-          decodedToken = await getAuth(fbAdmin).verifyIdToken(token);
-        } catch (_) {}
+      try {
+        decodedToken = await getAuth(fbAdmin).verifyIdToken(token);
+      } catch (tokenErr: any) {
+        return { authorized: false, error: "Token de autenticação inválido, forjado ou expirado." };
       }
 
-      if (!decodedToken) {
-        try {
-          const parts = token.split('.');
-          if (parts.length === 3) {
-            const payloadJson = Buffer.from(parts[1], 'base64').toString('utf-8');
-            decodedToken = JSON.parse(payloadJson);
-          }
-        } catch (_) {}
-      }
-
-      if (!decodedToken) {
+      if (!decodedToken || !decodedToken.uid) {
         return { authorized: false, error: "Sessão inválida ou token expirado." };
       }
 
       const callerEmail = (decodedToken.email || "").toLowerCase().trim();
-      const callerUid = decodedToken.uid || decodedToken.user_id || decodedToken.sub;
+      const callerUid = decodedToken.uid;
 
-      // Superadministradores do SaaS ou administradores da barbearia
+      // Superadministradores mestres autenticados criptograficamente
       const MASTER_EMAILS = [
         "barber@admin.ai",
         "blsseparate7@gmail.com",
@@ -339,18 +326,16 @@ app.use((req, res, next) => {
       }
 
       // Validar cargo no Firestore se for outro administrador ou gerente
-      if (fbAdmin) {
-        try {
-          const db = getFirestore(fbAdmin);
-          const userDoc = await db.collection("usuarios").doc(callerUid).get();
-          if (userDoc.exists) {
-            const userData = userDoc.data();
-            if (userData?.ativo && (userData.tipo === "admin" || userData.tipo === "gerente" || userData.tipo === "saas_admin")) {
-              return { authorized: true, uid: callerUid, email: callerEmail, tenantId: userData.tenantId };
-            }
+      try {
+        const db = getFirestore(fbAdmin);
+        const userDoc = await db.collection("usuarios").doc(callerUid).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+          if (userData?.ativo && (userData.tipo === "admin" || userData.tipo === "gerente" || userData.tipo === "saas_admin")) {
+            return { authorized: true, uid: callerUid, email: callerEmail, tenantId: userData.tenantId };
           }
-        } catch (_) {}
-      }
+        }
+      } catch (_) {}
 
       return { authorized: false, error: "Acesso negado: privilégios insuficientes." };
     } catch (err: any) {

@@ -8,6 +8,7 @@ import { Appointment, Service, UserProfile, AppointmentStatus } from '../../type
 import { appointmentService } from '../../services/appointmentService';
 import { serviceService } from '../../services/serviceService';
 import { userService } from '../../services/userService';
+import { catalogCacheService } from '../../services/catalogCacheService';
 import { agendaBlockService } from '../../services/agendaBlockService';
 import { toast } from 'sonner';
 import { format, addMinutes, parse } from 'date-fns';
@@ -122,7 +123,7 @@ export function AppointmentModal({
     }
   }, [isOpen]);
 
-  // Real-time sync for clients when modal is open
+  // Real-time sync for clients when modal is open (bounded to top 50 to prevent quota spikes)
   useEffect(() => {
     if (!isOpen) return;
 
@@ -141,7 +142,7 @@ export function AppointmentModal({
           });
           return Array.from(map.values());
         });
-      });
+      }, undefined, 50);
     }
 
     return () => {
@@ -249,14 +250,20 @@ export function AppointmentModal({
     setInitialLoading(true);
     try {
       const [servicesData, barbersData] = await Promise.all([
-        serviceService.getServices(),
+        catalogCacheService.getServices(),
         userService.getAllBarbers()
       ]);
       setServices(servicesData);
       setBarbers(barbersData);
 
       if (currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') {
-        const clientsData = await userService.getAllClients();
+        const clientsData = await userService.getAllClients(true, 50);
+        if (appointment?.cliente_id && !clientsData.some(c => c.uid === appointment.cliente_id)) {
+          const directClient = await userService.getUserProfile(appointment.cliente_id);
+          if (directClient) {
+            clientsData.unshift(directClient);
+          }
+        }
         setClients(clientsData);
       }
     } catch (err) {
@@ -818,7 +825,7 @@ export function AppointmentModal({
             )}
 
             {/* Benefícios Globais do Cliente */}
-            {formData.cliente_id && (clientPackages.some(p => p.remainingCuts > 0) || clientSubscriptions.some(s => s.status === 'active')) && (
+            {formData.cliente_id && (clientPackages.some(p => p.remainingCuts > 0) || clientSubscriptions.some(s => s.status === 'active' || s.status === 'overdue' || s.status === 'past_due')) && (
               <div className="col-span-full flex flex-wrap gap-2 pt-2 animate-in fade-in duration-300">
                 {clientPackages.some(p => p.remainingCuts > 0) && (
                   <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-xl border border-amber-100 shadow-sm">
@@ -830,6 +837,12 @@ export function AppointmentModal({
                   <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-xl border border-indigo-100 shadow-sm">
                     <Sparkles size={12} className="text-indigo-500" />
                     <span>Assinante do Clube</span>
+                  </span>
+                )}
+                {clientSubscriptions.some(s => s.status === 'overdue' || s.status === 'past_due') && (
+                  <span className="inline-flex items-center gap-1.5 bg-rose-50 text-rose-700 text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-xl border border-rose-200 shadow-sm animate-pulse">
+                    <AlertCircle size={12} className="text-rose-500" />
+                    <span>Assinatura Vencida no Asaas (Bloqueado)</span>
                   </span>
                 )}
               </div>

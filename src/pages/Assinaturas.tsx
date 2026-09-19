@@ -4644,10 +4644,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       </div>
 
                       <div className="space-y-1 text-left">
-                        <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">Forma de Pagamento</label>
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black uppercase tracking-wider text-purple-900 block">Forma de Pagamento</label>
+                          {selectedPlan.allowedPaymentMethods?.length === 1 && (
+                            <span className="text-[9px] font-extrabold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                              Exclusivo {selectedPlan.allowedPaymentMethods[0] === 'CREDIT_CARD' ? 'Cartão' : 'PIX'}
+                            </span>
+                          )}
+                        </div>
                         <select 
                           name="billingType"
-                          defaultValue="CREDIT_CARD"
+                          defaultValue={(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('CREDIT_CARD')) ? 'CREDIT_CARD' : 'PIX'}
                           className="w-full bg-white border border-purple-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-purple-500 cursor-pointer"
                         >
                           {(!selectedPlan.allowedPaymentMethods || selectedPlan.allowedPaymentMethods.includes('CREDIT_CARD')) && (

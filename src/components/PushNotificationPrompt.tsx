@@ -53,7 +53,7 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
         if (onSubscribed) onSubscribed();
 
         // Trigger an immediate test notification so they see it working
-        await pushNotificationService.sendTestPush(userId);
+        await pushNotificationService.sendTestPush(userId, tenantId);
       } else {
         if (result.permission) setPermission(result.permission);
         toast.error(result.error || 'Não foi possível ativar as notificações.');
@@ -68,7 +68,7 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
-      let res = await pushNotificationService.sendTestPush(userId);
+      let res = await pushNotificationService.sendTestPush(userId, tenantId);
       
       // Se não encontrou o dispositivo no servidor, renova a inscrição automaticamente
       if (!res.success && (res.error?.includes('Nenhum dispositivo') || res.error?.includes('404'))) {
@@ -78,7 +78,7 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
           tenantId
         });
         if (subRes.success) {
-          res = await pushNotificationService.sendTestPush(userId);
+          res = await pushNotificationService.sendTestPush(userId, tenantId);
         }
       }
 

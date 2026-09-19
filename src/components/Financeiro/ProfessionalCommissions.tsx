@@ -23,7 +23,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { db } from '../../firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { commissionService } from '../../services/commissionService';
 import { cashService } from '../../services/cashService';
 import { financialService } from '../../services/financialService';
@@ -145,18 +145,49 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar barbeiros:", error);
     });
 
-    const commsQuery = query(collection(db, 'commissions'), where('tenantId', '==', activeTenantId));
+    const isSingleDay = Boolean(dateRange.start && dateRange.start === dateRange.end);
+    let commsQuery;
+    if (isSingleDay) {
+      commsQuery = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', activeTenantId),
+        where('date', '==', dateRange.start)
+      );
+    } else if (dateRange.start && dateRange.end) {
+      commsQuery = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', activeTenantId),
+        where('date', '>=', dateRange.start),
+        where('date', '<=', dateRange.end)
+      );
+    } else {
+      commsQuery = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', activeTenantId),
+        limit(200)
+      );
+    }
+
     const unsubComms = onSnapshot(commsQuery, (snapshot) => {
       const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllCommissions(cList);
     }, (error) => {
-      console.error("Erro ao escutar comissões:", error);
+      console.warn("[ProfessionalCommissions] Error or missing index on comms range query, falling back to limited:", error);
+      const fallbackComms = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', activeTenantId),
+        limit(200)
+      );
+      onSnapshot(fallbackComms, (snap) => {
+        const cList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllCommissions(cList);
+      });
     });
 
     const cmdConstraints = activeTenantId === 'gbcortes7'
       ? [where('tenantId', 'in', [activeTenantId, ''])]
       : [where('tenantId', '==', activeTenantId)];
-    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints);
+    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints, limit(150));
     const unsubComandas = onSnapshot(comandasQuery, (snapshot) => {
       const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllComandas(cList);
@@ -278,7 +309,7 @@ export function ProfessionalCommissions({
       setAllAdvances(merged);
     };
 
-    const advsQuery = query(collection(db, 'professional_advances'), where('tenantId', '==', activeTenantId));
+    const advsQuery = query(collection(db, 'professional_advances'), where('tenantId', '==', activeTenantId), limit(100));
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
       rawAdvs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -286,7 +317,7 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar vales:", error);
     });
 
-    const payablesQuery = query(collection(db, 'accounts_payable'), where('tenantId', '==', activeTenantId));
+    const payablesQuery = query(collection(db, 'accounts_payable'), where('tenantId', '==', activeTenantId), limit(100));
     const unsubPayables = onSnapshot(payablesQuery, (snapshot) => {
       rawPayables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -294,7 +325,7 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar contas a pagar para vales:", error);
     });
 
-    const cashMovsQuery = query(collection(db, 'cash_movements'), where('tenantId', '==', activeTenantId));
+    const cashMovsQuery = query(collection(db, 'cash_movements'), where('tenantId', '==', activeTenantId), limit(100));
     const unsubCashMovs = onSnapshot(cashMovsQuery, (snapshot) => {
       rawCashMovs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -302,7 +333,7 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar movimentacoes para vales:", error);
     });
 
-    const finTxsQuery = query(collection(db, 'financial_transactions'), where('tenantId', '==', activeTenantId));
+    const finTxsQuery = query(collection(db, 'financial_transactions'), where('tenantId', '==', activeTenantId), limit(100));
     const unsubFinTxs = onSnapshot(finTxsQuery, (snapshot) => {
       rawFinTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -310,7 +341,13 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar transacoes financeiras para vales:", error);
     });
 
-    const cashQuery = query(collection(db, 'cash_sessions'), where('tenantId', '==', activeTenantId));
+    // Strictly limit cash sessions query to active/open sessions with limit(5)
+    const cashQuery = query(
+      collection(db, 'cash_sessions'), 
+      where('tenantId', '==', activeTenantId),
+      where('status', 'in', ['open', 'reopened']),
+      limit(5)
+    );
     const unsubCash = onSnapshot(cashQuery, (snapshot) => {
       const openCash = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -332,7 +369,7 @@ export function ProfessionalCommissions({
       unsubFinTxs();
       unsubCash();
     };
-  }, []);
+  }, [dateRange.start, dateRange.end]);
 
   useEffect(() => {
     if (!isOpenCash) {

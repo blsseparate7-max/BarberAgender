@@ -25,7 +25,7 @@ import {
   Crown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getActiveTenantId } from '../../services/tenantService';
 import { Appointment, AppointmentStatus, UserProfile, AgendaBlock } from '../../types';
@@ -152,9 +152,12 @@ export function AgendaProfessional({
 
   useEffect(() => {
     const tid = getActiveTenantId();
+    if (!tid) return;
+
     const qPackages = query(
       collection(db, 'pacotes_vendas'),
-      where('tenantId', '==', tid)
+      where('tenantId', '==', tid),
+      limit(100)
     );
     const unsubPackages = onSnapshot(qPackages, (snap) => {
       const uids = new Set<string>();
@@ -167,7 +170,8 @@ export function AgendaProfessional({
 
     const qSubscriptions = query(
       collection(db, 'subscriptions'),
-      where('tenantId', '==', tid)
+      where('tenantId', '==', tid),
+      limit(100)
     );
     const unsubSubscriptions = onSnapshot(qSubscriptions, (snap) => {
       const uids = new Set<string>();

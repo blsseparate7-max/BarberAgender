@@ -50,6 +50,7 @@ import { appointmentService } from '../../services/appointmentService';
 import { serviceService } from '../../services/serviceService';
 import { inventoryService } from '../../services/inventoryService';
 import { userService } from '../../services/userService';
+import { catalogCacheService } from '../../services/catalogCacheService';
 import { cashService } from '../../services/cashService';
 import { paymentMethodService } from '../../services/paymentMethodService';
 import { loyaltyService } from '../../services/loyaltyService';
@@ -640,35 +641,15 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     });
     const unsubscribeClients = userService.subscribeToAllClients(true, (data) => {
       setClients(data);
-    });
+    }, undefined, 50);
 
-    const tenantId = getActiveTenantId();
-    const qProducts = query(collection(db, 'products'), where('tenantId', '==', tenantId));
-    const unsubscribeProducts = onSnapshot(qProducts, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      setProducts(data);
-    });
-
-    const qServices = query(collection(db, 'services'), where('tenantId', '==', tenantId), where('active', '==', true));
-    const unsubscribeServices = onSnapshot(qServices, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
-      data.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
-      setServices(data);
-    });
-
-    const qPackages = query(collection(db, 'pacotes_config'), where('tenantId', '==', tenantId));
-    const unsubscribePackages = onSnapshot(qPackages, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setPackageConfigs(data.filter((p: any) => p.active !== false));
-    });
+    catalogCacheService.getPackageConfigs().then(configs => {
+      setPackageConfigs(configs);
+    }).catch(() => {});
 
     return () => {
       unsubscribeBarbers();
       unsubscribeClients();
-      unsubscribeProducts();
-      unsubscribeServices();
-      unsubscribePackages();
     };
   }, []);
 
@@ -741,7 +722,19 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
   useEffect(() => {
     if (comanda?.cliente_id) {
       const client = clients.find(c => c.uid === comanda.cliente_id);
-      setSelectedClientProfile(client || null);
+      if (!client && comanda.cliente_id !== 'sem_cadastro' && comanda.cliente_id !== 'avulso') {
+        userService.getUserProfile(comanda.cliente_id).then(u => {
+          if (u) {
+            setSelectedClientProfile(u);
+            setClients(prev => {
+              if (prev.some(c => c.uid === u.uid)) return prev;
+              return [u, ...prev];
+            });
+          }
+        }).catch(() => {});
+      } else {
+        setSelectedClientProfile(client || null);
+      }
       
       // Load loyalty points
       loyaltyService.getClientPoints(comanda.cliente_id).then(loyalty => {
@@ -759,13 +752,15 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
   const loadData = async () => {
     try {
-      const [s, p, pm] = await Promise.all([
-        serviceService.getServices(),
-        inventoryService.getProducts(),
-        paymentMethodService.getPaymentMethods()
+      const [s, p, pm, pkgs] = await Promise.all([
+        catalogCacheService.getServices(),
+        catalogCacheService.getProducts(),
+        paymentMethodService.getPaymentMethods(),
+        catalogCacheService.getPackageConfigs()
       ]);
       setServices(s);
       setProducts(p);
+      setPackageConfigs(pkgs);
       // Filter out 'assinatura' so it is not selectable as a payment method at checkout
       setPaymentMethods(pm.filter(m => m.status === 'active' && m.type !== 'assinatura'));
     } catch (error) {

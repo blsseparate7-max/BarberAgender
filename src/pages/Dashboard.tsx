@@ -44,7 +44,7 @@ import {
   Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays, isSameDay, parseISO } from 'date-fns';
+import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, startOfWeek, endOfWeek, subDays, isSameDay, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
   AreaChart, 
@@ -94,8 +94,8 @@ export function Dashboard({ stats: initialStats, setActiveTab, activeSubTab }: {
 
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState({
-    start: startOfMonth(new Date()),
-    end: endOfMonth(new Date())
+    start: startOfDay(new Date()),
+    end: endOfDay(new Date())
   });
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -459,25 +459,73 @@ function AdminDashboard({ data, setDateRange, dateRange, refresh, setActiveTab, 
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
+          {/* Presets rápidos para economizar cotas de leitura e agilizar o dia a dia */}
+          <div className="flex items-center gap-1 bg-surface border border-border p-1 rounded-xl shadow-xs">
+            <button
+              onClick={() => setDateRange({ start: startOfDay(new Date()), end: endOfDay(new Date()) })}
+              className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                isSameDay(dateRange.start, new Date()) && isSameDay(dateRange.end, new Date())
+                  ? 'bg-accent text-white shadow-xs'
+                  : 'text-muted hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              Hoje
+            </button>
+            <button
+              onClick={() => {
+                const y = subDays(new Date(), 1);
+                setDateRange({ start: startOfDay(y), end: endOfDay(y) });
+              }}
+              className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                isSameDay(dateRange.start, subDays(new Date(), 1)) && isSameDay(dateRange.end, subDays(new Date(), 1))
+                  ? 'bg-accent text-white shadow-xs'
+                  : 'text-muted hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              Ontem
+            </button>
+            <button
+              onClick={() => setDateRange({ start: startOfWeek(new Date(), { weekStartsOn: 1 }), end: endOfWeek(new Date(), { weekStartsOn: 1 }) })}
+              className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                isSameDay(dateRange.start, startOfWeek(new Date(), { weekStartsOn: 1 })) && isSameDay(dateRange.end, endOfWeek(new Date(), { weekStartsOn: 1 }))
+                  ? 'bg-accent text-white shadow-xs'
+                  : 'text-muted hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              Esta Semana
+            </button>
+            <button
+              onClick={() => setDateRange({ start: startOfMonth(new Date()), end: endOfMonth(new Date()) })}
+              className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                isSameDay(dateRange.start, startOfMonth(new Date())) && isSameDay(dateRange.end, endOfMonth(new Date()))
+                  ? 'bg-accent text-white shadow-xs'
+                  : 'text-muted hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              Este Mês
+            </button>
+          </div>
+
           <div className="flex items-center gap-2 bg-surface border border-border rounded-xl px-4 py-2 shadow-sm">
             <Calendar size={14} className="text-muted" />
             <input 
               type="date" 
               value={format(dateRange.start, 'yyyy-MM-dd')}
               onChange={(e) => setDateRange({...dateRange, start: parseISO(e.target.value)})}
-              className="bg-transparent text-xs text-primary focus:outline-none font-semibold"
+              className="bg-transparent text-xs text-primary focus:outline-none font-semibold cursor-pointer"
             />
             <span className="text-border">|</span>
             <input 
               type="date" 
               value={format(dateRange.end, 'yyyy-MM-dd')}
               onChange={(e) => setDateRange({...dateRange, end: parseISO(e.target.value)})}
-              className="bg-transparent text-xs text-primary focus:outline-none font-semibold"
+              className="bg-transparent text-xs text-primary focus:outline-none font-semibold cursor-pointer"
             />
           </div>
           <button 
             onClick={refresh} 
-            className="p-2.5 bg-surface border border-border rounded-xl text-muted hover:text-accent hover:border-accent/30 transition-all shadow-sm active:scale-95"
+            title="Atualizar dados"
+            className="p-2.5 bg-surface border border-border rounded-xl text-muted hover:text-accent hover:border-accent/30 transition-all shadow-sm active:scale-95 cursor-pointer"
           >
             <RefreshCw size={18} />
           </button>

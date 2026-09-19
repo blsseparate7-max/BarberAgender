@@ -1,4 +1,6 @@
-import { getActiveTenantId } from './tenantService';
+import { getActiveTenantId, tenantService } from './tenantService';
+import { db } from '../firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   try {
@@ -155,8 +157,26 @@ export const pushNotificationService = {
         }
       }
 
-      // 5. Enviar a inscrição para o Backend
+      // 5. Enviar a inscrição para o Backend e persistir no Firestore
       const tenantId = params.tenantId || getActiveTenantId() || '';
+      const endpointStr = String(subscription.endpoint || '');
+      const subKey = `${params.userId || 'anon'}_${btoa(endpointStr).replace(/[/+=]/g, '').slice(-24)}`;
+
+      // Gravação direta no Firestore pelo cliente para garantir persistência imutável
+      try {
+        await setDoc(doc(db, 'push_subscriptions', subKey), {
+          id: subKey,
+          userId: params.userId,
+          userRole: params.userRole || 'cliente',
+          tenantId,
+          subscription: subscription.toJSON(),
+          userAgent: navigator.userAgent,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      } catch (clientFsErr) {
+        console.warn('Aviso ao gravar push_subscription no Firestore via cliente:', clientFsErr);
+      }
+
       const response = await fetch('/api/notifications/subscribe', {
         method: 'POST',
         headers: {
@@ -195,17 +215,28 @@ export const pushNotificationService = {
     }
   },
 
-  async sendTestPush(userId?: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  async sendTestPush(userId?: string, tenantId?: string): Promise<{ success: boolean; message?: string; error?: string }> {
     let localTriggered = false;
     try {
+      const activeTenantId = tenantId || getActiveTenantId() || '';
+      let tenantData: any = null;
+      if (activeTenantId) {
+        try {
+          tenantData = await tenantService.getTenant(activeTenantId);
+        } catch (_) {}
+      }
+
+      const shopName = tenantData?.name || 'Barbearia';
+      const shopLogo = tenantData?.logoUrl || '/icon-192.png';
+
       // Notificação local de alta fidelidade para resposta imediata no dispositivo
       if (typeof window !== 'undefined' && 'serviceWorker' in navigator && Notification.permission === 'granted') {
         try {
           const reg = await navigator.serviceWorker.getRegistration();
           if (reg && reg.showNotification) {
-            await reg.showNotification('💈 Notificação Rull Ativa!', {
-              body: 'Parabéns! O seu celular está configurado para receber lembretes e avisos em tempo real.',
-              icon: '/icon-192.png',
+            await reg.showNotification(`💈 ${shopName} — Notificações Ativas!`, {
+              body: `O seu celular está pronto para receber avisos e agendamentos de ${shopName} em tempo real.`,
+              icon: shopLogo,
               badge: '/badge-72.png',
               tag: 'test-push-notification',
               data: { url: '/' }
@@ -221,7 +252,12 @@ export const pushNotificationService = {
         const response = await fetch('/api/notifications/test-push', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId })
+          body: JSON.stringify({
+            userId,
+            tenantId: activeTenantId,
+            tenantName: shopName,
+            tenantLogo: shopLogo
+          })
         });
 
         const text = await response.text();
@@ -268,12 +304,21 @@ export const pushNotificationService = {
   }): Promise<void> {
     try {
       const tenantId = params.tenantId || getActiveTenantId() || '';
+      let tenantData: any = null;
+      if (tenantId) {
+        try {
+          tenantData = await tenantService.getTenant(tenantId);
+        } catch (_) {}
+      }
+
       await fetch('/api/notifications/send-appointment-push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...params,
-          tenantId
+          tenantId,
+          tenantName: tenantData?.name || '',
+          tenantLogo: tenantData?.logoUrl || ''
         })
       });
     } catch (err) {

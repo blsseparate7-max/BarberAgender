@@ -363,23 +363,29 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
       refreshAllFinancial();
 
-      // Lightweight Realtime listener for barber's commissions
+      // Lightweight Realtime listener for barber's commissions - updates state directly (0 extra network queries)
       const qComms = query(
         collection(db, 'commissions'),
         where('tenantId', '==', proTenant),
         where('barbeiro_id', '==', activeBarberId),
         limit(100)
       );
-      const unsubComms = onSnapshot(qComms, () => { refreshAllFinancial(); }, (e) => console.warn(e));
+      const unsubComms = onSnapshot(qComms, (snap) => {
+        const commsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        setCommissions(commsList);
+      }, (e) => console.warn(e));
 
-      // Lightweight Realtime listener for barber's advances
+      // Lightweight Realtime listener for barber's advances - updates state directly
       const qAdvs = query(
         collection(db, 'professional_advances'),
         where('tenantId', '==', proTenant),
         where('profissional_id', '==', activeBarberId),
         limit(100)
       );
-      const unsubAdvs = onSnapshot(qAdvs, () => { refreshAllFinancial(); }, (e) => console.warn(e));
+      const unsubAdvs = onSnapshot(qAdvs, (snap) => {
+        const advsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        setAdvances(advsList);
+      }, (e) => console.warn(e));
 
       // Realtime listener for barber's comandas to reconcile gross revenue
       const qCmds = query(

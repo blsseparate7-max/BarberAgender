@@ -34,6 +34,8 @@ export function ClientSelectCombobox({
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(5);
   const [locallyCreatedClients, setLocallyCreatedClients] = useState<UserProfile[]>([]);
+  const [remoteClients, setRemoteClients] = useState<UserProfile[]>([]);
+  const [isSearchingRemote, setIsSearchingRemote] = useState(false);
   
   // Quick Create Client States
   const [isQuickCreateOpen, setIsQuickCreateOpen] = useState(false);
@@ -45,7 +47,7 @@ export function ClientSelectCombobox({
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Combine parent clients and any client created in this session
+  // Combine parent clients, created clients, and remote search matches
   const allClients = useMemo(() => {
     const map = new Map<string, UserProfile>();
     (clients || []).forEach(c => {
@@ -56,8 +58,49 @@ export function ClientSelectCombobox({
       const id = c.uid || (c as any).id;
       if (id && !map.has(id)) map.set(id, c);
     });
+    remoteClients.forEach(c => {
+      const id = c.uid || (c as any).id;
+      if (id && !map.has(id)) map.set(id, c);
+    });
     return Array.from(map.values());
-  }, [clients, locallyCreatedClients]);
+  }, [clients, locallyCreatedClients, remoteClients]);
+
+  // Debounced search when user types in combobox to find any client not in top list
+  useEffect(() => {
+    const term = searchQuery.trim();
+    if (term.length < 2) {
+      setRemoteClients([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsSearchingRemote(true);
+        const cleanDigits = term.replace(/\D/g, '');
+        if (cleanDigits.length >= 8) {
+          const found = await userService.getUserByPhone(cleanDigits);
+          if (found) {
+            setRemoteClients([found]);
+            return;
+          }
+        }
+        const users = await userService.getUsersByRole('cliente', true, undefined, 20);
+        const lower = term.toLowerCase();
+        const matches = users.filter(u => 
+          (u.nome || '').toLowerCase().includes(lower) || 
+          (u.telefone || '').includes(lower)
+        );
+        if (matches.length > 0) {
+          setRemoteClients(matches);
+        }
+      } catch (_) {
+      } finally {
+        setIsSearchingRemote(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const handleOpenQuickCreate = () => {
     // Pre-fill name if query looks like name, or phone if numbers

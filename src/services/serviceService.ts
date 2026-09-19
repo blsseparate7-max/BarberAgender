@@ -19,10 +19,42 @@ import { getActiveTenantId } from './tenantService';
 const SERVICES_COLLECTION = 'services';
 const CATEGORIES_COLLECTION = 'service_categories';
 
+// Cache em memória inteligente para reduzir leituras redundantes do Firestore
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+const servicesCache = new Map<string, CacheEntry<Service[]>>();
+const categoriesCache = new Map<string, CacheEntry<ServiceCategory[]>>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+function invalidateServiceCache(tenantId?: string) {
+  if (tenantId) {
+    for (const key of servicesCache.keys()) {
+      if (key.includes(tenantId)) servicesCache.delete(key);
+    }
+    for (const key of categoriesCache.keys()) {
+      if (key.includes(tenantId)) categoriesCache.delete(key);
+    }
+  } else {
+    servicesCache.clear();
+    categoriesCache.clear();
+  }
+}
+
 export const serviceService = {
   // --- Services ---
-  async getServices(onlyActive = true, category?: string, tenantId?: string) {
-    const tid = tenantId || getActiveTenantId();
+  async getServices(onlyActive = true, category?: string, tenantId?: string, bypassCache = false) {
+    const tid = (tenantId || getActiveTenantId() || '').trim().toLowerCase();
+    const cacheKey = `${tid}_active:${onlyActive}_cat:${category || 'all'}`;
+
+    if (!bypassCache) {
+      const cached = servicesCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+        return cached.data;
+      }
+    }
+
     let q = query(
       collection(db, SERVICES_COLLECTION),
       where('tenantId', '==', tid)
@@ -38,7 +70,10 @@ export const serviceService = {
 
     const querySnapshot = await getDocs(q);
     const services = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
-    return services.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const sorted = services.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+
+    servicesCache.set(cacheKey, { data: sorted, timestamp: Date.now() });
+    return sorted;
   },
 
   async getServiceById(id: string) {
@@ -51,8 +86,9 @@ export const serviceService = {
   },
 
   async createService(data: Partial<Service>) {
+    const tid = getActiveTenantId();
     const docRef = await addDoc(collection(db, SERVICES_COLLECTION), {
-      tenantId: getActiveTenantId(),
+      tenantId: tid,
       nome: data.nome || '',
       name: data.nome || '', // compatibilidade
       descricao: data.descricao || '',
@@ -70,6 +106,7 @@ export const serviceService = {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+    invalidateServiceCache(tid);
     return docRef.id;
   },
 
@@ -87,6 +124,7 @@ export const serviceService = {
     if (data.preco) updateData.price = data.preco;
 
     await updateDoc(docRef, updateData);
+    invalidateServiceCache(snap.data().tenantId);
   },
 
   async deleteService(id: string) {
@@ -96,11 +134,21 @@ export const serviceService = {
       throw new Error('Serviço não encontrado ou acesso negado.');
     }
     await deleteDoc(docRef);
+    invalidateServiceCache(snap.data().tenantId);
   },
 
   // --- Categories ---
-  async getCategories(onlyActive = true, tenantId?: string) {
-    const tid = tenantId || getActiveTenantId();
+  async getCategories(onlyActive = true, tenantId?: string, bypassCache = false) {
+    const tid = (tenantId || getActiveTenantId() || '').trim().toLowerCase();
+    const cacheKey = `${tid}_active:${onlyActive}`;
+
+    if (!bypassCache) {
+      const cached = categoriesCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+        return cached.data;
+      }
+    }
+
     let q = query(
       collection(db, CATEGORIES_COLLECTION),
       where('tenantId', '==', tid)
@@ -110,17 +158,22 @@ export const serviceService = {
     }
     const querySnapshot = await getDocs(q);
     const categories = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceCategory));
-    return categories.sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sorted = categories.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    categoriesCache.set(cacheKey, { data: sorted, timestamp: Date.now() });
+    return sorted;
   },
 
   async createCategory(name: string, order: number = 0) {
+    const tid = getActiveTenantId();
     const docRef = await addDoc(collection(db, CATEGORIES_COLLECTION), {
-      tenantId: getActiveTenantId(),
+      tenantId: tid,
       name,
       order,
       active: true,
       createdAt: serverTimestamp(),
     });
+    invalidateServiceCache(tid);
     return docRef.id;
   },
 
@@ -131,6 +184,7 @@ export const serviceService = {
       throw new Error('Categoria não encontrada ou acesso negado.');
     }
     await updateDoc(docRef, { ...data });
+    invalidateServiceCache(snap.data().tenantId);
   },
 
   async deleteCategory(id: string) {
@@ -140,5 +194,6 @@ export const serviceService = {
       throw new Error('Categoria não encontrada ou acesso negado.');
     }
     await deleteDoc(docRef);
+    invalidateServiceCache(snap.data().tenantId);
   }
 };

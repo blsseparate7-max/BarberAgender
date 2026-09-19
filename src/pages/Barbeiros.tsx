@@ -39,14 +39,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { Edit2 } from 'lucide-react';
 import { ConfirmationModal } from '../components/ConfirmationModal';
-import { collection, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs, serverTimestamp, limit } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { appointmentService } from '../services/appointmentService';
-import { format } from 'date-fns';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 
 // Default weekdays list for schedule configuring
 const DAYS_OF_WEEK = [
@@ -199,29 +199,48 @@ export function Barbeiros() {
     return () => unsubscribe();
   }, [tenantId]);
 
-  // Live Subscription for Commissions to generate live analytics cards
+  // Live Subscription for Commissions to generate live analytics cards (strictly bounded to current month)
   useEffect(() => {
+    if (!tenantId) return;
+    const now = new Date();
+    const startStr = format(startOfMonth(now), 'yyyy-MM-dd');
+    const endStr = format(endOfMonth(now), 'yyyy-MM-dd');
+
     const qCom = query(
       collection(db, 'commissions'),
-      where('tenantId', '==', tenantId)
+      where('tenantId', '==', tenantId),
+      where('date', '>=', startStr),
+      where('date', '<=', endStr)
     );
     const unsubscribeCom = onSnapshot(qCom, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setCommissions(docs);
     }, (error) => {
-      console.error("Erro ao carregar banco de comissões:", error);
+      console.warn("[Barbeiros] Fallback comissões:", error);
+      const fallback = query(collection(db, 'commissions'), where('tenantId', '==', tenantId), limit(100));
+      onSnapshot(fallback, (snap) => {
+        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCommissions(docs);
+      });
     });
 
     // Live Subscription for Advances to accurately calculate pending net payouts
     const qAdv = query(
       collection(db, 'professional_advances'),
-      where('tenantId', '==', tenantId)
+      where('tenantId', '==', tenantId),
+      where('date', '>=', startStr),
+      where('date', '<=', endStr)
     );
     const unsubscribeAdv = onSnapshot(qAdv, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAdvances(docs);
     }, (error) => {
-      console.error("Erro ao carregar banco de adiantamentos:", error);
+      console.warn("[Barbeiros] Fallback adiantamentos:", error);
+      const fallback = query(collection(db, 'professional_advances'), where('tenantId', '==', tenantId), limit(50));
+      onSnapshot(fallback, (snap) => {
+        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAdvances(docs);
+      });
     });
 
     return () => {

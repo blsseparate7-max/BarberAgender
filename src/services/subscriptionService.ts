@@ -661,7 +661,7 @@ export const subscriptionService = {
 
     const startDate = new Date();
     const startDateStr = format(startDate, 'yyyy-MM-dd');
-    const endDate = addDays(startDate, 30);
+    const endDate = addMonths(startDate, 1);
     const endDateStr = format(endDate, 'yyyy-MM-dd');
 
     // Clean up or cancel old pending subscriptions for this client and tenant to prevent duplicate rows
@@ -689,8 +689,20 @@ export const subscriptionService = {
     const subscriptionRef = doc(collection(db, SUBSCRIPTIONS_COLLECTION));
     const subId = subscriptionRef.id;
 
-    const planAllowed = plan.allowedPaymentMethods || ['CREDIT_CARD'];
-    const effectiveBillingType: 'PIX' | 'CREDIT_CARD' = data.billingType === 'PIX' ? 'PIX' : 'CREDIT_CARD';
+    // Strict enforcement of allowed payment methods from the plan configuration
+    const planAllowed: ('PIX' | 'CREDIT_CARD')[] = (plan.allowedPaymentMethods && plan.allowedPaymentMethods.length > 0)
+      ? plan.allowedPaymentMethods
+      : ['CREDIT_CARD'];
+
+    let effectiveBillingType: 'PIX' | 'CREDIT_CARD';
+    if (planAllowed.length === 1) {
+      // If plan only permits one method (e.g. ONLY credit card), strictly force it
+      effectiveBillingType = planAllowed[0];
+    } else if (data.billingType && planAllowed.includes(data.billingType)) {
+      effectiveBillingType = data.billingType;
+    } else {
+      effectiveBillingType = planAllowed.includes('CREDIT_CARD') ? 'CREDIT_CARD' : 'PIX';
+    }
 
     // Pre-save to Firestore FIRST so document exists with status 'pending' before webhook fires
     const subscriptionData: any = {

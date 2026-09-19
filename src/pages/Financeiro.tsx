@@ -57,7 +57,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
-import { format, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay } from 'date-fns';
+import { format, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay, startOfWeek, endOfWeek } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
   collection, 
@@ -212,9 +212,12 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const { tenantId, tenant } = useTenant();
   const currentTenantId = tenantId || tenant?.id || profile?.tenantId || getActiveTenantId();
   const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'digital-account' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new' | 'accounts-receivable'>('overview');
-  const [dateRange, setDateRange] = useState({
-    start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
-    end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
+  const [dateRange, setDateRange] = useState(() => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    return {
+      start: today,
+      end: today
+    };
   });
 
   // Estados de Paginação e Filtros
@@ -342,6 +345,21 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       toast.error(err.message || "Erro ao registrar recebimento de fiado.");
     } finally {
       setIsSubmittingQuickSettle(false);
+    }
+  };
+
+  const [isSyncingDebts, setIsSyncingDebts] = useState(false);
+
+  const handleSyncAllDebts = async () => {
+    setIsSyncingDebts(true);
+    try {
+      const res = await debtService.syncAllClientsDebtBalances();
+      toast.success(`Fiados sincronizados com sucesso! (${res.totalClientsWithDebts} clientes com débitos ativos)`);
+      await loadData();
+    } catch (err: any) {
+      toast.error("Erro ao sincronizar fiados: " + (err.message || "Erro desconhecido"));
+    } finally {
+      setIsSyncingDebts(false);
     }
   };
 
@@ -505,18 +523,39 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       }));
     });
 
-    // Real-time transactions for the current period
-    const q = query(
-      collection(db, 'financial_transactions'),
-      where('tenantId', '==', currentTenantId)
-    );
+    // Real-time transactions strictly bounded by the selected period (saving thousands of reads)
+    const isSingleDay = Boolean(dateRange.start && dateRange.start === dateRange.end);
+    let q;
+    if (isSingleDay) {
+      // Dual-equality query: where tenantId == X and date == Y.
+      // Firestore does NOT require composite index for dual equality!
+      // This strictly reads ONLY the transactions of that single day!
+      q = query(
+        collection(db, 'financial_transactions'),
+        where('tenantId', '==', currentTenantId),
+        where('date', '==', dateRange.start)
+      );
+    } else if (dateRange.start && dateRange.end) {
+      q = query(
+        collection(db, 'financial_transactions'),
+        where('tenantId', '==', currentTenantId),
+        where('date', '>=', dateRange.start),
+        where('date', '<=', dateRange.end)
+      );
+    } else {
+      q = query(
+        collection(db, 'financial_transactions'),
+        where('tenantId', '==', currentTenantId),
+        limit(150)
+      );
+    }
 
-    const unsubscribeTransactions = onSnapshot(q, (snapshot) => {
-      const allTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
-      const txs = allTxs.filter(t => (!dateRange.start || t.date >= dateRange.start) && (!dateRange.end || t.date <= dateRange.end));
+    const processTxSnapshot = (snapshot: any) => {
+      const allTxs = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
+      const txs = allTxs.filter((t: any) => (!dateRange.start || t.date >= dateRange.start) && (!dateRange.end || t.date <= dateRange.end));
       
       // Sort in memory by date desc, then by createdAt seconds desc
-      txs.sort((a, b) => {
+      txs.sort((a: any, b: any) => {
         const dateCompare = (b.date || '').localeCompare(a.date || '');
         if (dateCompare !== 0) return dateCompare;
         
@@ -531,20 +570,20 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       
       // Also update stats locally to avoid a separate fetch
       const income = txs
-        .filter(t => t.type === 'income' && t.status === 'pago')
-        .reduce((acc, t) => acc + t.amount, 0);
+        .filter((t: any) => t.type === 'income' && t.status === 'pago')
+        .reduce((acc: number, t: any) => acc + t.amount, 0);
         
       const expense = txs
-        .filter(t => t.type === 'expense' && t.status === 'pago')
-        .reduce((acc, t) => acc + t.amount, 0);
+        .filter((t: any) => t.type === 'expense' && t.status === 'pago')
+        .reduce((acc: number, t: any) => acc + t.amount, 0);
 
       const aReceberCartoes = txs
-        .filter(t => t.type === 'income' && t.status === 'pago' && t.is_settled === false && (t.paymentMethod === 'credito' || t.paymentMethod === 'debito'))
-        .reduce((acc, t) => acc + (t.net_amount || t.amount), 0);
+        .filter((t: any) => t.type === 'income' && t.status === 'pago' && t.is_settled === false && (t.paymentMethod === 'credito' || t.paymentMethod === 'debito'))
+        .reduce((acc: number, t: any) => acc + (t.net_amount || t.amount), 0);
 
       const disponivel = txs
-        .filter(t => t.type === 'income' && t.status === 'pago' && t.is_settled !== false)
-        .reduce((acc, t) => acc + (t.net_amount || t.amount), 0) - expense;
+        .filter((t: any) => t.type === 'income' && t.status === 'pago' && t.is_settled !== false)
+        .reduce((acc: number, t: any) => acc + (t.net_amount || t.amount), 0) - expense;
 
       setStats(prev => ({
         ...prev,
@@ -555,12 +594,27 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         aReceberCartoes
       }));
       setLoading(false);
+    };
+
+    let fallbackUnsubscribe: (() => void) | null = null;
+    const unsubscribeTransactions = onSnapshot(q, processTxSnapshot, (err) => {
+      console.warn("[Financeiro] Range listener index missing or error. Falling back to limited query:", err?.message || err);
+      const fallbackQ = query(
+        collection(db, 'financial_transactions'),
+        where('tenantId', '==', currentTenantId),
+        limit(150)
+      );
+      fallbackUnsubscribe = onSnapshot(fallbackQ, processTxSnapshot, (fErr) => {
+        console.error("Error in fallback transactions listener:", fErr);
+        setLoading(false);
+      });
     });
 
     return () => {
       unsubscribeCash();
       unsubscribeDebts();
       unsubscribeTransactions();
+      if (fallbackUnsubscribe) (fallbackUnsubscribe as any)();
     };
   }, [dateRange.start, dateRange.end, currentTenantId]);
 
@@ -821,8 +875,36 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       }
 
       if (activeTab === 'client-accounts') {
-        const allClients = await userService.getAllClients();
-        const uniqueClients = Array.from(new Map(allClients.map(c => [c.uid || (c as any).id, c])).values());
+        const qDebts = query(
+          collection(db, 'client_debts'),
+          where('tenantId', '==', currentTenantId),
+          limit(300)
+        );
+        const [allClients, debtsSnap] = await Promise.all([
+          userService.getAllClients(),
+          getDocs(qDebts).catch(() => ({ docs: [] } as any))
+        ]);
+
+        const debtsByClient: Record<string, number> = {};
+        debtsSnap.docs?.forEach((docSnap: any) => {
+          const d = docSnap.data();
+          const isPaid = ['pago', 'paga', 'quitado', 'cancelado'].includes(String(d.status || '').toLowerCase());
+          const rem = Number(d.remainingAmount ?? (isPaid ? 0 : (d.amount ?? d.valor ?? 0)));
+          const cId = d.cliente_id || d.client_id || d.clientId;
+          if (cId && !isPaid && rem > 0.001) {
+            debtsByClient[cId] = (debtsByClient[cId] || 0) + rem;
+          }
+        });
+
+        const uniqueClients = Array.from(new Map(allClients.map(c => {
+          const uid = c.uid || (c as any).id;
+          const calculatedDebt = debtsByClient[uid];
+          if (calculatedDebt !== undefined && (calculatedDebt > 0.001 || (c.total_em_aberto || 0) === 0)) {
+            return [uid, { ...c, total_em_aberto: calculatedDebt, saldo_devedor: calculatedDebt }];
+          }
+          return [uid, c];
+        })).values());
+
         setClients(uniqueClients);
       }
 
@@ -1230,17 +1312,53 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                   const todayStr = format(new Date(), 'yyyy-MM-dd');
                   setDateRange({ start: todayStr, end: todayStr });
                 }}
-                className="px-2.5 py-1 text-[10px] font-black uppercase text-slate-600 hover:bg-white rounded-lg transition-all shadow-2xs cursor-pointer"
+                className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg transition-all shadow-2xs cursor-pointer ${
+                  dateRange.start === format(new Date(), 'yyyy-MM-dd') && dateRange.end === format(new Date(), 'yyyy-MM-dd')
+                    ? 'bg-primary text-white'
+                    : 'text-slate-600 hover:bg-white'
+                }`}
               >
                 Hoje
               </button>
               <button
                 onClick={() => {
-                  const now = new Date();
-                  const startMonth = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
-                  setDateRange({ start: startMonth, end: format(now, 'yyyy-MM-dd') });
+                  const yStr = format(startOfDay(new Date(Date.now() - 86400000)), 'yyyy-MM-dd');
+                  setDateRange({ start: yStr, end: yStr });
                 }}
-                className="px-2.5 py-1 text-[10px] font-black uppercase text-slate-600 hover:bg-white rounded-lg transition-all shadow-2xs cursor-pointer"
+                className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg transition-all shadow-2xs cursor-pointer ${
+                  dateRange.start === format(startOfDay(new Date(Date.now() - 86400000)), 'yyyy-MM-dd') && dateRange.end === format(startOfDay(new Date(Date.now() - 86400000)), 'yyyy-MM-dd')
+                    ? 'bg-primary text-white'
+                    : 'text-slate-600 hover:bg-white'
+                }`}
+              >
+                Ontem
+              </button>
+              <button
+                onClick={() => {
+                  const sWeek = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
+                  const eWeek = format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
+                  setDateRange({ start: sWeek, end: eWeek });
+                }}
+                className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg transition-all shadow-2xs cursor-pointer ${
+                  dateRange.start === format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd') && dateRange.end === format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+                    ? 'bg-primary text-white'
+                    : 'text-slate-600 hover:bg-white'
+                }`}
+              >
+                Esta Semana
+              </button>
+              <button
+                onClick={() => {
+                  const now = new Date();
+                  const startMonth = format(startOfMonth(now), 'yyyy-MM-dd');
+                  const endMonth = format(endOfMonth(now), 'yyyy-MM-dd');
+                  setDateRange({ start: startMonth, end: endMonth });
+                }}
+                className={`px-2.5 py-1 text-[10px] font-black uppercase rounded-lg transition-all shadow-2xs cursor-pointer ${
+                  dateRange.start === format(startOfMonth(new Date()), 'yyyy-MM-dd') && dateRange.end === format(endOfMonth(new Date()), 'yyyy-MM-dd')
+                    ? 'bg-primary text-white'
+                    : 'text-slate-600 hover:bg-white'
+                }`}
               >
                 Este Mês
               </button>
@@ -2463,15 +2581,28 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                       </select>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenManualDebtModal()}
-                      className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm shadow-red-600/20 active:scale-95 cursor-pointer"
-                      title="Lançar um novo fiado ou débito avulso para qualquer cliente"
-                    >
-                      <PlusCircle size={16} />
-                      <span>Lançar Fiado Manual</span>
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleSyncAllDebts}
+                        disabled={isSyncingDebts}
+                        className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xs active:scale-95 cursor-pointer disabled:opacity-50"
+                        title="Recalcular e sincronizar o saldo de fiados de todos os clientes a partir dos registros de débitos"
+                      >
+                        <RefreshCcw size={15} className={isSyncingDebts ? 'animate-spin text-accent' : ''} />
+                        <span>{isSyncingDebts ? 'Sincronizando...' : 'Sincronizar Fiados'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenManualDebtModal()}
+                        className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-sm shadow-red-600/20 active:scale-95 cursor-pointer"
+                        title="Lançar um novo fiado ou débito avulso para qualquer cliente"
+                      >
+                        <PlusCircle size={16} />
+                        <span>Lançar Fiado Manual</span>
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="overflow-x-auto">

@@ -137,27 +137,54 @@ export function getActiveTenantId(): string {
   return '';
 }
 
+// In-memory cache para economizar leituras repetitivas do documento de tenant
+const tenantCache = new Map<string, { data: TenantProfile; timestamp: number }>();
+let listTenantsCache: { data: TenantProfile[]; timestamp: number } | null = null;
+const TENANT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+export function invalidateTenantCache(tenantId?: string) {
+  if (tenantId) {
+    tenantCache.delete(tenantId.toLowerCase().trim());
+  } else {
+    tenantCache.clear();
+  }
+  listTenantsCache = null;
+}
+
 export const tenantService = {
-  async getTenant(tenantId: string): Promise<TenantProfile | null> {
+  async getTenant(tenantId: string, bypassCache = false): Promise<TenantProfile | null> {
     if (!tenantId) return null;
+    const cleanTid = tenantId.trim().toLowerCase();
+
+    if (!bypassCache) {
+      const cached = tenantCache.get(cleanTid);
+      if (cached && (Date.now() - cached.timestamp < TENANT_CACHE_TTL_MS)) {
+        return cached.data;
+      }
+    }
+
     try {
-      const docRef = doc(db, 'tenants', tenantId);
+      const docRef = doc(db, 'tenants', cleanTid);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        return docSnap.data() as TenantProfile;
+        const tenantData = docSnap.data() as TenantProfile;
+        tenantCache.set(cleanTid, { data: tenantData, timestamp: Date.now() });
+        return tenantData;
       }
-      if (tenantId === 'gbcortes7') {
-        return {
+      if (cleanTid === 'gbcortes7') {
+        const defaultGB: TenantProfile = {
           id: 'gbcortes7',
           name: 'GB Cortes',
           accentColor: '#6366F1',
           isActive: true
         };
+        tenantCache.set('gbcortes7', { data: defaultGB, timestamp: Date.now() });
+        return defaultGB;
       }
       return null;
     } catch (error) {
-      console.error(`Error fetching tenant ${tenantId}:`, error);
-      if (tenantId === 'gbcortes7') {
+      console.error(`Error fetching tenant ${cleanTid}:`, error);
+      if (cleanTid === 'gbcortes7') {
         return {
           id: 'gbcortes7',
           name: 'GB Cortes',
@@ -227,6 +254,7 @@ export const tenantService = {
         ...updateData,
         updatedAt: serverTimestamp()
       });
+      invalidateTenantCache(tenantId);
     } catch (error) {
       console.error(`Error updating tenant ${tenantId}:`, error);
       throw error;
@@ -358,11 +386,16 @@ export const tenantService = {
     }
   },
 
-  async listTenants(): Promise<TenantProfile[]> {
+  async listTenants(bypassCache = false): Promise<TenantProfile[]> {
+    if (!bypassCache && listTenantsCache && (Date.now() - listTenantsCache.timestamp < TENANT_CACHE_TTL_MS)) {
+      return listTenantsCache.data;
+    }
     try {
       const q = query(collection(db, 'tenants'), where('isActive', '==', true));
       const snap = await getDocs(q);
-      return snap.docs.map(d => d.data() as TenantProfile);
+      const list = snap.docs.map(d => d.data() as TenantProfile);
+      listTenantsCache = { data: list, timestamp: Date.now() };
+      return list;
     } catch (error) {
       console.error('Error listing tenants:', error);
       return [];

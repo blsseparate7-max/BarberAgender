@@ -537,7 +537,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
           price: plan.price,
           clientName: profile.nome || 'Cliente',
           status: 'pending',
-          billingType
+          billingType: res.billingType || billingType
         });
         setShowClientChargeModal(true);
       }
@@ -1164,8 +1164,15 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
       // Load announcements/news & promotions
       try {
-        const qNews = query(collection(db, 'announcements'));
-        const snapNews = await getDocs(qNews);
+        const qNews = query(
+          collection(db, 'announcements'),
+          where('tenantId', 'in', [activeTenantId, '']),
+          limit(20)
+        );
+        const snapNews = await getDocs(qNews).catch(async () => {
+          // Fallback if index in not ready
+          return await getDocs(query(collection(db, 'announcements'), limit(20)));
+        });
         const newsList = snapNews.docs.map(d => ({ id: d.id, ...d.data() }));
         const filteredNews = newsList.filter((item: any) => !item.tenantId || item.tenantId.toLowerCase() === activeTenantId.toLowerCase());
         setAnnouncements(filteredNews);
@@ -1199,7 +1206,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         try {
           const qComandas = query(
             collection(db, 'comandas'),
-            where('cliente_id', '==', profile.uid)
+            where('cliente_id', '==', profile.uid),
+            limit(50)
           );
           const comSnap = await getDocs(qComandas);
           const allComs = comSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1230,7 +1238,8 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
           const qInvoices = query(
             collection(db, 'financial_transactions'),
             where('cliente_id', '==', profile.uid),
-            where('category', '==', 'Assinaturas')
+            where('category', '==', 'Assinaturas'),
+            limit(50)
           );
           const invSnap = await getDocs(qInvoices);
           const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1242,7 +1251,11 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
         // Load package sales
         try {
-          const pkgQuery = query(collection(db, 'pacotes_vendas'), where('clientId', '==', profile.uid));
+          const pkgQuery = query(
+            collection(db, 'pacotes_vendas'),
+            where('clientId', '==', profile.uid),
+            limit(50)
+          );
           const pkgSnap = await getDocs(pkgQuery);
           const clientPkgs = pkgSnap.docs.map(d => ({ id: d.id, ...d.data() }));
           setPackages(clientPkgs);

@@ -233,14 +233,16 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 2. Create Charge or Subscription
-    const today = new Date();
-    today.setDate(today.getDate() + 3);
-    const dueDateStr = today.toISOString().split('T')[0];
+    // 2. Create Charge or Subscription with D+0 (exact current date, no 3-day offset)
+    let dueDateStr = req.body?.dueDate || req.body?.nextDueDate;
+    if (!dueDateStr) {
+      const now = new Date();
+      dueDateStr = now.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }) || now.toISOString().split('T')[0];
+    }
 
     let payData: any = null;
     const isRealCustomerId = customerId && typeof customerId === 'string' && !customerId.startsWith('cus_sandbox_');
-    const selectedBillingType = (billingType === 'CREDIT_CARD' || billingType === 'PIX') ? billingType : 'PIX';
+    const selectedBillingType = (billingType === 'PIX') ? 'PIX' : 'CREDIT_CARD';
 
     if ((selectedBillingType === 'CREDIT_CARD' || isSubscription) && isRealCustomerId) {
       payData = await fetchAsaasApi('/subscriptions', {
@@ -293,7 +295,7 @@ export default async function handler(req: any, res: any) {
           paymentId: 'pay_sandbox_' + Date.now(),
           customerId: customerId,
           paymentUrl: 'https://sandbox.asaas.com/i/sandbox',
-          pixCopiaECola: '00020126580014br.gov.bcb.pix...',
+          pixCopiaECola: selectedBillingType === 'PIX' ? '00020126580014br.gov.bcb.pix...' : '',
           pixQrCodeUrl: ''
         });
       }
@@ -306,7 +308,7 @@ export default async function handler(req: any, res: any) {
     let pixCopiaECola = '';
     let pixQrCodeUrl = '';
 
-    // If subscription was created (id starts with 'sub_'), fetch its first payment to get invoiceUrl and Pix QR Code
+    // If subscription was created (id starts with 'sub_'), fetch its first payment to get invoiceUrl and align dueDate to D+0
     if (paymentId && paymentId.startsWith('sub_')) {
       try {
         const subPayments = await fetchAsaasApi(`/subscriptions/${paymentId}/payments`);
@@ -315,6 +317,21 @@ export default async function handler(req: any, res: any) {
           if (firstPayment?.id) {
             actualPaymentId = firstPayment.id;
             paymentUrl = firstPayment.invoiceUrl || firstPayment.bankSlipUrl || paymentUrl;
+
+            // Ensure first payment dueDate matches exact requested date (D+0)
+            const payDueDateStr = firstPayment.dueDate ? String(firstPayment.dueDate).split('T')[0] : '';
+            if (payDueDateStr && payDueDateStr !== dueDateStr && String(firstPayment.id).startsWith('pay_') && !String(firstPayment.id).startsWith('pay_sandbox_')) {
+              try {
+                console.log(`[Subscription DueDate Align] Alinhando primeiro vencimento de ${firstPayment.id} para ${dueDateStr}...`);
+                await fetchAsaasApi(`/payments/${firstPayment.id}`, {
+                  method: 'PUT',
+                  body: JSON.stringify({ dueDate: dueDateStr })
+                });
+                firstPayment.dueDate = dueDateStr;
+              } catch (alignErr) {
+                console.warn("[Subscription DueDate Align] Erro ao alinhar dueDate no Asaas:", alignErr);
+              }
+            }
           }
         }
       } catch (subErr) {
@@ -324,7 +341,7 @@ export default async function handler(req: any, res: any) {
 
     const pixTargetId = actualPaymentId && !actualPaymentId.startsWith('sub_') ? actualPaymentId : null;
 
-    if (pixTargetId && (billingType === 'PIX' || !billingType || body?.billingType === 'PIX')) {
+    if (pixTargetId && selectedBillingType === 'PIX') {
       try {
         const pixRes = await fetchAsaasApi(`/payments/${pixTargetId}/pixQrCode`);
         if (pixRes && pixRes.encodedImage) {

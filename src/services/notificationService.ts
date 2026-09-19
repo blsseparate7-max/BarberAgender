@@ -9,7 +9,8 @@ import {
   onSnapshot, 
   serverTimestamp,
   orderBy,
-  writeBatch
+  writeBatch,
+  limit
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { InAppNotification } from '../types';
@@ -92,16 +93,13 @@ export const notificationService = {
     const tenantId = getActiveTenantId();
     const q = query(
       collection(db, COLLECTION),
-      where('tenantId', '==', tenantId)
+      where('tenantId', '==', tenantId),
+      where('recipientId', '==', recipientId),
+      limit(25)
     );
 
     return onSnapshot(q, (snapshot) => {
-      const filteredDocs = snapshot.docs.filter(docSnap => {
-        const rId = docSnap.data().recipientId;
-        return rId === recipientId;
-      });
-
-      const notifications = filteredDocs.map(docSnap => {
+      const notifications = snapshot.docs.map(docSnap => {
         const data = docSnap.data();
         return {
           id: docSnap.id,
@@ -119,7 +117,8 @@ export const notificationService = {
 
       callback(notifications);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, COLLECTION);
+      console.warn("[notificationService] Error listening to notifications:", error);
+      callback([]);
     });
   },
 

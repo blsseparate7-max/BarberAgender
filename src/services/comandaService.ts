@@ -2358,7 +2358,39 @@ export const comandaService = {
     }
 
     // 1. Fetch all related documents before transaction
-    const clientDebtDocs = await getDocs(query(collection(db, 'client_debts'), where('comanda_id', '==', id)));
+    const qDebts1 = query(collection(db, 'client_debts'), where('comanda_id', '==', id));
+    const qDebts2 = query(collection(db, 'client_debts'), where('comandaId', '==', id));
+    const [snapDebts1, snapDebts2] = await Promise.all([
+      getDocs(qDebts1).catch(() => ({ docs: [] })),
+      getDocs(qDebts2).catch(() => ({ docs: [] }))
+    ]);
+
+    let extraDebts: any[] = [];
+    if (initialComanda?.cliente_id) {
+      try {
+        const qClientDebts = query(collection(db, 'client_debts'), where('cliente_id', '==', initialComanda.cliente_id));
+        const cSnap = await getDocs(qClientDebts);
+        extraDebts = cSnap.docs.filter(d => {
+          const data = d.data();
+          const desc = String(data.description || data.descricao || '');
+          return (
+            data.comanda_id === id ||
+            data.comandaId === id ||
+            (initialComanda.number && (data.comanda_number === initialComanda.number || desc.includes(`#${initialComanda.number}`))) ||
+            desc.includes(id)
+          );
+        });
+      } catch (err) {
+        console.warn("Could not query extra client debts:", err);
+      }
+    }
+
+    const allDebtMap = new Map<string, any>();
+    snapDebts1.docs.forEach(d => allDebtMap.set(d.id, d));
+    snapDebts2.docs.forEach(d => allDebtMap.set(d.id, d));
+    extraDebts.forEach(d => allDebtMap.set(d.id, d));
+
+    const clientDebtDocs = { docs: Array.from(allDebtMap.values()) };
     const debtIds = clientDebtDocs.docs.map(d => d.id);
 
     const relatedQueries: Promise<any>[] = [
@@ -2612,6 +2644,14 @@ export const comandaService = {
     } catch (cErr) {
       console.warn("Could not cancel lingering commissions in reopenComanda:", cErr);
     }
+
+    if (initialComanda?.cliente_id) {
+      try {
+        await debtService.reconcileClientAccount(initialComanda.cliente_id);
+      } catch (rErr) {
+        console.warn("Could not reconcile client account in reopenComanda:", rErr);
+      }
+    }
   },
 
   async revertComandaFinancials(id: string, clienteId?: string) {
@@ -2621,7 +2661,40 @@ export const comandaService = {
       if (!initialSnap.exists()) return;
       const comanda = initialSnap.data() as Comanda;
 
-      const clientDebtDocs = await getDocs(query(collection(db, 'client_debts'), where('comanda_id', '==', id)));
+      const qDebts1 = query(collection(db, 'client_debts'), where('comanda_id', '==', id));
+      const qDebts2 = query(collection(db, 'client_debts'), where('comandaId', '==', id));
+      const [snapDebts1, snapDebts2] = await Promise.all([
+        getDocs(qDebts1).catch(() => ({ docs: [] })),
+        getDocs(qDebts2).catch(() => ({ docs: [] }))
+      ]);
+
+      const targetClient = clienteId || comanda.cliente_id;
+      let extraDebts: any[] = [];
+      if (targetClient) {
+        try {
+          const qClientDebts = query(collection(db, 'client_debts'), where('cliente_id', '==', targetClient));
+          const cSnap = await getDocs(qClientDebts);
+          extraDebts = cSnap.docs.filter(d => {
+            const data = d.data();
+            const desc = String(data.description || data.descricao || '');
+            return (
+              data.comanda_id === id ||
+              data.comandaId === id ||
+              (comanda.number && (data.comanda_number === comanda.number || desc.includes(`#${comanda.number}`))) ||
+              desc.includes(id)
+            );
+          });
+        } catch (err) {
+          console.warn("Could not query extra client debts in revert:", err);
+        }
+      }
+
+      const allDebtMap = new Map<string, any>();
+      snapDebts1.docs.forEach(d => allDebtMap.set(d.id, d));
+      snapDebts2.docs.forEach(d => allDebtMap.set(d.id, d));
+      extraDebts.forEach(d => allDebtMap.set(d.id, d));
+
+      const clientDebtDocs = { docs: Array.from(allDebtMap.values()) };
       const debtIds = clientDebtDocs.docs.map(d => d.id);
 
       const relatedQueries: Promise<any>[] = [
@@ -2748,6 +2821,11 @@ export const comandaService = {
       await loyaltyService.revertComandaLoyalty(id, clienteId || comanda.cliente_id);
       // Cancel Commissions
       await commissionService.cancelCommissionsByComanda(id);
+      // Reconcile client balance to guarantee consistency
+      const targetClientId = clienteId || comanda.cliente_id;
+      if (targetClientId && targetClientId !== 'avulso') {
+        await debtService.reconcileClientAccount(targetClientId);
+      }
     } catch (err) {
       console.warn("Error in revertComandaFinancials:", err);
     }

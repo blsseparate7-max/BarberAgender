@@ -45,7 +45,7 @@ import { calculateProfessionalLedger } from '../services/ledgerService';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ProfessionalCommissionsDetail } from '../components/Financeiro/ProfessionalCommissionsDetail';
 import { CommissionAuditRecoveryModal } from '../components/Financeiro/CommissionAuditRecoveryModal';
@@ -76,10 +76,10 @@ export function Comissoes() {
   const [selectedBarber, setSelectedBarber] = useState(profile?.tipo === 'barbeiro' ? user?.uid : '');
   const [selectedStatus, setSelectedStatus] = useState<CommissionStatus | ''>('');
   const [dateRange, setDateRange] = useState(() => {
-    const today = new Date();
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
     return {
-      start: format(startOfMonth(today), 'yyyy-MM-dd'),
-      end: format(today, 'yyyy-MM-dd')
+      start: todayStr,
+      end: todayStr
     };
   });
 
@@ -160,44 +160,127 @@ export function Comissoes() {
     return () => unsubscribe();
   }, [tenantId]);
 
-  // Live Subscription for all commissions, advances, comandas and appointments of the tenant
+  // Live Subscription strictly bounded by dateRange and limits to prevent quota spikes
   useEffect(() => {
     if (!tenantId) return;
     
-    const commConstraints = tenantId === 'gbcortes7' 
-      ? [where('tenantId', 'in', [tenantId, ''])] 
-      : [where('tenantId', '==', tenantId)];
-    const qCom = query(collection(db, 'commissions'), ...commConstraints);
+    const isSingleDay = Boolean(dateRange.start && dateRange.start === dateRange.end);
+    
+    // 1. Commissions query
+    let qCom;
+    if (isSingleDay) {
+      qCom = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', tenantId),
+        where('date', '==', dateRange.start)
+      );
+    } else if (dateRange.start && dateRange.end) {
+      qCom = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', tenantId),
+        where('date', '>=', dateRange.start),
+        where('date', '<=', dateRange.end)
+      );
+    } else {
+      qCom = query(
+        collection(db, 'commissions'),
+        where('tenantId', '==', tenantId),
+        limit(150)
+      );
+    }
+
     const unsubCom = onSnapshot(qCom, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
       setAllCommissionsLive(docs);
+    }, (error) => {
+      console.warn("[Comissoes] Fallback on commissions listener:", error);
+      const fallbackQ = query(collection(db, 'commissions'), where('tenantId', '==', tenantId), limit(150));
+      onSnapshot(fallbackQ, (snap) => {
+        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+        setAllCommissionsLive(docs);
+      });
     });
 
-    const advConstraints = tenantId === 'gbcortes7' 
-      ? [where('tenantId', 'in', [tenantId, ''])] 
-      : [where('tenantId', '==', tenantId)];
-    const qAdv = query(collection(db, 'professional_advances'), ...advConstraints);
+    // 2. Advances query
+    let qAdv;
+    if (isSingleDay) {
+      qAdv = query(
+        collection(db, 'professional_advances'),
+        where('tenantId', '==', tenantId),
+        where('date', '==', dateRange.start)
+      );
+    } else if (dateRange.start && dateRange.end) {
+      qAdv = query(
+        collection(db, 'professional_advances'),
+        where('tenantId', '==', tenantId),
+        where('date', '>=', dateRange.start),
+        where('date', '<=', dateRange.end)
+      );
+    } else {
+      qAdv = query(
+        collection(db, 'professional_advances'),
+        where('tenantId', '==', tenantId),
+        limit(100)
+      );
+    }
+
     const unsubAdv = onSnapshot(qAdv, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
       setAllAdvancesLive(docs);
+    }, (error) => {
+      console.warn("[Comissoes] Fallback on advances listener:", error);
+      const fallbackQ = query(collection(db, 'professional_advances'), where('tenantId', '==', tenantId), limit(100));
+      onSnapshot(fallbackQ, (snap) => {
+        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
+        setAllAdvancesLive(docs);
+      });
     });
 
+    // 3. Comandas query (bounded with limit)
     const cmdConstraints = tenantId === 'gbcortes7'
       ? [where('tenantId', 'in', [tenantId, ''])]
       : [where('tenantId', '==', tenantId)];
-    const qCmd = query(collection(db, 'comandas'), ...cmdConstraints);
+    const qCmd = query(collection(db, 'comandas'), ...cmdConstraints, limit(100));
     const unsubCmd = onSnapshot(qCmd, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllComandasLive(docs);
+    }, (error) => {
+      console.error("Erro ao escutar comandas:", error);
     });
 
-    const aptConstraints = tenantId === 'gbcortes7'
-      ? [where('tenantId', 'in', [tenantId, ''])]
-      : [where('tenantId', '==', tenantId)];
-    const qApt = query(collection(db, 'appointments'), ...aptConstraints);
+    // 4. Appointments query (bounded with date or limit)
+    let qApt;
+    if (isSingleDay) {
+      qApt = query(
+        collection(db, 'appointments'),
+        where('tenantId', '==', tenantId),
+        where('date', '==', dateRange.start)
+      );
+    } else if (dateRange.start && dateRange.end) {
+      qApt = query(
+        collection(db, 'appointments'),
+        where('tenantId', '==', tenantId),
+        where('date', '>=', dateRange.start),
+        where('date', '<=', dateRange.end)
+      );
+    } else {
+      qApt = query(
+        collection(db, 'appointments'),
+        where('tenantId', '==', tenantId),
+        limit(150)
+      );
+    }
+
     const unsubApt = onSnapshot(qApt, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllAppointmentsLive(docs);
+    }, (error) => {
+      console.warn("[Comissoes] Fallback on appointments listener:", error);
+      const fallbackQ = query(collection(db, 'appointments'), where('tenantId', '==', tenantId), limit(150));
+      onSnapshot(fallbackQ, (snap) => {
+        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllAppointmentsLive(docs);
+      });
     });
 
     return () => {
@@ -206,7 +289,7 @@ export function Comissoes() {
       unsubCmd();
       unsubApt();
     };
-  }, [tenantId]);
+  }, [tenantId, dateRange.start, dateRange.end]);
 
   useEffect(() => {
     loadData();
@@ -545,21 +628,45 @@ export function Comissoes() {
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setDateRange({
-                  start: format(startOfDay(new Date()), 'yyyy-MM-dd'),
-                  end: format(endOfDay(new Date()), 'yyyy-MM-dd')
-                })}
-                className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
+                onClick={() => {
+                  const todayStr = format(new Date(), 'yyyy-MM-dd');
+                  setDateRange({ start: todayStr, end: todayStr });
+                }}
+                className={`px-2.5 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                  dateRange.start === format(new Date(), 'yyyy-MM-dd') && dateRange.end === format(new Date(), 'yyyy-MM-dd')
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                }`}
               >
                 Hoje
               </button>
               <button
                 type="button"
-                onClick={() => setDateRange({
-                  start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
-                  end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
-                })}
-                className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
+                onClick={() => {
+                  const yStr = format(startOfDay(new Date(Date.now() - 86400000)), 'yyyy-MM-dd');
+                  setDateRange({ start: yStr, end: yStr });
+                }}
+                className={`px-2.5 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                  dateRange.start === format(startOfDay(new Date(Date.now() - 86400000)), 'yyyy-MM-dd') && dateRange.end === format(startOfDay(new Date(Date.now() - 86400000)), 'yyyy-MM-dd')
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                }`}
+              >
+                Ontem
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date();
+                  const startMonth = format(startOfMonth(now), 'yyyy-MM-dd');
+                  const endMonth = format(endOfMonth(now), 'yyyy-MM-dd');
+                  setDateRange({ start: startMonth, end: endMonth });
+                }}
+                className={`px-2.5 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                  dateRange.start === format(startOfMonth(new Date()), 'yyyy-MM-dd') && dateRange.end === format(endOfMonth(new Date()), 'yyyy-MM-dd')
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                }`}
               >
                 Este Mês
               </button>

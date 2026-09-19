@@ -18,7 +18,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Appointment, AppointmentStatus, UserProfile } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
@@ -46,9 +46,12 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
 
   useEffect(() => {
     const tid = currentUser?.tenantId || getActiveTenantId() || '';
+    if (!tid) return;
+
     const qPackages = query(
       collection(db, 'pacotes_vendas'),
-      where('tenantId', '==', tid)
+      where('tenantId', '==', tid),
+      limit(100)
     );
     const unsubPackages = onSnapshot(qPackages, (snap) => {
       const uids = new Set<string>();
@@ -61,7 +64,8 @@ export function AppointmentList({ currentUser, onOpenAppointment }: AppointmentL
 
     const qSubscriptions = query(
       collection(db, 'subscriptions'),
-      where('tenantId', '==', tid)
+      where('tenantId', '==', tid),
+      limit(100)
     );
     const unsubSubscriptions = onSnapshot(qSubscriptions, (snap) => {
       const uids = new Set<string>();

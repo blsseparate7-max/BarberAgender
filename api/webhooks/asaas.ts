@@ -586,6 +586,47 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // Handle PAYMENT_OVERDUE (Agenda blocking and overdue flag)
+    const isPaymentOverdue = (
+      eventType === 'PAYMENT_OVERDUE' ||
+      eventType === 'PAYMENT_DUNNING_REQUESTED' ||
+      payment?.status === 'OVERDUE'
+    );
+
+    if (isPaymentOverdue) {
+      const subIdFromPayment = payment?.subscription || (typeof subscription === 'string' ? subscription : subscription?.id);
+      const paymentIdFromPayment = payment?.id;
+      let targetSubDoc: any = null;
+
+      if (subIdFromPayment) {
+        const qRes = await queryCollection('subscriptions', 'asaasSubscriptionId', '==', subIdFromPayment);
+        if (qRes.length > 0) targetSubDoc = qRes[0];
+      }
+      if (!targetSubDoc && paymentIdFromPayment) {
+        const qRes = await queryCollection('subscriptions', 'asaasInvoiceId', '==', paymentIdFromPayment);
+        if (qRes.length > 0) targetSubDoc = qRes[0];
+      }
+      if (!targetSubDoc && cleanRefId) {
+        for (const idToCheck of Array.from(new Set([cleanRefId, rawRefId].filter(Boolean)))) {
+          const matchDoc = await getDocById('subscriptions', idToCheck);
+          if (matchDoc) {
+            targetSubDoc = matchDoc;
+            break;
+          }
+        }
+      }
+
+      if (targetSubDoc) {
+        await updateDocById('subscriptions', targetSubDoc.id, {
+          status: 'overdue',
+          asaasPaymentStatus: 'overdue',
+          updatedAt: new Date().toISOString()
+        });
+        console.log(`⚠️ [ASAAS WEBHOOK] Subscription ${targetSubDoc.id} marked as overdue.`);
+        return res.status(200).json({ received: true, success: true, updated: "overdue", docId: targetSubDoc.id });
+      }
+    }
+
     return res.status(200).json({ received: true, processed: true });
   } catch (error: any) {
     console.error("❌ [VERCEL ASAAS WEBHOOK] Error handling event:", error);

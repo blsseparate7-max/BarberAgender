@@ -22,18 +22,55 @@ const COLLECTION_PAYMENTS = 'debt_payments';
 export const debtService = {
   async getClientDebts(cliente_id: string) {
     if (!cliente_id) return [];
-    const q = query(
-      collection(db, COLLECTION_DEBTS),
-      where('tenantId', '==', getActiveTenantId()),
-      where('cliente_id', '==', cliente_id)
-    );
-    const querySnapshot = await getDocs(q);
-    const debts = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as ClientDebt));
-    return debts.sort((a, b) => {
-      const aTime = a.createdAt?.seconds || 0;
-      const bTime = b.createdAt?.seconds || 0;
-      return bTime - aTime;
-    });
+    try {
+      const activeTenant = getActiveTenantId();
+      
+      const q1 = query(
+        collection(db, COLLECTION_DEBTS),
+        where('cliente_id', '==', cliente_id)
+      );
+      const q2 = query(
+        collection(db, COLLECTION_DEBTS),
+        where('client_id', '==', cliente_id)
+      );
+
+      const [snap1, snap2] = await Promise.all([
+        getDocs(q1).catch(() => ({ docs: [] })),
+        getDocs(q2).catch(() => ({ docs: [] }))
+      ]);
+
+      const debtMap = new Map<string, ClientDebt>();
+      [...snap1.docs, ...snap2.docs].forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.tenantId && activeTenant && data.tenantId !== activeTenant) {
+          return;
+        }
+        const amount = Number(data.amount ?? data.valor ?? data.value ?? 0);
+        const remainingAmount = Number(data.remainingAmount ?? data.saldo_restante ?? data.valor_restante ?? (data.status === 'pago' ? 0 : amount));
+        const status = data.status || (remainingAmount <= 0.001 ? 'pago' : 'pendente');
+
+        debtMap.set(docSnap.id, {
+          id: docSnap.id,
+          cliente_id: data.cliente_id || data.client_id || cliente_id,
+          amount,
+          remainingAmount,
+          status,
+          description: data.description || data.descricao || data.motivo || 'Fiado / Dívida',
+          date: data.date || data.data || (data.createdAt?.toDate?.() ? data.createdAt.toDate().toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+          ...data
+        } as ClientDebt);
+      });
+
+      const debts = Array.from(debtMap.values());
+      return debts.sort((a, b) => {
+        const aTime = a.createdAt?.seconds || 0;
+        const bTime = b.createdAt?.seconds || 0;
+        return bTime - aTime;
+      });
+    } catch (err) {
+      console.error("Error fetching client debts:", err);
+      return [];
+    }
   },
 
   async getDebtById(id: string) {
@@ -662,6 +699,62 @@ export const debtService = {
     } catch (err) {
       console.error("Erro ao reconciliar conta do cliente:", err);
       return null;
+    }
+  },
+
+  /**
+   * Sincronização e Reconciliação Global de Fiados/Débitos de Todos os Clientes
+   * Varre todas as dívidas na base, recalcula a soma de fiados pendentes por cliente e
+   * atualiza os cadastros em 'usuarios' (total_em_aberto, saldo_devedor, etc).
+   */
+  async syncAllClientsDebtBalances() {
+    try {
+      const activeTenant = getActiveTenantId();
+      const debtsSnap = await getDocs(collection(db, COLLECTION_DEBTS));
+      
+      const debtsByClient: Record<string, { totalOpen: number; activeCount: number }> = {};
+      
+      debtsSnap.docs.forEach(docSnap => {
+        const d = docSnap.data();
+        if (d.tenantId && activeTenant && d.tenantId !== activeTenant) {
+          return;
+        }
+        const cId = d.cliente_id || d.client_id || d.clientId;
+        if (!cId || cId === 'avulso') return;
+
+        const isPaid = ['pago', 'paga', 'quitado', 'cancelado'].includes(String(d.status || '').toLowerCase());
+        const remaining = Number(d.remainingAmount ?? (isPaid ? 0 : (d.amount ?? d.valor ?? 0)));
+
+        if (!debtsByClient[cId]) {
+          debtsByClient[cId] = { totalOpen: 0, activeCount: 0 };
+        }
+
+        if (!isPaid && remaining > 0.001) {
+          debtsByClient[cId].totalOpen += remaining;
+          debtsByClient[cId].activeCount += 1;
+        }
+      });
+
+      const updates: Promise<any>[] = [];
+      for (const [clientId, info] of Object.entries(debtsByClient)) {
+        const clientRef = doc(db, 'usuarios', clientId);
+        updates.push(
+          updateDoc(clientRef, {
+            total_em_aberto: info.totalOpen,
+            saldo_devedor: info.totalOpen,
+            updatedAt: serverTimestamp()
+          }).catch(err => console.warn(`Could not sync debt for client ${clientId}:`, err))
+        );
+      }
+
+      await Promise.all(updates);
+      return {
+        totalClientsWithDebts: Object.keys(debtsByClient).length,
+        totalDebtsProcessed: debtsSnap.size
+      };
+    } catch (err) {
+      console.error("Error in syncAllClientsDebtBalances:", err);
+      throw err;
     }
   }
 };

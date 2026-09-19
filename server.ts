@@ -1734,8 +1734,8 @@ function encodeFirestoreFields(data: any): any {
         // Use custom dueDate if provided in req.body, or default to today (no 3-day offset)
         let dueDateStr = req.body?.dueDate || req.body?.nextDueDate;
         if (!dueDateStr) {
-          const today = new Date();
-          dueDateStr = today.toISOString().split('T')[0];
+          const now = new Date();
+          dueDateStr = now.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }) || now.toISOString().split('T')[0];
         }
 
         let payData: any = null;
@@ -6694,12 +6694,14 @@ function encodeFirestoreFields(data: any): any {
   }
   const localPushSubs = new Map<string, StoredPushSub>();
 
-  async function sendPushToUser(userId: string, payload: { title: string; body: string; url?: string; icon?: string }) {
+  async function sendPushToUser(userId: string, payload: { title: string; body: string; url?: string; icon?: string; badge?: string; tag?: string }) {
     const jsonPayload = JSON.stringify({
       title: payload.title,
       body: payload.body,
       icon: payload.icon || "/icon-192.png",
-      url: payload.url || "/"
+      badge: payload.badge || "/badge-72.png",
+      url: payload.url || "/",
+      tag: payload.tag || "rull-push-" + Date.now()
     });
 
     const subsToSend: StoredPushSub[] = [];
@@ -6735,6 +6737,64 @@ function encodeFirestoreFields(data: any): any {
           if (fbAdmin && s.id) {
             getFirestore(fbAdmin).collection("push_subscriptions").doc(s.id).delete().catch(() => {});
           }
+        }
+      }
+    }
+  }
+
+  async function sendPushToRole(tenantId: string, roles: string[], payload: { title: string; body: string; url?: string; icon?: string; badge?: string; tag?: string }, excludeUserId?: string) {
+    const jsonPayload = JSON.stringify({
+      title: payload.title,
+      body: payload.body,
+      icon: payload.icon || "/icon-192.png",
+      badge: payload.badge || "/badge-72.png",
+      url: payload.url || "/",
+      tag: payload.tag || "rull-role-push-" + Date.now()
+    });
+
+    const subsToSend: StoredPushSub[] = [];
+    const lowerRoles = roles.map(r => r.toLowerCase());
+
+    for (const [_, sub] of localPushSubs.entries()) {
+      const subTenant = (sub.tenantId || '').toLowerCase();
+      const targetTenant = (tenantId || '').toLowerCase();
+      const matchesTenant = !targetTenant || !subTenant || subTenant === targetTenant || targetTenant === 'gbcortes7' || subTenant === 'gbcortes7';
+      const matchesRole = lowerRoles.includes((sub.userRole || '').toLowerCase());
+      const notExcluded = !excludeUserId || sub.userId !== excludeUserId;
+
+      if (matchesRole && matchesTenant && notExcluded) {
+        subsToSend.push(sub);
+      }
+    }
+
+    try {
+      const fbAdmin = getFirebaseAdmin();
+      if (fbAdmin) {
+        const db = getFirestore(fbAdmin);
+        let q: any = db.collection("push_subscriptions");
+        if (tenantId && tenantId !== 'gbcortes7') {
+          q = q.where("tenantId", "==", tenantId);
+        }
+        const snap = await q.get();
+        snap.docs.forEach(d => {
+          const dData = d.data() as StoredPushSub;
+          const matchesRole = lowerRoles.includes((dData.userRole || '').toLowerCase());
+          const notExcluded = !excludeUserId || dData.userId !== excludeUserId;
+          if (matchesRole && notExcluded && dData.subscription?.endpoint && !subsToSend.some(s => s.subscription?.endpoint === dData.subscription?.endpoint)) {
+            subsToSend.push(dData);
+          }
+        });
+      }
+    } catch (_) {}
+
+    for (const s of subsToSend) {
+      try {
+        if (s.subscription && s.subscription.endpoint) {
+          await webpush.sendNotification(s.subscription, jsonPayload);
+        }
+      } catch (err: any) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          localPushSubs.delete(s.id);
         }
       }
     }
@@ -6787,10 +6847,10 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
-  // Testar envio de notificação na tela do celular
+  // Testar envio de notificação na tela do celular com Logo e Nome da Barbearia
   app.post("/api/notifications/test-push", async (req, res) => {
     try {
-      const { userId } = req.body;
+      const { userId, tenantId, tenantName, tenantLogo } = req.body;
       const subsToSend: StoredPushSub[] = [];
 
       for (const [_, sub] of localPushSubs.entries()) {
@@ -6824,11 +6884,30 @@ function encodeFirestoreFields(data: any): any {
         }
       }
 
+      let shopName = tenantName || "Barbearia";
+      let shopLogo = tenantLogo || "";
+
+      if (!shopLogo || !shopName || shopName === "Barbearia") {
+        try {
+          const fbAdmin = getFirebaseAdmin();
+          if (fbAdmin && tenantId) {
+            const db = getFirestore(fbAdmin);
+            const tDoc = await db.collection("tenants").doc(tenantId).get();
+            if (tDoc.exists) {
+              const tData = tDoc.data() || {};
+              shopName = tData.name || shopName;
+              shopLogo = tData.logoUrl || shopLogo;
+            }
+          }
+        } catch (_) {}
+      }
+
       let sentCount = 0;
       const testPayload = JSON.stringify({
-        title: "💈 Notificação Rull Ativa!",
-        body: "Parabéns! O seu celular está configurado para receber lembretes e avisos de agendamentos em tempo real.",
-        icon: "/icon-192.png",
+        title: `💈 ${shopName} — Notificações Ativas!`,
+        body: `Parabéns! O seu aparelho está pronto para receber avisos e agendamentos em tempo real de ${shopName}.`,
+        icon: shopLogo || "/icon-192.png",
+        badge: "/badge-72.png",
         url: "/"
       });
 
@@ -6849,47 +6928,102 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
-  // Disparar push de agendamento (novo, reagendado ou cancelado)
+  // Disparar push de agendamento (novo, reagendado ou cancelado) com suporte a Logo da Barbearia e envio a Barbeiros, Gerentes e Admins
   app.post("/api/notifications/send-appointment-push", async (req, res) => {
     try {
-      const { eventType, appointment } = req.body;
+      const { eventType, appointment, tenantId, tenantName, tenantLogo } = req.body;
       if (!appointment) return res.status(400).json({ error: "Dados do agendamento ausentes." });
 
-      const clientName = appointment.cliente_name || "Cliente";
-      const barberName = appointment.profissional_name || "Barbeiro";
-      const serviceName = appointment.servico_name || "Serviço";
+      const clientName = appointment.cliente_name || appointment.clientName || "Cliente";
+      const barberName = appointment.profissional_name || appointment.barberName || "Barbeiro";
+      const serviceName = appointment.servico_name || appointment.serviceName || "Serviço";
       const dateStr = appointment.date || "";
       const timeStr = appointment.startTime || "";
-      const barberId = appointment.profissional_id;
-      const clientId = appointment.cliente_id;
+      const barberId = appointment.profissional_id || appointment.barberId;
+      const clientId = appointment.cliente_id || appointment.clientId;
+      const effectiveTenantId = tenantId || appointment.tenantId || '';
 
-      let barberTitle = "🔔 Atualização na sua Agenda";
-      let barberBody = `${clientName} tem uma atualização no agendamento às ${timeStr}.`;
-      let clientTitle = "📅 Seu Agendamento";
-      let clientBody = `Seu horário com ${barberName} para ${serviceName} foi atualizado.`;
+      // Obter Logo e Nome Fantasia da Barbearia
+      let shopName = tenantName || "Barbearia";
+      let shopLogo = tenantLogo || "";
+
+      if (!shopLogo || !shopName || shopName === "Barbearia") {
+        try {
+          const fbAdmin = getFirebaseAdmin();
+          if (fbAdmin && effectiveTenantId) {
+            const db = getFirestore(fbAdmin);
+            const tDoc = await db.collection("tenants").doc(effectiveTenantId).get();
+            if (tDoc.exists) {
+              const tData = tDoc.data() || {};
+              shopName = tData.name || shopName;
+              shopLogo = tData.logoUrl || shopLogo;
+            }
+          }
+        } catch (_) {}
+      }
+
+      const pushIcon = shopLogo || "/icon-192.png";
+      const pushBadge = "/badge-72.png";
+
+      let staffTitle = `💈 ${shopName} — Atualização na Agenda`;
+      let staffBody = `👤 ${clientName} | ✂️ ${serviceName} | ⏰ ${dateStr} às ${timeStr} | 💈 ${barberName}`;
+      let clientTitle = `💈 ${shopName} — Seu Agendamento`;
+      let clientBody = `Seu horário com ${barberName} para ${serviceName} em ${dateStr} às ${timeStr} foi atualizado.`;
 
       if (eventType === 'created') {
-        barberTitle = "📅 Novo Agendamento Recebido!";
-        barberBody = `${clientName} agendou ${serviceName} para o dia ${dateStr} às ${timeStr}.`;
-        clientTitle = "✅ Agendamento Confirmado!";
-        clientBody = `Seu horário de ${serviceName} com ${barberName} está marcado para ${dateStr} às ${timeStr}.`;
+        staffTitle = `📅 ${shopName} — Novo Agendamento!`;
+        staffBody = `👤 ${clientName} marcou ${serviceName}\n⏰ ${dateStr} às ${timeStr} com ${barberName}`;
+        clientTitle = `✅ ${shopName} — Agendamento Confirmado!`;
+        clientBody = `Seu horário de ${serviceName} com ${barberName} está confirmado para ${dateStr} às ${timeStr}.`;
       } else if (eventType === 'rescheduled') {
-        barberTitle = "🔄 Horário Reagendado!";
-        barberBody = `O horário de ${clientName} foi alterado para ${dateStr} às ${timeStr}.`;
-        clientTitle = "🔄 Horário Alterado!";
-        clientBody = `Seu agendamento com ${barberName} foi alterado para ${dateStr} às ${timeStr}.`;
+        staffTitle = `🔄 ${shopName} — Horário Reagendado!`;
+        staffBody = `👤 ${clientName} reagendou para ${dateStr} às ${timeStr} (com ${barberName})`;
+        clientTitle = `🔄 ${shopName} — Horário Alterado!`;
+        clientBody = `Seu agendamento de ${serviceName} foi alterado para ${dateStr} às ${timeStr} com ${barberName}.`;
       } else if (eventType === 'cancelled') {
-        barberTitle = "🚨 Agendamento Cancelado";
-        barberBody = `O agendamento de ${clientName} às ${timeStr} do dia ${dateStr} foi cancelado.`;
-        clientTitle = "🚨 Horário Cancelado";
+        staffTitle = `🚨 ${shopName} — Agendamento Cancelado`;
+        staffBody = `👤 ${clientName} cancelou o horário de ${dateStr} às ${timeStr} com ${barberName}.`;
+        clientTitle = `🚨 ${shopName} — Horário Cancelado`;
         clientBody = `Seu agendamento com ${barberName} do dia ${dateStr} às ${timeStr} foi cancelado.`;
       }
 
-      if (barberId && barberId !== 'admin') {
-        await sendPushToUser(barberId, { title: barberTitle, body: barberBody, url: '/portal-barbeiro' });
+      // 1. Notificar Barbeiro Específico
+      if (barberId) {
+        await sendPushToUser(barberId, {
+          title: staffTitle,
+          body: staffBody,
+          icon: pushIcon,
+          badge: pushBadge,
+          url: '/portal-barbeiro',
+          tag: `appt-${appointment.id || Date.now()}`
+        });
       }
+
+      // 2. Notificar Dono / Administradores / Gerentes da barbearia em tempo real
+      await sendPushToRole(
+        effectiveTenantId,
+        ['admin', 'gerente', 'saas_admin', 'gestor', 'recepcionista'],
+        {
+          title: staffTitle,
+          body: staffBody,
+          icon: pushIcon,
+          badge: pushBadge,
+          url: '/agenda',
+          tag: `appt-admin-${appointment.id || Date.now()}`
+        },
+        barberId // Evita enviar duplicado se o admin for o próprio barbeiro
+      );
+
+      // 3. Notificar o Cliente
       if (clientId) {
-        await sendPushToUser(clientId, { title: clientTitle, body: clientBody, url: '/portal' });
+        await sendPushToUser(clientId, {
+          title: clientTitle,
+          body: clientBody,
+          icon: pushIcon,
+          badge: pushBadge,
+          url: '/portal',
+          tag: `appt-client-${appointment.id || Date.now()}`
+        });
       }
 
       return res.json({ success: true, message: "Push disparado com sucesso." });

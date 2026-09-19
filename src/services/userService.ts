@@ -23,14 +23,32 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const COLLECTION = 'usuarios';
 
+// In-memory cache de barbeiros e colaboradores para mitigar leituras excessivas
+const barbersCache = new Map<string, { data: UserProfile[]; timestamp: number }>();
+const USERS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+export function invalidateBarbersCache(tenantId?: string) {
+  if (tenantId) {
+    const tid = tenantId.trim().toLowerCase();
+    for (const key of barbersCache.keys()) {
+      if (key.includes(tid)) barbersCache.delete(key);
+    }
+  } else {
+    barbersCache.clear();
+  }
+}
+
 export const userService = {
-  async getUsersByRole(role: UserRole, onlyActive = true, tenantId?: string) {
+  async getUsersByRole(role: UserRole, onlyActive = true, tenantId?: string, maxLimit = 150) {
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    const constraints = [where('tipo', '==', role)];
+    const constraints: any[] = [where('tipo', '==', role)];
     if (tid === 'gbcortes7') {
       constraints.push(where('tenantId', 'in', [tid, '']));
     } else {
       constraints.push(where('tenantId', '==', tid));
+    }
+    if (maxLimit && maxLimit > 0) {
+      constraints.push(limit(maxLimit));
     }
     const q = query(
       collection(db, COLLECTION), 
@@ -46,13 +64,16 @@ export const userService = {
     return users.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   },
 
-  subscribeToUsersByRole(role: UserRole, onlyActive = true, callback: (users: UserProfile[]) => void, tenantId?: string) {
+  subscribeToUsersByRole(role: UserRole, onlyActive = true, callback: (users: UserProfile[]) => void, tenantId?: string, maxLimit?: number) {
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    const constraints = [where('tipo', '==', role)];
+    const constraints: any[] = [where('tipo', '==', role)];
     if (tid === 'gbcortes7') {
       constraints.push(where('tenantId', 'in', [tid, '']));
     } else {
       constraints.push(where('tenantId', '==', tid));
+    }
+    if (maxLimit && maxLimit > 0) {
+      constraints.push(limit(maxLimit));
     }
     const q = query(
       collection(db, COLLECTION), 
@@ -120,15 +141,24 @@ export const userService = {
     });
   },
 
-  subscribeToAllClients(onlyActive = true, callback: (clients: UserProfile[]) => void, tenantId?: string) {
-    return this.subscribeToUsersByRole('cliente', onlyActive, callback, tenantId);
+  subscribeToAllClients(onlyActive = true, callback: (clients: UserProfile[]) => void, tenantId?: string, maxLimit: number = 80) {
+    return this.subscribeToUsersByRole('cliente', onlyActive, callback, tenantId, maxLimit);
   },
 
-  async getAllBarbers(onlyActive = true, tenantId?: string) {
+  async getAllBarbers(onlyActive = true, tenantId?: string, bypassCache = false) {
     const storedTenant = typeof window !== 'undefined' 
       ? (localStorage.getItem('barberelite_tenant_id') || localStorage.getItem('tenantId') || '') 
       : '';
     const tid = (tenantId || getActiveTenantId() || storedTenant).trim().toLowerCase();
+    const cacheKey = `${tid}_active:${onlyActive}`;
+
+    if (!bypassCache) {
+      const cached = barbersCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < USERS_CACHE_TTL_MS)) {
+        return cached.data;
+      }
+    }
+
     const q = query(
       collection(db, COLLECTION),
       where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])
@@ -177,11 +207,12 @@ export const userService = {
       }
     }
 
+    barbersCache.set(cacheKey, { data: unique, timestamp: Date.now() });
     return unique;
   },
 
-  async getAllClients(onlyActive = true) {
-    return this.getUsersByRole('cliente', onlyActive);
+  async getAllClients(onlyActive = true, maxLimit = 150) {
+    return this.getUsersByRole('cliente', onlyActive, undefined, maxLimit);
   },
 
   async searchUsers(role: UserRole, searchTerm: string) {
@@ -205,7 +236,40 @@ export const userService = {
     if (!cleanPhone || cleanPhone.length < 8) return null;
 
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    const clients = await this.getUsersByRole('cliente', false, tid);
+
+    // 1. Direct indexed queries for exact or digits phone match (1 document read)
+    try {
+      const qPhone = query(
+        collection(db, COLLECTION),
+        where('telefone', '==', phone),
+        limit(1)
+      );
+      const snapPhone = await getDocs(qPhone);
+      if (!snapPhone.empty) {
+        const u = { uid: snapPhone.docs[0].id, ...snapPhone.docs[0].data() } as UserProfile;
+        const uTenant = (u.tenantId || '').trim().toLowerCase();
+        if (!tid || uTenant === tid || (tid === 'gbcortes7' && (uTenant === 'gbcortes7' || uTenant === ''))) {
+          return u;
+        }
+      }
+
+      const qClean = query(
+        collection(db, COLLECTION),
+        where('telefone', '==', cleanPhone),
+        limit(1)
+      );
+      const snapClean = await getDocs(qClean);
+      if (!snapClean.empty) {
+        const u = { uid: snapClean.docs[0].id, ...snapClean.docs[0].data() } as UserProfile;
+        const uTenant = (u.tenantId || '').trim().toLowerCase();
+        if (!tid || uTenant === tid || (tid === 'gbcortes7' && (uTenant === 'gbcortes7' || uTenant === ''))) {
+          return u;
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback bounded to maximum 50 clients instead of downloading entire database
+    const clients = await this.getUsersByRole('cliente', false, tid, 50);
     const found = clients.find(c => {
       const p1 = (c.telefone || '').replace(/\D/g, '');
       const p2 = (c.phone || '').replace(/\D/g, '');
@@ -224,7 +288,23 @@ export const userService = {
     }
 
     const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
-    const clients = await this.getUsersByRole('cliente', false, tid);
+    try {
+      const qEmail = query(
+        collection(db, COLLECTION),
+        where('email', '==', cleanEmail),
+        limit(1)
+      );
+      const snap = await getDocs(qEmail);
+      if (!snap.empty) {
+        const u = { uid: snap.docs[0].id, ...snap.docs[0].data() } as UserProfile;
+        const uTenant = (u.tenantId || '').trim().toLowerCase();
+        if (!tid || uTenant === tid || (tid === 'gbcortes7' && (uTenant === 'gbcortes7' || uTenant === ''))) {
+          return u;
+        }
+      }
+    } catch (_) {}
+
+    const clients = await this.getUsersByRole('cliente', false, tid, 50);
     const found = clients.find(c => (c.email || '').toLowerCase().trim() === cleanEmail);
 
     if (found) return found;
@@ -475,6 +555,7 @@ export const userService = {
     }
 
     await updateDoc(docRef, updateData);
+    invalidateBarbersCache(snap.data()?.tenantId || getActiveTenantId());
   },
 
   async createUser(data: Partial<UserProfile> & { password?: string }) {
@@ -621,6 +702,7 @@ export const userService = {
     }
     
     await setDoc(docRef, newUser);
+    invalidateBarbersCache(newUser.tenantId || getActiveTenantId());
     return newUser;
   },
 

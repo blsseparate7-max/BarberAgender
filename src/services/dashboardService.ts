@@ -58,11 +58,12 @@ async function safeTenantDateDocs(collectionName: string, activeTenantId: string
     }
   }
 
-  // Fallback: Query by tenantId (and extra constraints if any) then filter in-memory
+  // Fallback: Query by tenantId with safety limit to protect Firestore read quota
   try {
     const snap = await getDocs(query(
       collection(db, collectionName),
       where('tenantId', '==', activeTenantId),
+      limit(250),
       ...extraConstraints
     ));
     if (startStr || endStr) {
@@ -111,7 +112,8 @@ export const dashboardService = {
         query(
           collection(db, 'comandas'),
           where('tenantId', '==', activeTenantId),
-          where('status', 'in', ['aberta', 'aguardando_pagamento'])
+          where('status', 'in', ['aberta', 'aguardando_pagamento']),
+          limit(50)
         )
       ).catch(err => {
         console.error("Dashboard Query Error [comandas]:", err);
@@ -121,7 +123,8 @@ export const dashboardService = {
         query(
           collection(db, 'products'),
           where('tenantId', '==', activeTenantId),
-          where('status', '==', 'active')
+          where('status', '==', 'active'),
+          limit(100)
         )
       ).catch(err => {
         console.error("Dashboard Query Error [products]:", err);
@@ -131,7 +134,8 @@ export const dashboardService = {
         query(
           collection(db, 'client_debts'),
           where('tenantId', '==', activeTenantId),
-          where('status', 'in', ['pendente', 'parcial', 'vencido'])
+          where('status', 'in', ['pendente', 'parcial', 'vencido']),
+          limit(60)
         )
       ).catch(err => {
         console.error("Dashboard Query Error [client_debts]:", err);

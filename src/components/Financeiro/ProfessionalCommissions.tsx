@@ -59,9 +59,14 @@ export function ProfessionalCommissions({
   
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProId, setSelectedProId] = useState<string | null>(null);
-  const [dateRange, setDateRangeState] = useState({
-    start: parentDateRange?.start || '2026-09-01',
-    end: parentDateRange?.end || '2026-09-15'
+  const [dateRange, setDateRangeState] = useState(() => {
+    const now = new Date();
+    const startOfMonth = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
+    const todayStr = format(now, 'yyyy-MM-dd');
+    return {
+      start: parentDateRange?.start || startOfMonth,
+      end: parentDateRange?.end || todayStr
+    };
   });
 
   const setDateRange = (newRange: any) => {
@@ -104,7 +109,6 @@ export function ProfessionalCommissions({
     setLoading(true);
 
     const activeTenantId = getActiveTenantId();
-    commissionService.purgeOrphanedVales(activeTenantId);
 
     const constraints = [where('tipo', 'in', ['barbeiro', 'gerente', 'admin'])];
     if (activeTenantId === 'gbcortes7') {
@@ -146,25 +150,28 @@ export function ProfessionalCommissions({
     });
 
     const isSingleDay = Boolean(dateRange.start && dateRange.start === dateRange.end);
+    const tenantCondition = activeTenantId === 'gbcortes7'
+      ? where('tenantId', 'in', [activeTenantId, ''])
+      : where('tenantId', '==', activeTenantId);
+
     let commsQuery;
     if (isSingleDay) {
       commsQuery = query(
         collection(db, 'commissions'),
-        where('tenantId', '==', activeTenantId),
+        tenantCondition,
         where('date', '==', dateRange.start)
       );
     } else if (dateRange.start && dateRange.end) {
       commsQuery = query(
         collection(db, 'commissions'),
-        where('tenantId', '==', activeTenantId),
+        tenantCondition,
         where('date', '>=', dateRange.start),
         where('date', '<=', dateRange.end)
       );
     } else {
       commsQuery = query(
         collection(db, 'commissions'),
-        where('tenantId', '==', activeTenantId),
-        limit(200)
+        tenantCondition
       );
     }
 
@@ -175,8 +182,7 @@ export function ProfessionalCommissions({
       console.warn("[ProfessionalCommissions] Error or missing index on comms range query, falling back to limited:", error);
       const fallbackComms = query(
         collection(db, 'commissions'),
-        where('tenantId', '==', activeTenantId),
-        limit(200)
+        tenantCondition
       );
       onSnapshot(fallbackComms, (snap) => {
         const cList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -184,15 +190,34 @@ export function ProfessionalCommissions({
       });
     });
 
-    const cmdConstraints = activeTenantId === 'gbcortes7'
-      ? [where('tenantId', 'in', [activeTenantId, ''])]
-      : [where('tenantId', '==', activeTenantId)];
-    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints, limit(150));
+    let comandasQuery;
+    if (isSingleDay) {
+      comandasQuery = query(
+        collection(db, 'comandas'),
+        tenantCondition,
+        where('date', '==', dateRange.start)
+      );
+    } else if (dateRange.start && dateRange.end) {
+      comandasQuery = query(
+        collection(db, 'comandas'),
+        tenantCondition,
+        where('date', '>=', dateRange.start),
+        where('date', '<=', dateRange.end)
+      );
+    } else {
+      comandasQuery = query(collection(db, 'comandas'), tenantCondition);
+    }
+
     const unsubComandas = onSnapshot(comandasQuery, (snapshot) => {
       const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllComandas(cList);
     }, (error) => {
-      console.error("Erro ao escutar comandas:", error);
+      console.warn("Erro ao escutar comandas filtradas por data, tentando por tenant:", error);
+      const fallbackCmd = query(collection(db, 'comandas'), tenantCondition);
+      onSnapshot(fallbackCmd, (snap) => {
+        const cList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllComandas(cList);
+      });
     });
 
     // Reactive listeners for advances, payables, cash movements, and financial transactions
@@ -309,7 +334,7 @@ export function ProfessionalCommissions({
       setAllAdvances(merged);
     };
 
-    const advsQuery = query(collection(db, 'professional_advances'), where('tenantId', '==', activeTenantId), limit(100));
+    const advsQuery = query(collection(db, 'professional_advances'), tenantCondition);
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
       rawAdvs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -317,7 +342,7 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar vales:", error);
     });
 
-    const payablesQuery = query(collection(db, 'accounts_payable'), where('tenantId', '==', activeTenantId), limit(100));
+    const payablesQuery = query(collection(db, 'accounts_payable'), tenantCondition);
     const unsubPayables = onSnapshot(payablesQuery, (snapshot) => {
       rawPayables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -325,7 +350,7 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar contas a pagar para vales:", error);
     });
 
-    const cashMovsQuery = query(collection(db, 'cash_movements'), where('tenantId', '==', activeTenantId), limit(100));
+    const cashMovsQuery = query(collection(db, 'cash_movements'), tenantCondition);
     const unsubCashMovs = onSnapshot(cashMovsQuery, (snapshot) => {
       rawCashMovs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -333,7 +358,7 @@ export function ProfessionalCommissions({
       console.error("Erro ao escutar movimentacoes para vales:", error);
     });
 
-    const finTxsQuery = query(collection(db, 'financial_transactions'), where('tenantId', '==', activeTenantId), limit(100));
+    const finTxsQuery = query(collection(db, 'financial_transactions'), tenantCondition);
     const unsubFinTxs = onSnapshot(finTxsQuery, (snapshot) => {
       rawFinTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();

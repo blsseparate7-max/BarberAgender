@@ -332,23 +332,13 @@ export const comandaService = {
         });
 
         if (hasMatchingClosed || hasMatchingCommission) {
-          console.log(`Self-healing: Deleting duplicate open comanda ${oId} for client ${openData.cliente_name}`);
+          console.log(`Self-healing: Marking matched comanda ${oId} as fechada for client ${openData.cliente_name}`);
           
-          const batch = writeBatch(db);
-          // Delete duplicate open comanda document
-          batch.delete(openDoc.ref);
-          
-          // Delete any linked appointments of this open comanda to completely free up the agenda grid slots
-          const linkedAppsQuery = query(
-            collection(db, 'appointments'),
-            where('comanda_id', '==', oId)
-          );
-          const linkedAppsSnap = await getDocs(linkedAppsQuery);
-          linkedAppsSnap.forEach((docSnap) => {
-            batch.delete(docSnap.ref);
+          await updateDoc(openDoc.ref, {
+            status: 'fechada',
+            closedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
           });
-          
-          await batch.commit();
           healedComandas++;
         }
       }

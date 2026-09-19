@@ -76,9 +76,11 @@ export function Comissoes() {
   const [selectedBarber, setSelectedBarber] = useState(profile?.tipo === 'barbeiro' ? user?.uid : '');
   const [selectedStatus, setSelectedStatus] = useState<CommissionStatus | ''>('');
   const [dateRange, setDateRange] = useState(() => {
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const now = new Date();
+    const startOfMonth = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
+    const todayStr = format(now, 'yyyy-MM-dd');
     return {
-      start: todayStr,
+      start: startOfMonth,
       end: todayStr
     };
   });
@@ -152,40 +154,39 @@ export function Comissoes() {
       userService.getAllBarbers(false, tenantId).then(setBarbers).catch(console.error);
     });
 
-    commissionService.purgeOrphanedCommissions(tenantId);
-    if (tenantId === 'gbcortes7') {
-      commissionService.purgePreSeptemberData('gbcortes7');
-    }
+    // Auditoria e limpeza mantidas estritamente manuais via modal para segurança contábil
 
     return () => unsubscribe();
   }, [tenantId]);
 
-  // Live Subscription strictly bounded by dateRange and limits to prevent quota spikes
+  // Live Subscription strictly bounded by dateRange to keep realtime sync
   useEffect(() => {
     if (!tenantId) return;
     
     const isSingleDay = Boolean(dateRange.start && dateRange.start === dateRange.end);
+    const tenantCondition = tenantId === 'gbcortes7'
+      ? where('tenantId', 'in', [tenantId, ''])
+      : where('tenantId', '==', tenantId);
     
     // 1. Commissions query
     let qCom;
     if (isSingleDay) {
       qCom = query(
         collection(db, 'commissions'),
-        where('tenantId', '==', tenantId),
+        tenantCondition,
         where('date', '==', dateRange.start)
       );
     } else if (dateRange.start && dateRange.end) {
       qCom = query(
         collection(db, 'commissions'),
-        where('tenantId', '==', tenantId),
+        tenantCondition,
         where('date', '>=', dateRange.start),
         where('date', '<=', dateRange.end)
       );
     } else {
       qCom = query(
         collection(db, 'commissions'),
-        where('tenantId', '==', tenantId),
-        limit(150)
+        tenantCondition
       );
     }
 
@@ -194,7 +195,7 @@ export function Comissoes() {
       setAllCommissionsLive(docs);
     }, (error) => {
       console.warn("[Comissoes] Fallback on commissions listener:", error);
-      const fallbackQ = query(collection(db, 'commissions'), where('tenantId', '==', tenantId), limit(150));
+      const fallbackQ = query(collection(db, 'commissions'), tenantCondition);
       onSnapshot(fallbackQ, (snap) => {
         const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
         setAllCommissionsLive(docs);
@@ -206,21 +207,20 @@ export function Comissoes() {
     if (isSingleDay) {
       qAdv = query(
         collection(db, 'professional_advances'),
-        where('tenantId', '==', tenantId),
+        tenantCondition,
         where('date', '==', dateRange.start)
       );
     } else if (dateRange.start && dateRange.end) {
       qAdv = query(
         collection(db, 'professional_advances'),
-        where('tenantId', '==', tenantId),
+        tenantCondition,
         where('date', '>=', dateRange.start),
         where('date', '<=', dateRange.end)
       );
     } else {
       qAdv = query(
         collection(db, 'professional_advances'),
-        where('tenantId', '==', tenantId),
-        limit(100)
+        tenantCondition
       );
     }
 
@@ -229,46 +229,61 @@ export function Comissoes() {
       setAllAdvancesLive(docs);
     }, (error) => {
       console.warn("[Comissoes] Fallback on advances listener:", error);
-      const fallbackQ = query(collection(db, 'professional_advances'), where('tenantId', '==', tenantId), limit(100));
+      const fallbackQ = query(collection(db, 'professional_advances'), tenantCondition);
       onSnapshot(fallbackQ, (snap) => {
         const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
         setAllAdvancesLive(docs);
       });
     });
 
-    // 3. Comandas query (bounded with limit)
-    const cmdConstraints = tenantId === 'gbcortes7'
-      ? [where('tenantId', 'in', [tenantId, ''])]
-      : [where('tenantId', '==', tenantId)];
-    const qCmd = query(collection(db, 'comandas'), ...cmdConstraints, limit(100));
+    // 3. Comandas query bounded by period (without cutting off random docs)
+    let qCmd;
+    if (isSingleDay) {
+      qCmd = query(
+        collection(db, 'comandas'),
+        tenantCondition,
+        where('date', '==', dateRange.start)
+      );
+    } else if (dateRange.start && dateRange.end) {
+      qCmd = query(
+        collection(db, 'comandas'),
+        tenantCondition,
+        where('date', '>=', dateRange.start),
+        where('date', '<=', dateRange.end)
+      );
+    } else {
+      qCmd = query(collection(db, 'comandas'), tenantCondition);
+    }
+
     const unsubCmd = onSnapshot(qCmd, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllComandasLive(docs);
     }, (error) => {
-      console.error("Erro ao escutar comandas:", error);
+      console.warn("Erro ao escutar comandas filtradas, tentando fallback por tenant:", error);
+      const fallbackCmd = query(collection(db, 'comandas'), tenantCondition);
+      onSnapshot(fallbackCmd, (snap) => {
+        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllComandasLive(docs);
+      });
     });
 
-    // 4. Appointments query (bounded with date or limit)
+    // 4. Appointments query
     let qApt;
     if (isSingleDay) {
       qApt = query(
         collection(db, 'appointments'),
-        where('tenantId', '==', tenantId),
+        tenantCondition,
         where('date', '==', dateRange.start)
       );
     } else if (dateRange.start && dateRange.end) {
       qApt = query(
         collection(db, 'appointments'),
-        where('tenantId', '==', tenantId),
+        tenantCondition,
         where('date', '>=', dateRange.start),
         where('date', '<=', dateRange.end)
       );
     } else {
-      qApt = query(
-        collection(db, 'appointments'),
-        where('tenantId', '==', tenantId),
-        limit(150)
-      );
+      qApt = query(collection(db, 'appointments'), tenantCondition);
     }
 
     const unsubApt = onSnapshot(qApt, (snapshot) => {
@@ -276,7 +291,7 @@ export function Comissoes() {
       setAllAppointmentsLive(docs);
     }, (error) => {
       console.warn("[Comissoes] Fallback on appointments listener:", error);
-      const fallbackQ = query(collection(db, 'appointments'), where('tenantId', '==', tenantId), limit(150));
+      const fallbackQ = query(collection(db, 'appointments'), tenantCondition);
       onSnapshot(fallbackQ, (snap) => {
         const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAllAppointmentsLive(docs);
@@ -1118,7 +1133,7 @@ export function Comissoes() {
           onClose={() => setIsAuditModalOpen(false)}
           tenantId={tenantId || 'gbcortes7'}
           startDate={dateRange.start || '2026-09-01'}
-          endDate={dateRange.end || '2026-09-15'}
+          endDate={dateRange.end || format(new Date(), 'yyyy-MM-dd')}
           onSuccess={() => {
             loadData();
             toast.success("Dados do período reconciliados com o banco de dados!");

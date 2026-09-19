@@ -321,7 +321,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     const cmdConstraints = tenantId === 'gbcortes7' 
       ? [where('tenantId', 'in', [tenantId, ''])] 
       : [where('tenantId', '==', tenantId)];
-    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints, limit(150));
+    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints);
     const unsubComandas = onSnapshot(comandasQuery, (snapshot) => {
       const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllComandas(cList);
@@ -332,7 +332,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     const commConstraints = tenantId === 'gbcortes7' 
       ? [where('tenantId', 'in', [tenantId, ''])] 
       : [where('tenantId', '==', tenantId)];
-    const commsQuery = query(collection(db, 'commissions'), ...commConstraints, limit(200));
+    const commsQuery = query(collection(db, 'commissions'), ...commConstraints);
     const unsubComms = onSnapshot(commsQuery, (snapshot) => {
       const commsList = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
@@ -498,7 +498,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     const advConstraints = tenantId === 'gbcortes7' 
       ? [where('tenantId', 'in', [tenantId, ''])] 
       : [where('tenantId', '==', tenantId)];
-    const advsQuery = query(collection(db, 'professional_advances'), ...advConstraints, limit(100));
+    const advsQuery = query(collection(db, 'professional_advances'), ...advConstraints);
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
       rawAdvs = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance))
@@ -524,7 +524,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       console.error("Erro ao escutar vales detalhados:", error);
     });
 
-    const payablesQuery = query(collection(db, 'accounts_payable'), where('tenantId', '==', tenantId), limit(100));
+    const payablesQuery = query(collection(db, 'accounts_payable'), ...advConstraints);
     const unsubPayables = onSnapshot(payablesQuery, (snapshot) => {
       rawPayables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -532,7 +532,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       console.error("Erro ao escutar contas a pagar para vales detalhados:", error);
     });
 
-    const cashMovsQuery = query(collection(db, 'cash_movements'), where('tenantId', '==', tenantId), limit(100));
+    const cashMovsQuery = query(collection(db, 'cash_movements'), ...advConstraints);
     const unsubCashMovs = onSnapshot(cashMovsQuery, (snapshot) => {
       rawCashMovs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -543,7 +543,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     const finTxsConstraints = tenantId === 'gbcortes7' 
       ? [where('tenantId', 'in', [tenantId, ''])] 
       : [where('tenantId', '==', tenantId)];
-    const finTxsQuery = query(collection(db, 'financial_transactions'), ...finTxsConstraints, limit(150));
+    const finTxsQuery = query(collection(db, 'financial_transactions'), ...finTxsConstraints);
     const unsubFinTxs = onSnapshot(finTxsQuery, (snapshot) => {
       rawFinTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       mergeAdvances();
@@ -551,7 +551,14 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       console.error("Erro ao escutar transações financeiras para vales detalhados:", error);
     });
 
-    const payoutsQuery = query(collection(db, 'professional_payments'), where('profissional_id', '==', professionalId), where('tenantId', '==', tenantId), limit(100));
+    const payoutConstraints = tenantId === 'gbcortes7'
+      ? [where('tenantId', 'in', [tenantId, ''])]
+      : [where('tenantId', '==', tenantId)];
+    const payoutsQuery = query(
+      collection(db, 'professional_payments'), 
+      where('profissional_id', '==', professionalId), 
+      ...payoutConstraints
+    );
     const unsubPayouts = onSnapshot(payoutsQuery, (snapshot) => {
       const payoutsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
       setPayouts(payoutsList);

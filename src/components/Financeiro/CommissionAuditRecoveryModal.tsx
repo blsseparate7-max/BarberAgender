@@ -173,9 +173,9 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  // Period: default to September 1 to 15
+  // Period: default to September 1 to today
   const startDate = propStartDate || '2026-09-01';
-  const endDate = propEndDate || '2026-09-15';
+  const endDate = propEndDate || format(new Date(), 'yyyy-MM-dd');
 
   useEffect(() => {
     if (isOpen) {
@@ -361,7 +361,7 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
       });
       setTotalComandasAnalyzed(periodComandas.length);
 
-      // Identificar comandas do fluxo que ficaram com status 'aberta' mas foram pagas/concluídas
+      // Identificar comandas do fluxo que ficaram com status não-fechado mas foram pagas/concluídas/possuem fluxo
       const identifiedOpenComandas: OpenFlowComanda[] = [];
       periodComandas.forEach(c => {
         const st = (c.status || '').toLowerCase();
@@ -369,8 +369,11 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
         const hasPaymentRecorded = payments.length > 0;
         const paidAmount = Number(c.paidAmount || (c as any).valorPago || 0);
         const hasDailyFlow = Boolean((c as any).daily_flow_id || (c as any).dailyFlowId);
+        const hasItems = Array.isArray(c.items) && c.items.length > 0;
 
-        if (st === 'aberta' && (hasPaymentRecorded || paidAmount > 0 || hasDailyFlow)) {
+        const isUnclosed = st === 'aberta' || st === 'em_atendimento' || st === 'aguardando_pagamento';
+
+        if (isUnclosed && (hasPaymentRecorded || paidAmount > 0 || hasDailyFlow || hasItems)) {
           identifiedOpenComandas.push({
             id: c.id,
             number: c.number || 'S/N',
@@ -670,7 +673,7 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
         batch.update(cmdRef, {
           status: 'fechada',
           closedAt: serverTimestamp(),
-          notes: `[Fechamento auditado do Fluxo 01-16/Setembro]`
+          notes: `[Fechamento auditado do Fluxo ${startDate} a ${endDate}]`
         });
         await commitBatchIfNeeded();
       }

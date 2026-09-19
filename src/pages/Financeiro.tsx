@@ -213,9 +213,11 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const currentTenantId = tenantId || tenant?.id || profile?.tenantId || getActiveTenantId();
   const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'digital-account' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new' | 'accounts-receivable'>('overview');
   const [dateRange, setDateRange] = useState(() => {
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const now = new Date();
+    const startOfMonth = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
+    const today = format(now, 'yyyy-MM-dd');
     return {
-      start: today,
+      start: startOfMonth,
       end: today
     };
   });

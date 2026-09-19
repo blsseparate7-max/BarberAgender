@@ -1965,9 +1965,15 @@ function encodeFirestoreFields(data: any): any {
     }
   });
 
-  // Endpoint to simulate sandbox payment confirmation (useful for Pix / Subscription testing in Sandbox)
+  // Endpoint to simulate sandbox payment confirmation (exclusively for testing in Sandbox by authorized Admins)
   app.post(["/api/saas/payment/simulate-receive", "/saas/payment/simulate-receive", "/payment/simulate-receive", "/simulate-receive"], async (req, res) => {
     try {
+      // Exige autenticação de administrador para acionar simulações
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.error || "Acesso negado: apenas administradores podem executar simulação de pagamentos." });
+      }
+
       const { paymentId } = req.body;
       if (!paymentId) {
         return res.status(400).json({ error: "Parâmetro paymentId é obrigatório." });
@@ -1975,7 +1981,12 @@ function encodeFirestoreFields(data: any): any {
 
       const rawAsaasKey = process.env.ASAAS_API_KEY || '';
       const asaasApiKey = rawAsaasKey.trim().replace(/^['"]|['"]$/g, '');
-      const asaasEnv = process.env.ASAAS_ENVIRONMENT || 'sandbox';
+      const asaasEnv = (process.env.ASAAS_ENVIRONMENT || 'sandbox').toLowerCase().trim();
+
+      // Bloqueia em produção caso não seja um ID de sandbox explícito
+      if (asaasEnv === 'production' && !paymentId.includes('sandbox')) {
+        return res.status(400).json({ error: "Simulações de pagamento não são permitidas em ambiente de produção." });
+      }
 
       const baseUrl = getAsaasBaseUrl(asaasEnv);
       console.log(`[Simulação] Solicitado confirmação para o ID de pagamento/assinatura: ${paymentId}`);

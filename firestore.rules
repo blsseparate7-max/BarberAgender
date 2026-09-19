@@ -425,19 +425,21 @@ service cloud.firestore {
 
     // --- Estoque ---
     match /products/{productId} {
-      allow read: if isAuthenticated();
-      allow write: if isStaff() || isBarbeiro();
+      allow read: if isAuthenticated() && isTenantMember(resource.data);
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update, delete: if (isStaff() || isBarbeiro()) && isTenantMember(resource.data) && isTenantMember(request.resource.data);
     }
     
     match /product_categories/{categoryId} {
-      allow read: if isAuthenticated();
-      allow write: if isStaff();
+      allow read: if isAuthenticated() && isTenantMember(resource.data);
+      allow create: if isStaff() && isTenantMember(request.resource.data);
+      allow update, delete: if isStaff() && isTenantMember(resource.data) && isTenantMember(request.resource.data);
     }
     
     match /inventory_movements/{movementId} {
-      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow create: if isStaff() || isBarbeiro();
-      allow update, delete: if isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda");
+      allow read: if isAuthenticated() && isTenantMember(resource.data) && (isStaff() || isBarbeiro());
+      allow create: if (isStaff() || isBarbeiro()) && isTenantMember(request.resource.data);
+      allow update, delete: if (isStaff() || isBarbeiro() || hasRolePermission("reopen_comanda")) && isTenantMember(resource.data);
     }
 
     // --- Assinaturas ---
@@ -454,11 +456,23 @@ service cloud.firestore {
     }
     
     match /subscription_usage/{usageId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
+      );
+      allow create: if isStaff() || isBarbeiro();
+      allow update, delete: if isStaff() || hasRolePermission("reopen_comanda");
     }
 
     match /subscription_usages/{usageId} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
+      );
+      allow create: if isStaff() || isBarbeiro();
+      allow update, delete: if isStaff() || hasRolePermission("reopen_comanda");
     }
 
     match /subscription_commission_runs/{runId} {
@@ -496,9 +510,20 @@ service cloud.firestore {
     }
 
     match /waitlist/{entryId} {
-      allow read: if isAuthenticated() && (isStaff() || isBarbeiro());
-      allow create, update: if isAuthenticated();
-      allow delete: if isStaff();
+      allow read: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isStaff() || 
+        isBarbeiro() || 
+        (resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid))
+      );
+      allow delete: if isStaff() || (
+        isAuthenticated() && resource != null && (resource.data.cliente_id == request.auth.uid || resource.data.clientId == request.auth.uid)
+      );
     }
 
     match /loyalty_points/{clientId} {

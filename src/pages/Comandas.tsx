@@ -130,7 +130,7 @@ export function Comandas({ activeSubTab }: { activeSubTab?: string }) {
     if (!matchesSearch) return false;
 
     if (activeTab === 'abertas') {
-      return ['aberta', 'em_atendimento', 'aguardando_pagamento', 'parcialmente_paga'].includes(c.status || '');
+      return ['aberta', 'em_atendimento', 'aguardando_pagamento', 'parcialmente_paga'].includes(c.status || '') && c.status !== 'fechada' && c.status !== 'cancelada';
     }
     if (activeTab === 'historico') {
       const basicFilter = ['fechada', 'cancelada', 'nao_paga'].includes(c.status || '');

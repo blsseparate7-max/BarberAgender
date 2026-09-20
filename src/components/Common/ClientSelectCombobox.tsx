@@ -76,28 +76,18 @@ export function ClientSelectCombobox({
     const timer = setTimeout(async () => {
       try {
         setIsSearchingRemote(true);
-        const cleanDigits = term.replace(/\D/g, '');
-        if (cleanDigits.length >= 8) {
-          const found = await userService.getUserByPhone(cleanDigits);
-          if (found) {
-            setRemoteClients([found]);
-            return;
-          }
-        }
-        const users = await userService.getUsersByRole('cliente', true, undefined, 20);
-        const lower = term.toLowerCase();
-        const matches = users.filter(u => 
-          (u.nome || '').toLowerCase().includes(lower) || 
-          (u.telefone || '').includes(lower)
-        );
-        if (matches.length > 0) {
+        const matches = await userService.searchClientsFast(term);
+        if (matches && matches.length > 0) {
           setRemoteClients(matches);
+        } else {
+          setRemoteClients([]);
         }
-      } catch (_) {
+      } catch (err) {
+        console.warn("Erro ao buscar clientes remotamente:", err);
       } finally {
         setIsSearchingRemote(false);
       }
-    }, 350);
+    }, 250);
 
     return () => clearTimeout(timer);
   }, [searchQuery]);

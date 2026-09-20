@@ -30,6 +30,7 @@ import {
 import { db } from '../../firebase';
 import { UserProfile, Comanda, Commission, ProfessionalAdvance } from '../../types';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
 
 const formatCurrency = (val: number) => {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);

@@ -228,8 +228,7 @@ export function Barbeiros() {
     const qAdv = query(
       collection(db, 'professional_advances'),
       where('tenantId', '==', tenantId),
-      where('date', '>=', startStr),
-      where('date', '<=', endStr)
+      limit(100)
     );
     const unsubscribeAdv = onSnapshot(qAdv, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));

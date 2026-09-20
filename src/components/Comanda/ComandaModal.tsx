@@ -71,6 +71,29 @@ interface ComandaModalProps {
   onSave: () => void;
 }
 
+const CATEGORY_STYLES: Record<string, { bg: string; text: string; border: string; accent: string }> = {
+  'cabelo': { bg: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-100', accent: 'bg-indigo-500' },
+  'barba': { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', accent: 'bg-emerald-500' },
+  'combo': { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', accent: 'bg-amber-500' },
+  'estética': { bg: 'bg-rose-50', text: 'text-rose-600', border: 'border-rose-100', accent: 'bg-rose-500' },
+  'sobrancelha': { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-100', accent: 'bg-purple-500' },
+  'química': { bg: 'bg-cyan-50', text: 'text-cyan-600', border: 'border-cyan-100', accent: 'bg-cyan-500' },
+  'default': { bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-150', accent: 'bg-slate-400' }
+};
+
+const getCategoryStyle = (catName?: string) => {
+  if (!catName) return CATEGORY_STYLES['default'];
+  const norm = catName.toLowerCase().trim();
+  if (CATEGORY_STYLES[norm]) return CATEGORY_STYLES[norm];
+  if (norm.includes('combo') || norm.includes('casado')) return CATEGORY_STYLES['combo'];
+  if (norm.includes('corte') || norm.includes('cabelo') || norm.includes('hair') || norm.includes('penteado')) return CATEGORY_STYLES['cabelo'];
+  if (norm.includes('barba') || norm.includes('navalha') || norm.includes('beard')) return CATEGORY_STYLES['barba'];
+  if (norm.includes('estet') || norm.includes('facial') || norm.includes('limpeza') || norm.includes('pele')) return CATEGORY_STYLES['estética'];
+  if (norm.includes('sobrancelha')) return CATEGORY_STYLES['sobrancelha'];
+  if (norm.includes('quim') || norm.includes('alisamento') || norm.includes('platinado') || norm.includes('luzes') || norm.includes('color')) return CATEGORY_STYLES['química'];
+  return CATEGORY_STYLES['default'];
+};
+
 export function ComandaModal({ comanda_id, initialData, onClose, onSave }: ComandaModalProps) {
   const { user, profile, isAdmin, isGerente } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -987,6 +1010,9 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         ? (targetBarber.nome || targetBarber.displayName || targetBarber.name || 'Barbeiro') 
         : comanda.profissional_name;
 
+      const itemColor = (item as any).color || (item as any).cor || (item as any).categoryColor || undefined;
+      const itemCategory = (item as Service).categoria || (item as Service).category || undefined;
+
       const newItem: ComandaItem = {
         id: `${item.id}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         type: type === 'servico' ? 'servico' : 'produto',
@@ -997,6 +1023,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         totalPrice: totalPriceVal,
         profissional_id: targetBarberId,
         profissional_name: targetBarberName,
+        color: itemColor,
+        category: itemCategory,
         isCortesia: isCortesiaVal,
         deductType: deductTypeVal,
         subscriptionId: subscriptionIdVal,
@@ -1023,18 +1051,23 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           let startTimeStr = format(new Date(), 'HH:mm');
           let parentStatus = 'confirmado';
 
-          if (comanda.agendamento_id) {
+          if (comanda.status === 'fechada') {
+            parentStatus = 'concluído';
+          } else if (comanda.agendamento_id) {
             const parentAppSnap = await getDoc(doc(db, 'appointments', comanda.agendamento_id));
             if (parentAppSnap.exists()) {
               const pData = parentAppSnap.data();
               if (pData.date) dateStr = pData.date;
               if (pData.endTime) startTimeStr = pData.endTime;
-              if (pData.status) parentStatus = pData.status;
+              if (pData.status) {
+                parentStatus = pData.status;
+              } else if (comanda.status === 'em_atendimento') {
+                parentStatus = 'em_atendimento';
+              }
             }
           } else {
-            // Se for comanda avulsa (sem agendamento de origem) mas já estiver aberta ou em atendimento,
-            // define o encaixe como 'em_atendimento' para que fique da mesma cor amarela/laranja.
-            if (comanda.status === 'aberta' || comanda.status === 'aguardando_pagamento') {
+            // Se for comanda avulsa (sem agendamento de origem) mas já estiver aberta ou em atendimento
+            if (comanda.status === 'aberta' || comanda.status === 'em_atendimento' || comanda.status === 'aguardando_pagamento' || comanda.status === 'parcialmente_paga') {
               parentStatus = 'em_atendimento';
             }
           }
@@ -2687,18 +2720,27 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             return false;
                           })();
 
+                          const catStyle = isService ? getCategoryStyle(item.category || item.name) : null;
+
                           return (
                             <tr key={`${item.id || 'item'}-${index}`} className="hover:bg-slate-50/50 transition-colors group">
                               <td className="px-6 py-5">
                                 <div className="flex items-center gap-4">
                                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shadow-sm ${
-                                    isService ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'
+                                    isService 
+                                      ? `${catStyle?.bg || 'bg-emerald-50'} ${catStyle?.text || 'text-emerald-600'} ${catStyle?.border || 'border-emerald-100'}`
+                                      : 'bg-blue-50 text-blue-600 border-blue-100'
                                   }`}>
                                     {isService ? <Scissors size={16} /> : <Package size={16} />}
                                   </div>
                                   <div>
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className="text-sm font-bold text-primary block">{item.name}</span>
+                                      {item.category && (
+                                        <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${catStyle?.bg} ${catStyle?.text} ${catStyle?.border}`}>
+                                          {item.category}
+                                        </span>
+                                      )}
                                       {item.isCortesia && !item.deductType && (
                                         <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-1.5 py-0.5 rounded">Cortesia</span>
                                       )}

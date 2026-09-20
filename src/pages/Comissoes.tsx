@@ -45,7 +45,7 @@ import { calculateProfessionalLedger } from '../services/ledgerService';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
-import { collection, onSnapshot, query, where, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ProfessionalCommissionsDetail } from '../components/Financeiro/ProfessionalCommissionsDetail';
 import { CommissionAuditRecoveryModal } from '../components/Financeiro/CommissionAuditRecoveryModal';
@@ -159,152 +159,7 @@ export function Comissoes() {
     return () => unsubscribe();
   }, [tenantId]);
 
-  // Live Subscription strictly bounded by dateRange to keep realtime sync
-  useEffect(() => {
-    if (!tenantId) return;
-    
-    const isSingleDay = Boolean(dateRange.start && dateRange.start === dateRange.end);
-    const tenantCondition = tenantId === 'gbcortes7'
-      ? where('tenantId', 'in', [tenantId, ''])
-      : where('tenantId', '==', tenantId);
-    
-    // 1. Commissions query
-    let qCom;
-    if (isSingleDay) {
-      qCom = query(
-        collection(db, 'commissions'),
-        tenantCondition,
-        where('date', '==', dateRange.start)
-      );
-    } else if (dateRange.start && dateRange.end) {
-      qCom = query(
-        collection(db, 'commissions'),
-        tenantCondition,
-        where('date', '>=', dateRange.start),
-        where('date', '<=', dateRange.end)
-      );
-    } else {
-      qCom = query(
-        collection(db, 'commissions'),
-        tenantCondition
-      );
-    }
 
-    const unsubCom = onSnapshot(qCom, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
-      setAllCommissionsLive(docs);
-    }, (error) => {
-      console.warn("[Comissoes] Fallback on commissions listener:", error);
-      const fallbackQ = query(collection(db, 'commissions'), tenantCondition);
-      onSnapshot(fallbackQ, (snap) => {
-        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
-        setAllCommissionsLive(docs);
-      });
-    });
-
-    // 2. Advances query
-    let qAdv;
-    if (isSingleDay) {
-      qAdv = query(
-        collection(db, 'professional_advances'),
-        tenantCondition,
-        where('date', '==', dateRange.start)
-      );
-    } else if (dateRange.start && dateRange.end) {
-      qAdv = query(
-        collection(db, 'professional_advances'),
-        tenantCondition,
-        where('date', '>=', dateRange.start),
-        where('date', '<=', dateRange.end)
-      );
-    } else {
-      qAdv = query(
-        collection(db, 'professional_advances'),
-        tenantCondition
-      );
-    }
-
-    const unsubAdv = onSnapshot(qAdv, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
-      setAllAdvancesLive(docs);
-    }, (error) => {
-      console.warn("[Comissoes] Fallback on advances listener:", error);
-      const fallbackQ = query(collection(db, 'professional_advances'), tenantCondition);
-      onSnapshot(fallbackQ, (snap) => {
-        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
-        setAllAdvancesLive(docs);
-      });
-    });
-
-    // 3. Comandas query bounded by period (without cutting off random docs)
-    let qCmd;
-    if (isSingleDay) {
-      qCmd = query(
-        collection(db, 'comandas'),
-        tenantCondition,
-        where('date', '==', dateRange.start)
-      );
-    } else if (dateRange.start && dateRange.end) {
-      qCmd = query(
-        collection(db, 'comandas'),
-        tenantCondition,
-        where('date', '>=', dateRange.start),
-        where('date', '<=', dateRange.end)
-      );
-    } else {
-      qCmd = query(collection(db, 'comandas'), tenantCondition);
-    }
-
-    const unsubCmd = onSnapshot(qCmd, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAllComandasLive(docs);
-    }, (error) => {
-      console.warn("Erro ao escutar comandas filtradas, tentando fallback por tenant:", error);
-      const fallbackCmd = query(collection(db, 'comandas'), tenantCondition);
-      onSnapshot(fallbackCmd, (snap) => {
-        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setAllComandasLive(docs);
-      });
-    });
-
-    // 4. Appointments query
-    let qApt;
-    if (isSingleDay) {
-      qApt = query(
-        collection(db, 'appointments'),
-        tenantCondition,
-        where('date', '==', dateRange.start)
-      );
-    } else if (dateRange.start && dateRange.end) {
-      qApt = query(
-        collection(db, 'appointments'),
-        tenantCondition,
-        where('date', '>=', dateRange.start),
-        where('date', '<=', dateRange.end)
-      );
-    } else {
-      qApt = query(collection(db, 'appointments'), tenantCondition);
-    }
-
-    const unsubApt = onSnapshot(qApt, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAllAppointmentsLive(docs);
-    }, (error) => {
-      console.warn("[Comissoes] Fallback on appointments listener:", error);
-      const fallbackQ = query(collection(db, 'appointments'), tenantCondition);
-      onSnapshot(fallbackQ, (snap) => {
-        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setAllAppointmentsLive(docs);
-      });
-    });
-
-    return () => {
-      unsubCom();
-      unsubAdv();
-      unsubCmd();
-      unsubApt();
-    };
-  }, [tenantId, dateRange.start, dateRange.end]);
 
   useEffect(() => {
     loadData();
@@ -343,11 +198,35 @@ export function Comissoes() {
   };
 
   const loadData = async () => {
+    if (!tenantId) return;
     setLoading(true);
     try {
       const barberId = profile?.tipo === 'barbeiro' ? user?.uid : selectedBarber;
-      
-      const [commissionsData, payoutsData, advancesData] = await Promise.all([
+      const isSingleDay = Boolean(dateRange.start && dateRange.start === dateRange.end);
+      const tenantCondition = tenantId === 'gbcortes7'
+        ? where('tenantId', 'in', [tenantId, ''])
+        : where('tenantId', '==', tenantId);
+
+      // Comandas limitadas estritamente ao período selecionado para não consumir cota indevida
+      let qCmd;
+      if (isSingleDay) {
+        qCmd = query(
+          collection(db, 'comandas'),
+          tenantCondition,
+          where('date', '==', dateRange.start)
+        );
+      } else if (dateRange.start && dateRange.end) {
+        qCmd = query(
+          collection(db, 'comandas'),
+          tenantCondition,
+          where('date', '>=', dateRange.start),
+          where('date', '<=', dateRange.end)
+        );
+      } else {
+        qCmd = query(collection(db, 'comandas'), tenantCondition, limit(100));
+      }
+
+      const [commissionsData, payoutsData, advancesData, comandasSnap] = await Promise.all([
         commissionService.getCommissions({ 
           profissional_id: barberId, 
           status: selectedStatus || undefined,
@@ -361,12 +240,21 @@ export function Comissoes() {
           startDate: dateRange.start,
           endDate: dateRange.end,
           tenantId
+        }),
+        getDocs(qCmd).catch(err => {
+          console.warn("Erro ao buscar comandas no período:", err);
+          return null;
         })
       ]);
+
+      const comandasData = comandasSnap ? comandasSnap.docs.map(d => ({ id: d.id, ...d.data() })) : [];
       
       setCommissions(commissionsData);
+      setAllCommissionsLive(commissionsData);
       setPayouts(payoutsData);
       setAdvances(advancesData);
+      setAllAdvancesLive(advancesData);
+      setAllComandasLive(comandasData);
     } catch (error) {
       console.error("Erro ao carregar dados de comissões:", error);
     } finally {
@@ -541,6 +429,7 @@ export function Comissoes() {
         professionalId={user.uid}
         professionalName={profile.nome || 'Meu Usuário'}
         dateRange={{ start: dateRange.start, end: dateRange.end }}
+        preloadedComandas={allComandasLive}
       />
     );
   }
@@ -564,6 +453,7 @@ export function Comissoes() {
           professionalId={selectedBarberId}
           professionalName={selectedBarberName}
           dateRange={{ start: dateRange.start, end: dateRange.end }}
+          preloadedComandas={allComandasLive}
           onBack={() => {
             setSelectedBarberId(null);
             setSelectedBarberName(null);

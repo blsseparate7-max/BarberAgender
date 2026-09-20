@@ -257,7 +257,7 @@ export function AppointmentModal({
       setBarbers(barbersData);
 
       if (currentUser.tipo === 'admin' || currentUser.tipo === 'gerente' || currentUser.tipo === 'barbeiro') {
-        const clientsData = await userService.getAllClients(true, 50);
+        const clientsData = await userService.getAllClients(true, 300);
         if (appointment?.cliente_id && !clientsData.some(c => c.uid === appointment.cliente_id)) {
           const directClient = await userService.getUserProfile(appointment.cliente_id);
           if (directClient) {

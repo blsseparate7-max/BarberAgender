@@ -399,6 +399,8 @@ export interface ComandaItem {
   generateCommission: boolean;
   profissional_id?: string;
   profissional_name?: string;
+  color?: string;
+  category?: string;
   deductType?: 'pacote' | 'assinatura';
   packageSaleId?: string;
   subscriptionId?: string;

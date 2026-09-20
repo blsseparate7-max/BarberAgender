@@ -121,9 +121,10 @@ interface DetailProps {
   professionalName: string;
   dateRange: { start: string; end: string };
   onBack?: () => void;
+  preloadedComandas?: any[];
 }
 
-export function ProfessionalCommissionsDetail({ professionalId, professionalName, dateRange, onBack }: DetailProps) {
+export function ProfessionalCommissionsDetail({ professionalId, professionalName, dateRange, onBack, preloadedComandas }: DetailProps) {
   const { user, profile } = useAuth();
   const isBarbeiro = profile?.tipo === 'barbeiro';
   const [loading, setLoading] = useState(true);
@@ -131,7 +132,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   
   const [allCommissions, setAllCommissions] = useState<Commission[]>([]);
   const [allAdvances, setAllAdvances] = useState<ProfessionalAdvance[]>([]);
-  const [allComandas, setAllComandas] = useState<any[]>([]);
+  const [allComandas, setAllComandas] = useState<any[]>(preloadedComandas || []);
   const [payouts, setPayouts] = useState<ProfessionalPayment[]>([]);
   const [isOpenCash, setIsOpenCash] = useState<any>(null);
 
@@ -307,53 +308,20 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     paymentMethod: 'pix'
   });
 
-  // Reactive listeners to avoid any manual reload and give live synchronization
+  // Reactive listeners strictly 100% ID-based and optimized to minimize Firestore reads
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId || !professionalId) return;
     setLoading(true);
 
-    const proNameLower = (professionalName || '').toLowerCase().trim();
-    const isGabriel = proNameLower.startsWith('gabriel');
-    const isMateus = proNameLower.startsWith('mateus') || proNameLower.startsWith('matheus');
-    const isLuizMiguel = proNameLower.startsWith('luiz miguel');
-    const isLuizHenrique = proNameLower.startsWith('luiz henrique');
-
-    const cmdConstraints = tenantId === 'gbcortes7' 
-      ? [where('tenantId', 'in', [tenantId, ''])] 
-      : [where('tenantId', '==', tenantId)];
-    const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints);
-    const unsubComandas = onSnapshot(comandasQuery, (snapshot) => {
-      const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAllComandas(cList);
-    }, (error) => {
-      console.error("Erro ao escutar comandas detalhadas:", error);
-    });
-
-    const commConstraints = tenantId === 'gbcortes7' 
-      ? [where('tenantId', 'in', [tenantId, ''])] 
-      : [where('tenantId', '==', tenantId)];
-    const commsQuery = query(collection(db, 'commissions'), ...commConstraints);
+    // 1. Escuta comissões do profissional estritamente por ID único
+    const commsQuery = query(
+      collection(db, 'commissions'),
+      where('profissional_id', '==', professionalId)
+    );
     const unsubComms = onSnapshot(commsQuery, (snapshot) => {
       const commsList = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
-        .filter(c => {
-          if (c.profissional_id === professionalId || (c as any).barber_id === professionalId) return true;
-          if (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && (c.profissional_id === 'XpDGfA241JOx7dzoAgKugo86ld62' || (c as any).barber_id === 'XpDGfA241JOx7dzoAgKugo86ld62')) return true;
-          if (!c.profissional_id && !(c as any).barber_id) {
-            const cNameLower = (c.profissional_name || '').toLowerCase().trim();
-            if (proNameLower && cNameLower) {
-              if (proNameLower === cNameLower) return true;
-              if (isGabriel && cNameLower.startsWith('gabriel')) return true;
-              if (isMateus && (cNameLower.startsWith('mateus') || cNameLower.startsWith('matheus'))) return true;
-              if (isLuizMiguel && cNameLower.startsWith('luiz miguel')) return true;
-              if (isLuizHenrique && cNameLower.startsWith('luiz henrique')) return true;
-              if (proNameLower.startsWith('moises') && cNameLower.startsWith('moises')) return true;
-              if (proNameLower.startsWith('bryan') && cNameLower.startsWith('bryan')) return true;
-            }
-          }
-          return false;
-        });
-
+        .filter(c => !tenantId || !c.tenantId || c.tenantId === tenantId || (tenantId === 'gbcortes7' && (!c.tenantId || c.tenantId === 'gbcortes7')));
       setAllCommissions(commsList);
       setLoading(false);
     }, (error) => {
@@ -361,203 +329,43 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       setLoading(false);
     });
 
-    // Reactive listeners for advances, payables, cash movements, and financial transactions
-    let rawAdvs: any[] = [];
-    let rawPayables: any[] = [];
-    let rawCashMovs: any[] = [];
-    let rawFinTxs: any[] = [];
-
-    const mergeAdvances = () => {
-      const merged: any[] = [...rawAdvs];
-
-      // Merge matching payables (apenas se for do profissional ou tiver nome correspondente sem ID divergente)
-      rawPayables.forEach(p => {
-        const category = (p.category || '').toLowerCase();
-        const desc = (p.description || '').toLowerCase();
-        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
-        const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
-
-        let matchesPro = false;
-        if (p.profissional_id) {
-          matchesPro = p.profissional_id === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && p.profissional_id === 'XpDGfA241JOx7dzoAgKugo86ld62');
-        } else if (proNameLower) {
-          const pName = (p.profissional_name || p.supplier || '').toLowerCase().trim();
-          if (pName) {
-            matchesPro = pName === proNameLower || (isGabriel && pName.startsWith('gabriel')) || (isMateus && (pName.startsWith('mateus') || pName.startsWith('matheus'))) || (isLuizMiguel && pName.startsWith('luiz miguel')) || (isLuizHenrique && pName.startsWith('luiz henrique'));
-          }
-        }
-
-        if (isVale && matchesPro) {
-          const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
-          const pAmount = p.amount || 0;
-          const isDup = merged.some(m => m.id === p.id || (Math.abs(m.amount - pAmount) < 0.01 && m.date === pDate));
-          if (!isDup) {
-            merged.push({
-              id: p.id,
-              tenantId: p.tenantId,
-              profissional_id: p.profissional_id || professionalId,
-              profissional_name: p.profissional_name || p.supplier || professionalName,
-              amount: pAmount,
-              date: pDate || new Date().toISOString().split('T')[0],
-              description: p.description || 'Adiantamento / Vale',
-              status: (p.status === 'paid' || p.status === 'deduzido' || p.status === 'pago') ? 'pago' : 'pendente',
-              responsible_id: p.responsible_id || '',
-              responsible_name: p.responsible_name || '',
-              createdAt: p.createdAt,
-              updatedAt: p.updatedAt
-            } as unknown as ProfessionalAdvance);
-          }
-        }
+    // 4. Comandas: utiliza pré-carregadas se houver, ou consulta limitada para não estourar cota
+    let unsubComandas = () => {};
+    if (preloadedComandas && preloadedComandas.length > 0) {
+      setAllComandas(preloadedComandas);
+    } else {
+      const cmdConstraints = tenantId === 'gbcortes7' 
+        ? [where('tenantId', 'in', [tenantId, ''])] 
+        : [where('tenantId', '==', tenantId)];
+      const comandasQuery = query(collection(db, 'comandas'), ...cmdConstraints, limit(150));
+      unsubComandas = onSnapshot(comandasQuery, (snapshot) => {
+        const cList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllComandas(cList);
+      }, (error) => {
+        console.error("Erro ao escutar comandas detalhadas:", error);
       });
+    }
 
-      // Merge matching cash_movements
-      rawCashMovs.forEach(c => {
-        const category = (c.category || '').toLowerCase();
-        const desc = (c.description || '').toLowerCase();
-        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
-        const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
 
-        let matchesPro = false;
-        const cProId = c.profissional_id || c.barber_id;
-        if (cProId) {
-          matchesPro = cProId === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && cProId === 'XpDGfA241JOx7dzoAgKugo86ld62');
-        } else if (proNameLower) {
-          const cName = (c.profissional_name || c.barber_name || '').toLowerCase().trim();
-          if (cName) {
-            matchesPro = cName === proNameLower || (isGabriel && cName.startsWith('gabriel')) || (isMateus && (cName.startsWith('mateus') || cName.startsWith('matheus'))) || (isLuizMiguel && cName.startsWith('luiz miguel')) || (isLuizHenrique && cName.startsWith('luiz henrique'));
-          }
-        }
 
-        if (isVale && matchesPro) {
-          const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
-          const cAmount = c.amount || 0;
-          const isDup = merged.some(m => m.id === c.id || (Math.abs(m.amount - cAmount) < 0.01 && m.date === cDate));
-          if (!isDup) {
-            merged.push({
-              id: c.id,
-              tenantId: c.tenantId,
-              profissional_id: c.profissional_id || professionalId,
-              profissional_name: c.profissional_name || professionalName,
-              amount: cAmount,
-              date: cDate || new Date().toISOString().split('T')[0],
-              description: c.description || 'Vale / Adiantamento',
-              status: (c.status === 'paid' || c.status === 'deduzido' || c.status === 'pago') ? 'pago' : 'pendente',
-              responsible_id: c.usuario_id || '',
-              responsible_name: c.usuario_name || '',
-              createdAt: c.createdAt,
-              updatedAt: c.updatedAt
-            } as unknown as ProfessionalAdvance);
-          }
-        }
-      });
-
-      // Merge matching financial_transactions
-      rawFinTxs.forEach(t => {
-        const desc = (t.description || '').toLowerCase();
-        const category = (t.category || '').toLowerCase();
-        const isRepasse = desc.includes('repasse') || desc.includes('payout') || desc.includes('pagamento de comiss');
-        const isVale = (desc.includes('vale') || desc.includes('adiantamento') || category.includes('vale') || category.includes('adiantamento')) && !isRepasse;
-
-        let matchesPro = false;
-        const tProId = t.profissional_id || t.barber_id;
-        if (tProId) {
-          matchesPro = tProId === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && tProId === 'XpDGfA241JOx7dzoAgKugo86ld62');
-        } else if (proNameLower) {
-          const tName = (t.profissional_name || '').toLowerCase().trim();
-          if (tName) {
-            matchesPro = tName === proNameLower || (isGabriel && tName.startsWith('gabriel')) || (isMateus && (tName.startsWith('mateus') || tName.startsWith('matheus'))) || (isLuizMiguel && tName.startsWith('luiz miguel')) || (isLuizHenrique && tName.startsWith('luiz henrique'));
-          }
-        }
-
-        if (isVale && matchesPro) {
-          const tDate = t.date ? t.date.substring(0, 10) : '';
-          const tAmount = Number(t.amount) || 0;
-          const isDup = merged.some(m => m.id === t.id || (Math.abs(m.amount - tAmount) < 0.01 && (m.date || '').substring(0, 10) === tDate));
-          if (!isDup) {
-            merged.push({
-              id: t.id,
-              tenantId: t.tenantId,
-              profissional_id: t.profissional_id || professionalId,
-              profissional_name: t.profissional_name || professionalName,
-              amount: tAmount,
-              date: tDate || new Date().toISOString().split('T')[0],
-              description: t.description || 'Vale / Adiantamento',
-              status: 'pendente',
-              responsible_id: '',
-              responsible_name: '',
-              createdAt: t.createdAt,
-              updatedAt: t.updatedAt
-            } as unknown as ProfessionalAdvance);
-          }
-        }
-      });
-
-      setAllAdvances(merged);
-    };
-
-    const advConstraints = tenantId === 'gbcortes7' 
-      ? [where('tenantId', 'in', [tenantId, ''])] 
-      : [where('tenantId', '==', tenantId)];
-    const advsQuery = query(collection(db, 'professional_advances'), ...advConstraints);
+    // 2. Escuta vales do profissional estritamente por ID único na coleção oficial professional_advances
+    const advsQuery = query(
+      collection(db, 'professional_advances'),
+      where('profissional_id', '==', professionalId)
+    );
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
-      rawAdvs = snapshot.docs
+      const advsList = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance))
-        .filter(a => {
-          const aProId = a.profissional_id || (a as any).barber_id;
-          if (aProId) {
-            return aProId === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && aProId === 'XpDGfA241JOx7dzoAgKugo86ld62');
-          }
-          const aNameLower = (a.profissional_name || '').toLowerCase().trim();
-          if (proNameLower && aNameLower) {
-            if (proNameLower === aNameLower) return true;
-            if (isGabriel && aNameLower.startsWith('gabriel')) return true;
-            if (isMateus && (aNameLower.startsWith('mateus') || aNameLower.startsWith('matheus'))) return true;
-            if (isLuizMiguel && aNameLower.startsWith('luiz miguel')) return true;
-            if (isLuizHenrique && aNameLower.startsWith('luiz henrique')) return true;
-            if (proNameLower.startsWith('moises') && aNameLower.startsWith('moises')) return true;
-            if (proNameLower.startsWith('bryan') && aNameLower.startsWith('bryan')) return true;
-          }
-          return false;
-        });
-      mergeAdvances();
+        .filter(a => !tenantId || !a.tenantId || a.tenantId === tenantId || (tenantId === 'gbcortes7' && (!a.tenantId || a.tenantId === 'gbcortes7')));
+      setAllAdvances(advsList);
     }, (error) => {
       console.error("Erro ao escutar vales detalhados:", error);
     });
 
-    const payablesQuery = query(collection(db, 'accounts_payable'), ...advConstraints);
-    const unsubPayables = onSnapshot(payablesQuery, (snapshot) => {
-      rawPayables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      mergeAdvances();
-    }, (error) => {
-      console.error("Erro ao escutar contas a pagar para vales detalhados:", error);
-    });
-
-    const cashMovsQuery = query(collection(db, 'cash_movements'), ...advConstraints);
-    const unsubCashMovs = onSnapshot(cashMovsQuery, (snapshot) => {
-      rawCashMovs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      mergeAdvances();
-    }, (error) => {
-      console.error("Erro ao escutar movimentacoes para vales detalhados:", error);
-    });
-
-    const finTxsConstraints = tenantId === 'gbcortes7' 
-      ? [where('tenantId', 'in', [tenantId, ''])] 
-      : [where('tenantId', '==', tenantId)];
-    const finTxsQuery = query(collection(db, 'financial_transactions'), ...finTxsConstraints);
-    const unsubFinTxs = onSnapshot(finTxsQuery, (snapshot) => {
-      rawFinTxs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      mergeAdvances();
-    }, (error) => {
-      console.error("Erro ao escutar transações financeiras para vales detalhados:", error);
-    });
-
-    const payoutConstraints = tenantId === 'gbcortes7'
-      ? [where('tenantId', 'in', [tenantId, ''])]
-      : [where('tenantId', '==', tenantId)];
+    // 3. Escuta pagamentos de repasse do profissional estritamente por ID único
     const payoutsQuery = query(
       collection(db, 'professional_payments'), 
-      where('profissional_id', '==', professionalId), 
-      ...payoutConstraints
+      where('profissional_id', '==', professionalId)
     );
     const unsubPayouts = onSnapshot(payoutsQuery, (snapshot) => {
       const payoutsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalPayment));
@@ -566,7 +374,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       console.error("Erro ao escutar pagamentos detalhados:", error);
     });
 
-    const unsubCash = onSnapshot(query(collection(db, 'cash_sessions'), where('tenantId', '==', tenantId), limit(5)), (snapshot) => {
+    // 5. Sessão de caixa aberta atual (apenas 1 documento)
+    const unsubCash = onSnapshot(query(collection(db, 'cash_sessions'), where('tenantId', '==', tenantId), limit(1)), (snapshot) => {
       const openCash = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .find((c: any) => c.status === 'open' || c.status === 'reopened');
@@ -579,13 +388,10 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
       unsubComandas();
       unsubComms();
       unsubAdvs();
-      unsubPayables();
-      unsubCashMovs();
-      unsubFinTxs();
       unsubPayouts();
       unsubCash();
     };
-  }, [professionalId, tenantId]);
+  }, [professionalId, tenantId, preloadedComandas]);
 
   const [professionalProfile, setProfessionalProfile] = useState<UserProfile | null>(null);
   const [payoutType, setPayoutType] = useState<'comissoes' | 'remuneracao'>('comissoes');

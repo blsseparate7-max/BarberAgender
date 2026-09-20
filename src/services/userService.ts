@@ -25,6 +25,8 @@ const COLLECTION = 'usuarios';
 
 // In-memory cache de barbeiros e colaboradores para mitigar leituras excessivas
 const barbersCache = new Map<string, { data: UserProfile[]; timestamp: number }>();
+// In-memory cache de clientes do tenant para permitir busca instantânea por nome/telefone com ZERO quota redundante
+const clientsCache = new Map<string, { data: UserProfile[]; timestamp: number }>();
 const USERS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
 export function invalidateBarbersCache(tenantId?: string) {
@@ -35,6 +37,17 @@ export function invalidateBarbersCache(tenantId?: string) {
     }
   } else {
     barbersCache.clear();
+  }
+}
+
+export function invalidateClientsCache(tenantId?: string) {
+  if (tenantId) {
+    const tid = tenantId.trim().toLowerCase();
+    for (const key of clientsCache.keys()) {
+      if (key.includes(tid)) clientsCache.delete(key);
+    }
+  } else {
+    clientsCache.clear();
   }
 }
 
@@ -211,23 +224,77 @@ export const userService = {
     return unique;
   },
 
-  async getAllClients(onlyActive = true, maxLimit = 150) {
-    return this.getUsersByRole('cliente', onlyActive, undefined, maxLimit);
+  async getAllClients(onlyActive = true, maxLimit = 300, bypassCache = false, tenantId?: string) {
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const cacheKey = `${tid}_clients_active:${onlyActive}`;
+
+    if (!bypassCache) {
+      const cached = clientsCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < USERS_CACHE_TTL_MS)) {
+        return cached.data;
+      }
+    }
+
+    const users = await this.getUsersByRole('cliente', onlyActive, tid, maxLimit);
+    clientsCache.set(cacheKey, { data: users, timestamp: Date.now() });
+    return users;
+  },
+
+  async searchClientsFast(searchTerm: string, tenantId?: string, onlyActive = true): Promise<UserProfile[]> {
+    const term = (searchTerm || '').trim();
+    if (!term) return [];
+
+    const tid = (tenantId || getActiveTenantId()).trim().toLowerCase();
+    const cleanDigits = term.replace(/\D/g, '');
+    const normTerm = term.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    // 1. Tentar primeiro busca exata por telefone diretamente no banco (1 leitura eficiente)
+    if (cleanDigits.length >= 8) {
+      const phoneMatch = await this.getUserByPhone(cleanDigits, tid);
+      if (phoneMatch) {
+        return [phoneMatch];
+      }
+    }
+
+    // 2. Obter lista de clientes via cache de alta performance
+    const allClients = await this.getAllClients(onlyActive, 500, false, tid);
+
+    // 3. Filtrar com correspondência flexível (nome, telefone formatado, apenas dígitos, email e cpf)
+    const matches = allClients.filter(c => {
+      const cNome = (c.nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const cEmail = (c.email || '').toLowerCase().trim();
+      const cTel = (c.telefone || c.phone || '').trim();
+      const cTelDigits = cTel.replace(/\D/g, '');
+      const cCpf = (c.cpf || (c as any).cpfCnpj || '').replace(/\D/g, '');
+
+      if (cNome.includes(normTerm)) return true;
+      if (cEmail.includes(term.toLowerCase())) return true;
+      if (cleanDigits && cTelDigits.includes(cleanDigits)) return true;
+      if (cleanDigits && cCpf && cCpf.includes(cleanDigits)) return true;
+      if (cTel.includes(term)) return true;
+
+      return false;
+    });
+
+    return matches;
   },
 
   async searchUsers(role: UserRole, searchTerm: string) {
-    // Basic search on client side for multiple fields or use specific queries
-    // For production, a specialized search index like Algolia or full-text-search is better
-    // Here we implement a simple name search or filter the results
+    if (role === 'cliente') {
+      return this.searchClientsFast(searchTerm, undefined, false);
+    }
     const users = await this.getUsersByRole(role, false);
-    const term = searchTerm.toLowerCase();
+    const term = searchTerm.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     
-    return users.filter(u => 
-      u.nome.toLowerCase().includes(term) || 
-      u.email.toLowerCase().includes(term) || 
-      (u.telefone && u.telefone.includes(term)) ||
-      (u.phone && u.phone.includes(term))
-    );
+    return users.filter(u => {
+      const uNome = (u.nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return (
+        uNome.includes(term) || 
+        (u.email || '').toLowerCase().includes(term) || 
+        (u.telefone && u.telefone.includes(term)) ||
+        (u.phone && u.phone.includes(term))
+      );
+    });
   },
 
   async getUserByPhone(phone: string, tenantId?: string) {
@@ -556,6 +623,7 @@ export const userService = {
 
     await updateDoc(docRef, updateData);
     invalidateBarbersCache(snap.data()?.tenantId || getActiveTenantId());
+    invalidateClientsCache(snap.data()?.tenantId || getActiveTenantId());
   },
 
   async createUser(data: Partial<UserProfile> & { password?: string }) {
@@ -703,6 +771,7 @@ export const userService = {
     
     await setDoc(docRef, newUser);
     invalidateBarbersCache(newUser.tenantId || getActiveTenantId());
+    invalidateClientsCache(newUser.tenantId || getActiveTenantId());
     return newUser;
   },
 
@@ -720,6 +789,7 @@ export const userService = {
         ativo: false,
         updatedAt: serverTimestamp()
       });
+      invalidateClientsCache(snap.data()?.tenantId || getActiveTenantId());
     }
   }
 };

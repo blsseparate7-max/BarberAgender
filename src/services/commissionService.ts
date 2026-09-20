@@ -58,53 +58,18 @@ export const commissionService = {
     }
     let results = querySnapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...docSnap.data() } as Commission));
 
-    // Tolerant professional filter in memory (matches UID, barbeiro_id, email, and name variations)
-    if (filters.profissional_id || filters.profissional_name) {
-      const targetId = filters.profissional_id || '';
-      let targetName = (filters.profissional_name || '').toLowerCase().trim();
-      let targetEmail = '';
-
-      if (targetId) {
-        try {
-          const userDoc = await getDoc(doc(db, 'usuarios', targetId));
-          if (userDoc.exists()) {
-            const uData = userDoc.data();
-            if (!targetName) targetName = (uData.nome || '').toLowerCase().trim();
-            targetEmail = (uData.email || '').toLowerCase().trim();
-          } else {
-            const uSnap = await getDocs(query(collection(db, 'usuarios'), where('uid', '==', targetId)));
-            if (!uSnap.empty) {
-              const uData = uSnap.docs[0].data();
-              if (!targetName) targetName = (uData.nome || '').toLowerCase().trim();
-              targetEmail = (uData.email || '').toLowerCase().trim();
-            }
-          }
-        } catch (e) {
-          console.warn("Could not fetch user details for commission matching:", e);
-        }
-      }
-
-      const targetFirstName = targetName.split(' ')[0] || '';
-
+    // Filtro 100% por ID quando informado
+    if (filters.profissional_id) {
+      const targetId = filters.profissional_id;
       results = results.filter(c => {
-        if (c.profissional_id || (c as any).barbeiro_id) {
-          if (targetId && (c.profissional_id === targetId || (c as any).barbeiro_id === targetId)) return true;
-          return false;
-        }
+        const proId = c.profissional_id || (c as any).barbeiro_id || (c as any).barber_id;
+        return proId === targetId;
+      });
+    } else if (filters.profissional_name) {
+      const targetName = filters.profissional_name.toLowerCase().trim();
+      results = results.filter(c => {
         const cName = (c.profissional_name || (c as any).barbeiro_nome || '').toLowerCase().trim();
-        if (targetName && cName) {
-          if (cName === targetName) return true;
-          if (targetFirstName === 'gabriel' && cName.startsWith('gabriel')) return true;
-          if ((targetFirstName === 'mateus' || targetFirstName === 'matheus') && (cName.startsWith('mateus') || cName.startsWith('matheus'))) return true;
-          if (targetName.startsWith('luiz miguel') && cName.startsWith('luiz miguel')) return true;
-          if (targetName.startsWith('luiz henrique') && cName.startsWith('luiz henrique')) return true;
-          if (targetFirstName === 'moises' && cName.startsWith('moises')) return true;
-          if (targetName.length > 5 && cName.includes(targetName)) return true;
-        }
-        const cEmail = ((c as any).profissional_email || c.profissional_id || '').toLowerCase().trim();
-        if (targetEmail && cEmail && cEmail === targetEmail) return true;
-
-        return false;
+        return cName === targetName;
       });
     }
 
@@ -144,223 +109,19 @@ export const commissionService = {
     let snap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
     let results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
 
-    // Target details for matching
-    let targetId = filters.profissional_id || '';
-    let targetProName = (filters.profissional_name || '').toLowerCase().trim();
-    let targetProEmail = '';
-
-    if (targetId) {
-      try {
-        const userDoc = await getDoc(doc(db, 'usuarios', targetId));
-        if (userDoc.exists()) {
-          const uData = userDoc.data();
-          if (!targetProName) targetProName = (uData.nome || '').toLowerCase().trim();
-          targetProEmail = (uData.email || '').toLowerCase().trim();
-        } else {
-          const uSnap = await getDocs(query(collection(db, 'usuarios'), where('uid', '==', targetId)));
-          if (!uSnap.empty) {
-            const uData = uSnap.docs[0].data();
-            if (!targetProName) targetProName = (uData.nome || '').toLowerCase().trim();
-            targetProEmail = (uData.email || '').toLowerCase().trim();
-          }
-        }
-      } catch (e) {
-        console.warn("Could not fetch user doc for advance name matching:", e);
-      }
-    }
-
-    const targetProFirstName = targetProName.split(' ')[0] || '';
-
-    const matchesProText = (txt: string) => {
-      if (!txt) return false;
-      const t = txt.toLowerCase();
-      if (targetProName && t.includes(targetProName)) return true;
-      if (targetProFirstName === 'gabriel' && t.includes('gabriel')) return true;
-      if ((targetProFirstName === 'mateus' || targetProFirstName === 'matheus') && (t.includes('mateus') || t.includes('matheus'))) return true;
-      if (targetProName.startsWith('luiz miguel') && t.includes('luiz miguel')) return true;
-      if (targetProName.startsWith('luiz henrique') && t.includes('luiz henrique')) return true;
-      if (targetProFirstName === 'moises' && t.includes('moises')) return true;
-      if (targetProEmail && t.includes(targetProEmail)) return true;
-      return false;
-    };
-
-    // Filter advances in memory if filters are provided
-    if (targetId || targetProName || targetProEmail) {
+    // Filtro 100% por ID quando informado
+    if (filters.profissional_id) {
+      const targetId = filters.profissional_id;
       results = results.filter(a => {
-        if (a.profissional_id || (a as any).barber_id) {
-          if (targetId && (a.profissional_id === targetId || (a as any).barber_id === targetId)) return true;
-          return false;
-        }
-        if (matchesProText(a.profissional_name) || matchesProText(a.description)) return true;
-        const aEmail = ((a as any).profissional_email || a.profissional_id || '').toLowerCase().trim();
-        if (targetProEmail && aEmail === targetProEmail) return true;
-        return false;
+        const proId = a.profissional_id || (a as any).barber_id || (a as any).barbeiro_id;
+        return proId === targetId;
       });
-    }
-
-    // Merge vales/adiantamentos registered in accounts_payable
-    try {
-      let payablesQuery = activeTenant ? query(collection(db, 'accounts_payable'), where('tenantId', '==', activeTenant)) : query(collection(db, 'accounts_payable'));
-      let payablesSnap = await getDocs(payablesQuery);
-
-      payablesSnap.docs.forEach(docSnap => {
-        const p = docSnap.data() as any;
-        if (p.status === 'cancelado' || p.is_deleted === true || (p.amount || 0) <= 0) return;
-
-        const category = (p.category || '').toLowerCase();
-        const desc = (p.description || '').toLowerCase();
-        const supplier = (p.supplier || '').toLowerCase();
-        const proName = (p.profissional_name || '').toLowerCase();
-        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
-        const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
-
-        let matchesPro = false;
-        if (p.profissional_id || p.barber_id) {
-          if (targetId && (p.profissional_id === targetId || p.barber_id === targetId)) {
-            matchesPro = true;
-          } else {
-            matchesPro = false;
-          }
-        } else if (targetProName || targetProEmail) {
-          matchesPro = matchesProText(supplier) || matchesProText(proName) || matchesProText(desc);
-        } else {
-          matchesPro = true;
-        }
-
-        if (isVale && matchesPro) {
-          const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
-          if (activeTenant === 'gbcortes7' && pDate && pDate < '2026-09-01') return;
-
-          // If linked to an advance that was deleted, do not resurrect
-          if (p.advanceId || p.transactionId) {
-            const hasExisting = results.some(r => r.id === p.advanceId || r.id === p.transactionId || r.transaction_id === p.transactionId);
-            if (!hasExisting) return;
-          }
-
-          const pAmount = p.amount || 0;
-
-          const isDuplicate = results.some(r => 
-            r.id === docSnap.id || 
-            p.advanceId === r.id ||
-            p.transactionId === r.id ||
-            (Math.abs(r.amount - pAmount) < 0.01 && (r.description.toLowerCase().includes(desc) || desc.includes(r.description.toLowerCase())))
-          );
-
-          if (isDuplicate) {
-            if (p.status === 'deduzido' || p.repasse_id || p.payout_id) {
-              const match = results.find(r => 
-                r.id === docSnap.id || 
-                p.advanceId === r.id ||
-                p.transactionId === r.id ||
-                (Math.abs(r.amount - pAmount) < 0.01 && (r.description.toLowerCase().includes(desc) || desc.includes(r.description.toLowerCase())))
-              );
-              if (match) match.status = 'deduzido';
-            }
-          }
-
-          if (!isDuplicate) {
-            results.push({
-              id: docSnap.id,
-              tenantId: p.tenantId || activeTenant,
-              profissional_id: p.profissional_id || targetId || '',
-              profissional_name: p.profissional_name || p.supplier || targetProName || 'Profissional',
-              amount: pAmount,
-              date: pDate || new Date().toISOString().split('T')[0],
-              description: p.description || 'Adiantamento / Vale',
-              status: (p.status === 'deduzido' || p.repasse_id || p.payout_id) ? 'deduzido' : 'pendente',
-              responsible_id: '',
-              responsible_name: '',
-              createdAt: p.createdAt,
-              updatedAt: p.updatedAt
-            } as ProfessionalAdvance);
-          }
-        }
+    } else if (filters.profissional_name) {
+      const targetName = filters.profissional_name.toLowerCase().trim();
+      results = results.filter(a => {
+        const aName = (a.profissional_name || '').toLowerCase().trim();
+        return aName === targetName;
       });
-    } catch (e) {
-      console.warn("Could not merge accounts_payable into advances:", e);
-    }
-
-    // Merge vales/adiantamentos registered in cash_movements
-    try {
-      let cashQuery;
-      if (activeTenant) {
-        cashQuery = query(
-          collection(db, 'cash_movements'),
-          where('tenantId', '==', activeTenant)
-        );
-      } else {
-        cashQuery = query(collection(db, 'cash_movements'));
-      }
-
-      let cashSnap = await getDocs(cashQuery);
-
-      cashSnap.docs.forEach(docSnap => {
-        const c = docSnap.data() as any;
-        if (c.is_deleted === true || c.status === 'cancelado' || c.status === 'excluido' || c.deleted === true || (c.amount || 0) <= 0) {
-          return;
-        }
-
-        const category = (c.category || '').toLowerCase();
-        const desc = (c.description || '').toLowerCase();
-        const cProName = (c.profissional_name || '').toLowerCase();
-        const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
-        const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
-
-        let matchesPro = false;
-        if (targetId && (c.profissional_id === targetId || c.barber_id === targetId)) {
-          matchesPro = true;
-        } else if (targetProName || targetProEmail) {
-          matchesPro = matchesProText(cProName) || matchesProText(desc);
-        } else {
-          matchesPro = true;
-        }
-
-        if (isVale && matchesPro) {
-          const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
-          if (activeTenant === 'gbcortes7' && cDate && cDate < '2026-09-01') {
-            return;
-          }
-
-          // If linked to an advance that was deleted from professional_advances, do not resurrect it
-          if (c.referencia_id) {
-            const hasExisting = results.some(r => 
-              r.id === c.referencia_id || 
-              r.transaction_id === c.referencia_id || 
-              r.movement_id === docSnap.id
-            );
-            if (!hasExisting) {
-              return;
-            }
-          }
-
-          const cAmount = c.amount || 0;
-
-          const isDuplicate = results.some(r => 
-            r.id === docSnap.id || 
-            r.movement_id === docSnap.id ||
-            (Math.abs(r.amount - cAmount) < 0.01 && r.date === cDate)
-          );
-
-          if (!isDuplicate) {
-            results.push({
-              id: docSnap.id,
-              tenantId: c.tenantId || activeTenant,
-              profissional_id: c.profissional_id || filters.profissional_id || '',
-              profissional_name: c.profissional_name || targetProName || 'Profissional',
-              amount: cAmount,
-              date: cDate || new Date().toISOString().split('T')[0],
-              description: c.description || 'Vale / Sangria de Caixa',
-              status: 'pendente',
-              responsible_id: c.usuario_id || '',
-              responsible_name: c.usuario_name || '',
-              createdAt: c.createdAt,
-              updatedAt: c.updatedAt
-            } as ProfessionalAdvance);
-          }
-        }
-      });
-    } catch (err) {
-      console.warn("Could not fetch cash_movements as advances:", err);
     }
 
     if (filters.startDate && filters.endDate) {

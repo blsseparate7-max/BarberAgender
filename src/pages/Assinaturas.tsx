@@ -73,6 +73,7 @@ import {
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { ComandaModal } from '../components/Comanda/ComandaModal';
+import { ClientSelectCombobox } from '../components/Common/ClientSelectCombobox';
 
 enum OperationType {
   CREATE = 'create',
@@ -4537,27 +4538,25 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                 <div className="p-6 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Buscar Cliente</label>
-                    <select 
-                      name="clientId" 
-                      required 
-                      value={assignSelectedClientId}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        setAssignSelectedClientId(id);
-                        const c = clients.find(cl => cl.uid === id);
-                        const existingCpf = c?.cpf || (c as any)?.cpfCnpj || '';
-                        setAssignClientCpf(formatCpfMask(existingCpf));
-                        setAssignClientEmail(c?.email || '');
+                    <ClientSelectCombobox
+                      clients={clients}
+                      selectedClientId={assignSelectedClientId}
+                      onSelectClient={(cId, _cName, clientObj) => {
+                        setAssignSelectedClientId(cId);
+                        if (clientObj) {
+                          const existingCpf = clientObj.cpf || (clientObj as any)?.cpfCnpj || '';
+                          setAssignClientCpf(formatCpfMask(existingCpf));
+                          setAssignClientEmail(clientObj.email || '');
+                        } else {
+                          const found = clients.find(cl => cl.uid === cId);
+                          const existingCpf = found?.cpf || (found as any)?.cpfCnpj || '';
+                          setAssignClientCpf(formatCpfMask(existingCpf));
+                          setAssignClientEmail(found?.email || '');
+                        }
                       }}
-                      className="w-full bg-slate-50 border border-slate-150 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-accent/50 focus:bg-white transition-all text-primary outline-none cursor-pointer font-extrabold"
-                    >
-                      <option value="">Selecione o Cliente do Clube...</option>
-                      {clients.map((c, index) => (
-                        <option key={`assign-client-${c.uid || index}-${index}`} value={c.uid}>
-                          {c.nome} {c.cpf ? `(CPF: ${formatCpfMask(c.cpf)})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Buscar cliente por nome ou celular..."
+                      allowAvulso={false}
+                    />
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Cadastro / Ativação</label>

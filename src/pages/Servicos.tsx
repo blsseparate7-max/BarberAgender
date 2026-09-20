@@ -39,6 +39,7 @@ import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { collection, onSnapshot, query, orderBy, doc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { Combos } from './Combos';
 
 // Category Aesthetic Mapping for bespoke badges and cards styling
 const CATEGORY_STYLES: Record<string, { bg: string; text: string; border: string; accent: string }> = {
@@ -59,10 +60,22 @@ const getCategoryStyle = (catName: string) => {
   return CATEGORY_STYLES['default'];
 };
 
-export function Servicos() {
+export function Servicos({ activeSubTab }: { activeSubTab?: string } = {}) {
   const { isAdmin, isGerente } = useAuth();
   const { tenantId } = useTenant();
   const canManage = isAdmin || isGerente;
+
+  const [catalogTab, setCatalogTab] = useState<'servicos' | 'combos'>(
+    activeSubTab === 'cadastros-combos' ? 'combos' : 'servicos'
+  );
+
+  useEffect(() => {
+    if (activeSubTab === 'cadastros-combos') {
+      setCatalogTab('combos');
+    } else if (activeSubTab === 'cadastros-servicos') {
+      setCatalogTab('servicos');
+    }
+  }, [activeSubTab]);
 
   const [services, setServices] = useState<Service[]>([]);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
@@ -170,13 +183,13 @@ export function Servicos() {
       {/* Header Bar */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-5 border-b border-slate-100 pb-5">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-primary mb-1">Catálogo de Serviços</h1>
+          <h1 className="text-3xl font-black tracking-tight text-primary mb-1">Catálogo & Serviços</h1>
           <p className="text-muted text-sm font-medium">
-            Gerencie os serviços, tabelas de comissão, durações operacionais e regras de cortesia do seu estabelecimento.
+            Gerencie os serviços, combos promocionais, comissões operacionais e categorias do seu estabelecimento.
           </p>
         </div>
         <div className="flex gap-3 shrink-0 self-start sm:self-center">
-          {canManage && (
+          {canManage && catalogTab === 'servicos' && (
             <button 
               onClick={() => setIsCategoryModalOpen(true)}
               className="flex items-center justify-center gap-2 bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-slate-50 transition shadow-sm active:scale-95"
@@ -185,7 +198,7 @@ export function Servicos() {
               <span>Categorias</span>
             </button>
           )}
-          {canManage && (
+          {canManage && catalogTab === 'servicos' && (
             <button 
               onClick={() => {
                 setEditingService(null);
@@ -200,6 +213,36 @@ export function Servicos() {
         </div>
       </header>
 
+      {/* Navigation Switch between Services and Combos */}
+      <div className="flex bg-slate-100 p-1.5 rounded-2xl w-fit border border-slate-200 shadow-inner">
+        <button
+          onClick={() => setCatalogTab('servicos')}
+          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all ${
+            catalogTab === 'servicos'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          <Scissors size={15} className={catalogTab === 'servicos' ? 'text-indigo-600' : 'text-slate-400'} />
+          <span>Serviços Individuais</span>
+        </button>
+        <button
+          onClick={() => setCatalogTab('combos')}
+          className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all ${
+            catalogTab === 'combos'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          <Sparkles size={15} className={catalogTab === 'combos' ? 'text-amber-500' : 'text-slate-400'} />
+          <span>Combos Promocionais</span>
+        </button>
+      </div>
+
+      {catalogTab === 'combos' ? (
+        <Combos />
+      ) : (
+        <>
       {/* Analytics Summary Bar */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
@@ -296,6 +339,8 @@ export function Servicos() {
             />
           ))}
         </div>
+      )}
+      </>
       )}
 
       {/* Safe deletes and actions forms */}

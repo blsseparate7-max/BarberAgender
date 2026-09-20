@@ -34,7 +34,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { userService } from '../services/userService';
 import { UserProfile, WorkingHours } from '../types';
-import { calculateProfessionalLedger } from '../services/ledgerService';
 import { useAuth } from '../contexts/AuthContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { Edit2 } from 'lucide-react';
@@ -46,7 +45,7 @@ import { toast } from 'sonner';
 import { useTenant } from '../contexts/TenantContext';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { appointmentService } from '../services/appointmentService';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format } from 'date-fns';
 
 // Default weekdays list for schedule configuring
 const DAYS_OF_WEEK = [
@@ -94,8 +93,6 @@ export function Barbeiros() {
   const { isAdmin, isGerente, user } = useAuth();
   const { tenant, tenantId } = useTenant();
   const [barbeiros, setBarbeiros] = useState<UserProfile[]>([]);
-  const [commissions, setCommissions] = useState<any[]>([]);
-  const [advances, setAdvances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('active');
@@ -197,55 +194,6 @@ export function Barbeiros() {
     });
 
     return () => unsubscribe();
-  }, [tenantId]);
-
-  // Live Subscription for Commissions to generate live analytics cards (strictly bounded to current month)
-  useEffect(() => {
-    if (!tenantId) return;
-    const now = new Date();
-    const startStr = format(startOfMonth(now), 'yyyy-MM-dd');
-    const endStr = format(endOfMonth(now), 'yyyy-MM-dd');
-
-    const qCom = query(
-      collection(db, 'commissions'),
-      where('tenantId', '==', tenantId),
-      where('date', '>=', startStr),
-      where('date', '<=', endStr)
-    );
-    const unsubscribeCom = onSnapshot(qCom, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setCommissions(docs);
-    }, (error) => {
-      console.warn("[Barbeiros] Fallback comissões:", error);
-      const fallback = query(collection(db, 'commissions'), where('tenantId', '==', tenantId), limit(100));
-      onSnapshot(fallback, (snap) => {
-        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setCommissions(docs);
-      });
-    });
-
-    // Live Subscription for Advances to accurately calculate pending net payouts
-    const qAdv = query(
-      collection(db, 'professional_advances'),
-      where('tenantId', '==', tenantId),
-      limit(100)
-    );
-    const unsubscribeAdv = onSnapshot(qAdv, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAdvances(docs);
-    }, (error) => {
-      console.warn("[Barbeiros] Fallback adiantamentos:", error);
-      const fallback = query(collection(db, 'professional_advances'), where('tenantId', '==', tenantId), limit(50));
-      onSnapshot(fallback, (snap) => {
-        const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setAdvances(docs);
-      });
-    });
-
-    return () => {
-      unsubscribeCom();
-      unsubscribeAdv();
-    };
   }, [tenantId]);
 
   const handleToggleAtivo = async (uid: string, currentAtivo: boolean) => {
@@ -453,8 +401,6 @@ export function Barbeiros() {
             <BarberCard 
               key={`barber-${barber.uid || index}-${index}`} 
               barber={barber} 
-              commissions={commissions}
-              advances={advances}
               onEdit={() => {
                 setEditingBarber(barber);
                 setIsModalOpen(true);
@@ -500,35 +446,31 @@ export function Barbeiros() {
   );
 }
 
-// BARBER CARD WITH EXPANDABLE WORKING HOURS AND REALTIME PERFORMANCE GRAPHICS
+// BARBER CARD FOCUSED 100% ON REGISTRATION, CONTACTS, AND OPERATIONAL SCHEDULE
 interface BarberCardProps {
   key?: string;
   barber: UserProfile;
-  commissions: any[];
-  advances: any[];
   onEdit: () => void;
   onToggleAtivo: (uid: string, currentAtivo: boolean) => void | Promise<void>;
   onDelete: () => void;
   canEdit: boolean;
 }
 
-function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDelete, canEdit }: BarberCardProps) {
+function BarberCard({ barber, onEdit, onToggleAtivo, onDelete, canEdit }: BarberCardProps) {
   const [showOptions, setShowOptions] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
 
   const comissao = barber.percentual_comissao ?? barber.commission_percentage ?? 50;
   const especialidadesString = barber.especialidade ?? barber.specialty ?? '';
   const specialties = especialidadesString ? especialidadesString.split(',').map(s => s.trim()).filter(Boolean) : [];
-  const meta = barber.meta_mensal ?? barber.monthly_goal ?? 0;
   const gestor = barber.is_gestor ?? barber.is_manager ?? false;
   const telefone = barber.telefone || barber.phone;
 
-  // Unified financial ledger calculation - 100% synchronized with Comissoes and Financeiro
-  const ledger = calculateProfessionalLedger(barber, commissions, advances);
-  const goalPercentage = meta > 0 ? Math.min(Math.round((ledger.faturamentoBrutoMes / meta) * 100), 100) : 0;
-
   // Extract work schedule array
   const activeHours = barber.horario_de_trabalho ?? DEFAULT_WORKING_HOURS;
+  const todayDayOfWeek = new Date().getDay();
+  const todaySchedule = activeHours.find(h => h.dayOfWeek === todayDayOfWeek);
+  const isWorkingToday = todaySchedule ? todaySchedule.isOpen : false;
 
   // Match random persistent color based on UUID, or fallback
   const getAvatarColor = () => {
@@ -605,7 +547,7 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
       </div>
 
       {/* Main card row header */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-4 mb-5">
         <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl border shadow-inner overflow-hidden transition grow-0 shrink-0 ${barber.fotoUrl || barber.avatarUrl ? 'bg-white' : style.bg}`}>
           {barber.fotoUrl || barber.avatarUrl ? (
             <img 
@@ -620,7 +562,7 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
         <div className="min-w-0 flex-1">
           <h3 className="font-extrabold text-lg text-primary tracking-tight truncate leading-tight">{barber.nome}</h3>
           <div className="flex items-center gap-1.5 mt-1">
-            <Shield size={12} className={gestor ? "text-amber-505" : "text-emerald-500"} />
+            <Shield size={12} className={gestor ? "text-amber-500" : "text-emerald-500"} />
             <p className="text-[9px] text-muted-foreground uppercase tracking-wider font-extrabold text-slate-500">
               {gestor ? 'Sócio / Supervisor' : 'Profissional Barber'}
             </p>
@@ -628,66 +570,28 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
         </div>
       </div>
 
-      {/* Real-time statistics board - Clean & 100% Reconciled */}
-      <div className="bg-slate-50/70 border border-slate-100 p-3.5 rounded-3xl mb-5 space-y-3">
-        <div className="grid grid-cols-2 gap-3 text-center divide-x divide-slate-200/60">
-          <div>
-            <p className="text-[8px] font-black uppercase text-slate-400 tracking-wider truncate">Ganhos do Mês</p>
-            <p className="text-base font-black text-slate-900 mt-0.5">R$ {ledger.comissaoGeradaMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-            <p className="text-[8px] text-slate-400 font-bold truncate">{ledger.totalAtendimentosMes} atendimentos</p>
-          </div>
-          <div>
-            <p className={`text-[8px] font-black uppercase tracking-wider truncate ${
-              ledger.saldoPendenteLiquido < 0 ? 'text-rose-600' : 'text-emerald-600'
-            }`}>
-              {ledger.saldoPendenteLiquido < 0 ? 'Saldo Devedor' : 'Saldo a Pagar'}
+      {/* Operational Status Board */}
+      <div className="bg-slate-50 border border-slate-150 p-3.5 rounded-2xl mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isWorkingToday && barber.ativo ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+          <div className="min-w-0">
+            <p className="text-[9px] font-black uppercase text-slate-400 tracking-wider leading-none">
+              {isWorkingToday ? 'Escalado Hoje' : 'Folga Hoje'}
             </p>
-            <p className={`text-base font-extrabold mt-0.5 ${
-              ledger.saldoPendenteLiquido < 0 ? 'text-rose-600' : 'text-emerald-600'
-            }`}>
-              {ledger.saldoPendenteLiquido < 0 
-                ? `- R$ ${Math.abs(ledger.saldoPendenteLiquido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` 
-                : `R$ ${ledger.saldoPendenteLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-            </p>
-            <p className={`text-[8px] font-bold truncate ${
-              ledger.saldoPendenteLiquido < 0 ? 'text-rose-700/80' : 'text-emerald-700/80'
-            }`}>
-              {ledger.valesPendentes > 0 
-                ? (ledger.saldoPendenteLiquido < 0 ? `Devendo R$ ${Math.abs(ledger.saldoPendenteLiquido).toFixed(2)} em vales` : `-R$ ${ledger.valesPendentes.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} vales`)
-                : 'Pendente líquido'}
+            <p className="text-xs font-black text-slate-800 mt-1 truncate">
+              {isWorkingToday && todaySchedule ? `${todaySchedule.startTime} às ${todaySchedule.endTime}` : 'Sem escala hoje'}
             </p>
           </div>
         </div>
-
-        {meta > 0 && (
-          <div className="space-y-1.5 pt-2.5 border-t border-slate-200/40">
-            <div className="flex justify-between items-center text-[9px] font-black text-slate-500 uppercase tracking-wide">
-              <span>Alcancado da Meta (R$ {meta.toLocaleString('pt-BR', { maximumFractionDigits: 0 })})</span>
-              <span className={goalPercentage >= 100 ? "text-emerald-600" : "text-indigo-600"}>{goalPercentage}%</span>
-            </div>
-            <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex shadow-inner">
-              <motion.div 
-                initial={{ width: 0 }}
-                animate={{ width: `${goalPercentage}%` }}
-                className={`h-full rounded-full ${
-                  goalPercentage >= 100 ? 'bg-gradient-to-r from-emerald-500 to-green-600 shadow-md shadow-emerald-500/20' :
-                  goalPercentage >= 50 ? 'bg-gradient-to-r from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/20' :
-                  'bg-gradient-to-r from-amber-500 to-rose-500'
-                }`}
-              />
-            </div>
-            {goalPercentage >= 100 && (
-              <div className="flex items-center gap-1.5 text-[8px] text-emerald-600 font-extrabold uppercase tracking-widest mt-1">
-                <Sparkles size={10} className="animate-spin" />
-                <span>Parabéns! Meta Mensal Superada!</span>
-              </div>
-            )}
-          </div>
+        {barber.tipoContrato && (
+          <span className="px-2.5 py-1 bg-white border border-slate-200 text-slate-700 rounded-xl text-[9px] font-black uppercase tracking-wider shadow-2xs shrink-0">
+            {barber.tipoContrato}
+          </span>
         )}
       </div>
 
       {/* Basic information parameters */}
-      <div className="space-y-3 mb-6 flex-1">
+      <div className="space-y-3 mb-5 flex-1">
         {specialties.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 mb-2.5">
             {specialties.map((spec, specIdx) => (
@@ -705,56 +609,49 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
 
         <div className="space-y-2 text-xs font-bold text-slate-600">
           <div className="flex items-center gap-3">
-            <Mail size={13} className="text-slate-400" />
+            <Mail size={13} className="text-slate-400 shrink-0" />
             <span className="truncate text-slate-500">{barber.email}</span>
           </div>
 
           {telefone && (
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Phone size={13} className="text-slate-400" />
-                <span className="text-slate-500">{telefone}</span>
+              <div className="flex items-center gap-3 min-w-0">
+                <Phone size={13} className="text-slate-400 shrink-0" />
+                <span className="text-slate-500 truncate">{telefone}</span>
               </div>
               <a 
                 href={`https://wa.me/55${telefone.replace(/\D/g, '')}`}
                 target="_blank"
                 rel="noreferrer"
-                className="text-[9px] uppercase font-black text-emerald-600 hover:underline hover:text-emerald-700 block shrink-0"
+                className="text-[9px] uppercase font-black text-emerald-600 hover:underline hover:text-emerald-700 block shrink-0 ml-2"
               >
-                Chamar WhatsApp
+                WhatsApp
               </a>
             </div>
           )}
 
           <div className="flex items-center gap-3">
-            <Percent size={13} className="text-slate-400" />
-            <span>Comissão Base Configurada: <span className="text-indigo-650 font-black">{comissao}%</span></span>
+            <Percent size={13} className="text-slate-400 shrink-0" />
+            <span>Comissão Contratual: <span className="text-indigo-600 font-black">{comissao}%</span></span>
           </div>
 
           {barber.startDate && (
             <div className="flex items-center gap-3">
-              <Calendar size={13} className="text-slate-400" />
-              <span>Contrato: <span className="font-extrabold">{new Date(barber.startDate + 'T12:00:00').toLocaleDateString('pt-BR')}</span></span>
-            </div>
-          )}
-
-          {barber.tipoContrato && (
-            <div className="flex items-center gap-3">
-              <Briefcase size={13} className="text-slate-400" />
-              <span>Regime: <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[9px] font-black uppercase tracking-wider">{barber.tipoContrato}</span></span>
+              <Calendar size={13} className="text-slate-400 shrink-0" />
+              <span>Início: <span className="font-extrabold">{new Date(barber.startDate + 'T12:00:00').toLocaleDateString('pt-BR')}</span></span>
             </div>
           )}
 
           {barber.cpf && (
             <div className="flex items-center gap-3">
-              <span className="text-[9px] font-black text-slate-400 w-[13px] text-center">CPF</span>
+              <span className="text-[9px] font-black text-slate-400 w-[13px] text-center shrink-0">CPF</span>
               <span className="text-slate-500 font-semibold">CPF: {barber.cpf}</span>
             </div>
           )}
 
           {barber.chavePix && (
             <div className="flex items-center gap-3">
-              <span className="text-[9px] font-black text-emerald-600 w-[13px] text-center">PIX</span>
+              <span className="text-[9px] font-black text-emerald-600 w-[13px] text-center shrink-0">PIX</span>
               <span className="text-slate-500 font-semibold truncate" title={barber.chavePix}>Pix: {barber.chavePix}</span>
             </div>
           )}
@@ -762,7 +659,7 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
       </div>
 
       {/* Collapsible schedule scale details */}
-      <div className="border-t border-slate-100 pt-4 mt-auto">
+      <div className="border-t border-slate-100 pt-3 mt-auto">
         <button
           onClick={() => setShowSchedule(!showSchedule)}
           className="w-full flex items-center justify-between text-xs font-black uppercase text-slate-400 hover:text-primary transition-all pb-1 tracking-wider"
@@ -811,7 +708,7 @@ function BarberCard({ barber, commissions, advances, onEdit, onToggleAtivo, onDe
       </div>
 
       {/* Availability action row footer */}
-      <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-4 h-9">
+      <div className="flex items-center justify-between pt-3 border-t border-slate-100 mt-3 h-9">
         <button
           disabled={!canEdit}
           onClick={() => onToggleAtivo(barber.uid, barber.ativo)}
@@ -1343,7 +1240,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Percentual Comissão (%)</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Comissão Base Contratual (%)</label>
                     <input 
                       type="number" 
                       min="0"
@@ -1354,32 +1251,7 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                       className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
                       placeholder="Ex: 50"
                     />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Remuneração Fixa / Salário (R$)</label>
-                    <input 
-                      type="number" 
-                      min="0"
-                      value={remuneracaoFixa === 0 ? '' : remuneracaoFixa}
-                      onFocus={(e) => e.target.select()}
-                      onChange={e => setRemuneracaoFixa(e.target.value === '' ? '' : Number(e.target.value))}
-                      className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
-                      placeholder="Ex: 2500"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Meta Mensal Esperada (R$)</label>
-                    <input 
-                      type="number" 
-                      min="0"
-                      value={metaMensal === 0 ? '' : metaMensal}
-                      onFocus={(e) => e.target.select()}
-                      onChange={e => setMetaMensal(e.target.value === '' ? '' : Number(e.target.value))}
-                      className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-3 px-4 text-sm font-bold text-primary outline-none transition"
-                      placeholder="Ex: 3000"
-                    />
+                    <p className="text-[9px] text-slate-400 font-semibold ml-1">Taxa percentual padrão repassada ao profissional ao fechar comandas.</p>
                   </div>
 
                   {!barber ? (

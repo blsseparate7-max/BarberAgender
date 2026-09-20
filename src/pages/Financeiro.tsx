@@ -53,7 +53,13 @@ import {
   Database,
   Eye,
   PlusCircle,
-  MessageSquare
+  MessageSquare,
+  Banknote,
+  QrCode,
+  Package,
+  Scissors,
+  Layers,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -100,6 +106,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { parseDate } from '../lib/utils';
+import { normalizeDate, isDateInRange, calculateStandardFinancialMetrics } from '../utils/financialCalculations';
 import { ProfessionalCommissions } from '../components/Financeiro/ProfessionalCommissions';
 import { DREGerencial } from '../components/Financeiro/DREGerencial';
 import { AccountsPayableManager } from '../components/AccountsPayableManager';
@@ -502,6 +509,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [currentCash, setCurrentCash] = useState<DailyCash | null>(null);
   const [cashHistory, setCashHistory] = useState<DailyCash[]>([]);
+  const [commissions, setCommissions] = useState<Commission[]>([]);
+  const [pendingDebts, setPendingDebts] = useState<ClientDebt[]>([]);
 
   // Subscrição em tempo real do status do caixa, transações e fiados pendentes
   useEffect(() => {
@@ -554,11 +563,11 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
 
     const processTxSnapshot = (snapshot: any) => {
       const allTxs = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as FinancialTransaction));
-      const txs = allTxs.filter((t: any) => (!dateRange.start || t.date >= dateRange.start) && (!dateRange.end || t.date <= dateRange.end));
+      const txs = allTxs.filter((t: any) => isDateInRange(t.date || t.createdAt, dateRange.start, dateRange.end));
       
       // Sort in memory by date desc, then by createdAt seconds desc
       txs.sort((a: any, b: any) => {
-        const dateCompare = (b.date || '').localeCompare(a.date || '');
+        const dateCompare = (normalizeDate(b.date || b.createdAt)).localeCompare(normalizeDate(a.date || a.createdAt));
         if (dateCompare !== 0) return dateCompare;
         
         const timeA = a.createdAt?.seconds || 0;
@@ -570,41 +579,26 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
 
       setTransactions(txs);
       
-      // Also update stats locally to avoid a separate fetch
-      const income = txs
-        .filter((t: any) => t.type === 'income' && t.status === 'pago')
-        .reduce((acc: number, t: any) => acc + t.amount, 0);
-        
-      const expense = txs
-        .filter((t: any) => t.type === 'expense' && t.status === 'pago')
-        .reduce((acc: number, t: any) => acc + t.amount, 0);
-
-      const aReceberCartoes = txs
-        .filter((t: any) => t.type === 'income' && t.status === 'pago' && t.is_settled === false && (t.paymentMethod === 'credito' || t.paymentMethod === 'debito'))
-        .reduce((acc: number, t: any) => acc + (t.net_amount || t.amount), 0);
-
-      const disponivel = txs
-        .filter((t: any) => t.type === 'income' && t.status === 'pago' && t.is_settled !== false)
-        .reduce((acc: number, t: any) => acc + (t.net_amount || t.amount), 0) - expense;
+      // Update stats locally using standardized calculation
+      const metrics = calculateStandardFinancialMetrics(txs, pendingDebts);
 
       setStats(prev => ({
         ...prev,
-        income,
-        expense,
-        balance: income - expense,
-        disponivel,
-        aReceberCartoes
+        income: metrics.totalEntradasBruto,
+        expense: metrics.totalSaidasPagas,
+        balance: metrics.saldoOperacionalLiquido,
+        disponivel: metrics.totalDisponivelImediato - metrics.totalSaidasPagas,
+        aReceberCartoes: metrics.totalAReceberCartoesLiquido
       }));
       setLoading(false);
     };
 
     let fallbackUnsubscribe: (() => void) | null = null;
     const unsubscribeTransactions = onSnapshot(q, processTxSnapshot, (err) => {
-      console.warn("[Financeiro] Range listener index missing or error. Falling back to limited query:", err?.message || err);
+      console.warn("[Financeiro] Range listener index missing or error. Falling back to complete tenant query:", err?.message || err);
       const fallbackQ = query(
         collection(db, 'financial_transactions'),
-        where('tenantId', '==', currentTenantId),
-        limit(150)
+        where('tenantId', '==', currentTenantId)
       );
       fallbackUnsubscribe = onSnapshot(fallbackQ, processTxSnapshot, (fErr) => {
         console.error("Error in fallback transactions listener:", fErr);
@@ -620,153 +614,33 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     };
   }, [dateRange.start, dateRange.end, currentTenantId]);
 
-  // Calculations for Fluxo de Caixa Breakdowns (AppBarber style)
+  // Calculations for Fluxo de Caixa Breakdowns (Clean, Reconciled, Exact)
   const overviewBreakdowns = React.useMemo(() => {
-    const defaultMethods: Record<string, { label: string; amount: number; net: number }> = {
-      dinheiro: { label: 'Dinheiro', amount: 0, net: 0 },
-      debito: { label: 'Cartão de Débito', amount: 0, net: 0 },
-      pix: { label: 'PIX', amount: 0, net: 0 },
-      credito: { label: 'Cartão de Crédito', amount: 0, net: 0 },
-      online: { label: 'PAGAMENTO ONLINE', amount: 0, net: 0 },
-    };
+    const metrics = calculateStandardFinancialMetrics(transactions, pendingDebts);
 
-    const itemMap = {
-      servicos: { label: 'Serviços', pgto: 0, total: 0 },
-      pacotes: { label: 'Pacotes', pgto: 0, total: 0 },
-      assinaturas: { label: 'Assinaturas', pgto: 0, total: 0 },
-      produtos: { label: 'Produtos', pgto: 0, total: 0 },
-    };
-
-    let totalMovimentadoBruto = 0;
-    let totalMovimentadoLiquido = 0;
-
-    let totalDisponivelBruto = 0;
-    let totalDisponivelLiquido = 0;
-
-    let totalAReceberBruto = 0;
-    let totalAReceberLiquido = 0;
-
-    transactions.forEach(t => {
-      if (t.type !== 'income') return;
-
-      const amount = t.amount || 0;
-      const netAmount = t.net_amount ?? amount;
-      const isPaid = t.status === 'pago';
-
-      // Total Movimentado (Entradas)
-      if (isPaid) {
-        totalMovimentadoBruto += amount;
-        totalMovimentadoLiquido += netAmount;
-      }
-
-      // Payment method grouping
-      let pmKey = (t.paymentMethod || 'outros').toLowerCase();
-      if (pmKey.includes('online') || pmKey === 'asaas' || pmKey === 'pix_online' || pmKey === 'cartao_online' || pmKey === 'pagamento_online') {
-        pmKey = 'online';
-      }
-      if (isPaid) {
-        if (!defaultMethods[pmKey]) {
-          let labelName = t.paymentMethod || 'Outros';
-          if (pmKey === 'dinheiro') labelName = 'Dinheiro';
-          else if (pmKey === 'debito') labelName = 'Cartão de Débito';
-          else if (pmKey === 'pix') labelName = 'PIX';
-          else if (pmKey === 'credito') labelName = 'Cartão de Crédito';
-          else if (pmKey === 'online') labelName = 'PAGAMENTO ONLINE';
-          else if (pmKey === 'fiado') labelName = 'Conta Cliente (Fiado)';
-          else if (pmKey === 'assinatura') labelName = 'Assinatura';
-
-          defaultMethods[pmKey] = { label: labelName, amount: 0, net: 0 };
-        }
-        defaultMethods[pmKey].amount += amount;
-        defaultMethods[pmKey].net += netAmount;
-      }
-
-      // Item type grouping & revenue distribution
-      const cat = (t.category || '').toLowerCase();
-      const desc = (t.description || '').toLowerCase();
-
-      // If paid, calculate item type grouping & revenue distribution
-      if (isPaid) {
-        if (t.service_amount !== undefined || t.product_amount !== undefined || t.package_amount !== undefined || t.subscription_amount !== undefined) {
-          const sAmt = t.service_amount || 0;
-          const pAmt = t.product_amount || 0;
-          const pacAmt = t.package_amount || 0;
-          const subAmt = t.subscription_amount || 0;
-          const sumParts = sAmt + pAmt + pacAmt + subAmt;
-
-          if (sumParts > 0) {
-            const ratio = amount / sumParts;
-            if (sAmt > 0) {
-              itemMap.servicos.total += sAmt * ratio;
-              itemMap.servicos.pgto += sAmt * ratio;
-            }
-            if (pAmt > 0) {
-              itemMap.produtos.total += pAmt * ratio;
-              itemMap.produtos.pgto += pAmt * ratio;
-            }
-            if (pacAmt > 0) {
-              itemMap.pacotes.total += pacAmt * ratio;
-              itemMap.pacotes.pgto += pacAmt * ratio;
-            }
-            if (subAmt > 0) {
-              itemMap.assinaturas.total += subAmt * ratio;
-              itemMap.assinaturas.pgto += subAmt * ratio;
-            }
-          } else {
-            itemMap.servicos.total += amount;
-            itemMap.servicos.pgto += amount;
-          }
-        } else {
-          // Fallback for legacy transactions
-          let itemKey: 'servicos' | 'pacotes' | 'assinaturas' | 'produtos' = 'servicos';
-
-          if (cat.includes('assinat') || desc.includes('assinat') || desc.includes('plano') || pmKey === 'assinatura') {
-            itemKey = 'assinaturas';
-          } else if (cat.includes('pacote') || desc.includes('pacote')) {
-            itemKey = 'pacotes';
-          } else if (
-            (cat === 'produtos' || cat === 'produto' || cat.includes('estoque') || desc.includes('venda de produto') || desc.includes('venda produto')) &&
-            !cat.includes('serviço') && !cat.includes('servico')
-          ) {
-            itemKey = 'produtos';
-          } else {
-            itemKey = 'servicos';
-          }
-
-          itemMap[itemKey].total += amount;
-          itemMap[itemKey].pgto += amount;
-        }
-      }
-
-      // Classification for Disponível vs A Receber
-      if (isPaid) {
-        if (t.is_settled !== false && pmKey !== 'credito' && pmKey !== 'fiado') {
-          totalDisponivelBruto += amount;
-          totalDisponivelLiquido += netAmount;
-        } else {
-          totalAReceberBruto += amount;
-          totalAReceberLiquido += netAmount;
-        }
-      } else if (t.status === 'pendente' && pmKey === 'fiado') {
-        totalAReceberBruto += amount;
-        totalAReceberLiquido += netAmount;
-      }
-    });
+    const activeMethods = Object.values(metrics.byMethod).filter(m => m.amount > 0 || ['Dinheiro', 'PIX', 'Cartão de Débito', 'Cartão de Crédito'].includes(m.label));
+    const activeItems = Object.values(metrics.byCategory).filter(it => it.total > 0 || ['Serviços', 'Produtos'].includes(it.label));
 
     return {
-      methods: Object.values(defaultMethods),
-      items: Object.values(itemMap),
-      totalMovimentadoBruto,
-      totalMovimentadoLiquido,
-      totalDisponivelBruto,
-      totalDisponivelLiquido,
-      totalAReceberBruto,
-      totalAReceberLiquido,
+      methods: activeMethods,
+      items: activeItems,
+      totalEntradasBruto: metrics.totalEntradasBruto,
+      totalEntradasLiquido: metrics.totalEntradasLiquido,
+      totalTaxasCartao: metrics.totalTaxasCartao,
+      totalEntradasCount: metrics.totalEntradasCount,
+      totalSaidasPagas: metrics.totalSaidasPagas,
+      totalDespesasOperacionais: metrics.totalDespesasOperacionais,
+      totalSangriasRetiradas: metrics.totalSangriasRetiradas,
+      totalSaidasCount: metrics.totalSaidasCount,
+      saldoOperacionalBruto: metrics.saldoBruto,
+      saldoOperacionalLiquido: metrics.saldoOperacionalLiquido,
+      totalAReceberCartoesBruto: metrics.totalAReceberCartoesBruto,
+      totalAReceberCartoesLiquido: metrics.totalAReceberCartoesLiquido,
+      totalDisponivelImediato: metrics.totalDisponivelImediato,
+      fiadosPendentes: metrics.fiadosPendentes || stats.pendingFiado || 0,
+      totalPrevisaoReceber: metrics.totalPrevisaoReceber
     };
-  }, [transactions]);
-
-  const [commissions, setCommissions] = useState<Commission[]>([]);
-  const [pendingDebts, setPendingDebts] = useState<ClientDebt[]>([]);
+  }, [transactions, pendingDebts, stats.pendingFiado]);
 
   // Modal states
   const [isCashModalOpen, setIsCashModalOpen] = useState(false);
@@ -1453,166 +1327,213 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                {/* Financial Summary Cards */}
+                {/* 1. Executive Summary Cards (Consolidated 4-Card Row) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                   <StatCard 
-                    title="Disponível Hoje" 
-                    value={stats.disponivel} 
-                    icon={<Wallet size={20} />} 
+                    title="Entradas Realizadas" 
+                    value={overviewBreakdowns.totalEntradasBruto} 
+                    icon={<TrendingUp size={22} />} 
                     color="emerald"
-                    subtitle="Dinheiro/PIX imediato (líquido)"
+                    badge={`${overviewBreakdowns.totalEntradasCount} ${overviewBreakdowns.totalEntradasCount === 1 ? 'transação' : 'transações'}`}
+                    subtitle={`Líquido: R$ ${overviewBreakdowns.totalEntradasLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (Taxas: -R$ ${overviewBreakdowns.totalTaxasCartao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`}
                   />
                   <StatCard 
-                    title="A Receber Cartões" 
-                    value={stats.aReceberCartoes} 
-                    icon={<CreditCard size={20} />} 
-                    color="blue"
-                    subtitle="Previsão amanhã/futura (D+1+)"
-                  />
-                  <StatCard 
-                    title="Fiados Pendentes" 
-                    value={stats.pendingFiado} 
-                    icon={<Clock size={20} />} 
-                    color="amber"
-                    subtitle="Contas de clientes em aberto"
-                  />
-                  <StatCard 
-                    title="Saídas Gerais" 
-                    value={stats.expense} 
-                    icon={<TrendingDown size={20} />} 
+                    title="Saídas & Despesas" 
+                    value={overviewBreakdowns.totalSaidasPagas} 
+                    icon={<TrendingDown size={22} />} 
                     color="red"
-                    subtitle="Total de saídas no período"
+                    badge={`${overviewBreakdowns.totalSaidasCount} ${overviewBreakdowns.totalSaidasCount === 1 ? 'saída' : 'saídas'}`}
+                    subtitle={`Despesas: R$ ${overviewBreakdowns.totalDespesasOperacionais.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | Sangrias: R$ ${overviewBreakdowns.totalSangriasRetiradas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                  />
+                  <StatCard 
+                    title="Resultado Operacional" 
+                    value={overviewBreakdowns.saldoOperacionalLiquido} 
+                    icon={<Wallet size={22} />} 
+                    color={overviewBreakdowns.saldoOperacionalLiquido >= 0 ? 'blue' : 'red'}
+                    badge={overviewBreakdowns.saldoOperacionalLiquido >= 0 ? 'Lucro Operacional' : 'Déficit Operacional'}
+                    subtitle="Entradas Líquidas deduzidas das Saídas Pagas"
+                  />
+                  <StatCard 
+                    title="Previsão a Receber" 
+                    value={overviewBreakdowns.totalPrevisaoReceber} 
+                    icon={<CreditCard size={22} />} 
+                    color="amber"
+                    badge="Futuro / Aberto"
+                    subtitle={`Cartões D+1+: R$ ${overviewBreakdowns.totalAReceberCartoesLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | Fiados: R$ ${overviewBreakdowns.fiadosPendentes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
                   />
                 </div>
-                {/* Banner Cards (AppBarber Style) */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {/* Card 1: Total Movimentado */}
-                  <div className="bg-sky-500 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[140px] hover:shadow-xl transition-all">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h2 className="text-3xl font-black tracking-tight drop-shadow-sm">
-                          R$ {overviewBreakdowns.totalMovimentadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </h2>
-                        <p className="text-xs font-extrabold text-sky-100 mt-1">
-                          Líquido: R$ {overviewBreakdowns.totalMovimentadoLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </p>
-                      </div>
-                      <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl">
-                        <ArrowRightLeft size={28} className="text-white" />
-                      </div>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs font-black uppercase tracking-wider text-sky-100">
-                      <span>Total Movimentado</span>
-                      <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Bruto | Líquido</span>
-                    </div>
-                  </div>
 
-                  {/* Card 2: Total Disponível */}
-                  <div className="bg-emerald-600 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[140px] hover:shadow-xl transition-all">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h2 className="text-3xl font-black tracking-tight drop-shadow-sm">
-                          R$ {overviewBreakdowns.totalDisponivelBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </h2>
-                        <p className="text-xs font-extrabold text-emerald-100 mt-1">
-                          Líquido: R$ {overviewBreakdowns.totalDisponivelLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </p>
-                      </div>
-                      <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl">
-                        <Wallet size={28} className="text-white" />
-                      </div>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs font-black uppercase tracking-wider text-emerald-100">
-                      <span>Total Disponível</span>
-                      <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Caixa / PIX</span>
-                    </div>
-                  </div>
-
-                  {/* Card 3: Total a Receber */}
-                  <div className="bg-amber-500 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[140px] hover:shadow-xl transition-all">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h2 className="text-3xl font-black tracking-tight drop-shadow-sm">
-                          R$ {overviewBreakdowns.totalAReceberBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </h2>
-                        <p className="text-xs font-extrabold text-amber-100 mt-1">
-                          Líquido: R$ {overviewBreakdowns.totalAReceberLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </p>
-                      </div>
-                      <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl">
-                        <ShoppingCart size={28} className="text-white" />
-                      </div>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between text-xs font-black uppercase tracking-wider text-amber-100">
-                      <span>Total a Receber</span>
-                      <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">Cartões / Fiados</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Breakdown Tables (AppBarber Style) */}
+                {/* 2. Structured Breakdown Tables */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  {/* Box 1: Movimentações por tipo de pagamento */}
+                  {/* Box 1: Entradas por Forma de Pagamento */}
                   <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col justify-between">
                     <div>
-                      <div className="bg-sky-600 text-white px-6 py-3.5 font-black text-sm tracking-wide text-center uppercase">
-                        Movimentações por tipo de pagamento
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                        {overviewBreakdowns.methods.map((m, idx) => (
-                          <div key={`overview-method-${m.label || idx}-${idx}`} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
-                            <span className="font-bold text-xs text-slate-700">{m.label}:</span>
-                            <span className="font-black text-xs text-slate-900">
-                              R$ {m.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </span>
+                      <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <CreditCard size={18} className="text-emerald-400" />
+                          <div>
+                            <h3 className="font-black text-sm tracking-wide uppercase">Entradas por Forma de Pagamento</h3>
+                            <p className="text-[11px] text-slate-300 font-medium">Distribuição dos recebimentos liquidados no período</p>
                           </div>
-                        ))}
+                        </div>
+                        <span className="text-xs font-black bg-white/10 px-3 py-1 rounded-full text-emerald-300">
+                          R$ {overviewBreakdowns.totalEntradasBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      
+                      <div className="divide-y divide-slate-100 p-2">
+                        {overviewBreakdowns.methods.map((m, idx) => {
+                          const percentage = overviewBreakdowns.totalEntradasBruto > 0 
+                            ? ((m.amount / overviewBreakdowns.totalEntradasBruto) * 100) 
+                            : 0;
+
+                          const methodIcon = () => {
+                            const lbl = m.label.toLowerCase();
+                            if (lbl.includes('dinheiro')) return <Banknote size={16} className="text-emerald-600" />;
+                            if (lbl.includes('pix')) return <QrCode size={16} className="text-teal-600" />;
+                            if (lbl.includes('online')) return <Globe size={16} className="text-purple-600" />;
+                            return <CreditCard size={16} className="text-sky-600" />;
+                          };
+
+                          return (
+                            <div key={`overview-method-${m.label || idx}-${idx}`} className="p-4 hover:bg-slate-50/80 rounded-2xl transition-colors space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center">
+                                    {methodIcon()}
+                                  </div>
+                                  <div>
+                                    <p className="font-bold text-sm text-slate-800">{m.label}</p>
+                                    <p className="text-[11px] text-slate-400 font-semibold">{m.count} {m.count === 1 ? 'pagamento' : 'pagamentos'}</p>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <p className="font-black text-sm text-slate-900">
+                                    R$ {m.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500 font-semibold">
+                                    Líq: R$ {m.net.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({percentage.toFixed(1)}%)
+                                  </p>
+                                </div>
+                              </div>
+                              {/* Progress bar */}
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-emerald-500 rounded-full transition-all duration-500" 
+                                  style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }} 
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {overviewBreakdowns.methods.length === 0 && (
+                          <div className="py-8 text-center text-slate-400 text-xs italic">
+                            Nenhum faturamento registrado no período selecionado.
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div className="bg-slate-50 border-t border-slate-100 px-6 py-2.5 text-right">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Faturado no Período</span>
+                    
+                    <div className="bg-slate-50 border-t border-slate-100 px-6 py-3.5 flex items-center justify-between text-xs font-bold text-slate-600">
+                      <span>Total Faturado no Período:</span>
+                      <span className="font-black text-slate-900 text-sm">
+                        R$ {overviewBreakdowns.totalEntradasBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Box 2: Movimentações por Item */}
+                  {/* Box 2: Faturamento por Categoria / Mix de Receitas */}
                   <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col justify-between">
                     <div>
-                      <div className="bg-sky-600 text-white px-6 py-3.5 text-center uppercase">
-                        <p className="font-black text-sm tracking-wide">Movimentações por Item</p>
-                        <p className="text-[10px] font-extrabold text-sky-100 tracking-widest mt-0.5">Valor Pgto | Valor Total</p>
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                        {overviewBreakdowns.items.map((it, idx) => (
-                          <div key={`overview-item-${it.label || idx}-${idx}`} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors">
-                            <span className="font-bold text-xs text-slate-700">{it.label}:</span>
-                            <span className="font-black text-xs text-slate-900">
-                              {it.pgto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | {it.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </span>
+                      <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <PieChart size={18} className="text-sky-400" />
+                          <div>
+                            <h3 className="font-black text-sm tracking-wide uppercase">Mix de Faturamento por Categoria</h3>
+                            <p className="text-[11px] text-slate-300 font-medium">Composição de serviços, produtos e planos</p>
                           </div>
-                        ))}
+                        </div>
+                        <span className="text-xs font-black bg-white/10 px-3 py-1 rounded-full text-sky-300">
+                          {overviewBreakdowns.items.reduce((acc, it) => acc + it.count, 0)} itens
+                        </span>
+                      </div>
+                      
+                      <div className="divide-y divide-slate-100 p-2">
+                        {overviewBreakdowns.items.map((it, idx) => {
+                          const totalRevenue = overviewBreakdowns.totalEntradasBruto;
+                          const percentage = totalRevenue > 0 ? ((it.total / totalRevenue) * 100) : 0;
+
+                          const itemIcon = () => {
+                            const lbl = it.label.toLowerCase();
+                            if (lbl.includes('serviço')) return <Scissors size={16} className="text-indigo-600" />;
+                            if (lbl.includes('produto')) return <Package size={16} className="text-sky-600" />;
+                            if (lbl.includes('pacote')) return <Layers size={16} className="text-amber-600" />;
+                            return <Sparkles size={16} className="text-purple-600" />;
+                          };
+
+                          return (
+                            <div key={`overview-item-${it.label || idx}-${idx}`} className="p-4 hover:bg-slate-50/80 rounded-2xl transition-colors space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center">
+                                    {itemIcon()}
+                                  </div>
+                                  <div>
+                                    <p className="font-bold text-sm text-slate-800">{it.label}</p>
+                                    <p className="text-[11px] text-slate-400 font-semibold">{it.count} {it.count === 1 ? 'venda/execução' : 'vendas/execuções'}</p>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <p className="font-black text-sm text-slate-900">
+                                    R$ {it.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500 font-semibold">
+                                    Participação: {percentage.toFixed(1)}%
+                                  </p>
+                                </div>
+                              </div>
+                              {/* Progress bar */}
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-sky-500 rounded-full transition-all duration-500" 
+                                  style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }} 
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {overviewBreakdowns.items.length === 0 && (
+                          <div className="py-8 text-center text-slate-400 text-xs italic">
+                            Nenhum item faturado no período selecionado.
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div className="bg-slate-50 border-t border-slate-100 px-6 py-2.5 text-right">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pago | Faturamento Total</span>
+                    
+                    <div className="bg-slate-50 border-t border-slate-100 px-6 py-3.5 flex items-center justify-between text-xs font-bold text-slate-600">
+                      <span>Total dos Itens Faturados:</span>
+                      <span className="font-black text-slate-900 text-sm">
+                        R$ {overviewBreakdowns.totalEntradasBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Visual Cash Flow Chart & Trend */}
+                {/* 3. Visual Cash Flow Chart & Trend */}
                 <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                     <div>
                       <h3 className="font-bold text-xl text-primary flex items-center gap-2">
                         <PieChart size={20} className="text-accent" />
-                        Fluxo de Caixa Operacional
+                        Fluxo de Caixa Operacional Diário
                       </h3>
-                      <p className="text-xs text-muted font-medium mt-1">Comparativo de receitas e despesas diárias consolidadas pelo período selecionado.</p>
+                      <p className="text-xs text-muted font-medium mt-1">Comparativo de receitas e despesas pagas consolidadas dia a dia no período selecionado.</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="w-3 h-3 bg-emerald-500 rounded-full" />
                       <span className="text-[10px] uppercase font-black text-slate-500 mr-4">Receitas</span>
                       <span className="w-3 h-3 bg-red-400 rounded-full" />
-                      <span className="text-[10px] uppercase font-black text-slate-500">Despesas</span>
+                      <span className="text-[10px] uppercase font-black text-slate-500">Despesas / Sangrias</span>
                     </div>
                   </div>
 
@@ -1669,6 +1590,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                   </div>
                 </div>
 
+                {/* 4. Bottom Grid: Latest Transactions & Financial Health Indicators */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {/* Latest Actions / Logs */}
                   <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
@@ -1684,57 +1606,62 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                         <TransactionItem key={`trans-overview-${t.id || index}-${index}`} transaction={t} />
                       ))}
                       {transactions.length === 0 && (
-                        <div className="text-center py-10 text-muted italic text-sm">Nenhuma transação recente.</div>
+                        <div className="text-center py-10 text-muted italic text-sm">Nenhuma transação recente no período.</div>
                       )}
                     </div>
                   </div>
                   
-                  {/* Ledger Performance Indicators */}
+                  {/* Financial Health & Liquidity Indicators */}
                   <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
                     <h3 className="font-bold text-lg text-primary mb-8 flex items-center gap-2">
                       <TrendingUp size={18} className="text-emerald-500" />
-                      Indicadores de Performance e Saúde Financeira
+                      Liquidez e Indicadores de Saúde Financeira
                     </h3>
 
-                    <div className="space-y-6">
+                    <div className="space-y-4">
                       <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
                         <div>
-                          <p className="text-xs font-bold text-primary">Margem Operacional Estimada (EBITDA)</p>
-                          <p className="text-[10px] text-muted font-semibold">Faturamento total deduzido de despesas diretas.</p>
+                          <p className="text-xs font-bold text-primary">Disponibilidade Imediata em Caixa / PIX</p>
+                          <p className="text-[10px] text-muted font-semibold">Recursos disponíveis na hora sem prazo de compensação.</p>
                         </div>
-                        <p className="text-base font-black text-slate-800">
-                          R$ {(stats.income - stats.expense).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        <p className="text-base font-black text-emerald-600">
+                          R$ {overviewBreakdowns.totalDisponivelImediato.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </p>
                       </div>
 
                       <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
                         <div>
-                          <p className="text-xs font-bold text-primary">Rentabilidade Esperada no Período</p>
-                          <p className="text-[10px] text-muted font-semibold">Proporção líquida das receitas convertidas livremente.</p>
+                          <p className="text-xs font-bold text-primary">Taxas e Intermediações Retidas</p>
+                          <p className="text-[10px] text-muted font-semibold">Custo descontado pelas maquininhas e operadoras de cartão.</p>
                         </div>
-                        <p className="text-sm font-black text-emerald-600">
-                          {stats.income > 0 ? (((stats.income - stats.expense) / stats.income) * 100).toFixed(1) + '%' : '100.0%'}
+                        <p className="text-sm font-black text-slate-700">
+                          - R$ {overviewBreakdowns.totalTaxasCartao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </p>
                       </div>
 
                       <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
                         <div>
-                          <p className="text-xs font-bold text-primary">Taxa de Liquidação Imediata (Dinheiro/PIX)</p>
-                          <p className="text-[10px] text-muted font-semibold">Volume de recursos disponíveis à vista instantaneamente.</p>
+                          <p className="text-xs font-bold text-primary">Margem Operacional no Período</p>
+                          <p className="text-[10px] text-muted font-semibold">Proporção líquida das receitas convertidas após despesas.</p>
                         </div>
-                        <p className="text-sm font-black text-blue-600">
-                          R$ {stats.disponivel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        <p className="text-sm font-black text-sky-600">
+                          {overviewBreakdowns.totalEntradasBruto > 0 
+                            ? (((overviewBreakdowns.saldoOperacionalLiquido) / overviewBreakdowns.totalEntradasBruto) * 100).toFixed(1) + '%' 
+                            : '0.0%'}
                         </p>
                       </div>
 
                       <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
                         <div>
-                          <p className="text-xs font-bold text-primary">Crédito Inadimplente Estimado (Fiados)</p>
+                          <p className="text-xs font-bold text-primary">Contas de Clientes em Aberto (Fiados)</p>
                           <p className="text-[10px] text-muted font-semibold">Total pendente de recebimento direto com clientes.</p>
                         </div>
-                        <p className="text-sm font-black text-amber-600">
-                          R$ {stats.pendingFiado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </p>
+                        <button 
+                          onClick={() => setActiveTab('client-accounts')} 
+                          className="text-sm font-black text-amber-600 hover:underline"
+                        >
+                          R$ {overviewBreakdowns.fiadosPendentes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -5024,26 +4951,81 @@ function TransactionTable({ transactions }: { transactions: FinancialTransaction
   );
 }
 
-function StatCard({ title, value, icon, color, subtitle }: { title: string, value: number, icon: React.ReactNode, color: string, subtitle: string }) {
-  const colors: Record<string, string> = {
-    emerald: 'bg-emerald-50 border-emerald-100 text-emerald-600',
-    red: 'bg-red-50 border-red-100 text-red-600',
-    blue: 'bg-blue-50 border-blue-100 text-blue-600',
-    amber: 'bg-amber-50 border-amber-100 text-amber-600'
+function StatCard({ 
+  title, 
+  value, 
+  icon, 
+  color, 
+  subtitle,
+  badge
+}: { 
+  title: string; 
+  value: number; 
+  icon: React.ReactNode; 
+  color: 'emerald' | 'red' | 'blue' | 'amber' | 'indigo'; 
+  subtitle?: string;
+  badge?: string;
+}) {
+  const colors: Record<string, { bg: string; border: string; iconBg: string; text: string; badge: string }> = {
+    emerald: {
+      bg: 'bg-emerald-50/70',
+      border: 'border-emerald-200/80',
+      iconBg: 'bg-emerald-600 text-white',
+      text: 'text-emerald-700',
+      badge: 'bg-emerald-100 text-emerald-800 border-emerald-200'
+    },
+    red: {
+      bg: 'bg-rose-50/70',
+      border: 'border-rose-200/80',
+      iconBg: 'bg-rose-600 text-white',
+      text: 'text-rose-700',
+      badge: 'bg-rose-100 text-rose-800 border-rose-200'
+    },
+    blue: {
+      bg: 'bg-sky-50/70',
+      border: 'border-sky-200/80',
+      iconBg: 'bg-sky-600 text-white',
+      text: 'text-sky-700',
+      badge: 'bg-sky-100 text-sky-800 border-sky-200'
+    },
+    indigo: {
+      bg: 'bg-indigo-50/70',
+      border: 'border-indigo-200/80',
+      iconBg: 'bg-indigo-600 text-white',
+      text: 'text-indigo-700',
+      badge: 'bg-indigo-100 text-indigo-800 border-indigo-200'
+    },
+    amber: {
+      bg: 'bg-amber-50/70',
+      border: 'border-amber-200/80',
+      iconBg: 'bg-amber-600 text-white',
+      text: 'text-amber-700',
+      badge: 'bg-amber-100 text-amber-800 border-amber-200'
+    }
   };
 
+  const c = colors[color] || colors.blue;
+
   return (
-    <div className={`p-8 rounded-[2rem] border ${colors[color]} space-y-6 shadow-sm relative overflow-hidden group`}>
-      <div className="absolute top-0 right-0 w-24 h-24 bg-white/20 rounded-full -mr-12 -mt-12 group-hover:scale-110 transition-transform" />
+    <div className={`p-6 rounded-3xl border ${c.bg} ${c.border} space-y-4 shadow-sm relative overflow-hidden group transition-all hover:shadow-md`}>
       <div className="flex items-center justify-between relative z-10">
-        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-white/50">
+        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-sm ${c.iconBg}`}>
           {icon}
         </div>
-        <span className="text-[10px] font-black uppercase tracking-widest opacity-70">{title}</span>
+        {badge && (
+          <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${c.badge}`}>
+            {badge}
+          </span>
+        )}
       </div>
       <div className="relative z-10">
-        <p className="text-3xl font-black text-primary tracking-tighter">R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-        <p className="text-[10px] font-bold opacity-60 mt-1.5 uppercase tracking-wide">{subtitle}</p>
+        <span className="text-[11px] font-black uppercase tracking-wider text-slate-500 block mb-1">{title}</span>
+        <p className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+          R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+        </p>
+        {subtitle && (
+          <p className="text-xs font-bold text-slate-500 mt-2 leading-tight">{subtitle}</p>
+        )}
       </div>
     </div>
   );

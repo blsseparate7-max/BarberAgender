@@ -13,10 +13,11 @@ import {
   getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Appointment, FinancialTransaction, Commission, UserProfile } from '../types';
+import { Appointment, FinancialTransaction, Commission, UserProfile, ClientDebt } from '../types';
 import { getActiveTenantId } from './tenantService';
 import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays } from 'date-fns';
 import { cashService } from './cashService';
+import { normalizeDate, isDateInRange, calculateStandardFinancialMetrics } from '../utils/financialCalculations';
 
 // Helper to safely execute a query with date range, falling back to tenant-only query if composite index is missing
 async function safeTenantDateDocs(collectionName: string, activeTenantId: string, startStr?: string, endStr?: string, extraConstraints: any[] = []) {
@@ -31,7 +32,9 @@ async function safeTenantDateDocs(collectionName: string, activeTenantId: string
         where('date', '==', startStr),
         ...extraConstraints
       ));
-      return snap.docs;
+      if (!snap.empty) {
+        return snap.docs;
+      }
     } catch (err: any) {
       console.warn(`[safeTenantDateDocs] Single date query error for ${collectionName}:`, err?.message || err);
     }
@@ -49,30 +52,22 @@ async function safeTenantDateDocs(collectionName: string, activeTenantId: string
       ));
       return snap.docs;
     } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg.includes('requires an index') || msg.includes('failed-precondition') || msg.includes('INDEX_REQUISITE')) {
-        console.warn(`[safeTenantDateDocs] Firestore composite index missing for ${collectionName} (tenantId + date). Falling back to client-side date filtering.`);
-      } else {
-        console.error(`Dashboard Query Error [${collectionName}]:`, err);
-      }
+      console.warn(`[safeTenantDateDocs] Fallback for ${collectionName}:`, err?.message || err);
     }
   }
 
-  // Fallback: Query by tenantId with safety limit to protect Firestore read quota
+  // Fallback: Query by tenantId without truncating current month data
   try {
     const snap = await getDocs(query(
       collection(db, collectionName),
       where('tenantId', '==', activeTenantId),
-      limit(250),
       ...extraConstraints
     ));
     if (startStr || endStr) {
       return snap.docs.filter(doc => {
         const data = doc.data();
-        const d = data.date || (data.createdAt?.seconds ? new Date(data.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
-        if (startStr && d && d < startStr) return false;
-        if (endStr && d && d > endStr) return false;
-        return true;
+        const d = normalizeDate(data.date || data.dueDate || data.createdAt);
+        return isDateInRange(d, startStr, endStr);
       });
     }
     return snap.docs;
@@ -160,17 +155,25 @@ export const dashboardService = {
       .map(doc => ({ id: doc.id, ...doc.data() } as Commission))
       .filter(c => c.tenantId === activeTenantId);
 
+    const debtsDocs = (debtsSnap.docs as any[])
+      .map(d => (typeof d.data === 'function' ? { id: d.id, ...d.data() } : d))
+      .filter((d: any) => ['pendente', 'parcial', 'vencido'].includes(d.status));
+    const debtorClientsCount = new Set(debtsDocs.map((d: any) => d?.cliente_id)).size;
+
+    // Standardized Financial Metrics
+    const stdMetrics = calculateStandardFinancialMetrics(transactions, debtsDocs as ClientDebt[]);
+
     // Daily vs Monthly Stats
     const dailyRevenue = transactions
-      .filter(t => t.date === todayStr && t.type === 'income' && t.status === 'pago')
-      .reduce((acc, t) => acc + t.amount, 0);
+      .filter(t => normalizeDate(t.date || t.createdAt) === todayStr && t.type === 'income' && ((t.status as string) === 'pago' || (t.status as string) === 'liquidado'))
+      .reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
       
     const monthlyRevenue = transactions
-      .filter(t => t.date >= monthStartStr && t.type === 'income' && t.status === 'pago')
-      .reduce((acc, t) => acc + t.amount, 0);
+      .filter(t => normalizeDate(t.date || t.createdAt) >= monthStartStr && t.type === 'income' && ((t.status as string) === 'pago' || (t.status as string) === 'liquidado'))
+      .reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
 
-    const dailyAppointments = appointments.filter(a => a.date === todayStr).length;
-    const monthlyAppointments = appointments.filter(a => a.date >= monthStartStr).length;
+    const dailyAppointments = appointments.filter(a => normalizeDate(a.date || a.createdAt) === todayStr).length;
+    const monthlyAppointments = appointments.filter(a => normalizeDate(a.date || a.createdAt) >= monthStartStr).length;
 
     const cashStatus = openCash ? 'open' : 'closed';
 
@@ -183,22 +186,9 @@ export const dashboardService = {
       return p.currentStock <= p.minStock && p.status === 'active';
     }).length;
 
-    const debtsDocs = (debtsSnap.docs as any[])
-      .map(d => (typeof d.data === 'function' ? d.data() : d))
-      .filter((d: any) => ['pendente', 'parcial', 'vencido'].includes(d.status));
-    const totalDebts = debtsDocs.reduce((acc: number, d: any) => acc + (d?.remainingAmount || 0), 0);
-    const debtorClientsCount = new Set(debtsDocs.map((d: any) => d?.cliente_id)).size;
-
-    // Calculations
-    const totalRevenue = transactions
-      .filter(t => t.type === 'income' && t.status === 'pago')
-      .reduce((acc, t) => acc + t.amount, 0);
-      
-    const totalExpenses = transactions
-      .filter(t => t.type === 'expense' && t.status === 'pago')
-      .reduce((acc, t) => acc + t.amount, 0);
-
-    const pendingFiado = totalDebts;
+    const totalRevenue = stdMetrics.totalEntradasBruto;
+    const totalExpenses = stdMetrics.totalSaidasPagas;
+    const pendingFiado = stdMetrics.fiadosPendentes;
 
     const totalCommissions = commissions.reduce((acc, c) => acc + c.commission_value, 0);
     const pendingCommissions = commissions.filter(c => c.status === 'pendente').reduce((acc, c) => acc + c.commission_value, 0);
@@ -214,8 +204,8 @@ export const dashboardService = {
       const d = subDays(new Date(), 6 - i);
       const dStr = format(d, 'yyyy-MM-dd');
       const rev = transactions
-        .filter(t => t.date === dStr && t.type === 'income' && t.status === 'pago')
-        .reduce((acc, t) => acc + t.amount, 0);
+        .filter(t => normalizeDate(t.date || t.createdAt) === dStr && t.type === 'income' && ((t.status as string) === 'pago' || (t.status as string) === 'liquidado'))
+        .reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
       return { name: format(d, 'dd/MM'), revenue: rev };
     });
 

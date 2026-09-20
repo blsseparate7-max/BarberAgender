@@ -43,6 +43,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { format, endOfMonth, parseISO, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
+import { normalizeDate, isDateInRange, calculateStandardFinancialMetrics } from '../../utils/financialCalculations';
+import { FinancialTransaction, ClientDebt } from '../../types';
 
 interface MonthData {
   monthStr: string; // e.g. "2026-09"
@@ -153,28 +155,34 @@ export function FechamentoMes() {
           where('date', '>=', startDate),
           where('date', '<=', endDate)
         ));
-        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (!snap.empty) {
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
       } catch (err) {
         // Fallback for missing composite index
-        const fallbackSnap = await getDocs(query(
-          collection(db, collectionName),
-          where('tenantId', '==', currentTenantId)
-        ));
-        return fallbackSnap.docs
-          .map(d => ({ id: d.id, ...d.data() } as any))
-          .filter(doc => {
-            const d = doc.date || (doc.dueDate ? doc.dueDate : '');
-            return d >= startDate && d <= endDate;
-          });
       }
+      
+      const fallbackSnap = await getDocs(query(
+        collection(db, collectionName),
+        where('tenantId', '==', currentTenantId)
+      ));
+      return fallbackSnap.docs
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter(doc => {
+          const d = normalizeDate(doc.date || doc.dueDate || doc.createdAt);
+          return isDateInRange(d, startDate, endDate);
+        });
     };
 
-    const [transactions, comandas, commissions, payables] = await Promise.all([
+    const [transactions, comandas, commissions, debtsSnap] = await Promise.all([
       safeDateQuery('financial_transactions'),
       safeDateQuery('comandas'),
       safeDateQuery('commissions'),
-      safeDateQuery('accounts_payable')
+      getDocs(query(collection(db, 'client_debts'), where('tenantId', '==', currentTenantId)))
     ]);
+
+    const debts = debtsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
+    const stdMetrics = calculateStandardFinancialMetrics(transactions as FinancialTransaction[], debts);
 
     // Check if month is sealed in tenant_month_closures
     let isSealed = false;
@@ -189,20 +197,27 @@ export function FechamentoMes() {
 
     const metrics: MonthData = {
       monthStr,
-      grossRevenue: 0,
-      totalExpenses: 0,
+      grossRevenue: stdMetrics.totalEntradasBruto,
+      totalExpenses: stdMetrics.totalSaidasPagas,
       commissionsGenerated: 0,
-      netProfit: 0,
-      servicesRevenue: 0,
-      productsRevenue: 0,
-      subscriptionsRevenue: 0,
+      netProfit: stdMetrics.saldoOperacionalLiquido,
+      servicesRevenue: stdMetrics.byCategory.servicos?.total || 0,
+      productsRevenue: stdMetrics.byCategory.produtos?.total || 0,
+      subscriptionsRevenue: stdMetrics.byCategory.assinaturas?.total || 0,
       debtPaymentsRevenue: 0,
-      otherRevenue: 0,
-      operationalExpenses: 0,
+      otherRevenue: stdMetrics.byCategory.pacotes?.total || 0,
+      operationalExpenses: stdMetrics.totalDespesasOperacionais,
       productPurchases: 0,
-      sangriaExpenses: 0,
+      sangriaExpenses: stdMetrics.totalSangriasRetiradas,
       otherExpenses: 0,
-      byPaymentMethod: { pix: 0, dinheiro: 0, credito: 0, debito: 0, fiado: 0, outros: 0 },
+      byPaymentMethod: {
+        pix: stdMetrics.byMethod.pix?.amount || 0,
+        dinheiro: stdMetrics.byMethod.dinheiro?.amount || 0,
+        credito: stdMetrics.byMethod.credito?.amount || 0,
+        debito: stdMetrics.byMethod.debito?.amount || 0,
+        fiado: (stdMetrics.byMethod as any).fiado?.amount || 0,
+        outros: (stdMetrics.byMethod.online?.amount || 0) + (stdMetrics.byMethod.outros?.amount || 0)
+      },
       barberStats: {},
       pendingCommissionsCount: 0,
       pendingCommissionsValue: 0,
@@ -211,64 +226,24 @@ export function FechamentoMes() {
       isSealed
     };
 
-    // Calculate Revenues (Incomes) and Expenses
+    // Fine-grained breakdown of transactions
     transactions.forEach((t: any) => {
       const amount = Number(t.amount || 0);
       const isPaid = t.status === 'pago';
 
       if (t.type === 'income' && isPaid) {
-        metrics.grossRevenue += amount;
-
-        // Classify Revenue by origin
         const desc = (t.description || '').toLowerCase();
         const category = (t.category || '').toLowerCase();
-        
-        if (desc.includes('serviço') || desc.includes('atendimento') || desc.includes('corte') || category.includes('serviço')) {
-          metrics.servicesRevenue += amount;
-        } else if (desc.includes('produto') || desc.includes('venda') || category.includes('produto')) {
-          metrics.productsRevenue += amount;
-        } else if (desc.includes('assinatura') || desc.includes('plano') || category.includes('assinatura')) {
-          metrics.subscriptionsRevenue += amount;
-        } else if (desc.includes('fiado') || desc.includes('débito') || t.isDebtPayment || category.includes('fiado')) {
+        if (desc.includes('fiado') || desc.includes('débito') || t.isDebtPayment || category.includes('fiado')) {
           metrics.debtPaymentsRevenue += amount;
-        } else {
-          metrics.otherRevenue += amount;
         }
-
-        // Classify Payment Method
-        const pm = (t.paymentMethod || 'outros').toLowerCase();
-        if (pm.includes('pix')) metrics.byPaymentMethod.pix += amount;
-        else if (pm.includes('dinheiro')) metrics.byPaymentMethod.dinheiro += amount;
-        else if (pm.includes('credito') || pm.includes('crédito')) metrics.byPaymentMethod.credito += amount;
-        else if (pm.includes('debito') || pm.includes('débito')) metrics.byPaymentMethod.debito += amount;
-        else if (pm.includes('fiado')) metrics.byPaymentMethod.fiado += amount;
-        else metrics.byPaymentMethod.outros += amount;
       }
 
-      if (t.type === 'expense' && isPaid) {
-        metrics.totalExpenses += amount;
+      if ((t.type === 'expense' || t.type === 'saida') && isPaid) {
         const desc = (t.description || '').toLowerCase();
         const category = (t.category || '').toLowerCase();
-
         if (desc.includes('produto') || desc.includes('estoque') || category.includes('produto') || category.includes('estoque')) {
           metrics.productPurchases += amount;
-        } else if (desc.includes('sangria') || category.includes('sangria')) {
-          metrics.sangriaExpenses += amount;
-        } else {
-          metrics.operationalExpenses += amount;
-        }
-      }
-    });
-
-    // Payables paid in period
-    payables.forEach((p: any) => {
-      if (p.status === 'paid' || p.status === 'pago') {
-        const amt = Number(p.amount || 0);
-        const category = (p.category || '').toLowerCase();
-        if (category.includes('estoque') || category.includes('compra')) {
-          metrics.productPurchases += amt;
-        } else {
-          metrics.operationalExpenses += amt;
         }
       }
     });
@@ -314,9 +289,6 @@ export function FechamentoMes() {
         metrics.completedAtendimentosCount++;
       }
     });
-
-    // Net Profit Calculation
-    metrics.netProfit = metrics.grossRevenue - (metrics.totalExpenses + metrics.commissionsGenerated);
 
     return metrics;
   };

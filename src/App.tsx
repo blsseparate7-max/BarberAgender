@@ -369,10 +369,11 @@ function MainApp() {
     }
 
     // Cadastros
-    if (activeTab === 'cadastros') return <Servicos />;
+    if (activeTab === 'cadastros') return <Servicos activeSubTab={activeTab} />;
     if (activeTab === 'cadastros-clientes') return <Clientes />;
     if (activeTab === 'cadastros-profissionais') return <Barbeiros />;
-    if (activeTab === 'cadastros-servicos') return <Servicos />;
+    if (activeTab === 'cadastros-servicos') return <Servicos activeSubTab={activeTab} />;
+    if (activeTab === 'cadastros-combos') return <Servicos activeSubTab={activeTab} />;
     if (activeTab === 'cadastros-pacotes') return <Pacotes />;
     if (activeTab === 'cadastros-pacotes-meus') return <Pacotes defaultTab="meus_pacotes" />;
     if (activeTab === 'cadastros-assinantes') {
@@ -404,11 +405,9 @@ function MainApp() {
     if (activeTab === 'cadastros-noticias') return <NoticiasPromocoes />;
     if (activeTab === 'cadastros-satisfacao') return <PesquisaSatisfacao />;
     if (activeTab === 'cadastros-lembretes') return <Lembretes />;
-    if (activeTab === 'cadastros-pacotes') return <Pacotes />;
     if (activeTab === 'cadastros-produtos') return <Estoque />;
-    if (activeTab === 'cadastros-cupons') return <CuponsDesconto />;
-    if (activeTab === 'cadastros-metodos-pagamento') return <PaymentMethodManager />;
-    if (activeTab === 'cadastros-combos') return <Combos />;
+    if (activeTab === 'cadastros-cupons') return <Fidelidade activeSubTab={activeTab} setActiveTab={setActiveTab} />;
+    if (activeTab === 'cadastros-metodos-pagamento') return <Configuracoes activeSubTab={activeTab} />;
     if (activeTab === 'cadastros-categorias') return <Tipos defaultTab="categorias" />;
     
     if (activeTab.startsWith('cadastros-')) return <Clientes />; 

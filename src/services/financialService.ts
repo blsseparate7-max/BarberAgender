@@ -14,6 +14,7 @@ import { db } from '../firebase';
 import { FinancialTransaction, FinancialCategory, TransactionType } from '../types';
 import { getActiveTenantId } from './tenantService';
 import { cashService } from './cashService';
+import { normalizeDate, isDateInRange } from '../utils/financialCalculations';
 
 const TRANSACTIONS_COLLECTION = 'financial_transactions';
 const CATEGORIES_COLLECTION = 'financial_categories';
@@ -30,13 +31,11 @@ export const financialService = {
         constraints.push(where('date', '<=', endDate));
       } else if (startDate) {
         constraints.push(where('date', '>=', startDate));
-      } else {
-        constraints.push(limit(250));
       }
       const q = query(collection(db, TRANSACTIONS_COLLECTION), ...constraints);
       querySnapshot = await getDocs(q);
     } catch (err) {
-      const fallbackQ = query(collection(db, TRANSACTIONS_COLLECTION), where('tenantId', '==', activeTenantId), limit(250));
+      const fallbackQ = query(collection(db, TRANSACTIONS_COLLECTION), where('tenantId', '==', activeTenantId));
       querySnapshot = await getDocs(fallbackQ);
     }
     
@@ -44,10 +43,8 @@ export const financialService = {
       .map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() as any) } as FinancialTransaction))
       .filter((t: any) => t.tenantId === activeTenantId);
 
-    if (startDate && endDate) {
-      transactions = transactions.filter(t => t.date >= startDate && t.date <= endDate);
-    } else if (startDate) {
-      transactions = transactions.filter(t => t.date >= startDate);
+    if (startDate || endDate) {
+      transactions = transactions.filter(t => isDateInRange(t.date || t.createdAt, startDate, endDate));
     }
 
     if (type) {
@@ -55,8 +52,8 @@ export const financialService = {
     }
 
     return transactions.sort((a, b) => {
-      const aDate = a.date || '';
-      const bDate = b.date || '';
+      const aDate = normalizeDate(a.date || a.createdAt);
+      const bDate = normalizeDate(b.date || b.createdAt);
       if (aDate !== bDate) return bDate.localeCompare(aDate);
       const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
       const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;

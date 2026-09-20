@@ -69,6 +69,7 @@ import { loyaltyService } from '../services/loyaltyService';
 import { saasGatewayService, SaaSChargeResponse } from '../services/saasGatewayService';
 import { tenantService, SaaSPlan } from '../services/tenantService';
 import { permissionService, TenantPermissions, FunctionPermissions } from '../services/permissionService';
+import { PaymentMethodManager } from '../components/PaymentMethodManager';
 import { toast } from 'sonner';
 
 export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
@@ -542,6 +543,7 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
       else if (activeSubTab === 'configuracoes-permissoes') setActiveSection('security');
       else if (activeSubTab === 'admin-usuarios') setActiveSection('security');
       else if (activeSubTab === 'configuracoes-perfil') setActiveSection('user-profile');
+      else if (activeSubTab === 'cadastros-metodos-pagamento' || activeSubTab === 'configuracoes-pagamento') setActiveSection('payment_methods');
     }
   }, [activeSubTab]);
 
@@ -950,6 +952,12 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             onClick={() => setActiveSection('notifications')}
           />
           <ConfigSidebarItem 
+            icon={<CreditCard size={18} />} 
+            label="Formas de Pagamento & Taxas" 
+            active={activeSection === 'payment_methods'} 
+            onClick={() => setActiveSection('payment_methods')}
+          />
+          <ConfigSidebarItem 
             icon={<Shield size={18} />} 
             label="Usuários e Permissões" 
             active={activeSection === 'security'} 
@@ -986,6 +994,19 @@ export function Configuracoes({ activeSubTab }: { activeSubTab?: string }) {
             animate={{ opacity: 1, y: 0 }}
             className="bg-white border border-slate-200 rounded-[2.5rem] p-8 md:p-10 shadow-sm space-y-10"
           >
+            {/* Formas de Pagamento e Taxas */}
+            {activeSection === 'payment_methods' && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-2xl font-black text-primary tracking-tight">Formas de Pagamento & Taxas</h3>
+                  <p className="text-xs text-muted font-medium mt-1">
+                    Configure os meios de pagamento aceitos no seu balcão, taxas percentuais de maquininhas (débito/crédito) para cálculo de lucro líquido e prazos de compensação.
+                  </p>
+                </div>
+                <PaymentMethodManager />
+              </div>
+            )}
+
             {/* Meu Perfil Pessoal */}
             {activeSection === 'user-profile' && (
               <form onSubmit={handleSaveUserProfile} className="space-y-8">

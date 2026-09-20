@@ -144,7 +144,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       icon: <LayoutDashboard size={20} />,
       roles: ['admin', 'gerente', 'barbeiro'],
       subItems: [
-        { id: 'dashboard-overview', label: 'Resumo Geral', roles: ['admin', 'gerente', 'barbeiro'] },
+        { id: 'dashboard-overview', label: 'Resumo Geral (Cockpit)', roles: ['admin', 'gerente', 'barbeiro'] },
         { id: 'dashboard-indicators', label: 'Metas da Equipe', roles: ['admin', 'gerente'] },
         { id: 'insights', label: 'Insights de IA', roles: ['admin', 'gerente'] },
       ]
@@ -174,15 +174,15 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
     },
     {
       id: 'fidelidade',
-      label: 'Clientes & Fidelização',
+      label: 'Clientes & Relacionamento',
       icon: <Users size={20} />,
       roles: ['admin', 'gerente', 'cliente', 'barbeiro'],
       subItems: [
         { id: 'cadastros-clientes', label: 'Fichas de Clientes', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'cadastros-assinantes', label: 'Planos & Assinantes (VIP)', roles: ['admin', 'gerente'] },
+        { id: 'cadastros-assinantes', label: 'Clube de Assinaturas (VIP)', roles: ['admin', 'gerente'] },
         { id: 'cadastros-pacotes', label: 'Pacotes de Sessões', roles: ['admin', 'gerente'] },
-        { id: 'fidelidade-programa', label: 'Programa de Cashback', roles: ['admin', 'gerente', 'cliente'] },
-        { id: 'cadastros-cupons', label: 'Cupons de Desconto', roles: ['admin', 'gerente'] },
+        { id: 'fidelidade-programa', label: 'Fidelidade, Cashback & Cupons', roles: ['admin', 'gerente', 'cliente'] },
+        { id: 'marketing', label: 'Marketing & Retenção', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -197,33 +197,27 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
     },
     {
       id: 'cadastros',
-      label: 'Serviços & Estoque',
+      label: 'Catálogo & Estoque',
       icon: <Scissors size={20} />,
       roles: ['admin', 'gerente', 'cliente', 'barbeiro'],
       subItems: [
-        { id: 'cadastros-servicos', label: 'Catálogo de Serviços', roles: ['admin', 'gerente', 'cliente'] },
-        { id: 'cadastros-combos', label: 'Combos Promocionais', roles: ['admin', 'gerente'] },
+        { id: 'cadastros-servicos', label: 'Serviços & Combos', roles: ['admin', 'gerente', 'cliente'] },
         { id: 'estoque-produtos', label: 'Produtos & Estoque', roles: ['admin', 'gerente', 'barbeiro'] },
-        { id: 'cadastros-tipos', label: 'Categorias & Tipos', roles: ['admin', 'gerente'] },
       ]
     },
     {
       id: 'financeiro',
-      label: 'Financeiro',
+      label: 'Financeiro & DRE',
       icon: <DollarSign size={20} />,
       roles: ['admin', 'gerente'],
       subItems: [
-        { id: 'financeiro-conta-digital', label: 'Conta Digital (Asaas)', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-caixa', label: 'Caixa do Dia', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-historico', label: 'Histórico de Caixas', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-movimentacoes', label: 'Entradas e Saídas', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-fluxo', label: 'Fluxo de Caixa', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-dre', label: 'DRE Gerencial', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-fluxo', label: 'Fluxo de Caixa Consolidado', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-dre', label: 'DRE Gerencial & Lucro', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-pagar', label: 'Contas a Pagar', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-contas-receber', label: 'Contas a Receber', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-fiados', label: 'Conta do Cliente (Fiados)', roles: ['admin', 'gerente'] },
-        { id: 'cadastros-metodos-pagamento', label: 'Meios de Pagamento', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-inconsistencias', label: 'Auditoria & Inconsistências', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-contas-receber', label: 'Contas a Receber & Fiados', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-historico', label: 'Histórico de Caixas', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-conta-digital', label: 'Conta Digital (Asaas)', roles: ['admin', 'gerente'] },
+        { id: 'financeiro-inconsistencias', label: 'Auditoria Financeira', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -233,13 +227,11 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       roles: ['admin', 'gerente'],
       subItems: [
         { id: 'relatorios-geral', label: 'Painel Geral & KPIs', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-agendamentos', label: 'Agendamentos & Horários', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-clientes', label: 'Clientes & Ranks', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-profissionais', label: 'Rank de Profissionais', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-financeiro', label: 'Finanças & Métodos', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-comissoes', label: 'Comissões de Equipe', roles: ['admin', 'gerente'] },
-        { id: 'relatorios-estoque', label: 'Produtos & Assinaturas', roles: ['admin', 'gerente'] },
         { id: 'relatorios-fechamento', label: 'Fechamento do Mês', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-financeiro', label: 'Finanças & Métodos', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-profissionais', label: 'Rank de Profissionais', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-clientes', label: 'Clientes & Ranks', roles: ['admin', 'gerente'] },
+        { id: 'relatorios-agendamentos', label: 'Agendamentos & Horários', roles: ['admin', 'gerente'] },
       ]
     },
     {
@@ -249,8 +241,9 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
       roles: ['admin', 'gerente'],
       subItems: [
         { id: 'configuracoes-parametros', label: 'Dados da Barbearia', roles: ['admin', 'gerente'] },
-        { id: 'configuracoes-funcionamento', label: 'Horários de Expediente', roles: ['admin', 'gerente'] },
-        { id: 'admin-usuarios', label: 'Operadores & Acessos', roles: ['admin'] },
+        { id: 'configuracoes-funcionamento', label: 'Horários de Atendimento', roles: ['admin', 'gerente'] },
+        { id: 'cadastros-metodos-pagamento', label: 'Formas de Pagamento & Taxas', roles: ['admin', 'gerente'] },
+        { id: 'admin-usuarios', label: 'Operadores & Permissões', roles: ['admin'] },
         { id: 'admin-logs', label: 'Logs de Auditoria', roles: ['admin'] },
       ]
     }

@@ -23,6 +23,7 @@ import { LoyaltyConfig, LoyaltyPoints, LoyaltyHistory, UserProfile, LoyaltyVouch
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { toast } from 'sonner';
 import { AniversariantesView } from '../components/AniversariantesView';
+import { CuponsDesconto } from './CuponsDesconto';
 
 export function Fidelidade({ 
   activeSubTab, 
@@ -32,7 +33,7 @@ export function Fidelidade({
   setActiveTab?: (tab: string) => void; 
 }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
-  const [activeTab, setActiveTab] = useState<'meu_saldo' | 'clientes' | 'aniversariantes' | 'cupons' | 'historico'>('meu_saldo');
+  const [activeTab, setActiveTab] = useState<'meu_saldo' | 'clientes' | 'aniversariantes' | 'cupons' | 'cupons_promocionais' | 'historico'>('meu_saldo');
   const [config, setConfig] = useState<LoyaltyConfig | null>(null);
   const [clientPoints, setClientPoints] = useState<LoyaltyPoints | null>(null);
   const [history, setHistory] = useState<LoyaltyHistory[]>([]);
@@ -87,6 +88,8 @@ export function Fidelidade({
     if (activeSubTab) {
       if (activeSubTab === 'fidelidade-programa') {
         setActiveTab(profile?.tipo === 'cliente' ? 'meu_saldo' : 'clientes');
+      } else if (activeSubTab === 'cadastros-cupons') {
+        setActiveTab('cupons_promocionais');
       } else if (activeSubTab === 'fidelidade-cashback') {
         if (isAdmin || isGerente) {
           if (setParentActiveTab) setParentActiveTab('configuracoes-fidelidade');
@@ -231,7 +234,10 @@ export function Fidelidade({
         {(isAdmin || isGerente) && (
           <TabButton active={activeTab === 'aniversariantes'} onClick={() => setActiveTab('aniversariantes')} label="🎂 Aniversariantes" icon={<Cake size={16} />} />
         )}
-        <TabButton active={activeTab === 'cupons'} onClick={() => setActiveTab('cupons')} label="Vouchers de Resgate" icon={<Tag size={16} />} />
+        {(isAdmin || isGerente) && (
+          <TabButton active={activeTab === 'cupons_promocionais'} onClick={() => setActiveTab('cupons_promocionais')} label="Cupons de Desconto" icon={<Tag size={16} />} />
+        )}
+        <TabButton active={activeTab === 'cupons'} onClick={() => setActiveTab('cupons')} label="Vouchers de Resgate" icon={<Gift size={16} />} />
         <TabButton active={activeTab === 'historico'} onClick={() => setActiveTab('historico')} label="Histórico" icon={<History size={16} />} />
       </div>
 
@@ -356,6 +362,17 @@ export function Fidelidade({
                 />
               ))}
             </div>
+          </motion.div>
+        )}
+
+        {activeTab === 'cupons_promocionais' && (
+          <motion.div 
+            key="cupons_promocionais"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            <CuponsDesconto />
           </motion.div>
         )}
 

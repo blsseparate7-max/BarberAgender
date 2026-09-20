@@ -16,9 +16,11 @@ import {
   InventoryMovement, 
   Product,
   AccountPayable,
-  AccountReceivable
+  AccountReceivable,
+  ClientDebt
 } from '../types';
 import { format } from 'date-fns';
+import { normalizeDate, isDateInRange, calculateStandardFinancialMetrics } from '../utils/financialCalculations';
 
 export interface ReportFilter {
   startDate: string;
@@ -30,11 +32,11 @@ export interface ReportFilter {
   servico_id?: string;
 }
 
-// Helper seguro para buscar documentos delimitados por data no Firestore sem ler coleções inteiras
+// Helper seguro e robusto para buscar documentos delimitados por data no Firestore
 async function safeReportDateDocs(collectionName: string, activeTenantId: string, startDate?: string, endDate?: string, extraConstraints: any[] = []) {
   if (!activeTenantId) return [];
 
-  // Se for data única, consulta por igualdade (não exige índice composto)
+  // Se for data única, consulta por igualdade
   if (startDate && endDate && startDate === endDate) {
     try {
       const snap = await getDocs(query(
@@ -43,7 +45,9 @@ async function safeReportDateDocs(collectionName: string, activeTenantId: string
         where('date', '==', startDate),
         ...extraConstraints
       ));
-      return snap.docs;
+      if (!snap.empty) {
+        return snap.docs;
+      }
     } catch (err: any) {
       console.warn(`[safeReportDateDocs] Consulta de data única para ${collectionName}:`, err?.message || err);
     }
@@ -61,26 +65,22 @@ async function safeReportDateDocs(collectionName: string, activeTenantId: string
       ));
       return snap.docs;
     } catch (err: any) {
-      // Fallback gracioso com limite de segurança se faltar índice composto
       console.warn(`[safeReportDateDocs] Fallback para ${collectionName}:`, err?.message || err);
     }
   }
 
-  // Fallback com limite
+  // Fallback robusto sem limitação arbitrária que corte movimentações do mês atual
   try {
     const snap = await getDocs(query(
       collection(db, collectionName),
       where('tenantId', '==', activeTenantId),
-      limit(250),
       ...extraConstraints
     ));
     if (startDate || endDate) {
       return snap.docs.filter(doc => {
         const data = doc.data();
-        const d = data.date || (data.createdAt?.seconds ? new Date(data.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
-        if (startDate && d && d < startDate) return false;
-        if (endDate && d && d > endDate) return false;
-        return true;
+        const d = normalizeDate(data.date || data.dueDate || data.createdAt);
+        return isDateInRange(d, startDate, endDate);
       });
     }
     return snap.docs;
@@ -95,47 +95,46 @@ export const reportService = {
     const { startDate, endDate } = filter;
     const currentTenantId = getActiveTenantId();
 
-    const [financialDocs, appointmentsDocs, comandasDocs] = await Promise.all([
+    const [financialDocs, appointmentsDocs, comandasDocs, debtsSnap] = await Promise.all([
       safeReportDateDocs('financial_transactions', currentTenantId, startDate, endDate),
       safeReportDateDocs('appointments', currentTenantId, startDate, endDate),
-      safeReportDateDocs('comandas', currentTenantId, startDate, endDate)
+      safeReportDateDocs('comandas', currentTenantId, startDate, endDate),
+      getDocs(query(collection(db, 'client_debts'), where('tenantId', '==', currentTenantId)))
     ]);
 
     const transactions = financialDocs
       .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
-      .filter(t => (!startDate || t.date >= startDate) && (!endDate || t.date <= endDate));
+      .filter(t => isDateInRange(t.date || (t as any).createdAt, startDate, endDate));
 
     const appointments = appointmentsDocs
       .map(doc => ({ id: doc.id, ...doc.data() } as Appointment))
-      .filter(a => (!startDate || a.date >= startDate) && (!endDate || a.date <= endDate));
+      .filter(a => isDateInRange(a.date || (a as any).createdAt, startDate, endDate));
 
     const comandas = comandasDocs
       .map(doc => ({ id: doc.id, ...doc.data() } as Comanda))
-      .filter(c => (!startDate || c.date >= startDate) && (!endDate || c.date <= endDate));
+      .filter(c => isDateInRange(c.date || (c as any).createdAt, startDate, endDate));
 
-    // Cálculos unificados alinhados ao DRE e Financeiro
-    const grossRevenue = transactions
-      .filter(t => t.type === 'income' && t.status === 'pago')
-      .reduce((acc, t) => acc + t.amount, 0);
+    const debts = debtsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
 
-    const totalExpenses = transactions
-      .filter(t => t.type === 'expense' && t.status === 'pago')
-      .reduce((acc, t) => acc + t.amount, 0);
+    // Cálculos unificados através do padrão consolidado
+    const metrics = calculateStandardFinancialMetrics(transactions, debts);
 
     const pendingAmount = comandas
       .filter(c => c.status !== 'fechada' && c.status !== 'cancelada')
       .reduce((acc, c) => acc + (c.pendingAmount || 0), 0);
 
     const completedAppts = appointments.filter(a => a.status === 'concluído');
-    const ticketMedio = completedAppts.length > 0 ? grossRevenue / completedAppts.length : 0;
+    const ticketMedio = completedAppts.length > 0 ? metrics.totalEntradasBruto / completedAppts.length : 0;
 
     const uniqueClients = new Set(appointments.map(a => a.cliente_id).filter(Boolean)).size;
 
     return {
-      grossRevenue,
-      totalExpenses,
-      netRevenue: grossRevenue - totalExpenses,
-      pendingAmount,
+      grossRevenue: metrics.totalEntradasBruto,
+      totalExpenses: metrics.totalSaidasPagas,
+      netRevenue: metrics.saldoOperacionalLiquido,
+      totalEntradasLiquido: metrics.totalEntradasLiquido,
+      totalTaxasCartao: metrics.totalTaxasCartao,
+      pendingAmount: metrics.fiadosPendentes || pendingAmount,
       ticketMedio,
       totalAtendimentos: appointments.length,
       completedAtendimentos: completedAppts.length,
@@ -304,35 +303,44 @@ export const reportService = {
     const currentTenantId = getActiveTenantId();
     
     // 1. Transactions delimitadas por data
-    const transactionsDocs = await safeReportDateDocs('financial_transactions', currentTenantId, startDate, endDate);
+    const [transactionsDocs, debtsSnap] = await Promise.all([
+      safeReportDateDocs('financial_transactions', currentTenantId, startDate, endDate),
+      getDocs(query(collection(db, 'client_debts'), where('tenantId', '==', currentTenantId)))
+    ]);
+
     const transactions = transactionsDocs
       .map(doc => ({ id: doc.id, ...doc.data() } as FinancialTransaction))
-      .filter(t => (!startDate || t.date >= startDate) && (!endDate || t.date <= endDate));
+      .filter(t => isDateInRange(t.date || (t as any).createdAt, startDate, endDate));
 
-    const income = transactions.filter(t => t.type === 'income' && t.status === 'pago').reduce((acc, t) => acc + t.amount, 0);
-    const expense = transactions.filter(t => t.type === 'expense' && t.status === 'pago').reduce((acc, t) => acc + t.amount, 0);
-    const sangria = transactions.filter(t => t.type === 'sangria').reduce((acc, t) => acc + t.amount, 0);
+    const debts = debtsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
+    const metrics = calculateStandardFinancialMetrics(transactions, debts);
+
+    const income = metrics.totalEntradasBruto;
+    const expense = metrics.totalSaidasPagas;
+    const sangria = metrics.totalSangriasRetiradas;
 
     const byMethod: Record<string, number> = {};
-    transactions.filter(t => t.type === 'income' && t.status === 'pago').forEach(t => {
-      byMethod[t.paymentMethod] = (byMethod[t.paymentMethod] || 0) + t.amount;
+    Object.values(metrics.byMethod).forEach(m => {
+      if (m.amount > 0) {
+        byMethod[m.label] = m.amount;
+      }
     });
 
     // 2. Accounts Payable
     const payablesSnap = await getDocs(
-      query(collection(db, 'accounts_payable'), where('tenantId', '==', currentTenantId), limit(150))
+      query(collection(db, 'accounts_payable'), where('tenantId', '==', currentTenantId))
     );
     const payables = payablesSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as AccountPayable))
-      .filter(p => (!startDate || p.dueDate >= startDate) && (!endDate || p.dueDate <= endDate));
+      .filter(p => isDateInRange(p.dueDate || (p as any).paymentDate || (p as any).date, startDate, endDate));
 
     const totalPayablesAmount = payables.reduce((acc, p) => acc + (p.amount || 0), 0);
-    const paidPayablesAmount = payables.filter(p => p.status === 'paid').reduce((acc, p) => acc + (p.amount || 0), 0);
-    const pendingPayablesAmount = payables.filter(p => p.status === 'pending').reduce((acc, p) => acc + (p.amount || 0), 0);
+    const paidPayablesAmount = payables.filter(p => (p.status as string) === 'paid' || (p.status as string) === 'pago').reduce((acc, p) => acc + (p.amount || 0), 0);
+    const pendingPayablesAmount = payables.filter(p => (p.status as string) === 'pending' || (p.status as string) === 'pendente').reduce((acc, p) => acc + (p.amount || 0), 0);
     
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     const overduePayablesAmount = payables
-      .filter(p => p.status === 'pending' && p.dueDate < todayStr)
+      .filter(p => ((p.status as string) === 'pending' || (p.status as string) === 'pendente') && normalizeDate(p.dueDate) < todayStr)
       .reduce((acc, p) => acc + (p.amount || 0), 0);
 
     const payablesByCategory: Record<string, number> = {};
@@ -347,22 +355,22 @@ export const reportService = {
 
     // 3. Accounts Receivable
     const receivablesSnap = await getDocs(
-      query(collection(db, 'accounts_receivable'), where('tenantId', '==', currentTenantId), limit(150))
+      query(collection(db, 'accounts_receivable'), where('tenantId', '==', currentTenantId))
     );
     const receivables = receivablesSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as AccountReceivable))
-      .filter(r => (!startDate || r.dueDate >= startDate) && (!endDate || r.dueDate <= endDate));
+      .filter(r => isDateInRange(r.dueDate || (r as any).date, startDate, endDate));
 
     const totalReceivablesAmount = receivables.reduce((acc, r) => acc + (r.amount || 0), 0);
-    const paidReceivablesAmount = receivables.filter(r => r.status === 'paid').reduce((acc, r) => acc + (r.amount || 0), 0);
-    const pendingReceivablesAmount = receivables.filter(r => r.status === 'pending').reduce((acc, r) => acc + (r.amount || 0), 0);
+    const paidReceivablesAmount = receivables.filter(r => (r.status as string) === 'paid' || (r.status as string) === 'pago').reduce((acc, r) => acc + (r.amount || 0), 0);
+    const pendingReceivablesAmount = receivables.filter(r => (r.status as string) === 'pending' || (r.status as string) === 'pendente').reduce((acc, r) => acc + (r.amount || 0), 0);
 
     return {
       stats: { 
         income, 
         expense, 
         sangria, 
-        balance: income - expense,
+        balance: metrics.saldoOperacionalLiquido,
         totalPayablesAmount,
         paidPayablesAmount,
         pendingPayablesAmount,

@@ -324,5 +324,40 @@ export const pushNotificationService = {
     } catch (err) {
       console.warn('Erro ao disparar push de agendamento:', err);
     }
+  },
+
+  /**
+   * Sincroniza silenciosamente a inscrição push existente com o servidor
+   * Chamada ao carregar o aplicativo (incluindo quando aberto da tela inicial / PWA)
+   */
+  async autoSyncPushSubscription(params?: { userId?: string; userRole?: string; tenantId?: string }): Promise<void> {
+    if (!this.isPushSupported()) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) return;
+
+      const subscription = await reg.pushManager.getSubscription();
+      if (!subscription) return;
+
+      const activeTenantId = params?.tenantId || getActiveTenantId() || 'gbcortes7';
+      const effectiveUserId = params?.userId || '';
+      const effectiveRole = params?.userRole || 'cliente';
+
+      await fetch('/api/notifications/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: effectiveUserId,
+          userRole: effectiveRole,
+          tenantId: activeTenantId,
+          subscription: subscription.toJSON(),
+          userAgent: navigator.userAgent
+        })
+      });
+    } catch (err) {
+      console.warn('Aviso na sincronização automática de push:', err);
+    }
   }
 };

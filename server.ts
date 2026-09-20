@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp, getApps, cert, applicationDefault, type App } from "firebase-admin/app";
@@ -6688,9 +6689,45 @@ function encodeFirestoreFields(data: any): any {
     userAgent?: string;
     updatedAt?: string;
   }
-  const localPushSubs = new Map<string, StoredPushSub>();
 
-  async function sendPushToUser(userId: string, payload: { title: string; body: string; url?: string; icon?: string; badge?: string; tag?: string }) {
+  const PUSH_SUBS_FILE = path.join(process.cwd(), "push_subscriptions_store.json");
+
+  function loadPushSubscriptionsFromDisk(): Map<string, StoredPushSub> {
+    const map = new Map<string, StoredPushSub>();
+    try {
+      if (fs.existsSync(PUSH_SUBS_FILE)) {
+        const raw = fs.readFileSync(PUSH_SUBS_FILE, "utf-8");
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (item && item.id && item.subscription?.endpoint) {
+              map.set(item.id, item);
+            }
+          }
+        }
+        console.log(`📡 [Push Notification] Carregadas ${map.size} inscrições ativas do armazenamento persistente em disco.`);
+      }
+    } catch (err) {
+      console.warn("⚠️ [Push Notification] Aviso ao carregar inscrições do disco:", err);
+    }
+    return map;
+  }
+
+  function savePushSubscriptionsToDisk(map: Map<string, StoredPushSub>) {
+    try {
+      const list = Array.from(map.values());
+      fs.writeFileSync(PUSH_SUBS_FILE, JSON.stringify(list, null, 2), "utf-8");
+    } catch (err) {
+      console.warn("⚠️ [Push Notification] Aviso ao gravar inscrições no disco:", err);
+    }
+  }
+
+  const localPushSubs = loadPushSubscriptionsFromDisk();
+
+  async function sendPushToUser(
+    userId: string,
+    payload: { title: string; body: string; url?: string; icon?: string; badge?: string; tag?: string }
+  ): Promise<number> {
     const jsonPayload = JSON.stringify({
       title: payload.title,
       body: payload.body,
@@ -6701,8 +6738,11 @@ function encodeFirestoreFields(data: any): any {
     });
 
     const subsToSend: StoredPushSub[] = [];
+    const targetUserId = (userId || "").trim().toLowerCase();
+
     for (const [_, sub] of localPushSubs.entries()) {
-      if (sub.userId === userId) {
+      const sUserId = (sub.userId || "").trim().toLowerCase();
+      if (sUserId && (sUserId === targetUserId || targetUserId.includes(sUserId) || sUserId.includes(targetUserId))) {
         subsToSend.push(sub);
       }
     }
@@ -6721,14 +6761,19 @@ function encodeFirestoreFields(data: any): any {
       }
     } catch (_) {}
 
+    let sentCount = 0;
     for (const s of subsToSend) {
       try {
         if (s.subscription && s.subscription.endpoint) {
           await webpush.sendNotification(s.subscription, jsonPayload);
+          sentCount++;
+          console.log(`✅ [Push Notification] Notificação entregue para usuário: ${s.userId} (${s.userRole || 'cliente'})`);
         }
       } catch (err: any) {
+        console.warn(`⚠️ [Push Notification] Erro no envio para ${s.userId}:`, err.statusCode || err.message);
         if (err.statusCode === 410 || err.statusCode === 404) {
           localPushSubs.delete(s.id);
+          savePushSubscriptionsToDisk(localPushSubs);
           const fbAdmin = getFirebaseAdmin();
           if (fbAdmin && s.id) {
             getFirestore(fbAdmin).collection("push_subscriptions").doc(s.id).delete().catch(() => {});
@@ -6736,9 +6781,15 @@ function encodeFirestoreFields(data: any): any {
         }
       }
     }
+    return sentCount;
   }
 
-  async function sendPushToRole(tenantId: string, roles: string[], payload: { title: string; body: string; url?: string; icon?: string; badge?: string; tag?: string }, excludeUserId?: string) {
+  async function sendPushToRole(
+    tenantId: string,
+    roles: string[],
+    payload: { title: string; body: string; url?: string; icon?: string; badge?: string; tag?: string },
+    excludeUserId?: string
+  ): Promise<number> {
     const jsonPayload = JSON.stringify({
       title: payload.title,
       body: payload.body,
@@ -6750,13 +6801,17 @@ function encodeFirestoreFields(data: any): any {
 
     const subsToSend: StoredPushSub[] = [];
     const lowerRoles = roles.map(r => r.toLowerCase());
+    const lowerExclude = (excludeUserId || "").trim().toLowerCase();
 
     for (const [_, sub] of localPushSubs.entries()) {
       const subTenant = (sub.tenantId || '').toLowerCase();
       const targetTenant = (tenantId || '').toLowerCase();
-      const matchesTenant = !targetTenant || !subTenant || subTenant === targetTenant || targetTenant === 'gbcortes7' || subTenant === 'gbcortes7';
+      const matchesTenant = !targetTenant || !subTenant || subTenant === targetTenant || 
+        targetTenant === 'gbcortes7' || subTenant === 'gbcortes7' ||
+        targetTenant === 'default' || subTenant === 'default';
       const matchesRole = lowerRoles.includes((sub.userRole || '').toLowerCase());
-      const notExcluded = !excludeUserId || sub.userId !== excludeUserId;
+      const sUserId = (sub.userId || "").trim().toLowerCase();
+      const notExcluded = !lowerExclude || !sUserId || sUserId !== lowerExclude;
 
       if (matchesRole && matchesTenant && notExcluded) {
         subsToSend.push(sub);
@@ -6768,14 +6823,15 @@ function encodeFirestoreFields(data: any): any {
       if (fbAdmin) {
         const db = getFirestore(fbAdmin);
         let q: any = db.collection("push_subscriptions");
-        if (tenantId && tenantId !== 'gbcortes7') {
+        if (tenantId && tenantId !== 'gbcortes7' && tenantId !== 'default') {
           q = q.where("tenantId", "==", tenantId);
         }
         const snap = await q.get();
         snap.docs.forEach(d => {
           const dData = d.data() as StoredPushSub;
           const matchesRole = lowerRoles.includes((dData.userRole || '').toLowerCase());
-          const notExcluded = !excludeUserId || dData.userId !== excludeUserId;
+          const sUserId = (dData.userId || "").trim().toLowerCase();
+          const notExcluded = !lowerExclude || !sUserId || sUserId !== lowerExclude;
           if (matchesRole && notExcluded && dData.subscription?.endpoint && !subsToSend.some(s => s.subscription?.endpoint === dData.subscription?.endpoint)) {
             subsToSend.push(dData);
           }
@@ -6783,17 +6839,23 @@ function encodeFirestoreFields(data: any): any {
       }
     } catch (_) {}
 
+    let sentCount = 0;
     for (const s of subsToSend) {
       try {
         if (s.subscription && s.subscription.endpoint) {
           await webpush.sendNotification(s.subscription, jsonPayload);
+          sentCount++;
+          console.log(`✅ [Push Notification] Broadcast entregue para perfil ${s.userRole} da barbearia ${s.tenantId} (user: ${s.userId})`);
         }
       } catch (err: any) {
+        console.warn(`⚠️ [Push Notification] Erro no broadcast para ${s.userRole}:`, err.statusCode || err.message);
         if (err.statusCode === 410 || err.statusCode === 404) {
           localPushSubs.delete(s.id);
+          savePushSubscriptionsToDisk(localPushSubs);
         }
       }
     }
+    return sentCount;
   }
 
   // Obter chave pública VAPID
@@ -6801,7 +6863,7 @@ function encodeFirestoreFields(data: any): any {
     return res.json({ publicKey: VAPID_PUBLIC_KEY });
   });
 
-  // Salvar inscrição de push do navegador/celular
+  // Salvar ou sincronizar inscrição de push do navegador/celular (com persistência em disco garantida)
   app.post("/api/notifications/subscribe", async (req, res) => {
     try {
       const { userId, userRole, tenantId, subscription, userAgent } = req.body;
@@ -6822,6 +6884,9 @@ function encodeFirestoreFields(data: any): any {
       };
 
       localPushSubs.set(subKey, subRecord);
+      savePushSubscriptionsToDisk(localPushSubs);
+
+      console.log(`📲 [Push Notification] Aparelho registrado/sincronizado! ID: ${subKey} | User: ${userId} | Cargo: ${userRole} | Total de aparelhos: ${localPushSubs.size}`);
 
       try {
         const fbAdmin = getFirebaseAdmin();
@@ -6833,10 +6898,10 @@ function encodeFirestoreFields(data: any): any {
           }, { merge: true });
         }
       } catch (fsErr) {
-        console.warn("Aviso ao persisitr push_subscription no Firestore:", fsErr);
+        console.warn("Aviso ao persistir push_subscription no Firestore:", fsErr);
       }
 
-      return res.json({ success: true, message: "Inscrição push salva com sucesso!" });
+      return res.json({ success: true, message: "Inscrição push salva e persistida com sucesso!" });
     } catch (err: any) {
       console.error("Erro ao salvar inscrição push:", err);
       return res.status(500).json({ error: err.message || "Erro ao salvar subscrição push." });
@@ -6914,6 +6979,7 @@ function encodeFirestoreFields(data: any): any {
         } catch (pushErr: any) {
           if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
             localPushSubs.delete(s.id);
+            savePushSubscriptionsToDisk(localPushSubs);
           }
         }
       }
@@ -6983,9 +7049,13 @@ function encodeFirestoreFields(data: any): any {
         clientBody = `Seu agendamento com ${barberName} do dia ${dateStr} às ${timeStr} foi cancelado.`;
       }
 
+      console.log(`📣 [Push Notification] Evento de agendamento: ${eventType} | Barbeiro: ${barberId} (${barberName}) | Cliente: ${clientId} (${clientName}) | Tenant: ${effectiveTenantId}`);
+      console.log(`📱 [Push Notification] Dispositivos registrados no servidor: ${localPushSubs.size}`);
+
+      let sentToBarberCount = 0;
       // 1. Notificar Barbeiro Específico
       if (barberId) {
-        await sendPushToUser(barberId, {
+        sentToBarberCount = await sendPushToUser(barberId, {
           title: staffTitle,
           body: staffBody,
           icon: pushIcon,
@@ -6995,8 +7065,34 @@ function encodeFirestoreFields(data: any): any {
         });
       }
 
+      // Se o barbeiro específico não recebeu via userId exato, busca dispositivo com perfil 'barbeiro' deste tenant
+      if (sentToBarberCount === 0 && effectiveTenantId) {
+        for (const [_, sub] of localPushSubs.entries()) {
+          const subTenant = (sub.tenantId || '').toLowerCase();
+          const targetTenant = effectiveTenantId.toLowerCase();
+          const matchesTenant = !targetTenant || !subTenant || subTenant === targetTenant || 
+            targetTenant === 'gbcortes7' || subTenant === 'gbcortes7' || 
+            targetTenant === 'default' || subTenant === 'default';
+          
+          if (matchesTenant && sub.userRole === 'barbeiro') {
+            console.log(`💈 [Push Notification] Notificando aparelho do barbeiro do tenant: ${sub.userId}`);
+            const sent = await sendPushToUser(sub.userId, {
+              title: staffTitle,
+              body: staffBody,
+              icon: pushIcon,
+              badge: pushBadge,
+              url: '/portal-barbeiro',
+              tag: `appt-${appointment.id || Date.now()}`
+            });
+            sentToBarberCount += sent;
+          }
+        }
+      }
+
       // 2. Notificar Dono / Administradores / Gerentes da barbearia em tempo real
-      await sendPushToRole(
+      // Se o barbeiro NÃO foi notificado individualmente, NÃO o excluímos para não perder o alerta
+      const excludeUserId = sentToBarberCount > 0 ? barberId : undefined;
+      const sentToRoleCount = await sendPushToRole(
         effectiveTenantId,
         ['admin', 'gerente', 'saas_admin', 'gestor', 'recepcionista'],
         {
@@ -7007,10 +7103,35 @@ function encodeFirestoreFields(data: any): any {
           url: '/agenda',
           tag: `appt-admin-${appointment.id || Date.now()}`
         },
-        barberId // Evita enviar duplicado se o admin for o próprio barbeiro
+        excludeUserId
       );
 
-      // 3. Notificar o Cliente
+      // 3. Fallback de Segurança da Barbearia: se NINGUÉM da equipe recebeu e existem aparelhos cadastrados no servidor,
+      // envia para qualquer aparelho de admin/gerente/barbeiro registrado no sistema para que NENHUM agendamento seja perdido!
+      if (sentToBarberCount === 0 && sentToRoleCount === 0 && localPushSubs.size > 0) {
+        console.log(`🚨 [Push Notification] Fallback de segurança: disparando para todos os aparelhos de gestão/atendimento disponíveis...`);
+        for (const [_, sub] of localPushSubs.entries()) {
+          const role = (sub.userRole || '').toLowerCase();
+          if (['admin', 'gerente', 'gestor', 'barbeiro', 'saas_admin'].includes(role)) {
+            try {
+              const staffPayload = JSON.stringify({
+                title: staffTitle,
+                body: staffBody,
+                icon: pushIcon,
+                badge: pushBadge,
+                url: '/agenda',
+                tag: `appt-emergency-${appointment.id || Date.now()}`
+              });
+              await webpush.sendNotification(sub.subscription, staffPayload);
+              console.log(`✅ [Push Notification] Alerta de agendamento entregue via fallback para ${sub.userId} (${role})`);
+            } catch (fbErr: any) {
+              console.warn(`⚠️ [Push Notification] Erro no fallback para ${sub.userId}:`, fbErr.statusCode || fbErr.message);
+            }
+          }
+        }
+      }
+
+      // 4. Notificar o Cliente
       if (clientId) {
         await sendPushToUser(clientId, {
           title: clientTitle,
@@ -7022,7 +7143,12 @@ function encodeFirestoreFields(data: any): any {
         });
       }
 
-      return res.json({ success: true, message: "Push disparado com sucesso." });
+      return res.json({ 
+        success: true, 
+        message: "Push de agendamento processado com sucesso.",
+        sentToBarber: sentToBarberCount,
+        sentToRole: sentToRoleCount
+      });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || "Erro ao disparar push de agendamento." });
     }

@@ -64,6 +64,7 @@ import { AgendaGeneral } from '../components/Agenda/AgendaGeneral';
 import { ImageCropModal } from '../components/ImageCropModal';
 import { NotificationBell } from '../components/NotificationBell';
 import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
+import { pushNotificationService } from '../services/pushNotificationService';
 import { useTenant } from '../contexts/TenantContext';
 import { buildAppointmentReminderMessage, getWhatsAppDirectUrl } from '../utils/whatsappTemplates';
 import { UserProfile, Appointment, Product, Commission, AppointmentStatus, AgendaBlock, ProfessionalAdvance, ProfessionalPayment } from '../types';
@@ -155,6 +156,17 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   const { user, isSaaSAdminUser, setOverrideRole } = useAuth();
   const effectiveUserId = user?.uid || profile.uid || (profile as any).id || '';
   const { tenant } = useTenant();
+
+  // Auto-sincronizar subscrição push do barbeiro quando abre o portal (inclusive na tela inicial)
+  useEffect(() => {
+    if (effectiveUserId) {
+      pushNotificationService.autoSyncPushSubscription({
+        userId: effectiveUserId,
+        userRole: 'barbeiro',
+        tenantId: tenant?.id || profile?.tenantId || 'gbcortes7'
+      });
+    }
+  }, [effectiveUserId, tenant?.id, profile?.tenantId]);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);

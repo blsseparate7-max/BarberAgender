@@ -14,6 +14,7 @@ import { Loader2, Lock } from 'lucide-react';
 import { PagePlaceholder } from './components/PagePlaceholder';
 import { OnboardingWelcome } from './components/OnboardingWelcome';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { pushNotificationService } from './services/pushNotificationService';
 
 // Code-split dynamic page imports with React.lazy and fallback retry
 const lazyWithRetry = (factory: () => Promise<any>) =>
@@ -109,6 +110,20 @@ function MainApp() {
       setShowOnboarding(false);
     }
   }, [profile]);
+
+  // Sincronização automática da Inscrição Web Push ao carregar ou reabrir pela tela inicial (PWA)
+  useEffect(() => {
+    if (user || profile) {
+      const activeTenant = tenant?.id || profile?.tenantId || 'gbcortes7';
+      const effectiveRole = profile?.tipo || (user ? 'cliente' : 'anon');
+      const effectiveUid = profile?.uid || user?.uid || '';
+      pushNotificationService.autoSyncPushSubscription({
+        userId: effectiveUid,
+        userRole: effectiveRole,
+        tenantId: activeTenant
+      });
+    }
+  }, [user?.uid, profile?.tipo, tenant?.id]);
 
   // Auto-redirect to Comandas if today is Ordem de Chegada (Walk-In) only
   useEffect(() => {

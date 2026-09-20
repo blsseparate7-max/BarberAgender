@@ -1011,8 +1011,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       subtitle: 'Controle de duplicatas, vendas a prazo e títulos a receber.'
     },
     'accounts-receivable': {
-      title: 'Contas a Receber (Fiados)',
-      subtitle: 'Gestão de fiados em aberto e recuperação de crédito.'
+      title: 'Contas a Receber',
+      subtitle: 'Controle de títulos, aluguéis de cadeira e faturamento empresarial.'
     },
     'accounts-payable': {
       title: 'Contas a Pagar',
@@ -2200,62 +2200,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 exit={{ opacity: 0, scale: 0.98 }}
                 className="space-y-8"
               >
-                <div className="bg-amber-50 border border-amber-100 p-10 rounded-[2.5rem] flex flex-col md:flex-row md:items-center justify-between gap-10 shadow-sm relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/5 rounded-full -mr-32 -mt-32 group-hover:scale-110 transition-transform" />
-                  <div className="flex items-center gap-6 relative z-10">
-                    <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center text-amber-600 shadow-lg shadow-amber-500/10 border border-amber-100">
-                      <AlertCircle size={40} />
-                    </div>
-                    <div>
-                      <h3 className="text-2xl font-black text-amber-900">Contas a Receber</h3>
-                      <p className="text-sm text-amber-700/70 max-w-md font-medium mt-1">Gestão estratégica de débitos pendentes e recuperação de crédito.</p>
-                    </div>
-                  </div>
-                  <div className="text-right relative z-10">
-                    <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-2">Total em Aberto</p>
-                    <p className="text-5xl font-black text-amber-900 tracking-tighter">R$ {stats.pendingFiado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {pendingDebts.map((debt, index) => (
-                    <div key={`debt-card-${debt.id || index}-${index}`} className="bg-white border border-slate-200 rounded-[2rem] p-8 hover:border-accent/30 transition-all group shadow-sm flex flex-col">
-                      <div className="flex items-center justify-between mb-8">
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-accent/5 group-hover:text-accent transition-all border border-slate-100 shadow-inner">
-                            <User size={24} />
-                          </div>
-                          <div>
-                            <p className="font-bold text-primary group-hover:text-accent transition-colors">{debt.cliente_name}</p>
-                            <p className="text-[10px] text-muted uppercase tracking-widest font-black mt-0.5">{format(parseDate(debt.createdAt), 'dd/MM/yyyy')}</p>
-                          </div>
-                        </div>
-                        <button className="p-2 text-slate-300 hover:text-primary transition-colors bg-white rounded-xl border border-slate-100 shadow-sm">
-                          <MoreVertical size={18} />
-                        </button>
-                      </div>
-                      
-                      <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 mb-8 shadow-inner text-center">
-                        <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-2">Dívida Pendente</p>
-                        <p className="text-3xl font-black text-emerald-600 tracking-tight">R$ {debt.remainingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                      </div>
-
-                      <button 
-                        onClick={() => setConfirmDebtPayment(debt)}
-                        disabled={isPayingDebt}
-                        className="w-full py-4 bg-primary text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-all flex items-center justify-center gap-3 shadow-lg shadow-primary/10 active:scale-95 mt-auto"
-                      >
-                        {isPayingDebt ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle2 size={20} />}
-                        <span>Registrar Pagamento</span>
-                      </button>
-                    </div>
-                  ))}
-                  {pendingDebts.length === 0 && (
-                    <div className="col-span-full text-center py-24 text-muted font-bold italic text-sm bg-slate-50/50 border border-dashed border-slate-200 rounded-[2.5rem]">
-                      Nenhum fiado pendente encontrado.
-                    </div>
-                  )}
-                </div>
+                <AccountsReceivableManager userId={user?.uid || ''} userName={user?.displayName || 'Sistema'} />
               </motion.div>
             )}
             {activeTab === 'inconsistencies' && (

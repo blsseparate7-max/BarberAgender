@@ -17,6 +17,7 @@ import { cashService } from '../../services/cashService';
 import { financialService } from '../../services/financialService';
 import { Commission, ProfessionalAdvance, ProfessionalPayment, UserProfile } from '../../types';
 import { calculateProfessionalLedger } from '../../services/ledgerService';
+import { DeleteAdvanceModal } from './DeleteAdvanceModal';
 
 function extensos(valor: number): string {
   if (!valor || isNaN(valor) || valor <= 0) return 'zero reais';
@@ -135,6 +136,7 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   const [allComandas, setAllComandas] = useState<any[]>(preloadedComandas || []);
   const [payouts, setPayouts] = useState<ProfessionalPayment[]>([]);
   const [isOpenCash, setIsOpenCash] = useState<any>(null);
+  const [advanceToDelete, setAdvanceToDelete] = useState<{ id: string; description?: string; amount?: number; date?: string; status?: string } | null>(null);
 
   const [localDateRange, setLocalDateRange] = useState({
     start: dateRange.start,
@@ -577,22 +579,15 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     }
   };
 
-  // Handle Deleting Advance (Vale) with Unified Cascade
-  const handleDeleteAdvance = async (advanceId: string, desc?: string, amount?: number) => {
-    if (!window.confirm(`Tem certeza que deseja cancelar e excluir o vale "${desc || 'Adiantamento'}" no valor de R$ ${(amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?\n\nEsta ação estornará a despesa do financeiro e da gaveta do caixa de forma unificada.`)) {
-      return;
-    }
-
-    try {
-      setLoading(true);
-      await commissionService.deleteAdvance(advanceId);
-      toast.success("Vale excluído e estornado com sucesso!");
-    } catch (err: any) {
-      console.error("Erro ao excluir vale:", err);
-      toast.error(err.message || "Erro ao excluir vale.");
-    } finally {
-      setLoading(false);
-    }
+  // Handle Deleting Advance (Vale) with Smart Cash & Cascade Flow
+  const handleDeleteAdvance = (advanceId: string, desc?: string, amount?: number, date?: string, status?: string) => {
+    setAdvanceToDelete({
+      id: advanceId,
+      description: desc,
+      amount,
+      date,
+      status
+    });
   };
 
   // Handle Adding Bonus / Gratificação
@@ -1277,9 +1272,9 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                 {a.status !== 'pago' && a.id && (
                                   <button
                                     id={`btn-del-vale-${a.id}`}
-                                    onClick={() => handleDeleteAdvance(a.id, a.description, a.amount)}
+                                    onClick={() => handleDeleteAdvance(a.id, a.description, a.amount, extractDateOnly(a), a.status)}
                                     title="Excluir vale e estornar despesa"
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex items-center justify-center"
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
                                   >
                                     <Trash2 size={15} />
                                   </button>
@@ -1797,10 +1792,10 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
                                                 type="button"
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  handleDeleteAdvance(a.id, a.description, a.amount);
+                                                  handleDeleteAdvance(a.id, a.description, a.amount, extractDateOnly(a), a.status);
                                                 }}
                                                 title="Excluir vale"
-                                                className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors no-print"
+                                                className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors no-print cursor-pointer"
                                               >
                                                 <Trash2 size={13} />
                                               </button>
@@ -2804,6 +2799,22 @@ Assinatura: _______________________________
           Documento fiscal-financeiro interno gerado e garantido na nuvem de dados BarberElite.
         </div>
       </div>
+
+      <DeleteAdvanceModal
+        isOpen={!!advanceToDelete}
+        onClose={() => setAdvanceToDelete(null)}
+        advanceId={advanceToDelete?.id || null}
+        advanceFallback={{
+          description: advanceToDelete?.description,
+          amount: advanceToDelete?.amount,
+          date: advanceToDelete?.date,
+          profissional_name: professionalName,
+          status: advanceToDelete?.status
+        }}
+        onSuccess={() => {
+          setAdvanceToDelete(null);
+        }}
+      />
     </>
   );
 }

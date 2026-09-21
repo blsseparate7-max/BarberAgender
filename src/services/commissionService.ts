@@ -12,7 +12,8 @@ import {
   orderBy,
   limit,
   writeBatch,
-  getDoc
+  getDoc,
+  deleteField
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Commission, CommissionPayout, CommissionStatus, ProfessionalAdvance, ProfessionalPayment } from '../types';
@@ -99,7 +100,7 @@ export const commissionService = {
     return results;
   },
 
-  async getAdvances(filters: { profissional_id?: string; profissional_name?: string; startDate?: string; endDate?: string; tenantId?: string }) {
+  async getAdvances(filters: { profissional_id?: string; profissional_name?: string; startDate?: string; endDate?: string; tenantId?: string; status?: string }) {
     const activeTenant = filters.tenantId || getActiveTenantId();
     let queryConstraints: any[] = [];
     if (activeTenant) {
@@ -122,6 +123,10 @@ export const commissionService = {
         const aName = (a.profissional_name || '').toLowerCase().trim();
         return aName === targetName;
       });
+    }
+
+    if (filters.status) {
+      results = results.filter(a => (a.status || 'pendente') === filters.status);
     }
 
     if (filters.startDate && filters.endDate) {
@@ -277,10 +282,168 @@ export const commissionService = {
     return { advanceId, transactionId, movementId };
   },
 
-  async deleteAdvance(advanceId: string) {
+  async checkAdvanceCashStatus(advanceId: string) {
     try {
+      const advRef = doc(db, ADVANCES_COLLECTION, advanceId);
+      const advSnap = await getDoc(advRef);
+      if (!advSnap.exists()) {
+        // Fallback: check if advanceId is a financial_transaction id
+        const txRef = doc(db, 'financial_transactions', advanceId);
+        const txSnap = await getDoc(txRef);
+        if (txSnap.exists()) {
+          const tx = txSnap.data();
+          const activeTenant = tx.tenantId || getActiveTenantId();
+          const currentCash = await cashService.getCurrentCash();
+          const hasOpenCashToday = !!currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened');
+          let originalCashSession: any = null;
+          let isOriginalCashClosed = false;
+          if (tx.date) {
+            const cDate = await cashService.getCashByDate(tx.date);
+            if (cDate) {
+              originalCashSession = cDate;
+              isOriginalCashClosed = cDate.status === 'closed';
+            }
+          }
+          return {
+            exists: true,
+            advance: {
+              id: txSnap.id,
+              amount: tx.amount,
+              date: tx.date,
+              description: tx.description,
+              profissional_name: tx.profissional_name,
+              profissional_id: tx.profissional_id,
+              status: tx.status === 'pago' ? 'pendente' : tx.status
+            } as ProfessionalAdvance,
+            isAlreadyPaid: false,
+            hasMovement: !!tx.movement_id,
+            movementId: tx.movement_id,
+            isOriginalCashClosed,
+            originalCashDate: tx.date,
+            originalCashSession,
+            hasOpenCashToday,
+            currentCash
+          };
+        }
+        return { exists: false, isOriginalCashClosed: false, hasOpenCashToday: false };
+      }
+
+      const adv = { id: advSnap.id, ...advSnap.data() } as ProfessionalAdvance;
+      const activeTenant = adv.tenantId || getActiveTenantId();
+
+      // Check current open cash
+      const currentCash = await cashService.getCurrentCash();
+      const hasOpenCashToday = !!currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened');
+
+      // Check if advance was already paid/deducted in a payout
+      const isAlreadyPaid = adv.status === 'pago' || adv.status === 'deduzido' || !!adv.repasse_id;
+
+      // Find linked cash movement
+      let movement: any = null;
+      if (adv.movement_id) {
+        const mSnap = await getDoc(doc(db, 'cash_movements', adv.movement_id));
+        if (mSnap.exists()) {
+          movement = { id: mSnap.id, ...mSnap.data() };
+        }
+      }
+
+      if (!movement) {
+        const qMove = query(collection(db, 'cash_movements'), where('referencia_id', '==', adv.id));
+        const moveSnap = await getDocs(qMove);
+        if (!moveSnap.empty) {
+          movement = { id: moveSnap.docs[0].id, ...moveSnap.docs[0].data() };
+        }
+      }
+
+      if (!movement && adv.transaction_id) {
+        const qMove2 = query(collection(db, 'cash_movements'), where('referencia_id', '==', adv.transaction_id));
+        const moveSnap2 = await getDocs(qMove2);
+        if (!moveSnap2.empty) {
+          movement = { id: moveSnap2.docs[0].id, ...moveSnap2.docs[0].data() };
+        }
+      }
+
+      if (!movement && adv.date && adv.amount) {
+        const qCandidate = query(
+          collection(db, 'cash_movements'),
+          where('tenantId', '==', activeTenant)
+        );
+        const cSnap = await getDocs(qCandidate);
+        const match = cSnap.docs.find(d => {
+          const m = d.data();
+          const mDate = m.date || (m.createdAt ? new Date(m.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
+          return Math.abs((m.amount || 0) - adv.amount) < 0.01 &&
+            mDate === adv.date &&
+            ((m.category && m.category.toLowerCase().includes('vale')) || (m.description && m.description.toLowerCase().includes('vale')));
+        });
+        if (match) {
+          movement = { id: match.id, ...match.data() };
+        }
+      }
+
+      let isOriginalCashClosed = false;
+      let originalCashSession: any = null;
+      let originalCashDate = adv.date;
+
+      if (movement && movement.caixa_id) {
+        const cashRef = doc(db, 'cash_sessions', movement.caixa_id);
+        const cashSnap = await getDoc(cashRef);
+        if (cashSnap.exists()) {
+          originalCashSession = { id: cashSnap.id, ...cashSnap.data() };
+          isOriginalCashClosed = originalCashSession.status === 'closed';
+          originalCashDate = originalCashSession.date || adv.date;
+        }
+      } else if (adv.date) {
+        const cashForDate = await cashService.getCashByDate(adv.date);
+        if (cashForDate) {
+          originalCashSession = cashForDate;
+          isOriginalCashClosed = cashForDate.status === 'closed';
+          originalCashDate = cashForDate.date;
+        }
+      }
+
+      return {
+        exists: true,
+        advance: adv,
+        isAlreadyPaid,
+        movement,
+        hasMovement: !!movement,
+        movementId: movement?.id,
+        isOriginalCashClosed,
+        originalCashDate,
+        originalCashSession,
+        hasOpenCashToday,
+        currentCash
+      };
+    } catch (err) {
+      console.error("Erro ao verificar status de caixa do vale:", err);
+      return { exists: false, isOriginalCashClosed: false, hasOpenCashToday: false };
+    }
+  },
+
+  async deleteAdvance(
+    advanceId: string,
+    options?: {
+      refundDestination?: 'current_cash' | 'original_cash' | 'none';
+      authorId?: string;
+      authorName?: string;
+      reason?: string;
+      force?: boolean;
+    }
+  ) {
+    try {
+      const statusInfo = await this.checkAdvanceCashStatus(advanceId);
+      
+      if (statusInfo.isAlreadyPaid && !options?.force) {
+        throw new Error(
+          `Este vale já foi quitado em um repasse de comissões${statusInfo.advance?.repasse_id ? ` (Repasse: ${statusInfo.advance.repasse_id})` : ''}. Cancele o repasse correspondente para liberar o estorno deste vale.`
+        );
+      }
+
       const advanceRef = doc(db, ADVANCES_COLLECTION, advanceId);
       const advSnap = await getDoc(advanceRef);
+      let advance: ProfessionalAdvance;
+
       if (!advSnap.exists()) {
         // Fallback: If it's a financial_transaction, cascade-delete it
         const txRef = doc(db, 'financial_transactions', advanceId);
@@ -337,7 +500,6 @@ export const commissionService = {
             });
           }
           
-          // Check for matching financial_transaction linked to this cash movement
           if (moveData.referencia_id) {
             const txRef2 = doc(db, 'financial_transactions', moveData.referencia_id);
             const txSnap2 = await getDoc(txRef2);
@@ -355,7 +517,8 @@ export const commissionService = {
         }
         return;
       }
-      const advance = { id: advSnap.id, ...advSnap.data() } as ProfessionalAdvance;
+
+      advance = { id: advSnap.id, ...advSnap.data() } as ProfessionalAdvance;
       const activeTenant = advance.tenantId || getActiveTenantId();
 
       // 1. Delete advance document
@@ -412,9 +575,10 @@ export const commissionService = {
         console.warn("Aviso ao deletar conta a pagar vinculada ao vale:", e);
       }
 
-      // 4. Cascade delete cash_movement if linked
+      // 4. Cascade handle cash_movement with smart closed/open logic
       try {
         const candidateMoveIds = new Set<string>();
+        if (statusInfo.movementId) candidateMoveIds.add(statusInfo.movementId);
         if (advance.movement_id) candidateMoveIds.add(advance.movement_id);
 
         const refIds = [advance.id, advance.transaction_id].filter(Boolean) as string[];
@@ -427,11 +591,11 @@ export const commissionService = {
           snap.docs.forEach(d => candidateMoveIds.add(d.id));
         }
 
-        // Also search for matching unlinked movement by pro, date and amount
+        // Search by amount and date
         if (candidateMoveIds.size === 0 && advance.amount && advance.date) {
           const qCandidate = query(
             collection(db, 'cash_movements'),
-            where('tenantId', '==', advance.tenantId || activeTenant)
+            where('tenantId', '==', activeTenant)
           );
           const cSnap = await getDocs(qCandidate);
           cSnap.docs.forEach(d => {
@@ -448,21 +612,94 @@ export const commissionService = {
           });
         }
 
+        // Process candidate movements
         for (const moveId of candidateMoveIds) {
-          try {
-            await cashService.removeMovement(moveId);
-          } catch {
-            // If cash register is already closed or removeMovement fails, soft-delete directly
-            await updateDoc(doc(db, 'cash_movements', moveId), {
-              is_deleted: true,
-              status: 'cancelado',
-              amount: 0,
-              cancel_reason: 'Vale excluído no módulo de comissões'
-            });
+          if (!statusInfo.isOriginalCashClosed) {
+            // Case A: Original cash is OPEN -> directly remove and adjust balance
+            try {
+              await cashService.removeMovement(moveId);
+            } catch {
+              await updateDoc(doc(db, 'cash_movements', moveId), {
+                is_deleted: true,
+                status: 'cancelado',
+                amount: 0,
+                cancel_reason: 'Vale excluído no módulo de comissões'
+              });
+            }
+          } else {
+            // Case B: Original cash is CLOSED
+            if (options?.refundDestination === 'current_cash') {
+              const currentCash = statusInfo.currentCash || await cashService.getCurrentCash();
+              if (currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened')) {
+                const todayStr = new Date().toISOString().split('T')[0];
+                // 1. Add movement to today's open cash drawer
+                await cashService.addMovement({
+                  caixa_id: currentCash.id,
+                  type: 'income',
+                  category: 'Estorno de Vale',
+                  description: `Estorno de vale devolvido em dinheiro - ${advance.profissional_name}`,
+                  amount: advance.amount,
+                  paymentMethod: 'dinheiro',
+                  is_receivable: false,
+                  usuario_id: options?.authorId,
+                  usuario_name: options?.authorName || 'Admin',
+                  date: todayStr,
+                  tenantId: activeTenant
+                });
+
+                // 2. Add income transaction in Financial ledger
+                await financialService.createTransaction({
+                  type: 'income',
+                  category: 'Estorno de Vale',
+                  description: `Estorno de vale devolvido em dinheiro no caixa - ${advance.profissional_name}`,
+                  amount: advance.amount,
+                  net_amount: advance.amount,
+                  fee_amount: 0,
+                  paymentMethod: 'dinheiro',
+                  date: todayStr,
+                  settlement_date: todayStr,
+                  status: 'pago',
+                  is_settled: true,
+                  profissional_id: advance.profissional_id,
+                  profissional_name: advance.profissional_name,
+                  responsavel_id: options?.authorId,
+                  responsavel_name: options?.authorName || 'Admin',
+                  tenantId: activeTenant
+                });
+
+                // 3. Mark old movement as cancelled and note where it was refunded
+                await updateDoc(doc(db, 'cash_movements', moveId), {
+                  is_deleted: true,
+                  status: 'cancelado',
+                  cancel_reason: `Vale estornado no caixa aberto de hoje (${todayStr}) por ${options?.authorName || 'Admin'}`
+                });
+              } else {
+                throw new Error("Não há caixa aberto hoje para receber a devolução do dinheiro. Abra o caixa de hoje antes de estornar nesta opção.");
+              }
+            } else if (options?.refundDestination === 'original_cash') {
+              if (statusInfo.originalCashSession?.id) {
+                // Reopen the original cash session
+                await cashService.reopenCash(statusInfo.originalCashSession.id, {
+                  userId: options?.authorId || 'Sistema',
+                  userName: options?.authorName || 'Admin',
+                  reason: options?.reason || `Reabertura para estorno de vale de ${advance.profissional_name}`
+                });
+                // Now remove the movement
+                await cashService.removeMovement(moveId);
+              }
+            } else {
+              // Option 'none' or default: mark old movement as cancelled without moving drawers
+              await updateDoc(doc(db, 'cash_movements', moveId), {
+                is_deleted: true,
+                status: 'cancelado',
+                cancel_reason: 'Vale cancelado no módulo de comissões sem movimentação de gaveta'
+              });
+            }
           }
         }
       } catch (e) {
-        console.warn("Aviso ao estornar movimento de caixa do vale:", e);
+        console.warn("Aviso ao processar estorno de caixa do vale:", e);
+        throw e;
       }
     } catch (err) {
       console.error("Erro ao deletar vale unificado:", err);
@@ -675,6 +912,140 @@ export const commissionService = {
 
     await batch.commit();
     return payoutRef.id;
+  },
+
+  async cancelPayout(
+    payoutId: string,
+    options?: {
+      authorId?: string;
+      authorName?: string;
+      reason?: string;
+    }
+  ) {
+    try {
+      const payoutRef = doc(db, PAYOUTS_COLLECTION, payoutId);
+      const payoutSnap = await getDoc(payoutRef);
+      if (!payoutSnap.exists()) {
+        throw new Error("Repasse não encontrado.");
+      }
+
+      const payoutData = { id: payoutSnap.id, ...payoutSnap.data() } as ProfessionalPayment;
+      if (payoutData.status === 'cancelado') {
+        throw new Error("Este repasse já está cancelado.");
+      }
+
+      // 1. Unlink linked commissions
+      const commsQuery = query(
+        collection(db, COMMISSIONS_COLLECTION),
+        where('repasse_id', '==', payoutId)
+      );
+      const commsSnap = await getDocs(commsQuery);
+
+      const commissionIds = payoutData.commission_ids || (payoutData as any).commissionIds || [];
+      const batch = writeBatch(db);
+
+      commsSnap.docs.forEach(docSnap => {
+        batch.update(docSnap.ref, {
+          status: 'pendente',
+          repasse_id: deleteField(),
+          updatedAt: serverTimestamp()
+        });
+      });
+
+      for (const cId of commissionIds) {
+        if (!commsSnap.docs.some(d => d.id === cId)) {
+          const cRef = doc(db, COMMISSIONS_COLLECTION, cId);
+          const cSnap = await getDoc(cRef);
+          if (cSnap.exists()) {
+            batch.update(cRef, {
+              status: 'pendente',
+              repasse_id: deleteField(),
+              updatedAt: serverTimestamp()
+            });
+          }
+        }
+      }
+
+      // 2. Unlink linked advances/vales
+      const advsQuery = query(
+        collection(db, ADVANCES_COLLECTION),
+        where('repasse_id', '==', payoutId)
+      );
+      const advsSnap = await getDocs(advsQuery);
+
+      const advanceIds = payoutData.advance_ids || (payoutData as any).advanceIds || [];
+
+      advsSnap.docs.forEach(docSnap => {
+        batch.update(docSnap.ref, {
+          status: 'pendente',
+          repasse_id: deleteField()
+        });
+      });
+
+      for (const aId of advanceIds) {
+        if (!advsSnap.docs.some(d => d.id === aId)) {
+          const aRef = doc(db, ADVANCES_COLLECTION, aId);
+          const aSnap = await getDoc(aRef);
+          if (aSnap.exists()) {
+            batch.update(aRef, {
+              status: 'pendente',
+              repasse_id: deleteField()
+            });
+          }
+        }
+      }
+
+      // 3. Mark payout as cancelado
+      batch.update(payoutRef, {
+        status: 'cancelado',
+        canceledAt: serverTimestamp(),
+        canceledBy: options?.authorName || 'Admin',
+        cancelReason: options?.reason || 'Estorno manual de repasse'
+      });
+
+      await batch.commit();
+
+      // 4. Reverse financial transaction / cash movement if paid in cash
+      try {
+        const txQuery = query(
+          collection(db, 'financial_transactions'),
+          where('repasse_id', '==', payoutId)
+        );
+        const txSnap = await getDocs(txQuery);
+        for (const txDoc of txSnap.docs) {
+          await updateDoc(txDoc.ref, {
+            status: 'cancelado',
+            description: `[CANCELADO] ${txDoc.data().description || ''}`
+          });
+        }
+
+        const isCash = (payoutData.paymentMethod || '').toLowerCase().includes('dinheiro');
+        if (isCash && payoutData.amount > 0) {
+          const openCash = await cashService.getCurrentCash();
+          if (openCash) {
+            await cashService.addMovement({
+              caixa_id: openCash.id,
+              type: 'income',
+              category: 'Estorno de Repasse de Comissão',
+              description: `Estorno de repasse em dinheiro de ${payoutData.profissional_name} (R$ ${payoutData.amount.toFixed(2)})`,
+              amount: payoutData.amount,
+              paymentMethod: 'dinheiro',
+              is_receivable: false,
+              usuario_id: options?.authorId || 'sistema',
+              usuario_name: options?.authorName || 'Admin',
+              date: new Date().toISOString().split('T')[0]
+            });
+          }
+        }
+      } catch (finErr) {
+        console.warn("Aviso ao estornar movimentação financeira do repasse:", finErr);
+      }
+
+      return true;
+    } catch (err) {
+      console.error("Erro ao cancelar/estornar repasse:", err);
+      throw err;
+    }
   },
 
   async getCommissionStats(profissional_id?: string, startDate?: string, endDate?: string, tenantId?: string) {

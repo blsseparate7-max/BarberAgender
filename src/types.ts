@@ -298,6 +298,7 @@ export interface FinancialTransaction {
   agendamento_id?: string;
   comanda_id?: string;
   movement_id?: string;
+  repasse_id?: string;
   cliente_id?: string;
   cliente_name?: string;
   profissional_id?: string;
@@ -556,6 +557,7 @@ export interface ProfessionalAdvance {
 
 export interface ProfessionalPayment {
   id: string;
+  tenantId?: string;
   profissional_id: string;
   profissional_name: string;
   amount: number;
@@ -564,8 +566,18 @@ export interface ProfessionalPayment {
   period_end: string;
   responsible_id: string;
   responsible_name: string;
+  responsibleName?: string;
   transaction_id: string;
   notes?: string;
+  status?: 'pago' | 'cancelado' | 'pendente';
+  commission_ids?: string[];
+  advance_ids?: string[];
+  commissionIds?: string[];
+  advanceIds?: string[];
+  paymentMethod?: string;
+  canceledAt?: any;
+  canceledBy?: string;
+  cancelReason?: string;
   createdAt: any;
 }
 

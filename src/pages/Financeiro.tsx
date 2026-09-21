@@ -76,7 +76,8 @@ import {
   serverTimestamp,
   onSnapshot,
   doc,
-  getDoc
+  getDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { 
@@ -115,6 +116,7 @@ import { InputModal } from '../components/InputModal';
 import { ContaDigitalAsaas } from '../components/Financeiro/ContaDigitalAsaas';
 import { EntriesExitsManager } from '../components/Financeiro/EntriesExitsManager';
 import { ClientAccountDetailsModal } from '../components/Financeiro/ClientAccountDetailsModal';
+import { DeleteAdvanceModal } from '../components/Financeiro/DeleteAdvanceModal';
 import { dataAuditService, AuditReportResult } from '../services/dataAuditService';
 import { 
   ResponsiveContainer, 
@@ -249,7 +251,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
   const [isSangriaModalOpen, setIsSangriaModalOpen] = useState(false);
   const [isReforcoModalOpen, setIsReforcoModalOpen] = useState(false);
-  const [sangriaData, setSangriaData] = useState({ amount: '', description: '' });
+  const [sangriaData, setSangriaData] = useState<{ amount: string; description: string; categoryType: 'transferencia' | 'despesa' }>({ amount: '', description: '', categoryType: 'transferencia' });
   const [reforcoData, setReforcoData] = useState({ amount: '', description: '' });
   const [inconsistencyLogs, setInconsistencyLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -877,14 +879,22 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const handleSangria = async () => {
     if (!currentCash || !user || !sangriaData.amount) return;
     const amount = parseFloat(sangriaData.amount);
-    if (isNaN(amount) || amount <= 0) return;
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Informe um valor de sangria válido.");
+      return;
+    }
 
     try {
+      const isExpense = sangriaData.categoryType === 'despesa';
+      const categoryName = isExpense ? 'Sangria - Despesa pelo Caixa' : 'Sangria - Transferência Cofre/Banco';
+      const defaultDesc = isExpense ? 'Despesa em dinheiro paga pelo caixa' : 'Retirada para cofre/depósito';
+
+      // 1. Register cash movement in current cash session
       await cashService.addMovement({
         caixa_id: currentCash.id,
         type: 'sangria',
-        category: 'Sangria de Caixa',
-        description: sangriaData.description || 'Sangria manual',
+        category: categoryName,
+        description: sangriaData.description || defaultDesc,
         amount,
         paymentMethod: 'dinheiro',
         is_receivable: false,
@@ -892,12 +902,34 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         usuario_name: profile?.nome || 'Admin',
         date: new Date().toISOString().split('T')[0]
       });
-      toast.success("Sangria registrada com sucesso!");
+
+      // 2. If categorized as operational expense paid in cash, also create ledger transaction for DRE
+      if (isExpense) {
+        await financialService.createTransaction({
+          tenantId: currentTenantId,
+          type: 'expense',
+          category: 'Despesas Operacionais',
+          description: `[Sangria-Despesa] ${sangriaData.description || 'Despesa paga em dinheiro pelo caixa'}`,
+          amount,
+          net_amount: amount,
+          fee_amount: 0,
+          paymentMethod: 'dinheiro',
+          date: new Date().toISOString().split('T')[0],
+          settlement_date: new Date().toISOString().split('T')[0],
+          status: 'pago',
+          is_settled: true,
+          responsavel_id: user.uid,
+          responsavel_name: profile?.nome || 'Admin'
+        });
+      }
+
+      toast.success(isExpense ? "Sangria e despesa financeira registradas com sucesso!" : "Sangria de transferência registrada com sucesso!");
       setIsSangriaModalOpen(false);
-      setSangriaData({ amount: '', description: '' });
+      setSangriaData({ amount: '', description: '', categoryType: 'transferencia' });
       loadData();
-    } catch (error) {
-      toast.error("Erro ao registrar sangria.");
+    } catch (error: any) {
+      console.error("Erro ao registrar sangria:", error);
+      toast.error(error?.message || "Erro ao registrar sangria.");
     }
   };
 
@@ -3665,16 +3697,162 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         )}
 
         {/* Global Sangria/Reforço Modals */}
-        <InputModal
-          isOpen={isSangriaModalOpen}
-          onClose={() => setIsSangriaModalOpen(false)}
-          onConfirm={handleSangria}
-          title="Nova Sangria"
-          description="Retirada de valores do caixa para despesas ou segurança."
-          type="number"
-          confirmLabel="Registrar Sangria"
-          onChange={(val) => setSangriaData(prev => ({ ...prev, amount: val }))}
-        />
+        {/* Global Sangria Modal with Categorization */}
+        {isSangriaModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-slate-100"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-red-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center border border-red-200 shadow-2xs">
+                    <ArrowDownRight size={20} />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-slate-900 uppercase tracking-tight text-sm">Nova Sangria de Caixa</h4>
+                    <p className="text-[10px] text-slate-500 font-bold">Retirada em espécie da gaveta</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSangriaModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSangria();
+                }}
+                className="p-6 space-y-5"
+              >
+                {/* Valor */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Valor da Retirada (R$)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      min="0.01"
+                      autoFocus
+                      placeholder="0,00"
+                      value={sangriaData.amount}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setSangriaData(prev => ({ ...prev, amount: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 pl-12 pr-4 text-2xl font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all shadow-inner"
+                    />
+                  </div>
+                </div>
+
+                {/* Finalidade / Categoria */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Finalidade da Retirada
+                  </label>
+                  <div className="grid grid-cols-1 gap-2.5">
+                    <label
+                      onClick={() => setSangriaData(prev => ({ ...prev, categoryType: 'transferencia' }))}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start gap-3 ${
+                        sangriaData.categoryType === 'transferencia'
+                          ? 'bg-blue-50/80 border-blue-300 ring-2 ring-blue-500/20'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100/80'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="sangriaType"
+                        checked={sangriaData.categoryType === 'transferencia'}
+                        onChange={() => setSangriaData(prev => ({ ...prev, categoryType: 'transferencia' }))}
+                        className="mt-1 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div>
+                        <p className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                          <span>🏦 Transferência Interna / Cofre / Banco</span>
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-medium leading-relaxed mt-0.5">
+                          Reduz o dinheiro na gaveta por segurança, mas não conta como despesa no faturamento/DRE.
+                        </p>
+                      </div>
+                    </label>
+
+                    <label
+                      onClick={() => setSangriaData(prev => ({ ...prev, categoryType: 'despesa' }))}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start gap-3 ${
+                        sangriaData.categoryType === 'despesa'
+                          ? 'bg-rose-50/80 border-rose-300 ring-2 ring-rose-500/20'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100/80'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="sangriaType"
+                        checked={sangriaData.categoryType === 'despesa'}
+                        onChange={() => setSangriaData(prev => ({ ...prev, categoryType: 'despesa' }))}
+                        className="mt-1 text-rose-600 focus:ring-rose-500"
+                      />
+                      <div>
+                        <p className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                          <span>💸 Despesa Operacional Paga pelo Caixa</span>
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-medium leading-relaxed mt-0.5">
+                          Reduz o caixa E cria um lançamento de despesa em dinheiro no livro caixa financeiro (DRE).
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Descrição */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Descrição / Motivo
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={
+                      sangriaData.categoryType === 'transferencia'
+                        ? 'Ex: Sangria para cofre ao atingir R$ 1.000'
+                        : 'Ex: Compra de pó de café e água no mercado'
+                    }
+                    value={sangriaData.description}
+                    onChange={(e) => setSangriaData(prev => ({ ...prev, description: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
+                  />
+                </div>
+
+                {/* Actions */}
+                <div className="pt-3 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsSangriaModalOpen(false)}
+                    className="flex-1 py-3.5 border border-slate-200 rounded-2xl font-bold text-xs text-slate-600 hover:bg-slate-50 transition-all cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!sangriaData.amount}
+                    className="flex-[2] py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-bold text-xs transition-all shadow-lg shadow-red-600/20 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    <ArrowDownRight size={16} />
+                    <span>Confirmar Sangria</span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
 
         <InputModal
           isOpen={isReforcoModalOpen}
@@ -3741,6 +3919,9 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           <MovementDetailsModal 
             movement={selectedMovementForDetails} 
             onClose={() => setSelectedMovementForDetails(null)} 
+            onSuccess={() => {
+              loadData();
+            }}
           />
         )}
 
@@ -3894,6 +4075,9 @@ function ProfessionalAccountDetailsModal({
 
   // Receipt voucher state
   const [selectedPayoutForReceipt, setSelectedPayoutForReceipt] = useState<any>(null);
+
+  // Delete advance modal state
+  const [advanceToDelete, setAdvanceToDelete] = useState<any>(null);
 
   const { user } = useAuth();
 
@@ -4166,18 +4350,7 @@ function ProfessionalAccountDetailsModal({
                         {a.status !== 'pago' && a.id && (
                           <button
                             type="button"
-                            onClick={async () => {
-                              if (window.confirm(`Tem certeza que deseja cancelar e excluir o vale "${a.description || 'Adiantamento'}" no valor de R$ ${(a.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?\n\nEsta ação estornará a despesa do financeiro e da gaveta do caixa de forma unificada.`)) {
-                                try {
-                                  await commissionService.deleteAdvance(a.id);
-                                  toast.success("Vale excluído e estornado com sucesso!");
-                                  loadInfo();
-                                  onSuccess();
-                                } catch (err: any) {
-                                  toast.error(err.message || "Erro ao excluir vale.");
-                                }
-                              }
-                            }}
+                            onClick={() => setAdvanceToDelete(a)}
                             title="Excluir vale e estornar despesa"
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer"
                           >
@@ -4293,6 +4466,24 @@ function ProfessionalAccountDetailsModal({
           </div>
         )}
       </AnimatePresence>
+
+      <DeleteAdvanceModal
+        isOpen={!!advanceToDelete}
+        onClose={() => setAdvanceToDelete(null)}
+        advanceId={advanceToDelete?.id || null}
+        advanceFallback={{
+          description: advanceToDelete?.description,
+          amount: advanceToDelete?.amount,
+          date: advanceToDelete?.date,
+          profissional_name: pro?.nome,
+          status: advanceToDelete?.status
+        }}
+        onSuccess={() => {
+          setAdvanceToDelete(null);
+          loadInfo();
+          onSuccess();
+        }}
+      />
     </div>
   );
 }
@@ -4391,16 +4582,25 @@ function CashMovementList({ caixaId }: { caixaId: string }) {
   );
 }
 
-function MovementDetailsModal({ movement, onClose }: { movement: any, onClose: () => void }) {
+function MovementDetailsModal({ movement, onClose, onSuccess }: { movement: any, onClose: () => void, onSuccess?: () => void }) {
   const { user, profile } = useAuth();
   const [comanda, setComanda] = useState<any | null>(null);
   const [loadingComanda, setLoadingComanda] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const [showReopenForm, setShowReopenForm] = useState(false);
   const [submittingReopen, setSubmittingReopen] = useState(false);
+  const [showDeleteValeModal, setShowDeleteValeModal] = useState(false);
+  const [isCancellingMovement, setIsCancellingMovement] = useState(false);
+
+  const isVale = (movement?.category || '').toLowerCase().includes('vale') || 
+                 (movement?.description || '').toLowerCase().includes('vale') || 
+                 movement?.tipo === 'vale';
+
+  const isSangria = movement?.type === 'sangria' || (movement?.category || '').toLowerCase().includes('sangria');
+  const isReforco = movement?.type === 'reforco' || (movement?.category || '').toLowerCase().includes('reforco');
 
   useEffect(() => {
-    if (movement?.referencia_id) {
+    if (movement?.referencia_id && !isVale && !isSangria && !isReforco) {
       setLoadingComanda(true);
       const comandaRef = doc(db, 'comandas', movement.referencia_id);
       getDoc(comandaRef).then((snap) => {
@@ -4418,7 +4618,42 @@ function MovementDetailsModal({ movement, onClose }: { movement: any, onClose: (
     } else {
       setComanda(null);
     }
-  }, [movement]);
+  }, [movement, isVale, isSangria, isReforco]);
+
+  const handleCancelMovement = async () => {
+    let confirmMsg = `Deseja realmente cancelar este lançamento de R$ ${(movement.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?`;
+    if (isSangria) {
+      confirmMsg = `Deseja realmente estornar esta sangria de R$ ${(movement.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?\n\nO valor retornará para o saldo esperado da gaveta do caixa.`;
+    } else if (isReforco) {
+      confirmMsg = `Deseja realmente estornar este reforço de R$ ${(movement.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?\n\nO valor será deduzido do saldo esperado da gaveta do caixa.`;
+    } else {
+      confirmMsg = `Deseja realmente estornar este lançamento de R$ ${(movement.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?\n\nO lançamento sairá da movimentação do caixa e do financeiro.`;
+    }
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsCancellingMovement(true);
+    try {
+      await cashService.removeMovement(movement.id);
+
+      if (movement.referencia_id && movement.referencia_id !== movement.id) {
+        try {
+          await deleteDoc(doc(db, 'financial_transactions', movement.referencia_id));
+        } catch (finErr) {
+          console.warn("Aviso ao remover transação financeira correspondente:", finErr);
+        }
+      }
+
+      toast.success("Lançamento estornado com sucesso!");
+      onSuccess?.();
+      onClose();
+    } catch (err: any) {
+      console.error("Erro ao estornar movimentação:", err);
+      toast.error(err.message || "Erro ao estornar lançamento do caixa.");
+    } finally {
+      setIsCancellingMovement(false);
+    }
+  };
 
   const handleReopenComanda = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4670,8 +4905,148 @@ function MovementDetailsModal({ movement, onClose }: { movement: any, onClose: (
               )}
             </div>
           )}
+
+          {/* Vale / Adiantamento Block */}
+          {isVale && (
+            <div className="space-y-4">
+              <h4 className="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2">Vale / Adiantamento de Profissional</h4>
+              <div className="p-5 bg-rose-50/50 border border-rose-100 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-black text-rose-900">{movement.description || 'Vale / Adiantamento'}</p>
+                    <p className="text-[10px] text-rose-700/80 font-bold uppercase tracking-wider">
+                      {movement.profissional_name ? `Profissional: ${movement.profissional_name}` : 'Adiantamento de comissão'}
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border bg-rose-100 text-rose-800 border-rose-200">
+                    Vale Ativo
+                  </span>
+                </div>
+                <p className="text-xs text-rose-800/80">
+                  Este vale foi retirado em dinheiro e computado como adiantamento na folha do profissional.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteValeModal(true)}
+                  className="w-full py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <Trash2 size={14} />
+                  Excluir e Estornar Vale do Profissional
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Sangria Block */}
+          {isSangria && (
+            <div className="space-y-4">
+              <h4 className="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2">Sangria de Caixa</h4>
+              <div className="p-5 bg-amber-50/60 border border-amber-200/60 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-black text-amber-900">{movement.description || 'Retirada de Caixa'}</p>
+                    <p className="text-[10px] text-amber-700/80 font-bold uppercase tracking-wider">
+                      Operador: {movement.usuario_name || 'Operador de Caixa'}
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border bg-amber-100 text-amber-800 border-amber-200">
+                    Sangria
+                  </span>
+                </div>
+                <p className="text-xs text-amber-800/80">
+                  Esta retirada retirou R$ {(movement.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em espécie da gaveta física do caixa.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCancelMovement}
+                  disabled={isCancellingMovement}
+                  className="w-full py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  {isCancellingMovement ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  Cancelar e Estornar Sangria
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Reforço Block */}
+          {isReforco && (
+            <div className="space-y-4">
+              <h4 className="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2">Reforço de Caixa</h4>
+              <div className="p-5 bg-blue-50/60 border border-blue-200/60 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-black text-blue-900">{movement.description || 'Suprimento de Troco'}</p>
+                    <p className="text-[10px] text-blue-700/80 font-bold uppercase tracking-wider">
+                      Operador: {movement.usuario_name || 'Operador de Caixa'}
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border bg-blue-100 text-blue-800 border-blue-200">
+                    Reforço
+                  </span>
+                </div>
+                <p className="text-xs text-blue-800/80">
+                  Este reforço adicionou R$ {(movement.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em dinheiro para troco na gaveta.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCancelMovement}
+                  disabled={isCancellingMovement}
+                  className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  {isCancellingMovement ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  Cancelar e Estornar Reforço
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Avulso Movement Block */}
+          {!movement.referencia_id && !isVale && !isSangria && !isReforco && (
+            <div className="space-y-4">
+              <h4 className="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2">Lançamento Avulso</h4>
+              <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-black text-slate-800">{movement.description || 'Lançamento Manual'}</p>
+                    <p className="text-[10px] text-muted font-bold uppercase tracking-wider">
+                      Categoria: {movement.category || 'Geral'} • {movement.type === 'income' ? 'Entrada' : 'Saída'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelMovement}
+                  disabled={isCancellingMovement}
+                  className="w-full py-3 px-4 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 text-xs font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                >
+                  {isCancellingMovement ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  Cancelar e Estornar este Lançamento
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </motion.div>
+
+      {/* Modal to delete and reverse Vale with closed cash handling */}
+      <DeleteAdvanceModal
+        isOpen={showDeleteValeModal}
+        onClose={() => setShowDeleteValeModal(false)}
+        advanceId={movement.referencia_id || movement.id}
+        advanceFallback={{
+          description: movement.description,
+          amount: movement.amount,
+          date: movement.date,
+          profissional_name: movement.profissional_name,
+          caixa_id: movement.caixa_id
+        }}
+        onSuccess={() => {
+          setShowDeleteValeModal(false);
+          onSuccess?.();
+          onClose();
+        }}
+      />
     </div>
   );
 }

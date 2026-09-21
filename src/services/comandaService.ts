@@ -2505,22 +2505,27 @@ export const comandaService = {
         const movement = d.data() as CashMovement;
         const cashData = cashMap[movement.caixa_id];
         if (cashData) {
-          const cashRef = doc(db, 'cash_sessions', movement.caixa_id);
-          if (movement.is_receivable) {
-            transaction.update(cashRef, {
-              total_receivables: increment(-movement.amount),
-              totalReceivables: increment(-movement.amount),
-              updatedAt: serverTimestamp()
-            });
-          } else {
-            transaction.update(cashRef, {
-              total_income: increment(-movement.amount),
-              totalIncome: increment(-movement.amount),
-              expected_balance: increment(-movement.amount),
-              expectedBalance: increment(-movement.amount),
-              updatedAt: serverTimestamp()
-            });
+          const isOpenOrReopened = cashData.status === 'open' || cashData.status === 'reopened';
+          if (isOpenOrReopened) {
+            const cashRef = doc(db, 'cash_sessions', movement.caixa_id);
+            if (movement.is_receivable) {
+              transaction.update(cashRef, {
+                total_receivables: increment(-movement.amount),
+                totalReceivables: increment(-movement.amount),
+                updatedAt: serverTimestamp()
+              });
+            } else {
+              transaction.update(cashRef, {
+                total_income: increment(-movement.amount),
+                totalIncome: increment(-movement.amount),
+                expected_balance: increment(-movement.amount),
+                expectedBalance: increment(-movement.amount),
+                updatedAt: serverTimestamp()
+              });
+            }
           }
+          // Note: If the cash session was already closed, we do NOT mutate its totals/balances
+          // to protect historical closed reports from distortion.
         }
         transaction.delete(d.ref);
       });

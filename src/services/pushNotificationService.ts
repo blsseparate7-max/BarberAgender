@@ -61,6 +61,7 @@ export const pushNotificationService = {
     userId: string;
     userRole: 'cliente' | 'barbeiro' | 'admin' | 'gerente';
     tenantId?: string;
+    profissionalId?: string;
   }): Promise<PushSubscriptionResult> {
     if (!this.isPushSupported()) {
       return {
@@ -167,6 +168,7 @@ export const pushNotificationService = {
         await setDoc(doc(db, 'push_subscriptions', subKey), {
           id: subKey,
           userId: params.userId,
+          profissionalId: params.profissionalId || '',
           userRole: params.userRole || 'cliente',
           tenantId,
           subscription: subscription.toJSON(),
@@ -184,6 +186,7 @@ export const pushNotificationService = {
         },
         body: JSON.stringify({
           userId: params.userId,
+          profissionalId: params.profissionalId || '',
           userRole: params.userRole,
           tenantId,
           subscription: subscription.toJSON(),
@@ -330,7 +333,7 @@ export const pushNotificationService = {
    * Sincroniza silenciosamente a inscrição push existente com o servidor
    * Chamada ao carregar o aplicativo (incluindo quando aberto da tela inicial / PWA)
    */
-  async autoSyncPushSubscription(params?: { userId?: string; userRole?: string; tenantId?: string }): Promise<void> {
+  async autoSyncPushSubscription(params?: { userId?: string; userRole?: string; tenantId?: string; profissionalId?: string }): Promise<void> {
     if (!this.isPushSupported()) return;
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
 
@@ -344,12 +347,14 @@ export const pushNotificationService = {
       const activeTenantId = params?.tenantId || getActiveTenantId() || 'gbcortes7';
       const effectiveUserId = params?.userId || '';
       const effectiveRole = params?.userRole || 'cliente';
+      const effectiveProfId = params?.profissionalId || '';
 
       await fetch('/api/notifications/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: effectiveUserId,
+          profissionalId: effectiveProfId,
           userRole: effectiveRole,
           tenantId: activeTenantId,
           subscription: subscription.toJSON(),

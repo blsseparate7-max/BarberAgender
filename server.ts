@@ -6683,6 +6683,7 @@ function encodeFirestoreFields(data: any): any {
   interface StoredPushSub {
     id: string;
     userId: string;
+    profissionalId?: string;
     userRole?: string;
     tenantId?: string;
     subscription: webpush.PushSubscription;
@@ -6742,7 +6743,11 @@ function encodeFirestoreFields(data: any): any {
 
     for (const [_, sub] of localPushSubs.entries()) {
       const sUserId = (sub.userId || "").trim().toLowerCase();
-      if (sUserId && (sUserId === targetUserId || targetUserId.includes(sUserId) || sUserId.includes(targetUserId))) {
+      const sProfId = (sub.profissionalId || "").trim().toLowerCase();
+      if (
+        (sUserId && (sUserId === targetUserId || targetUserId.includes(sUserId) || sUserId.includes(targetUserId))) ||
+        (sProfId && (sProfId === targetUserId || targetUserId.includes(sProfId) || sProfId.includes(targetUserId)))
+      ) {
         subsToSend.push(sub);
       }
     }
@@ -6751,8 +6756,16 @@ function encodeFirestoreFields(data: any): any {
       const fbAdmin = getFirebaseAdmin();
       if (fbAdmin) {
         const db = getFirestore(fbAdmin);
-        const snap = await db.collection("push_subscriptions").where("userId", "==", userId).get();
-        snap.docs.forEach(d => {
+        const snap1 = await db.collection("push_subscriptions").where("userId", "==", userId).get();
+        snap1.docs.forEach(d => {
+          const dData = d.data() as StoredPushSub;
+          if (dData.subscription?.endpoint && !subsToSend.some(s => s.subscription?.endpoint === dData.subscription?.endpoint)) {
+            subsToSend.push(dData);
+          }
+        });
+
+        const snap2 = await db.collection("push_subscriptions").where("profissionalId", "==", userId).get();
+        snap2.docs.forEach(d => {
           const dData = d.data() as StoredPushSub;
           if (dData.subscription?.endpoint && !subsToSend.some(s => s.subscription?.endpoint === dData.subscription?.endpoint)) {
             subsToSend.push(dData);
@@ -6770,7 +6783,7 @@ function encodeFirestoreFields(data: any): any {
           console.log(`✅ [Push Notification] Notificação entregue para usuário: ${s.userId} (${s.userRole || 'cliente'})`);
         }
       } catch (err: any) {
-        console.warn(`⚠️ [Push Notification] Erro no envio para ${s.userId}:`, err.statusCode || err.message);
+        console.warn(`⚠️ [Push Notification] Erro no envio para ${s.userId}: status=${err.statusCode || 'N/A'}, msg=${err.message || err}`, err.body || '');
         if (err.statusCode === 410 || err.statusCode === 404) {
           localPushSubs.delete(s.id);
           savePushSubscriptionsToDisk(localPushSubs);
@@ -6866,7 +6879,7 @@ function encodeFirestoreFields(data: any): any {
   // Salvar ou sincronizar inscrição de push do navegador/celular (com persistência em disco garantida)
   app.post("/api/notifications/subscribe", async (req, res) => {
     try {
-      const { userId, userRole, tenantId, subscription, userAgent } = req.body;
+      const { userId, profissionalId, userRole, tenantId, subscription, userAgent } = req.body;
       if (!subscription || !subscription.endpoint || !subscription.keys) {
         return res.status(400).json({ error: "Objeto de subscrição push inválido." });
       }
@@ -6876,6 +6889,7 @@ function encodeFirestoreFields(data: any): any {
       const subRecord: StoredPushSub = {
         id: subKey,
         userId: userId || '',
+        profissionalId: profissionalId || '',
         userRole: userRole || 'cliente',
         tenantId: tenantId || '',
         subscription,

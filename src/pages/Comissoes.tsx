@@ -30,6 +30,7 @@ import {
   ArrowLeft,
   Printer,
   RefreshCw,
+  RotateCcw,
   Building2,
   Receipt,
   ShieldCheck
@@ -39,6 +40,8 @@ import { format, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay, diff
 import { ptBR } from 'date-fns/locale';
 import { Commission, CommissionPayout, CommissionStatus, ProfessionalAdvance, UserProfile } from '../types';
 import { commissionService } from '../services/commissionService';
+import { cashService } from '../services/cashService';
+import { financialService } from '../services/financialService';
 import { comandaService } from '../services/comandaService';
 import { userService } from '../services/userService';
 import { calculateProfessionalLedger } from '../services/ledgerService';
@@ -262,32 +265,130 @@ export function Comissoes() {
     }
   };
 
-  const { execute: handleRegisterPayout, isLoading: isRegisteringPayout } = useAsyncAction(async (barberId: string, amount: number, commissionIds: string[], notes: string) => {
+  const { execute: handleRegisterPayout, isLoading: isRegisteringPayout } = useAsyncAction(async (
+    barberId: string, 
+    netAmount: number, 
+    commissionIds: string[], 
+    advanceIds: string[], 
+    paymentMethod: 'dinheiro' | 'pix' | 'transferencia', 
+    notes: string,
+    grossAmount: number
+  ) => {
     if (!user) return;
     const barber = barbers.find(b => b.uid === barberId);
     if (!barber) return;
 
     try {
-      await commissionService.registerPayout({
+      const todayString = format(new Date(), 'yyyy-MM-dd');
+      const valesDeducted = Math.max(0, grossAmount - netAmount);
+
+      // 1. Register Payout with commission and advance ids
+      const payoutId = await commissionService.registerPayout({
         profissional_id: barberId,
         profissional_name: barber.nome,
-        amount,
+        amount: netAmount,
         commission_ids: commissionIds,
-        date: format(new Date(), 'yyyy-MM-dd'),
+        advance_ids: advanceIds,
+        date: todayString,
         responsible_id: user.uid,
         responsible_name: profile?.nome || 'Admin',
         period_start: dateRange.start,
         period_end: dateRange.end,
         transaction_id: `PAY-${Date.now()}`,
-        notes
+        notes: (notes ? `${notes} • ` : '') +
+          `Bruto: R$ ${grossAmount.toFixed(2)}` +
+          (valesDeducted > 0 ? ` - Vales Deduzidos: R$ ${valesDeducted.toFixed(2)}` : '') +
+          ` (${paymentMethod === 'dinheiro' ? 'Dinheiro/Caixa' : 'PIX/Transferência'})`
       });
-      toast.success(`Repasse de R$ ${amount.toFixed(2)} registrado com sucesso!`);
+
+      // 2. If paid in Dinheiro, deduct from open daily cash drawer
+      if (paymentMethod === 'dinheiro' && netAmount > 0) {
+        try {
+          const currentCash = await cashService.getCurrentCash();
+          if (currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened')) {
+            await cashService.addMovement({
+              caixa_id: currentCash.id,
+              type: 'expense',
+              category: 'Repasse Comissões',
+              description: `Repasse de comissões em dinheiro - ${barber.nome}`,
+              amount: netAmount,
+              paymentMethod: 'dinheiro',
+              is_receivable: false,
+              usuario_id: user.uid,
+              usuario_name: profile?.nome || 'Admin',
+              date: todayString
+            });
+          }
+        } catch (cashErr) {
+          console.warn("Aviso ao registrar movimentação na gaveta do caixa:", cashErr);
+        }
+      }
+
+      // 3. Register transaction in Financial Ledger for DRE
+      if (netAmount > 0) {
+        try {
+          await financialService.createTransaction({
+            type: 'expense',
+            category: 'Repasse Comissões (Parceiros)',
+            description: `Repasse Comissões Líquido - ${barber.nome} (Ref ${dateRange.start} a ${dateRange.end})`,
+            amount: netAmount,
+            net_amount: netAmount,
+            fee_amount: 0,
+            paymentMethod: paymentMethod === 'dinheiro' ? 'dinheiro' : 'pix',
+            date: todayString,
+            settlement_date: todayString,
+            status: 'pago',
+            is_settled: true,
+            profissional_id: barberId,
+            profissional_name: barber.nome,
+            responsavel_id: user.uid,
+            responsavel_name: profile?.nome || 'Admin',
+            repasse_id: payoutId
+          });
+        } catch (finErr) {
+          console.warn("Aviso ao registrar despesa no financeiro:", finErr);
+        }
+      }
+
+      toast.success(`Repasse de R$ ${netAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} registrado com sucesso!`);
       loadData();
       setIsPayoutModalOpen(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro ao registrar repasse:", error);
+      toast.error(error.message || "Erro ao registrar repasse");
     }
   });
+
+  const [cancelingPayoutId, setCancelingPayoutId] = useState<string | null>(null);
+
+  const handleCancelPayout = async (payout: any) => {
+    if (!isAdmin && !isGerente) {
+      toast.error("Apenas administradores ou gerentes podem estornar repasses.");
+      return;
+    }
+    const isCancelled = payout.status === 'cancelado';
+    if (isCancelled) {
+      toast.error("Este repasse já se encontra cancelado.");
+      return;
+    }
+
+    if (window.confirm(`Tem certeza que deseja ESTORNAR o repasse de R$ ${payout.amount.toFixed(2)} para ${payout.profissional_name}?\n\nTodas as comissões e vales vinculados retornarão para o status PENDENTE.`)) {
+      setCancelingPayoutId(payout.id);
+      try {
+        await commissionService.cancelPayout(payout.id, {
+          authorId: user?.uid,
+          authorName: profile?.nome || 'Admin',
+          reason: 'Estorno efetuado no histórico de repasses'
+        });
+        toast.success("Repasse estornado com sucesso! As comissões e vales voltaram ao status pendente.");
+        await loadData();
+      } catch (err: any) {
+        toast.error(err.message || "Erro ao estornar repasse.");
+      } finally {
+        setCancelingPayoutId(null);
+      }
+    }
+  };
 
   // Calculate roster summary with unified ledger - 100% synchronized with Barbeiros and Financeiro
   const effectiveCommissions = allCommissionsLive.length > 0 ? allCommissionsLive : commissions;
@@ -959,42 +1060,80 @@ export function Comissoes() {
                 exit={{ opacity: 0, y: -8 }}
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
               >
-                {payouts.map((p, index) => (
-                  <div 
-                    key={`payout-card-${p.id || index}`} 
-                    className="bg-white border border-slate-200 rounded-3xl p-5 hover:border-slate-350 transition-all shadow-xs flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100 shadow-2xs">
-                            <ArrowRightLeft size={16} />
+                {payouts.map((p, index) => {
+                  const isCancelled = p.status === 'cancelado';
+                  return (
+                    <div 
+                      key={`payout-card-${p.id || index}`} 
+                      className={`bg-white border ${isCancelled ? 'border-red-200 bg-red-50/20' : 'border-slate-200 hover:border-slate-350'} rounded-3xl p-5 transition-all shadow-xs flex flex-col justify-between`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 ${isCancelled ? 'bg-red-100 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-600 border-emerald-100'} rounded-xl flex items-center justify-center border shadow-2xs`}>
+                              <ArrowRightLeft size={16} />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="font-black text-slate-900 text-sm">{p.profissional_name}</p>
+                                {isCancelled && (
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-red-700 bg-red-100 px-2 py-0.5 rounded-md border border-red-200">
+                                    Estornado
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 uppercase tracking-wider font-extrabold">{format(new Date(p.date), 'dd/MM/yyyy')}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-black text-slate-900 text-sm">{p.profissional_name}</p>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-wider font-extrabold">{format(new Date(p.date), 'dd/MM/yyyy')}</p>
+                          <div className="text-right">
+                            <p className={`text-base font-black font-mono ${isCancelled ? 'text-red-500 line-through' : 'text-emerald-600'}`}>
+                              R$ {p.amount.toFixed(2)}
+                            </p>
+                            <p className="text-[9px] text-slate-400 uppercase font-extrabold tracking-wider">
+                              {(p.commission_ids || p.commissionIds || []).length} comissões
+                            </p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-base font-black text-emerald-600 font-mono">R$ {p.amount.toFixed(2)}</p>
-                          <p className="text-[9px] text-slate-400 uppercase font-extrabold tracking-wider">{p.commissionIds?.length || 0} comissões</p>
+
+                        <div className="space-y-2 text-xs">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-wider font-black">
+                            <span>Responsável</span>
+                            <span className="text-slate-800 font-bold">{p.responsibleName || p.responsible_name || 'Admin'}</span>
+                          </div>
+                          {p.notes && (
+                            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-[11px] text-slate-600 italic">
+                              "{p.notes}"
+                            </div>
+                          )}
+                          {isCancelled && p.cancelReason && (
+                            <div className="p-2 bg-red-50 rounded-xl border border-red-100 text-[10px] text-red-700 font-semibold">
+                              Motivo Estorno: {p.cancelReason}
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      <div className="space-y-2 text-xs">
-                        <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-wider font-black">
-                          <span>Responsável</span>
-                          <span className="text-slate-800 font-bold">{p.responsibleName}</span>
+                      {/* Action Button: Estornar Repasse */}
+                      {!isCancelled && (isAdmin || isGerente) && (
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
+                          <button
+                            type="button"
+                            disabled={cancelingPayoutId === p.id}
+                            onClick={() => handleCancelPayout(p)}
+                            className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-red-200 active:scale-95 cursor-pointer disabled:opacity-50"
+                          >
+                            {cancelingPayoutId === p.id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <RotateCcw size={12} />
+                            )}
+                            <span>Estornar Repasse</span>
+                          </button>
                         </div>
-                        {p.notes && (
-                          <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-[11px] text-slate-600 italic">
-                            "{p.notes}"
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {payouts.length === 0 && (
                   <div className="col-span-full text-center py-16 text-slate-400 italic text-sm bg-slate-50 border border-dashed border-slate-200 rounded-3xl">
                     Nenhum histórico de repasse registrado no período selecionado.
@@ -1034,34 +1173,90 @@ export function Comissoes() {
   );
 }
 
-// Payout modal component with pristine layouts and loaders
-function PayoutModal({ barbers, initialBarberId, onClose, onConfirm, isRegistering }: { barbers: UserProfile[], initialBarberId?: string, onClose: () => void, onConfirm: (bId: string, am: number, ids: string[], n: string) => void, isRegistering: boolean }) {
+// Payout modal component with pristine layouts, vales deduction and cash drawer integration
+function PayoutModal({ 
+  barbers, 
+  initialBarberId, 
+  onClose, 
+  onConfirm, 
+  isRegistering 
+}: { 
+  barbers: UserProfile[], 
+  initialBarberId?: string, 
+  onClose: () => void, 
+  onConfirm: (
+    bId: string, 
+    netAmount: number, 
+    cIds: string[], 
+    aIds: string[], 
+    paymentMethod: 'dinheiro' | 'pix' | 'transferencia', 
+    notes: string, 
+    grossAmount: number
+  ) => void, 
+  isRegistering: boolean 
+}) {
+  const { currentTenant } = useTenant();
+  const tenantId = currentTenant?.id;
   const [selectedBarber, setSelectedBarber] = useState(initialBarberId || '');
   const [pendingCommissions, setPendingCommissions] = useState<Commission[]>([]);
+  const [pendingAdvances, setPendingAdvances] = useState<ProfessionalAdvance[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'dinheiro'>('pix');
+  const [hasOpenCash, setHasOpenCash] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState('');
+
+  useEffect(() => {
+    // Check if cash register is open
+    cashService.getCurrentCash()
+      .then(cash => setHasOpenCash(!!cash && (cash.status === 'open' || cash.status === 'reopened')))
+      .catch(() => setHasOpenCash(false));
+  }, [tenantId]);
 
   useEffect(() => {
     if (selectedBarber) {
       loadPending();
     } else {
       setPendingCommissions([]);
+      setPendingAdvances([]);
     }
   }, [selectedBarber]);
 
   const loadPending = async () => {
     setLoading(true);
     try {
-      const data = await commissionService.getCommissions({ profissional_id: selectedBarber, status: 'pendente' });
-      setPendingCommissions(data);
+      const [commData, advData] = await Promise.all([
+        commissionService.getCommissions({ profissional_id: selectedBarber, status: 'pendente', tenantId }),
+        commissionService.getAdvances({ profissional_id: selectedBarber, status: 'pendente', tenantId })
+      ]);
+      setPendingCommissions(commData);
+      setPendingAdvances(advData);
     } catch (error) {
-      console.error(error);
+      console.error("Erro ao carregar pendências do barbeiro:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const totalAmount = pendingCommissions.reduce((acc, c) => acc + c.commission_value, 0);
+  const grossAmount = pendingCommissions.reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
+  const advancesAmount = pendingAdvances.reduce((acc, a) => acc + (Number(a.amount) || 0), 0);
+  const netAmount = Math.max(0, grossAmount - advancesAmount);
+
+  const handleConfirm = () => {
+    if (!selectedBarber) return;
+    if (paymentMethod === 'dinheiro' && !hasOpenCash) {
+      toast.error("O caixa de hoje precisa estar aberto para registrar saída em dinheiro da gaveta!");
+      return;
+    }
+    onConfirm(
+      selectedBarber,
+      netAmount,
+      pendingCommissions.map(c => c.id),
+      pendingAdvances.map(a => a.id),
+      paymentMethod,
+      notes,
+      grossAmount
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
@@ -1069,16 +1264,19 @@ function PayoutModal({ barbers, initialBarberId, onClose, onConfirm, isRegisteri
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white border border-slate-200 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+        className="bg-white border border-slate-200 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col"
       >
         <div className="p-6 border-b border-slate-150 flex items-center justify-between bg-slate-50">
-          <h2 className="text-lg font-black text-slate-900">Registrar Repasse de Cota</h2>
+          <div>
+            <h2 className="text-lg font-black text-slate-900">Registrar Repasse de Cota</h2>
+            <p className="text-xs text-slate-500 font-medium">Acerto de comissões com dedução unificada de vales</p>
+          </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-900 transition-colors">
             <X size={18} />
           </button>
         </div>
 
-        <div className="p-6 space-y-6 text-left">
+        <div className="p-6 space-y-5 text-left overflow-y-auto flex-1">
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Selecionar Profissional</label>
             <select 
@@ -1095,27 +1293,82 @@ function PayoutModal({ barbers, initialBarberId, onClose, onConfirm, isRegisteri
 
           {selectedBarber && (
             <div className="space-y-4 animate-in fade-in duration-250">
-              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-150 text-center">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Acerto Bruto Pendente</p>
-                {loading ? (
-                  <Loader2 className="animate-spin mx-auto text-blue-500" size={24} />
-                ) : (
-                  <>
-                    <p className="text-3xl font-black text-emerald-600 font-mono">R$ {totalAmount.toFixed(2)}</p>
-                    <p className="text-xs text-slate-500 mt-1 font-bold">{pendingCommissions.length} comissões aguardando pagamento</p>
-                  </>
-                )}
-              </div>
+              {loading ? (
+                <div className="py-10 text-center">
+                  <Loader2 className="animate-spin mx-auto text-blue-500" size={28} />
+                  <p className="text-xs text-slate-400 font-bold mt-2">Buscando comissões e vales...</p>
+                </div>
+              ) : (
+                <>
+                  {/* Ledger Breakdown Cards */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-150 text-center">
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Bruto</p>
+                      <p className="text-sm font-black text-slate-800 font-mono">R$ {grossAmount.toFixed(2)}</p>
+                      <p className="text-[9px] text-slate-400 mt-0.5">{pendingCommissions.length} comissões</p>
+                    </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Descrição / Observações (Opcional)</label>
-                <textarea 
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-sm font-semibold focus:outline-none focus:border-slate-400 transition-colors text-slate-800 h-24 resize-none"
-                  placeholder="Ex: Pagamento referente ao período quinzenal."
-                />
-              </div>
+                    <div className="bg-rose-50/60 p-3 rounded-2xl border border-rose-150 text-center">
+                      <p className="text-[8px] font-black text-rose-500 uppercase tracking-widest mb-1">Vales</p>
+                      <p className="text-sm font-black text-rose-600 font-mono">- R$ {advancesAmount.toFixed(2)}</p>
+                      <p className="text-[9px] text-rose-400 mt-0.5">{pendingAdvances.length} vales</p>
+                    </div>
+
+                    <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-200 text-center">
+                      <p className="text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1">Líquido</p>
+                      <p className="text-sm font-black text-emerald-700 font-mono">R$ {netAmount.toFixed(2)}</p>
+                      <p className="text-[9px] text-emerald-600 mt-0.5 font-bold">A Pagar</p>
+                    </div>
+                  </div>
+
+                  {/* Forma de Pagamento / Origem do Recurso */}
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Origem / Forma de Pagamento</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('pix')}
+                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                          paymentMethod === 'pix' 
+                            ? 'bg-blue-50/50 border-blue-500 text-blue-900 shadow-xs' 
+                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        <p className="text-xs font-black">PIX / Transferência</p>
+                        <p className="text-[10px] text-slate-500 font-medium mt-0.5">Conta bancária externa</p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('dinheiro')}
+                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                          paymentMethod === 'dinheiro' 
+                            ? 'bg-amber-50/50 border-amber-500 text-amber-900 shadow-xs' 
+                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-black">Gaveta do Caixa</p>
+                          <span className={`w-2 h-2 rounded-full ${hasOpenCash ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                          {hasOpenCash ? 'Caixa aberto hoje' : 'Caixa fechado'}
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Descrição / Observações (Opcional)</label>
+                    <textarea 
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-sm font-semibold focus:outline-none focus:border-slate-400 transition-colors text-slate-800 h-20 resize-none"
+                      placeholder="Ex: Pagamento referente ao acerto semanal."
+                    />
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -1128,12 +1381,12 @@ function PayoutModal({ barbers, initialBarberId, onClose, onConfirm, isRegisteri
               Cancelar
             </button>
             <button 
-              disabled={!selectedBarber || totalAmount === 0 || loading || isRegistering}
-              onClick={() => onConfirm(selectedBarber, totalAmount, pendingCommissions.map(c => c.id), notes)}
+              disabled={!selectedBarber || (grossAmount === 0 && advancesAmount === 0) || loading || isRegistering}
+              onClick={handleConfirm}
               className="flex-[2] py-3.5 bg-slate-900 disabled:bg-slate-100 disabled:text-slate-400 text-white rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-slate-800 transition-all shadow-md flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
             >
               {isRegistering ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-              <span>Confirmar Pagamento</span>
+              <span>Confirmar Repasse (R$ {netAmount.toFixed(2)})</span>
             </button>
           </div>
         </div>

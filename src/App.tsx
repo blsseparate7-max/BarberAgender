@@ -117,8 +117,10 @@ function MainApp() {
       const activeTenant = tenant?.id || profile?.tenantId || 'gbcortes7';
       const effectiveRole = profile?.tipo || (user ? 'cliente' : 'anon');
       const effectiveUid = profile?.uid || user?.uid || '';
+      const profId = (profile as any)?.profissional_id || (profile as any)?.profissionalId || profile?.id || '';
       pushNotificationService.autoSyncPushSubscription({
         userId: effectiveUid,
+        profissionalId: profId,
         userRole: effectiveRole,
         tenantId: activeTenant
       });

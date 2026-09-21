@@ -160,13 +160,15 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
   // Auto-sincronizar subscrição push do barbeiro quando abre o portal (inclusive na tela inicial)
   useEffect(() => {
     if (effectiveUserId) {
+      const profId = (profile as any)?.profissional_id || (profile as any)?.profissionalId || profile?.id || '';
       pushNotificationService.autoSyncPushSubscription({
         userId: effectiveUserId,
+        profissionalId: profId,
         userRole: 'barbeiro',
         tenantId: tenant?.id || profile?.tenantId || 'gbcortes7'
       });
     }
-  }, [effectiveUserId, tenant?.id, profile?.tenantId]);
+  }, [effectiveUserId, tenant?.id, profile?.tenantId, profile?.id]);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
@@ -961,6 +963,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         <div className="mb-4">
           <PushNotificationPrompt 
             userId={effectiveUserId} 
+            profissionalId={(profile as any)?.profissional_id || (profile as any)?.profissionalId || profile?.id || ''}
             userRole="barbeiro" 
             tenantId={profile.tenantId || tenant?.id} 
             variant="card" 
@@ -1805,6 +1808,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
               </h4>
               <PushNotificationPrompt 
                 userId={effectiveUserId} 
+                profissionalId={(profile as any)?.profissional_id || (profile as any)?.profissionalId || profile?.id || ''}
                 userRole="barbeiro" 
                 tenantId={profile.tenantId || tenant?.id} 
                 variant="card" 

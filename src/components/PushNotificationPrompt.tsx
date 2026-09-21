@@ -7,6 +7,7 @@ interface PushNotificationPromptProps {
   userId: string;
   userRole: 'barbeiro' | 'cliente' | 'admin' | 'gerente';
   tenantId?: string;
+  profissionalId?: string;
   variant?: 'banner' | 'card' | 'compact' | 'pill';
   onSubscribed?: () => void;
 }
@@ -15,6 +16,7 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
   userId,
   userRole,
   tenantId,
+  profissionalId,
   variant = 'card',
   onSubscribed
 }) => {
@@ -44,7 +46,8 @@ export const PushNotificationPrompt: React.FC<PushNotificationPromptProps> = ({
       const result = await pushNotificationService.subscribeUser({
         userId,
         userRole,
-        tenantId
+        tenantId,
+        profissionalId
       });
 
       if (result.success) {

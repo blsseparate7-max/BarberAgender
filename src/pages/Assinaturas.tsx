@@ -640,10 +640,22 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     if (!selectedPlan) return;
     
     const formData = new FormData(e.currentTarget);
-    const cliente_id = formData.get('clientId') as string;
-    const client = clients.find(c => c.uid === cliente_id);
+    const cliente_id = assignSelectedClientId || (formData.get('clientId') as string);
+    let client = clients.find(c => c.uid === cliente_id || (c as any).id === cliente_id);
     
-    if (!client) return;
+    if (!client && cliente_id) {
+      client = {
+        uid: cliente_id,
+        nome: assignClientEmail ? assignClientEmail.split('@')[0] : 'Cliente',
+        email: assignClientEmail,
+        cpf: assignClientCpf
+      } as any;
+    }
+
+    if (!cliente_id || !client) {
+      toast.error("Por favor, busque e selecione um cliente para vincular a assinatura.");
+      return;
+    }
 
     const activationType = formData.get('activationType') as 'manual' | 'asaas';
     const autoRenew = formData.get('autoRenew') === 'on';
@@ -4557,6 +4569,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       placeholder="Buscar cliente por nome ou celular..."
                       allowAvulso={false}
                     />
+                    <input type="hidden" name="clientId" value={assignSelectedClientId} />
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-muted uppercase tracking-widest ml-1">Tipo de Cadastro / Ativação</label>
@@ -4677,9 +4690,17 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   <button type="button" onClick={() => setShowAssignModal(false)} className="flex-1 py-3.5 sm:py-4 border border-slate-200 rounded-xl text-xs sm:text-sm text-muted uppercase tracking-widest hover:bg-slate-100 transition-all cursor-pointer">Cancelar</button>
                   <button 
                     type="submit" 
-                    className="flex-[2] py-3.5 sm:py-4 bg-primary text-white rounded-xl text-xs sm:text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95 cursor-pointer font-extrabold"
+                    disabled={isAssigningSub}
+                    className="flex-[2] py-3.5 sm:py-4 bg-primary text-white rounded-xl text-xs sm:text-sm uppercase tracking-widest hover:bg-slate-800 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95 cursor-pointer font-extrabold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {assignActivationType === 'manual' ? 'Ir para o Caixa / PDV' : 'Criar Pendente'}
+                    {isAssigningSub ? (
+                      <>
+                        <Loader2 className="animate-spin" size={16} />
+                        <span>Processando...</span>
+                      </>
+                    ) : (
+                      assignActivationType === 'manual' ? 'Ir para o Caixa / PDV' : 'Criar Pendente'
+                    )}
                   </button>
                 </div>
               </form>

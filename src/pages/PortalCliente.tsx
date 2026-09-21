@@ -574,6 +574,29 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     }
   };
 
+  const handleOpenAsaasInvoice = async (sub: Subscription) => {
+    let link = sub.paymentUrl || (sub as any).invoiceUrl || (sub as any).asaasPaymentUrl || (sub as any).paymentLink;
+    
+    if (!link) {
+      setCheckingStatusSubId(sub.id);
+      try {
+        const res = await subscriptionService.checkAsaasPaymentStatus(sub.asaasInvoiceId || sub.id);
+        link = res?.payment?.invoiceUrl || res?.payment?.bankSlipUrl || res?.asaasPayment?.invoiceUrl || res?.asaasPayment?.bankSlipUrl;
+      } catch (e) {
+        console.warn("Erro ao buscar link da fatura Asaas:", e);
+      } finally {
+        setCheckingStatusSubId(null);
+      }
+    }
+
+    if (link) {
+      toast.success("Abrindo checkout seguro no Asaas...");
+      window.open(link, '_blank', 'noopener,noreferrer');
+    } else {
+      toast.info("Não há link de fatura online pendente no Asaas para esta assinatura.");
+    }
+  };
+
   const handleClientUpdateCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientCardModalSub) return;
@@ -2616,30 +2639,78 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                         
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                           {/* Active Subscriptions */}
-                          {activeSubs.map((sub, sIdx) => (
-                            <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
-                              <div>
-                                <p className="text-xs font-black text-emerald-800">{sub.planName}</p>
-                                <p className="text-[10px] text-emerald-600/80 font-bold mt-1">Cortes: {sub.haircutsUsed} usados / Barbas: {sub.beardsUsed} usadas</p>
-                                <p className="text-[9px] text-slate-400 mt-1 font-semibold">Válido até: {sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</p>
+                          {activeSubs.map((sub, sIdx) => {
+                            const planObj = availablePlans.find(p => p.id === sub.plano_id);
+                            const planServices = planObj?.services || (sub as any).services || (sub as any).planServices;
+                            
+                            let serviceSummaryText = "";
+                            if (planServices && Array.isArray(planServices) && planServices.length > 0) {
+                              serviceSummaryText = planServices.map((srv: any) => {
+                                const isUnlimited = srv.isUnlimited || srv.limit >= 99 || srv.limit === 0;
+                                const used = (sub.serviceUsages && (sub.serviceUsages[srv.serviceId] || sub.serviceUsages[srv.name])) || 0;
+                                return `${srv.name}: ${used}/${isUnlimited ? 'Ilimitado' : srv.limit}`;
+                              }).join(' • ');
+                            } else {
+                              const maxCuts = planObj?.haircutsPerMonth;
+                              const maxBeards = planObj?.beardsPerMonth;
+                              const parts = [];
+                              if (maxCuts !== undefined && maxCuts > 0) {
+                                parts.push(`Cortes: ${sub.haircutsUsed || 0}/${maxCuts >= 99 ? 'Ilimitados' : maxCuts}`);
+                              } else if (sub.haircutsUsed > 0) {
+                                parts.push(`Cortes: ${sub.haircutsUsed} usados`);
+                              }
+                              if (maxBeards !== undefined && maxBeards > 0) {
+                                parts.push(`Barbas: ${sub.beardsUsed || 0}/${maxBeards >= 99 ? 'Ilimitadas' : maxBeards}`);
+                              } else if (sub.beardsUsed > 0) {
+                                parts.push(`Barbas: ${sub.beardsUsed} usadas`);
+                              }
+                              
+                              if (parts.length > 0) {
+                                serviceSummaryText = parts.join(' • ');
+                              } else {
+                                serviceSummaryText = 'Benefícios do plano ativos no ciclo';
+                              }
+                            }
+
+                            return (
+                              <div key={`active-sub-${sub.id || sIdx}-${sIdx}`} className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
+                                <div>
+                                  <p className="text-xs font-black text-emerald-800">{sub.planName}</p>
+                                  <p className="text-[10px] text-emerald-600/80 font-bold mt-1">{serviceSummaryText}</p>
+                                  <p className="text-[9px] text-slate-400 mt-1 font-semibold">Válido até: {sub.endDate ? format(parse(sub.endDate, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}</p>
+                                </div>
+                                <span className="bg-emerald-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Assinante</span>
                               </div>
-                              <span className="bg-emerald-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Assinante</span>
-                            </div>
-                          ))}
+                            );
+                          })}
 
                           {/* Active Packages */}
-                          {packages.map((pkg, pIdx) => (
-                            <div key={`active-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
-                              <div>
-                                <p className="text-xs font-black text-amber-800">{pkg.packageName || 'Combo de Serviços'}</p>
-                                <p className="text-[10px] text-amber-600/80 font-bold mt-1">
-                                  Cortes Restantes: <span className="font-extrabold text-amber-800">{pkg.remainingCuts} de {pkg.totalCuts}</span>
-                                </p>
-                                <p className="text-[9px] text-slate-400 mt-1 font-semibold">Valor Pago: R$ {pkg.pricePaid?.toFixed(2)}</p>
+                          {packages.map((pkg, pIdx) => {
+                            const total = pkg.totalCuts || 1;
+                            const remaining = pkg.remainingCuts || 0;
+                            const rawName = (pkg.serviceName || pkg.packageName || '').toLowerCase();
+                            let unitLabel = "Sessões";
+                            if (rawName.includes('barba')) {
+                              unitLabel = "Barbas";
+                            } else if (rawName.includes('corte') || rawName.includes('cabelo')) {
+                              unitLabel = "Cortes";
+                            } else if (pkg.serviceName) {
+                              unitLabel = pkg.serviceName;
+                            }
+
+                            return (
+                              <div key={`active-pkg-${pkg.id || pIdx}-${pIdx}`} className="bg-amber-50/50 border border-amber-100 p-4 rounded-2xl flex justify-between items-center">
+                                <div>
+                                  <p className="text-xs font-black text-amber-800">{pkg.packageName || pkg.serviceName || 'Combo de Serviços'}</p>
+                                  <p className="text-[10px] text-amber-600/80 font-bold mt-1">
+                                    {unitLabel} Restantes: <span className="font-extrabold text-amber-800">{remaining} de {total}</span>
+                                  </p>
+                                  <p className="text-[9px] text-slate-400 mt-1 font-semibold">Valor Pago: R$ {pkg.pricePaid?.toFixed(2)}</p>
+                                </div>
+                                <span className="bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Pacote</span>
                               </div>
-                              <span className="bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">Pacote</span>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -4093,7 +4164,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     Meus Pacotes de Serviços
                   </h3>
                   <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                    Veja os pacotes de serviços que você já comprou e quantos cortes ou barbas ainda possui disponíveis.
+                    Veja os pacotes de serviços que você já comprou e o saldo de sessões ativas para agendamento.
                   </p>
                 </div>
 
@@ -4103,20 +4174,31 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                       const total = pkg.totalCuts || 5;
                       const remaining = pkg.remainingCuts || 0;
                       const percentage = (remaining / total) * 100;
+
+                      const rawName = (pkg.serviceName || pkg.packageName || '').toLowerCase();
+                      let unitLabel = "Sessões";
+                      if (rawName.includes('barba')) {
+                        unitLabel = "Barbas";
+                      } else if (rawName.includes('corte') || rawName.includes('cabelo')) {
+                        unitLabel = "Cortes";
+                      } else if (pkg.serviceName) {
+                        unitLabel = pkg.serviceName;
+                      }
+
                       return (
                         <div key={`pkg-rem-${pkg.id || pIdx}-${pIdx}`} className="bg-gradient-to-br from-indigo-50/50 to-indigo-100/20 border border-indigo-100/80 p-6 rounded-2xl flex flex-col justify-between relative overflow-hidden group shadow-sm">
                           <div>
                             <div className="flex justify-between items-start gap-2">
-                              <h4 className="text-sm font-black text-indigo-950 truncate">{pkg.packageName || 'Combo de Serviços'}</h4>
+                              <h4 className="text-sm font-black text-indigo-950 truncate">{pkg.packageName || pkg.serviceName || 'Combo de Serviços'}</h4>
                               <span className="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Ativo</span>
                             </div>
                             
                             <p className="text-[10px] text-indigo-600 font-bold mt-1">Adquirido em: {pkg.soldAt ? format(parse(pkg.soldAt.substring(0, 10), 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : 'Recentemente'}</p>
                             
-                            {/* Cuts counter and bar */}
+                            {/* Counter and progress bar */}
                             <div className="mt-4 space-y-1.5">
                               <div className="flex justify-between text-xs font-bold text-slate-700">
-                                <span>Cortes Disponíveis</span>
+                                <span>{unitLabel} Disponíveis</span>
                                 <span className="font-extrabold text-indigo-700">{remaining} de {total}</span>
                               </div>
                               <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
@@ -4170,10 +4252,24 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {availablePackages.map((pkg, pIdx) => {
                       const discount = pkg.originalPrice - pkg.promotionalPrice;
-                      const pricePerCut = pkg.promotionalPrice / pkg.cutsCount;
+                      const pricePerCut = pkg.promotionalPrice / (pkg.cutsCount || 1);
                       const cleanPhone = tenantInfo?.phone ? tenantInfo.phone.replace(/\D/g, '') : '';
-                      const waText = encodeURIComponent(`Olá! Sou o cliente ${profile.nome} e gostaria de adquirir o pacote "${pkg.name}" (${pkg.cutsCount} cortes por R$ ${pkg.promotionalPrice.toFixed(2)}) na Barbearia!`);
+                      const waText = encodeURIComponent(`Olá! Sou o cliente ${profile.nome} e gostaria de adquirir o pacote "${pkg.name}" (${pkg.cutsCount} sessões por R$ ${pkg.promotionalPrice.toFixed(2)}) na Barbearia!`);
                       const waUrl = `https://wa.me/${cleanPhone}?text=${waText}`;
+
+                      const rawPkgName = (pkg.name || pkg.serviceName || '').toLowerCase();
+                      let unitText = "Sessões";
+                      let unitSingleText = "sessão";
+                      if (rawPkgName.includes('barba')) {
+                        unitText = "Barbas";
+                        unitSingleText = "barba";
+                      } else if (rawPkgName.includes('corte') || rawPkgName.includes('cabelo')) {
+                        unitText = "Cortes de Cabelo";
+                        unitSingleText = "corte";
+                      } else if (pkg.serviceName) {
+                        unitText = pkg.serviceName;
+                        unitSingleText = pkg.serviceName;
+                      }
 
                       return (
                         <div key={`pkg-avail-${pkg.id || pIdx}-${pIdx}`} className="border border-slate-100 bg-slate-50/50 hover:bg-slate-50 hover:border-indigo-200 p-6 rounded-2xl flex flex-col justify-between transition-all group">
@@ -4187,7 +4283,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                               )}
                             </div>
 
-                            <p className="text-[10px] text-slate-500 font-bold mt-1">Inclui: {pkg.cutsCount} Cortes de Cabelo Premium</p>
+                            <p className="text-[10px] text-slate-500 font-bold mt-1">Inclui: {pkg.cutsCount} {unitText}</p>
                             
                             <div className="mt-4 flex items-baseline gap-1.5">
                               <span className="text-2xl font-black text-indigo-600">R$ {pkg.promotionalPrice.toFixed(2)}</span>
@@ -4197,7 +4293,7 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                             </div>
 
                             <p className="text-[10px] text-emerald-600 font-extrabold mt-1">
-                              Apenas R$ {pricePerCut.toFixed(2)} por corte!
+                              Apenas R$ {pricePerCut.toFixed(2)} por {unitSingleText}!
                             </p>
                           </div>
 
@@ -4378,8 +4474,12 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
 
                                   // 2. Legacy fallback: check if haircutsPerMonth or beardsPerMonth exist
                                   const items = [];
-                                  const maxCuts = planObj?.haircutsPerMonth ?? 0;
-                                  const maxBeards = planObj?.beardsPerMonth ?? 0;
+                                  const planNameLower = (sub.planName || '').toLowerCase();
+                                  const isBeardPlanOnly = planNameLower.includes('barba') && !planNameLower.includes('corte') && !planNameLower.includes('cabelo') && !planNameLower.includes('combo') && !planNameLower.includes('completo');
+                                  const isHaircutPlanOnly = (planNameLower.includes('corte') || planNameLower.includes('cabelo')) && !planNameLower.includes('barba') && !planNameLower.includes('combo') && !planNameLower.includes('completo');
+
+                                  const maxCuts = planObj?.haircutsPerMonth ?? (isBeardPlanOnly ? 0 : (sub.haircutsUsed > 0 ? 99 : 4));
+                                  const maxBeards = planObj?.beardsPerMonth ?? (isHaircutPlanOnly ? 0 : (sub.beardsUsed > 0 ? 99 : 0));
 
                                   if (maxCuts > 0) {
                                     const cutsUnlimited = maxCuts >= 99;
@@ -4451,9 +4551,18 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                               <div className="pt-3 border-t border-slate-200/50 flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {(() => {
-                                    const allowedPaymentMethods = planObj?.allowedPaymentMethods || ['PIX', 'CREDIT_CARD'];
-                                    const supportsPix = allowedPaymentMethods.includes('PIX');
-                                    const supportsCard = allowedPaymentMethods.includes('CREDIT_CARD');
+                                    // Determine strict payment method capabilities from plan and subscription
+                                    const planMethods = planObj?.allowedPaymentMethods || (sub as any).allowedPaymentMethods;
+                                    const isExplicitCardOnly = (planMethods && planMethods.length === 1 && planMethods[0] === 'CREDIT_CARD')
+                                      || (sub.billingType === 'CREDIT_CARD')
+                                      || (sub.paymentMethod === 'credit_card' && (!planMethods || !planMethods.includes('PIX')));
+
+                                    const allowedPaymentMethods = planMethods && planMethods.length > 0
+                                      ? planMethods 
+                                      : (isExplicitCardOnly ? ['CREDIT_CARD'] : (sub.billingType === 'PIX' || sub.paymentMethod === 'pix' ? ['PIX'] : ['CREDIT_CARD', 'PIX']));
+
+                                    const supportsPix = allowedPaymentMethods.includes('PIX') && !isExplicitCardOnly;
+                                    const supportsCard = allowedPaymentMethods.includes('CREDIT_CARD') || isExplicitCardOnly || sub.activationType === 'asaas';
 
                                     if (isActive) {
                                       return (
@@ -4461,13 +4570,32 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                           {supportsCard && (
                                             <button
                                               type="button"
-                                              onClick={() => setClientCardModalSub(sub)}
-                                              className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                              onClick={() => handleOpenAsaasInvoice(sub)}
+                                              disabled={checkingStatusSubId === sub.id}
+                                              className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                                             >
-                                              <CreditCard size={13} />
-                                              <span>Gerenciar Cartão de Crédito</span>
+                                              {checkingStatusSubId === sub.id ? (
+                                                <RefreshCw size={13} className="animate-spin" />
+                                              ) : (
+                                                <ExternalLink size={13} />
+                                              )}
+                                              <span>Pagar Fatura / Alterar Cartão no Asaas</span>
                                             </button>
                                           )}
+
+                                          <button
+                                            type="button"
+                                            onClick={() => handleCheckAsaasStatus(sub)}
+                                            disabled={checkingStatusSubId === sub.id}
+                                            className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                          >
+                                            {checkingStatusSubId === sub.id ? (
+                                              <RefreshCw size={13} className="animate-spin" />
+                                            ) : (
+                                              <RefreshCw size={13} />
+                                            )}
+                                            <span>Sincronizar Status</span>
+                                          </button>
                                         </>
                                       );
                                     }
@@ -4476,30 +4604,19 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                     return (
                                       <>
                                         {supportsCard && (
-                                          <>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleCheckAsaasStatus(sub)}
-                                              disabled={checkingStatusSubId === sub.id}
-                                              className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                                            >
-                                              {checkingStatusSubId === sub.id ? (
-                                                <RefreshCw size={13} className="animate-spin" />
-                                              ) : (
-                                                <RefreshCw size={13} />
-                                              )}
-                                              <span>Tentar Cobrar Novamente</span>
-                                            </button>
-
-                                            <button
-                                              type="button"
-                                              onClick={() => setClientCardModalSub(sub)}
-                                              className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                            >
-                                              <CreditCard size={13} />
-                                              <span>Atualizar Cartão & Cobrar</span>
-                                            </button>
-                                          </>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenAsaasInvoice(sub)}
+                                            disabled={checkingStatusSubId === sub.id}
+                                            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                          >
+                                            {checkingStatusSubId === sub.id ? (
+                                              <RefreshCw size={13} className="animate-spin" />
+                                            ) : (
+                                              <ExternalLink size={13} />
+                                            )}
+                                            <span>Pagar Fatura / Atualizar Cartão no Asaas</span>
+                                          </button>
                                         )}
 
                                         {supportsPix && (
@@ -4513,21 +4630,19 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                                           </button>
                                         )}
 
-                                        {supportsPix && !supportsCard && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleCheckAsaasStatus(sub)}
-                                            disabled={checkingStatusSubId === sub.id}
-                                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                                          >
-                                            {checkingStatusSubId === sub.id ? (
-                                              <RefreshCw size={13} className="animate-spin" />
-                                            ) : (
-                                              <CheckCircle size={13} className="text-emerald-600" />
-                                            )}
-                                            <span>Verificar Status</span>
-                                          </button>
-                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCheckAsaasStatus(sub)}
+                                          disabled={checkingStatusSubId === sub.id}
+                                          className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                        >
+                                          {checkingStatusSubId === sub.id ? (
+                                            <RefreshCw size={13} className="animate-spin" />
+                                          ) : (
+                                            <CheckCircle size={13} className="text-emerald-600" />
+                                          )}
+                                          <span>Verificar Confirmação</span>
+                                        </button>
                                       </>
                                     );
                                   })()}

@@ -43,6 +43,7 @@ import {
   FileText,
   CheckCheck,
   Sparkles,
+  Save,
   Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -255,6 +256,12 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const [newSubEndDate, setNewSubEndDate] = useState('');
   const [isSavingSubDates, setIsSavingSubDates] = useState(false);
   const [isSyncingWithAsaas, setIsSyncingWithAsaas] = useState(false);
+
+  // States for Quick Change Due Date Modal
+  const [subToEditDueDate, setSubToEditDueDate] = useState<Subscription | null>(null);
+  const [editDueDateStart, setEditDueDateStart] = useState<string>('');
+  const [editDueDateEnd, setEditDueDateEnd] = useState<string>('');
+  const [isSavingDueDate, setIsSavingDueDate] = useState<boolean>(false);
   const [planComissaoTipo, setPlanComissaoTipo] = useState<'fixo' | 'pool_atendimentos' | 'pool_pontos'>('fixo');
   const [planComissaoPoolPorcentagem, setPlanComissaoPoolPorcentagem] = useState(50);
   const [planComissaoFixaValor, setPlanComissaoFixaValor] = useState(10.00);
@@ -828,6 +835,36 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       toast.error(err?.message || "Falha ao sincronizar com o Asaas.");
     } finally {
       setIsSyncingWithAsaas(false);
+    }
+  };
+
+  const handleOpenChangeDueDateModal = (sub: Subscription) => {
+    setSubToEditDueDate(sub);
+    setEditDueDateStart(sub.startDate || format(new Date(), 'yyyy-MM-dd'));
+    setEditDueDateEnd(sub.endDate || format(new Date(), 'yyyy-MM-dd'));
+  };
+
+  const handleSaveChangeDueDate = async () => {
+    if (!subToEditDueDate) return;
+    setIsSavingDueDate(true);
+    try {
+      const result: any = await subscriptionService.updateSubscriptionDates(
+        subToEditDueDate.id,
+        editDueDateStart,
+        editDueDateEnd
+      );
+      if (result && result.message) {
+        toast.success(result.message);
+      } else {
+        toast.success("Nova data de vencimento salva e espelhada no Asaas com sucesso!");
+      }
+      await loadData();
+      setSubToEditDueDate(null);
+    } catch (err: any) {
+      console.error("Erro ao alterar data de vencimento:", err);
+      toast.error(err?.message || "Falha ao atualizar data de vencimento.");
+    } finally {
+      setIsSavingDueDate(false);
     }
   };
 
@@ -1573,6 +1610,46 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   }, [activeSubsForSelectedMonth, plans]);
 
   const houseNetRevenue = totalSubRevenue - totalCommissionsToRelease;
+
+  // Detailed revenue breakdown: Asaas (digital) vs Balcão (presencial/counter)
+  const revenueBreakdown = React.useMemo(() => {
+    let asaasRev = 0;
+    let asaasCount = 0;
+    let balcaoRev = 0;
+    let balcaoCount = 0;
+
+    activeSubsForSelectedMonth.forEach(s => {
+      const plan = plans.find(p => p.id === s.plano_id);
+      const price = plan?.price || (s as any).price || 0;
+      const isAsaas = s.activationType === 'asaas' || !!s.asaasSubscriptionId || !!s.asaasCustomerCode || s.paymentMethod === 'credit_card' || s.billingType === 'CREDIT_CARD';
+      if (isAsaas) {
+        asaasRev += price;
+        asaasCount++;
+      } else {
+        balcaoRev += price;
+        balcaoCount++;
+      }
+    });
+
+    const gatewayRate = 0.03; // 3% Asaas gateway fee
+    const asaasFees = asaasRev * gatewayRate;
+    const netAsaasRev = asaasRev - asaasFees;
+    const totalNetRevBeforeCommissions = netAsaasRev + balcaoRev;
+
+    return {
+      asaasRev,
+      asaasCount,
+      balcaoRev,
+      balcaoCount,
+      asaasFees,
+      netAsaasRev,
+      totalNetRevBeforeCommissions
+    };
+  }, [activeSubsForSelectedMonth, plans]);
+
+  const totalCommissionsPoolToDeduct = totalReleasedCommissionsPool > 0 ? totalReleasedCommissionsPool : totalProjectedCommissionPool;
+  const realHouseNetProfit = revenueBreakdown.totalNetRevBeforeCommissions - totalCommissionsPoolToDeduct;
+  const realHouseMarginPercent = totalSubRevenue > 0 ? Math.round((realHouseNetProfit / totalSubRevenue) * 100) : 0;
   const currentRunKey = commDateMode === 'month' ? selectedMonth : `${commStartDate}_${commEndDate}`;
   const isMonthReleased = !!releasedRuns[currentRunKey];
   const releasedRunInfo = releasedRuns[currentRunKey];
@@ -2107,6 +2184,18 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
             <>
               {subViewMode === 'list' ? (
                 <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
+                  {/* Visual Action Button Legend Bar */}
+                  <div className="bg-slate-50 border-b border-slate-200 px-6 py-2.5 flex flex-wrap items-center gap-2 text-[10px] font-extrabold text-slate-600">
+                    <span className="uppercase tracking-widest text-slate-400 font-black mr-1">Legenda dos Botões de Ação:</span>
+                    <span className="flex items-center gap-1 bg-white border border-slate-200 px-2 py-0.5 rounded-md"><Eye size={11} className="text-slate-600"/> Detalhes & Consumo</span>
+                    <span className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-md"><Calendar size={11}/> Mudar Vencimento</span>
+                    <span className="flex items-center gap-1 bg-white border border-slate-200 px-2 py-0.5 rounded-md"><Receipt size={11} className="text-slate-700"/> Histórico Faturas</span>
+                    <span className="flex items-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-md"><MessageCircle size={11}/> WhatsApp</span>
+                    <span className="flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-800 px-2 py-0.5 rounded-md"><SkipForward size={11}/> Baixa / Pular no Caixa</span>
+                    <span className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-md"><RefreshCw size={11}/> Renovar +1 Mês</span>
+                    <span className="flex items-center gap-1 bg-rose-50 border border-rose-200 text-rose-700 px-2 py-0.5 rounded-md"><CreditCard size={11}/> Recobrar Cartão</span>
+                  </div>
+
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
@@ -2144,6 +2233,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                               onConfirmAsaasPayment={handleConfirmAsaasPayment}
                               onShowChargeModal={handleOpenChargeModal}
                               onViewDetail={handleViewSubDetail}
+                              onChangeDueDate={handleOpenChangeDueDateModal}
                             />
                           );
                         })}
@@ -2175,6 +2265,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                         onConfirmAsaasPayment={handleConfirmAsaasPayment}
                         onShowChargeModal={handleOpenChargeModal}
                         onViewDetail={handleViewSubDetail}
+                        onChangeDueDate={handleOpenChangeDueDateModal}
                         isClient={false}
                       />
                     );
@@ -2383,42 +2474,47 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
           {/* Aggregate Analytical Cards (Valores Reais e Precisos) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in">
             <div className="bg-white border border-slate-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
-              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Receita Total de Assinaturas</span>
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Faturamento Bruto</span>
               <span className="text-2xl font-black text-slate-900 block">
                 R$ {totalSubRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                {activeSubs.length} assinante(s) ativo(s)
+              <div className="text-[9px] font-bold text-slate-500 block mt-1 leading-tight">
+                <span className="text-purple-700 font-black">Asaas: R$ {revenueBreakdown.asaasRev.toFixed(2)} ({revenueBreakdown.asaasCount})</span>
+                <span className="text-slate-300 mx-1">|</span>
+                <span className="text-emerald-700 font-black">Balcão: R$ {revenueBreakdown.balcaoRev.toFixed(2)} ({revenueBreakdown.balcaoCount})</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-rose-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
+              <div className="w-1.5 h-full bg-rose-500 absolute left-0 top-0"></div>
+              <span className="text-[9px] font-black uppercase text-rose-600 tracking-widest block mb-1">Taxas Asaas (3%)</span>
+              <span className="text-2xl font-black text-rose-700 block">
+                - R$ {revenueBreakdown.asaasFees.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">
+                Zero taxa em {revenueBreakdown.balcaoCount} pagas no balcão
               </span>
             </div>
 
-            <div className="bg-white border border-emerald-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
-              <div className="w-1.5 h-full bg-emerald-500 absolute left-0 top-0"></div>
-              <span className="text-[9px] font-black uppercase text-emerald-600 tracking-widest block mb-1">Pote Geral Liberado</span>
-              <span className="text-2xl font-black text-emerald-700 block">
-                R$ {totalReleasedCommissionsPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            <div className="bg-white border border-indigo-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
+              <div className="w-1.5 h-full bg-indigo-500 absolute left-0 top-0"></div>
+              <span className="text-[9px] font-black uppercase text-indigo-600 tracking-widest block mb-1">Pote de Comissões Equipe</span>
+              <span className="text-2xl font-black text-indigo-700 block">
+                - R$ {totalCommissionsPoolToDeduct.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos encerrados para repasse</span>
-            </div>
-
-            <div className="bg-white border border-amber-200/80 p-5 rounded-[2rem] shadow-sm relative overflow-hidden">
-              <div className="w-1.5 h-full bg-amber-500 absolute left-0 top-0"></div>
-              <span className="text-[9px] font-black uppercase text-amber-600 tracking-widest block mb-1">Pote Em Andamento (Provisório)</span>
-              <span className="text-2xl font-black text-amber-600 block">
-                R$ {totalInProgressCommissionsPool.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">
+                {totalReleasedCommissionsPool > 0 ? 'Pote retido para repasse' : 'Projeção para o ciclo'}
               </span>
-              <span className="text-[9px] font-bold text-slate-400 block mt-1 uppercase font-black">Ciclos ativos em andamento</span>
             </div>
             
             <div className="bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-950 border border-indigo-900/40 p-5 rounded-[2rem] shadow-sm text-white relative overflow-hidden">
               <div className="w-24 h-24 bg-indigo-500/10 rounded-full blur-xl absolute -right-4 -bottom-4 pointer-events-none" />
-              <span className="text-[9px] font-black uppercase text-indigo-300 tracking-widest block mb-1">Lucro Líquido Retido (Barbearia)</span>
+              <span className="text-[9px] font-black uppercase text-indigo-300 tracking-widest block mb-1">Lucro Líquido Real (Barbearia)</span>
               <span className="text-2xl font-black text-emerald-400 block">
-                R$ {houseNetRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                R$ {realHouseNetProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
               <span className="text-[9px] font-bold text-slate-300 block mt-1 uppercase font-black">
-                Margem Líquida da Casa ({totalSubRevenue > 0 ? Math.round((houseNetRevenue / totalSubRevenue) * 100) : 0}%)
+                Margem Limpa da Casa: {realHouseMarginPercent}%
               </span>
             </div>
           </div>
@@ -2433,10 +2529,10 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       <TrendingUp size={16} className="text-emerald-600" />
                       <span>DRE Demonstrativo de Resultados — Módulo Assinaturas</span>
                     </h5>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Detalhamento de entradas, custos operacionais e margem operacional</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Detalhamento de entradas digitais/presenciais, taxas de gateway e comissões de equipe</p>
                   </div>
                   <span className="text-xs font-black bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl border border-emerald-100">
-                    Lucro da Casa: R$ {houseNetRevenue.toFixed(2)}
+                    Lucro Líquido Limpo: R$ {realHouseNetProfit.toFixed(2)}
                   </span>
                 </div>
 
@@ -2444,31 +2540,34 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl space-y-2">
                     <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">1. Faturamento Bruto de Planos</span>
                     <p className="text-xl font-black text-slate-800">R$ {totalSubRevenue.toFixed(2)}</p>
-                    <p className="text-[10px] text-slate-500 font-semibold">{activeSubs.length} assinaturas ativas faturadas no ciclo</p>
+                    <div className="text-[10px] text-slate-600 font-medium space-y-0.5">
+                      <p>💳 Recorrência Asaas: <strong>R$ {revenueBreakdown.asaasRev.toFixed(2)}</strong> ({revenueBreakdown.asaasCount} assinantes)</p>
+                      <p>💈 Contratados no Balcão: <strong>R$ {revenueBreakdown.balcaoRev.toFixed(2)}</strong> ({revenueBreakdown.balcaoCount} assinantes)</p>
+                    </div>
                   </div>
 
                   <div className="bg-rose-50/70 border border-rose-100 p-4 rounded-2xl space-y-2">
-                    <span className="text-[9px] font-black uppercase text-rose-700 tracking-wider">2. Taxas Estimadas de Gateway/Pix (~3%)</span>
-                    <p className="text-xl font-black text-rose-800">- R$ {(totalSubRevenue * 0.03).toFixed(2)}</p>
-                    <p className="text-[10px] text-rose-600 font-semibold">Custo de infraestrutura de pagamentos recorrentes</p>
+                    <span className="text-[9px] font-black uppercase text-rose-700 tracking-wider">2. Taxas de Gateway Asaas (3%)</span>
+                    <p className="text-xl font-black text-rose-800">- R$ {revenueBreakdown.asaasFees.toFixed(2)}</p>
+                    <p className="text-[10px] text-rose-600 font-semibold">Custo de infraestrutura cobrado estritamente sobre os R$ {revenueBreakdown.asaasRev.toFixed(2)} do Asaas.</p>
                   </div>
 
                   <div className="bg-indigo-50/70 border border-indigo-100 p-4 rounded-2xl space-y-2">
-                    <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider">3. Repasses aos Barbeiros (Pote Liberado)</span>
-                    <p className="text-xl font-black text-indigo-800">- R$ {totalReleasedCommissionsPool.toFixed(2)}</p>
-                    <p className="text-[10px] text-indigo-600 font-semibold">Valor alocado no pote da equipe</p>
+                    <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider">3. Repasses aos Barbeiros (Pote da Equipe)</span>
+                    <p className="text-xl font-black text-indigo-800">- R$ {totalCommissionsPoolToDeduct.toFixed(2)}</p>
+                    <p className="text-[10px] text-indigo-600 font-semibold">{totalReleasedCommissionsPool > 0 ? 'Pote liberado e liquidado para os profissionais' : 'Projeção total de comissões para o ciclo'}</p>
                   </div>
                 </div>
 
-                <div className="bg-gradient-to-r from-emerald-500 to-teal-600 p-5 rounded-2xl text-white flex items-center justify-between shadow-md">
+                <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-5 rounded-2xl text-white flex items-center justify-between shadow-md">
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-100 block">Resultado Operacional Líquido Final</span>
-                    <p className="text-2xl font-black">R$ {(houseNetRevenue - (totalSubRevenue * 0.03)).toFixed(2)}</p>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-100 block">Resultado Operacional Líquido Final da Casa</span>
+                    <p className="text-2xl font-black">R$ {realHouseNetProfit.toFixed(2)}</p>
                   </div>
                   <div className="text-right">
                     <span className="text-[10px] font-bold text-emerald-100 block uppercase">Margem de Lucro Limpa</span>
                     <span className="text-3xl font-black">
-                      {totalSubRevenue > 0 ? Math.round(((houseNetRevenue - (totalSubRevenue * 0.03)) / totalSubRevenue) * 100) : 0}%
+                      {realHouseMarginPercent}%
                     </span>
                   </div>
                 </div>
@@ -5691,6 +5790,112 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
           </div>
         )}
       </AnimatePresence>
+
+      {/* MODAL: Mudar Data de Vencimento Direto (Rápido) */}
+      {subToEditDueDate && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white border border-slate-200 rounded-[2rem] w-full max-w-md overflow-hidden shadow-2xl space-y-6 p-6 animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center text-indigo-600">
+                  <Calendar size={20} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Ajustar Data de Vencimento</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">Assinante: <strong className="text-slate-800">{subToEditDueDate.cliente_name}</strong></p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSubToEditDueDate(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 text-amber-900 text-[11px] leading-relaxed">
+                <p className="font-bold flex items-center gap-1 mb-0.5">
+                  <Zap size={13} className="text-amber-600" /> Sincronização Automática com Asaas
+                </p>
+                A alteração do vencimento atualizará o ciclo do cliente localmente e solicitará a atualização da data no gateway Asaas.
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider block mb-1">Início do Ciclo</label>
+                  <input
+                    type="date"
+                    value={editDueDateStart}
+                    onChange={(e) => setEditDueDateStart(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider block mb-1">Novo Vencimento</label>
+                  <input
+                    type="date"
+                    value={editDueDateEnd}
+                    onChange={(e) => setEditDueDateEnd(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Presets */}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!editDueDateStart) return;
+                    try {
+                      const s = parseISO(editDueDateStart);
+                      const e = addDays(s, 30);
+                      setEditDueDateEnd(format(e, 'yyyy-MM-dd'));
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                  className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 rounded-lg text-[10px] font-black text-slate-600 transition text-center cursor-pointer"
+                >
+                  +30 Dias Padrão
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = new Date();
+                    setEditDueDateStart(format(today, 'yyyy-MM-dd'));
+                    setEditDueDateEnd(format(addDays(today, 30), 'yyyy-MM-dd'));
+                  }}
+                  className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 rounded-lg text-[10px] font-black text-slate-600 transition text-center cursor-pointer"
+                >
+                  Hoje + 30
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setSubToEditDueDate(null)}
+                className="px-4 py-2.5 text-xs font-black text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveChangeDueDate}
+                disabled={isSavingDueDate}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition flex items-center gap-2 shadow-md shadow-indigo-500/10 cursor-pointer disabled:opacity-50"
+              >
+                {isSavingDueDate ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>Salvar Nova Data</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5901,6 +6106,7 @@ interface SubscriptionCardProps {
   onConfirmAsaasPayment?: (id: string) => void;
   onShowChargeModal?: (sub: Subscription) => void;
   onViewDetail?: (sub: Subscription) => void;
+  onChangeDueDate?: (sub: Subscription) => void;
   isClient?: boolean;
 }
 
@@ -5921,6 +6127,7 @@ function SubscriptionCard({
   onConfirmAsaasPayment,
   onShowChargeModal,
   onViewDetail,
+  onChangeDueDate,
   isClient 
 }: SubscriptionCardProps) {
   if (!plan) return null;
@@ -6252,6 +6459,7 @@ interface SubscriptionTableRowProps {
   onConfirmAsaasPayment?: (id: string) => void;
   onShowChargeModal?: (sub: Subscription) => void;
   onViewDetail?: (sub: Subscription) => void;
+  onChangeDueDate?: (sub: Subscription) => void;
 }
 
 function SubscriptionTableRow({
@@ -6270,7 +6478,8 @@ function SubscriptionTableRow({
   onDelete,
   onConfirmAsaasPayment,
   onShowChargeModal,
-  onViewDetail
+  onViewDetail,
+  onChangeDueDate
 }: SubscriptionTableRowProps) {
   if (!plan) return null;
 
@@ -6415,6 +6624,17 @@ function SubscriptionTableRow({
               {sub.autoRenew ? 'Auto' : 'Manual'}
             </span>
           </div>
+          {isAdmin && onChangeDueDate && (
+            <button
+              type="button"
+              onClick={() => onChangeDueDate(sub)}
+              className="mt-1 text-[9px] font-extrabold text-indigo-700 hover:text-indigo-900 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 px-2 py-0.5 rounded-md flex items-center gap-1 transition cursor-pointer"
+              title="Ajustar data de vencimento (migração ou alteração de ciclo)"
+            >
+              <Calendar size={10} />
+              <span>Mudar Vencimento</span>
+            </button>
+          )}
         </div>
       </td>
 
@@ -6467,6 +6687,18 @@ function SubscriptionTableRow({
           >
             <Eye size={14} />
           </button>
+
+          {/* Mudar Data de Vencimento */}
+          {isAdmin && onChangeDueDate && (
+            <button
+              type="button"
+              onClick={() => onChangeDueDate(sub)}
+              className="p-2 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-xl transition cursor-pointer"
+              title="Ajustar Data de Vencimento (Dia da cobrança no Asaas)"
+            >
+              <Calendar size={14} />
+            </button>
+          )}
 
           {/* Histórico de Faturas Pagas */}
           {onViewInvoices && (

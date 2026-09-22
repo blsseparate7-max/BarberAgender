@@ -185,6 +185,8 @@ export interface RecurringAppointment {
   dayOfMonth?: number;
   appointmentTemplate: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>;
   excludedDates: string[];
+  allowConflict?: boolean;
+  status?: 'active' | 'inactive';
   createdAt: any;
   updatedAt: any;
 }
@@ -309,6 +311,11 @@ export interface FinancialTransaction {
   subscription_amount?: number;
   responsavel_id: string;
   responsavel_name: string;
+  is_deleted?: boolean;
+  is_vale_refund?: boolean;
+  is_neutral_transfer?: boolean;
+  referencia_id?: string;
+  advance_id?: string;
   createdAt: any;
   updatedAt: any;
 }
@@ -543,13 +550,16 @@ export interface ProfessionalAdvance {
   amount: number;
   date: string;
   description: string;
-  status?: 'pendente' | 'pago' | 'deduzido';
+  category?: string;
+  status?: 'pendente' | 'pago' | 'deduzido' | 'cancelado' | 'estornado' | 'excluido';
   source?: 'caixa' | 'financeiro';
   paymentMethod?: string;
   transaction_id?: string;
   payable_id?: string;
   movement_id?: string;
   repasse_id?: string;
+  is_deleted?: boolean;
+  is_vale_refund?: boolean;
   responsible_id: string;
   responsible_name: string;
   createdAt: any;

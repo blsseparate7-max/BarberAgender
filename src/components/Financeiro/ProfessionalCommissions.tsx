@@ -226,20 +226,30 @@ export function ProfessionalCommissions({
     let rawCashMovs: any[] = [];
     let rawFinTxs: any[] = [];
 
+    const isValeActive = (item: any) => {
+      if (!item) return false;
+      if (item.is_deleted) return false;
+      const st = String(item.status || '').toLowerCase();
+      if (st === 'cancelado' || st === 'estornado' || st === 'excluido' || st === 'cancelled') return false;
+      return true;
+    };
+
     const mergeAdvances = () => {
-      const merged: any[] = [...rawAdvs];
+      const merged: any[] = [...rawAdvs.filter(isValeActive)];
 
       // Merge from accounts_payable
       rawPayables.forEach(p => {
+        if (!isValeActive(p)) return;
         const category = (p.category || '').toLowerCase();
         const desc = (p.description || '').toLowerCase();
         const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
-        const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse;
+        const isEstorno = category.includes('estorno') || desc.includes('estorno');
+        const isVale = (p.type === 'vale' || category.includes('adiantamento') || category.includes('vale') || desc.includes('adiantamento') || desc.includes('vale')) && !isRepasse && !isEstorno;
 
         if (isVale) {
           const pDate = p.paidAt ? p.paidAt.split('T')[0] : (p.dueDate || '');
           const pAmount = p.amount || 0;
-          const isDup = merged.some(m => m.id === p.id || (m.amount === pAmount && m.date === pDate && m.description === p.description));
+          const isDup = merged.some(m => m.id === p.id || m.payable_id === p.id || (m.amount === pAmount && m.date === pDate && m.description === p.description));
           if (!isDup) {
             merged.push({
               id: p.id,
@@ -275,15 +285,19 @@ export function ProfessionalCommissions({
 
       // Merge from cash_movements
       rawCashMovs.forEach(c => {
+        if (!isValeActive(c)) return;
+        // Never import incomes/entradas or estornos as vales
+        if (c.type === 'income' || c.type === 'entrada') return;
         const category = (c.category || '').toLowerCase();
         const desc = (c.description || '').toLowerCase();
         const isRepasse = category.includes('repasse') || desc.includes('repasse') || desc.includes('pagamento de comiss') || desc.includes('payout');
-        const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse;
+        const isEstorno = category.includes('estorno') || desc.includes('estorno') || c.is_vale_refund;
+        const isVale = (category.includes('vale') || category.includes('adiantamento') || desc.includes('vale') || desc.includes('adiantamento')) && !isRepasse && !isEstorno;
 
         if (isVale) {
           const cDate = c.date || (c.createdAt ? new Date(c.createdAt.seconds * 1000).toISOString().split('T')[0] : '');
           const cAmount = Number(c.amount) || 0;
-          const isDup = merged.some(m => m.id === c.id || (Math.abs(m.amount - cAmount) < 0.01 && (m.date || '').substring(0, 10) === (cDate || '').substring(0, 10)));
+          const isDup = merged.some(m => m.id === c.id || m.movement_id === c.id || (Math.abs(m.amount - cAmount) < 0.01 && (m.date || '').substring(0, 10) === (cDate || '').substring(0, 10)));
           if (!isDup) {
             const matchedBarber = resolveBarberFromText(c.description);
             merged.push({
@@ -304,15 +318,19 @@ export function ProfessionalCommissions({
 
       // Merge from financial_transactions
       rawFinTxs.forEach(t => {
+        if (!isValeActive(t)) return;
+        // Never import incomes/refunds as pending vales
+        if (t.type === 'income' || t.is_vale_refund) return;
         const desc = (t.description || '').toLowerCase();
         const category = (t.category || '').toLowerCase();
         const isRepasse = desc.includes('repasse') || desc.includes('payout') || desc.includes('pagamento de comiss');
-        const isVale = (desc.includes('vale') || desc.includes('adiantamento') || category.includes('vale') || category.includes('adiantamento')) && !isRepasse;
+        const isEstorno = desc.includes('estorno') || category.includes('estorno') || t.is_vale_refund;
+        const isVale = (desc.includes('vale') || desc.includes('adiantamento') || category.includes('vale') || category.includes('adiantamento')) && !isRepasse && !isEstorno;
 
         if (isVale) {
           const tDate = t.date ? t.date.substring(0, 10) : '';
           const tAmount = Number(t.amount) || 0;
-          const isDup = merged.some(m => m.id === t.id || (Math.abs(m.amount - tAmount) < 0.01 && (m.date || '').substring(0, 10) === tDate));
+          const isDup = merged.some(m => m.id === t.id || m.transaction_id === t.id || (Math.abs(m.amount - tAmount) < 0.01 && (m.date || '').substring(0, 10) === tDate));
           if (!isDup) {
             const matchedBarber = resolveBarberFromText(t.description);
             merged.push({

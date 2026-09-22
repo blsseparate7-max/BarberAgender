@@ -1654,8 +1654,50 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
   const isMonthReleased = !!releasedRuns[currentRunKey];
   const releasedRunInfo = releasedRuns[currentRunKey];
 
+  // Helper to get exact real catalog price of any usage
+  const getUsageRealPrice = React.useCallback((u: any): { price: number; name: string } => {
+    // 1. Try match by service_id in services list
+    if (u.service_id) {
+      const matched = services.find(item => item.id === u.service_id);
+      if (matched && typeof matched.preco === 'number' && matched.preco > 0) {
+        return { price: matched.preco, name: matched.nome || u.service_name || 'Serviço' };
+      }
+    }
+
+    // 2. Try match by service_name in services list (case-insensitive)
+    if (u.service_name) {
+      const cleanName = u.service_name.trim().toLowerCase();
+      const matched = services.find(item => item.nome?.trim().toLowerCase() === cleanName);
+      if (matched && typeof matched.preco === 'number' && matched.preco > 0) {
+        return { price: matched.preco, name: matched.nome };
+      }
+    }
+
+    // 3. If valor_servico was stored on the usage record and > 0
+    if (typeof u.valor_servico === 'number' && u.valor_servico > 0) {
+      return { price: u.valor_servico, name: u.service_name || (u.type === 'beard' ? 'Barba' : 'Corte') };
+    }
+
+    // 4. Match generic corte or barba from services list
+    if (u.type === 'beard') {
+      const s = services.find(item => item.nome?.toLowerCase().includes('barba'));
+      if (s && typeof s.preco === 'number' && s.preco > 0) {
+        return { price: s.preco, name: s.nome };
+      }
+    } else {
+      const s = services.find(item => item.nome?.toLowerCase().includes('corte') || item.nome?.toLowerCase().includes('cabelo'));
+      if (s && typeof s.preco === 'number' && s.preco > 0) {
+        return { price: s.preco, name: s.nome };
+      }
+    }
+
+    // 5. Fallback only if no catalog service exists
+    const fallbackPrice = u.type === 'beard' ? 35 : 45;
+    return { price: fallbackPrice, name: u.service_name || (u.type === 'beard' ? 'Barba' : 'Corte de Cabelo') };
+  }, [services]);
+
   // --- RENDIMENTO & PERFORMANCE DE ASSINATURAS ---
-  const totalValueIfAvulso = filteredUsages.reduce((sum, u) => sum + (u.valor_servico || (u.type === 'haircut' ? 50 : 35)), 0);
+  const totalValueIfAvulso = filteredUsages.reduce((sum, u) => sum + getUsageRealPrice(u).price, 0);
   const clientSavings = totalValueIfAvulso - totalSubRevenue;
   const clientSavingsPercent = totalValueIfAvulso > 0 ? (clientSavings / totalValueIfAvulso) * 100 : 0;
   const avgVisitsPerActiveSub = activeSubs.length > 0 ? (filteredUsages.length / activeSubs.length).toFixed(1) : '0';
@@ -1688,7 +1730,27 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
     const plan = sub ? plans.find(p => p.id === sub.plano_id) : null;
     const planPrice = plan?.price || 0;
 
-    const avulsoValue = uList.reduce((sum, u) => sum + (u.valor_servico || (u.type === 'haircut' ? 50 : 35)), 0);
+    // Detailed services breakdown with actual catalog prices
+    const servicesCountMap: Record<string, { count: number; totalValue: number; unitPrice: number }> = {};
+    let avulsoValue = 0;
+
+    uList.forEach(u => {
+      const { price, name } = getUsageRealPrice(u);
+      avulsoValue += price;
+      if (!servicesCountMap[name]) {
+        servicesCountMap[name] = { count: 0, totalValue: 0, unitPrice: price };
+      }
+      servicesCountMap[name].count += 1;
+      servicesCountMap[name].totalValue += price;
+    });
+
+    const servicesSummaryList = Object.entries(servicesCountMap).map(([name, data]) => ({
+      name,
+      count: data.count,
+      unitPrice: data.unitPrice,
+      totalValue: data.totalValue
+    }));
+
     const savings = avulsoValue - planPrice;
 
     const matchedClient = clients.find(c => c.uid === item.clientId);
@@ -1705,7 +1767,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       planName: plan?.name || sub?.planName || 'Plano Personalizado',
       planPrice,
       avulsoValue,
-      savings
+      savings,
+      servicesSummaryList
     };
   }).sort((a, b) => b.totalVisits - a.totalVisits);
 
@@ -2578,24 +2641,24 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
           {reportViewMode === 'profitability' && (
             <div className="space-y-6 animate-fade-in">
               <div className="bg-white border border-slate-200/80 p-6 rounded-[2rem] shadow-sm space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
                   <div>
                     <h5 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                       <Zap size={16} className="text-amber-500" />
-                      <span>Análise de Uso vs. Custo Avulso (Economia & Rentabilidade)</span>
+                      <span>Análise de Uso vs. Tabela Avulsa (Economia & Rentabilidade Real)</span>
                     </h5>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Comparativo entre valor faturado no clube vs. tabela avulsa de serviços</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Comparativo entre o valor faturado no clube vs. soma real da tabela oficial de serviços no balcão</p>
                   </div>
-                  <span className="text-xs font-black bg-amber-50 text-amber-700 px-3 py-1 rounded-xl border border-amber-100">
+                  <span className="text-xs font-black bg-amber-50 text-amber-700 px-3 py-1 rounded-xl border border-amber-100 self-start sm:self-auto">
                     Média de Uso: {avgVisitsPerActiveSub} visitas/assinante
                   </span>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl space-y-1">
-                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Valor Equivalente em Avulso</span>
+                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Total em Tabela Avulsa (Real)</span>
                     <p className="text-xl font-black text-slate-800">R$ {totalValueIfAvulso.toFixed(2)}</p>
-                    <p className="text-[10px] text-slate-500 font-semibold">Valor se os assinantes tivessem pago a tabela normal</p>
+                    <p className="text-[10px] text-slate-500 font-semibold">Valor somando os preços reais dos serviços consumidos</p>
                   </div>
 
                   <div className="bg-emerald-50/80 border border-emerald-100 p-4 rounded-2xl space-y-1">
@@ -2607,50 +2670,125 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                   <div className="bg-indigo-50/80 border border-indigo-100 p-4 rounded-2xl space-y-1">
                     <span className="text-[9px] font-black uppercase text-indigo-700 tracking-wider">Economia Percebida pelos Clientes</span>
                     <p className="text-xl font-black text-indigo-800">R$ {clientSavings > 0 ? clientSavings.toFixed(2) : '0.00'} ({clientSavingsPercent.toFixed(0)}%)</p>
-                    <p className="text-[10px] text-indigo-600 font-semibold">Desconto médio oferecido pela recorrência</p>
+                    <p className="text-[10px] text-indigo-600 font-semibold">Desconto real proporcionado pelo clube</p>
                   </div>
                 </div>
 
-                {/* Tabela de Assinantes Hiperativos vs Margem */}
+                {/* Tabela de Assinantes com Consumos Reais */}
                 <div className="space-y-3 pt-2">
-                  <h6 className="text-xs font-black text-slate-700 uppercase tracking-wider">Perfil de Frequência dos Assinantes</h6>
-                  <div className="border border-slate-200/80 rounded-2xl overflow-hidden">
-                    <table className="w-full text-left text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h6 className="text-xs font-black text-slate-700 uppercase tracking-wider">Detalhamento Individual de Uso & Preço de Balcão</h6>
+                    <span className="text-[10px] text-slate-400 font-bold">{clientStats.length} assinante(s) com atendimentos no período</span>
+                  </div>
+                  <div className="border border-slate-200/80 rounded-2xl overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[700px]">
                       <thead>
                         <tr className="bg-slate-50 text-[9px] font-black text-slate-450 uppercase tracking-wider border-b">
-                          <th className="p-3">Assinante</th>
-                          <th className="p-3 text-center">Atendimentos no Mês</th>
-                          <th className="p-3 text-right">Valor Avulso Estimado</th>
-                          <th className="p-3 text-center">Perfil de Margem</th>
+                          <th className="p-3">Assinante & Plano</th>
+                          <th className="p-3">Serviços Utilizados no Período</th>
+                          <th className="p-3 text-right">Total Avulso Real</th>
+                          <th className="p-3 text-right">Mensalidade</th>
+                          <th className="p-3 text-right">Economia do Cliente</th>
+                          <th className="p-3 text-center">Rentabilidade Casa</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                        {Object.values(usagesByClient).slice(0, 8).map((client, cIdx) => {
-                          const count = client.usages.length;
-                          const avulsoVal = count * 50;
+                        {clientStats.map((client, cIdx) => {
+                          const isHighUser = client.avulsoValue > client.planPrice * 1.5;
+                          const isBalanced = client.avulsoValue >= client.planPrice && !isHighUser;
+
                           return (
-                            <tr key={`c-prof-${cIdx}`} className="hover:bg-slate-50/50">
-                              <td className="p-3 font-bold text-slate-800">{client.name}</td>
-                              <td className="p-3 text-center font-black">{count} atendimento(s)</td>
-                              <td className="p-3 text-right font-bold">R$ {avulsoVal.toFixed(2)}</td>
+                            <tr key={`c-prof-${client.clientId || cIdx}`} className="hover:bg-slate-50/50 transition">
+                              <td className="p-3">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-8 h-8 rounded-full bg-slate-100 border overflow-hidden flex items-center justify-center shrink-0">
+                                    {client.foto ? (
+                                      <img src={client.foto} alt={client.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                    ) : (
+                                      <Users size={14} className="text-slate-400" />
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="font-bold text-slate-800 text-xs leading-tight">{client.name}</p>
+                                    <span className="inline-block bg-slate-100 text-slate-600 text-[8px] font-black px-1.5 py-0.5 rounded mt-0.5 uppercase">
+                                      {client.planName}
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-3">
+                                <div className="space-y-1">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {client.servicesSummaryList && client.servicesSummaryList.length > 0 ? (
+                                      client.servicesSummaryList.map((srv: any, sIdx: number) => (
+                                        <span 
+                                          key={`srv-sum-${cIdx}-${sIdx}`}
+                                          className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-lg border border-slate-200/60"
+                                          title={`Preço oficial: R$ ${srv.unitPrice.toFixed(2)} cada`}
+                                        >
+                                          <span className="font-black text-slate-900">{srv.count}x</span>
+                                          <span>{srv.name}</span>
+                                          <span className="text-[9px] text-slate-400 font-semibold">(R$ {srv.unitPrice.toFixed(0)})</span>
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className="text-slate-400 text-[11px] italic font-medium">
+                                        {client.totalVisits} atendimento(s)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[9px] text-slate-400 font-bold block">
+                                    {client.totalVisits} {client.totalVisits === 1 ? 'atendimento' : 'atendimentos'} no período
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="p-3 text-right">
+                                <span className="font-black text-slate-900 text-xs block">
+                                  R$ {client.avulsoValue.toFixed(2)}
+                                </span>
+                                <span className="text-[8px] font-bold text-slate-400 uppercase">Tabela oficial</span>
+                              </td>
+                              <td className="p-3 text-right">
+                                <span className="font-bold text-slate-700 text-xs block">
+                                  R$ {client.planPrice.toFixed(2)}
+                                </span>
+                                <span className="text-[8px] font-bold text-slate-400 uppercase">Plano</span>
+                              </td>
+                              <td className="p-3 text-right">
+                                {client.savings > 0 ? (
+                                  <div>
+                                    <span className="font-black text-emerald-600 text-xs block">
+                                      + R$ {client.savings.toFixed(2)}
+                                    </span>
+                                    <span className="text-[8px] font-bold text-emerald-600 uppercase">Vantagem clube</span>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <span className="font-bold text-slate-400 text-xs block">
+                                      R$ 0,00
+                                    </span>
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase">Usou menos que o plano</span>
+                                  </div>
+                                )}
+                              </td>
                               <td className="p-3 text-center">
-                                <span className={`text-[9px] font-black px-2.5 py-0.5 rounded-full border ${
-                                  count > 4 
+                                <span className={`text-[9px] font-black px-2.5 py-1 rounded-full border whitespace-nowrap inline-block ${
+                                  isHighUser 
                                     ? 'bg-rose-50 text-rose-700 border-rose-200' 
-                                    : count >= 2 
+                                    : isBalanced 
                                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
                                     : 'bg-indigo-50 text-indigo-700 border-indigo-200'
                                 }`}>
-                                  {count > 4 ? '🔴 Uso Hiperativo' : count >= 2 ? '🟢 Equilibrado' : '🔵 Alta Margem'}
+                                  {isHighUser ? '🔴 Uso Frequente' : isBalanced ? '🟢 Equilibrado' : '🔵 Alta Margem'}
                                 </span>
                               </td>
                             </tr>
                           );
                         })}
-                        {Object.keys(usagesByClient).length === 0 && (
+                        {clientStats.length === 0 && (
                           <tr>
-                            <td colSpan={4} className="p-6 text-center text-slate-400 italic font-bold">
-                              Nenhum consumo registrado no período selecionado.
+                            <td colSpan={6} className="p-8 text-center text-slate-400 italic font-bold">
+                              Nenhum consumo de assinatura registrado no período selecionado.
                             </td>
                           </tr>
                         )}
@@ -3184,13 +3322,13 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
 
             <div className="bg-white border p-5 rounded-[2rem] shadow-sm flex flex-col justify-between">
               <div>
-                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Equivalente se Fosse Avulso</span>
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest block mb-1">Total se Fosse Avulso (Real)</span>
                 <span className="text-xl font-black text-slate-800 block">
                   R$ {totalValueIfAvulso.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
               <span className="text-[9px] font-bold text-indigo-600 block mt-2 uppercase font-black">
-                Faturamento avulso projetado
+                Soma real da tabela de serviços
               </span>
             </div>
 
@@ -3351,7 +3489,7 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
                       <th className="p-5">Plano Vigente</th>
                       <th className="p-5 text-center">Frequência no Mês</th>
                       <th className="p-5 text-center">Detalhamento</th>
-                      <th className="p-5 text-right">Custo Avulso Equivalente</th>
+                      <th className="p-5 text-right">Total Balcão (Real)</th>
                       <th className="p-5 text-right">Saldo do Cliente (Mês)</th>
                     </tr>
                   </thead>

@@ -538,7 +538,12 @@ export function AgendaProfessional({
                                     </span>
                                   </div>
                                 )}
-                                <p className={`text-[10px] font-bold uppercase leading-none mb-1 truncate ${isYellowCard ? 'text-slate-950 font-black' : 'text-white'}`}>{app.cliente_name}</p>
+                                <p 
+                                  title={app.cliente_name}
+                                  className={`text-[11px] sm:text-xs font-black uppercase leading-tight mb-1 line-clamp-2 break-words tracking-tight ${isYellowCard ? 'text-slate-950 font-black' : 'text-white'}`}
+                                >
+                                  {app.cliente_name}
+                                </p>
                                 <p className={`text-[8px] truncate font-semibold ${isYellowCard ? 'text-slate-900' : 'text-slate-100'}`}>{app.servico_name}</p>
                                 <div className="flex flex-wrap gap-1 mt-1">
                                   {app.origin === 'encaixe' && (

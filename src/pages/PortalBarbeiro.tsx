@@ -1082,10 +1082,10 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
 
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
-                      <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
-                        {nextUpcomingApp.cliente_name}
+                      <h3 className="text-base font-black text-slate-900 tracking-tight flex flex-wrap items-center gap-2">
+                        <span className="break-words">{nextUpcomingApp.cliente_name}</span>
                         {nextUpcomingApp.isSubscription && (
-                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[9px] font-black border border-emerald-200">
+                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[9px] font-black border border-emerald-200 shrink-0">
                             Assinante
                           </span>
                         )}

@@ -110,6 +110,18 @@ export const commissionService = {
     let snap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
     let results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
 
+    // Excluir vales cancelados, estornados, excluídos ou deletados
+    results = results.filter(a => {
+      if (!a) return false;
+      if ((a as any).is_deleted) return false;
+      const st = String(a.status || '').toLowerCase();
+      if (st === 'cancelado' || st === 'estornado' || st === 'excluido' || st === 'cancelled') return false;
+      const desc = String(a.description || '').toLowerCase();
+      const cat = String(a.category || '').toLowerCase();
+      if (desc.includes('estorno') || cat.includes('estorno') || (a as any).is_vale_refund) return false;
+      return true;
+    });
+
     // Filtro 100% por ID quando informado
     if (filters.profissional_id) {
       const targetId = filters.profissional_id;
@@ -325,6 +337,46 @@ export const commissionService = {
             currentCash
           };
         }
+
+        // Fallback: check if advanceId is an accounts_payable id
+        const payRef = doc(db, 'accounts_payable', advanceId);
+        const paySnap = await getDoc(payRef);
+        if (paySnap.exists()) {
+          const pay = paySnap.data();
+          const pDate = pay.paidAt ? pay.paidAt.split('T')[0] : (pay.dueDate || '');
+          let originalCashSession: any = null;
+          let isOriginalCashClosed = false;
+          if (pDate) {
+            const cDate = await cashService.getCashByDate(pDate);
+            if (cDate) {
+              originalCashSession = cDate;
+              isOriginalCashClosed = cDate.status === 'closed';
+            }
+          }
+          const currentCash = await cashService.getCurrentCash();
+          const hasOpenCashToday = !!currentCash && (currentCash.status === 'open' || currentCash.status === 'reopened');
+          return {
+            exists: true,
+            advance: {
+              id: paySnap.id,
+              amount: pay.amount,
+              date: pDate,
+              description: pay.description,
+              profissional_name: pay.profissional_name || pay.supplier,
+              profissional_id: pay.profissional_id,
+              status: (pay.status === 'paid' || pay.status === 'deduzido' || pay.status === 'pago') ? 'pago' : 'pendente',
+              payable_id: paySnap.id,
+              transaction_id: pay.transactionId
+            } as ProfessionalAdvance,
+            isAlreadyPaid: false,
+            hasMovement: false,
+            isOriginalCashClosed,
+            originalCashDate: pDate,
+            originalCashSession,
+            hasOpenCashToday,
+            currentCash
+          };
+        }
         return { exists: false, isOriginalCashClosed: false, hasOpenCashToday: false };
       }
 
@@ -515,6 +567,48 @@ export const commissionService = {
           }
           return;
         }
+
+        // Fallback: If it's an accounts_payable, cascade-delete it
+        const payRef = doc(db, 'accounts_payable', advanceId);
+        const paySnap = await getDoc(payRef);
+        if (paySnap.exists()) {
+          const payData = paySnap.data();
+          await deleteDoc(payRef);
+
+          if (payData.transactionId) {
+            const txRef = doc(db, 'financial_transactions', payData.transactionId);
+            const txSnap = await getDoc(txRef);
+            if (txSnap.exists()) {
+              await deleteDoc(txRef);
+            }
+          }
+
+          const refIds = [advanceId, payData.transactionId].filter(Boolean);
+          for (const refId of refIds) {
+            const qMove = query(collection(db, 'cash_movements'), where('referencia_id', '==', refId));
+            const moveSnap = await getDocs(qMove);
+            for (const d of moveSnap.docs) {
+              try {
+                await cashService.removeMovement(d.id);
+              } catch {
+                await updateDoc(d.ref, {
+                  is_deleted: true,
+                  status: 'cancelado',
+                  amount: 0,
+                  cancel_reason: 'Vale excluído no módulo de comissões'
+                });
+              }
+            }
+          }
+
+          const qAdv = query(collection(db, ADVANCES_COLLECTION), where('payable_id', '==', advanceId));
+          const advsSnap = await getDocs(qAdv);
+          for (const d of advsSnap.docs) {
+            await deleteDoc(d.ref);
+          }
+          return;
+        }
+
         return;
       }
 
@@ -532,19 +626,33 @@ export const commissionService = {
           if (txSnap.exists()) {
             await deleteDoc(txRef);
           }
-        } else {
-          // Fallback search
+        }
+        
+        // Comprehensive search by referencia_id
+        const qRef = query(collection(db, 'financial_transactions'), where('referencia_id', '==', advance.id));
+        const refSnap = await getDocs(qRef);
+        for (const d of refSnap.docs) {
+          await deleteDoc(d.ref);
+        }
+
+        // Fallback search by amount, date and professional
+        const advDateStr = (advance.date || '').substring(0, 10);
+        const advAmt = Number(advance.amount) || 0;
+        if (advAmt > 0 && advDateStr) {
           const q = query(
             collection(db, 'financial_transactions'),
-            where('amount', '==', advance.amount)
+            where('amount', '==', advAmt)
           );
           const snap = await getDocs(q);
           for (const d of snap.docs) {
             const tData = d.data();
-            if (
-              (tData.profissional_id === advance.profissional_id || (tData.description && tData.description.includes(advance.profissional_name))) &&
-              (tData.date === advance.date)
-            ) {
+            const tDate = (tData.date || '').substring(0, 10);
+            const isMatchingDate = tDate === advDateStr;
+            const isExpense = tData.type === 'expense' || !tData.type;
+            const isMatchingPro = (tData.profissional_id && tData.profissional_id === advance.profissional_id) ||
+              (tData.description && tData.description.toLowerCase().includes((advance.profissional_name || '').toLowerCase())) ||
+              (tData.category && tData.category.toLowerCase().includes('vale'));
+            if (isMatchingDate && isExpense && isMatchingPro) {
               await deleteDoc(d.ref);
             }
           }
@@ -561,7 +669,8 @@ export const commissionService = {
           if (paySnap.exists()) {
             await deleteDoc(payRef);
           }
-        } else if (advance.transaction_id) {
+        }
+        if (advance.transaction_id) {
           const qPay = query(
             collection(db, 'accounts_payable'),
             where('transactionId', '==', advance.transaction_id)
@@ -569,6 +678,28 @@ export const commissionService = {
           const snap = await getDocs(qPay);
           for (const d of snap.docs) {
             await deleteDoc(d.ref);
+          }
+        }
+
+        // Fallback search in accounts_payable
+        const advDateStr = (advance.date || '').substring(0, 10);
+        const advAmt = Number(advance.amount) || 0;
+        if (advAmt > 0 && advDateStr) {
+          const qPayFallback = query(
+            collection(db, 'accounts_payable'),
+            where('amount', '==', advAmt)
+          );
+          const snapPay = await getDocs(qPayFallback);
+          for (const d of snapPay.docs) {
+            const pData = d.data();
+            const pDate = (pData.paidAt ? pData.paidAt.split('T')[0] : (pData.dueDate || '')).substring(0, 10);
+            const isMatchingDate = pDate === advDateStr;
+            const isMatchingPro = (pData.profissional_id && pData.profissional_id === advance.profissional_id) ||
+              (pData.supplier && pData.supplier.toLowerCase().includes((advance.profissional_name || '').toLowerCase())) ||
+              (pData.description && pData.description.toLowerCase().includes((advance.profissional_name || '').toLowerCase()));
+            if (isMatchingDate && isMatchingPro) {
+              await deleteDoc(d.ref);
+            }
           }
         }
       } catch (e) {
@@ -664,7 +795,9 @@ export const commissionService = {
                   profissional_name: advance.profissional_name,
                   responsavel_id: options?.authorId,
                   responsavel_name: options?.authorName || 'Admin',
-                  tenantId: activeTenant
+                  tenantId: activeTenant,
+                  is_vale_refund: true,
+                  is_neutral_transfer: true
                 });
 
                 // 3. Mark old movement as cancelled and note where it was refunded
@@ -720,9 +853,13 @@ export const commissionService = {
 
       for (const docSnap of advSnap.docs) {
         const adv = { id: docSnap.id, ...docSnap.data() } as ProfessionalAdvance;
-        const name = (adv.profissional_name || '').toLowerCase();
-        const desc = (adv.description || '').toLowerCase();
         
+        // Remove documentos cancelados, estornados ou excluídos
+        if (adv.status === 'cancelado' || adv.status === 'estornado' || adv.status === 'excluido' || (adv as any).is_deleted) {
+          await deleteDoc(docSnap.ref);
+          continue;
+        }
+
         // 1. Check if transaction_id was set but no longer exists in financial_transactions
         let isOrphan = false;
         if (adv.transaction_id) {

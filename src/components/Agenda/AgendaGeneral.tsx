@@ -659,9 +659,9 @@ export function AgendaGeneral({
                   const bUid = barber.uid || barber.id || `barber-b-${barberIdx}`;
                   const currentApp = dayApps.find(app => app.profissional_id === bUid && app.status === 'em_atendimento');
                   const totalBarberCuts = dayApps.filter(app => app.profissional_id === bUid && app.status !== 'cancelado').length;
-                  const columnWidthClass = displayedBarbers.length <= 2
+                  const columnWidthClass = displayedBarbers.length === 1
                     ? 'min-w-0 flex-1'
-                    : 'min-w-[180px] sm:min-w-[220px] flex-1';
+                    : 'min-w-[170px] sm:min-w-[220px] flex-1';
 
                   return (
                     <div key={`barber-hdr-${barber.uid || barber.id || barber.nome || barberIdx}`} className={`${columnWidthClass} border-r border-border p-3 flex items-center justify-between gap-3 bg-slate-50/95`}>
@@ -735,9 +735,9 @@ export function AgendaGeneral({
                           const slotEnd = addMinutes(slotStart, 30);
                           return (isEqual(bStart, slotStart) || isAfter(bStart, slotStart)) && isBefore(bStart, slotEnd);
                         })();
-                        const columnWidthClass = displayedBarbers.length <= 2
+                        const columnWidthClass = displayedBarbers.length === 1
                           ? 'min-w-0 flex-1'
-                          : 'min-w-[180px] sm:min-w-[220px] flex-1';
+                          : 'min-w-[170px] sm:min-w-[220px] flex-1';
 
                         const barberKey = barber.uid || barber.id || '';
                         const layoutMap = barberLayoutsMap.get(barberKey);
@@ -900,10 +900,15 @@ export function AgendaGeneral({
                                       </div>
                                     )}
 
-                                    <div className="flex items-center justify-between gap-1 mb-1">
-                                      <p className={`text-xs font-black uppercase leading-tight truncate tracking-tight ${isYellowCard ? 'text-slate-950 font-black' : 'text-white'}`}>{app.cliente_name}</p>
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-0.5 sm:gap-1 mb-1">
+                                      <p 
+                                        title={app.cliente_name}
+                                        className={`text-[11px] sm:text-xs font-black uppercase leading-tight tracking-tight line-clamp-2 break-words ${isYellowCard ? 'text-slate-950 font-black' : 'text-white'}`}
+                                      >
+                                        {app.cliente_name}
+                                      </p>
                                       {app.status === 'em_atendimento' && (
-                                        <span className="px-1.5 py-0.5 bg-slate-950 text-amber-400 rounded font-black text-[8px] uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0 border border-amber-400/40">
+                                        <span className="self-start sm:self-auto px-1.5 py-0.5 bg-slate-950 text-amber-400 rounded font-black text-[8px] uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0 border border-amber-400/40 mt-0.5 sm:mt-0">
                                           <Scissors size={10} /> {appPos.totalCols === 1 && 'ATENDENDO'}
                                         </span>
                                       )}

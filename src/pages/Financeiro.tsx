@@ -4131,17 +4131,19 @@ function ProfessionalAccountDetailsModal({
     setIsSavingAdvance(true);
     try {
       const amount = parseFloat(advanceAmount);
-      await addDoc(collection(db, 'professional_advances'), {
+      await commissionService.registerCompleteVale({
         profissional_id,
         profissional_name: pro?.nome || 'Profissional',
         amount,
-        description: advanceDesc || 'Vale/Adiantamento Avulso',
         date: format(new Date(), 'yyyy-MM-dd'),
-        createdAt: serverTimestamp(),
-        authorName: user?.displayName || 'Admin'
+        description: advanceDesc || 'Vale/Adiantamento Avulso',
+        category: 'Vale / Adiantamento',
+        source: 'financeiro',
+        paymentMethod: 'dinheiro',
+        userId: user?.uid || '',
+        userName: user?.displayName || 'Admin'
       });
 
-      // Update local wallet if desired
       toast.success("Vale registrado com sucesso para o Profissional!");
       setAdvanceAmount('');
       setAdvanceDesc('');

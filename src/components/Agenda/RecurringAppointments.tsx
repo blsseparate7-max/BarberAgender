@@ -16,13 +16,18 @@ import {
   AlertTriangle,
   Info,
   CheckCircle2,
-  Filter
+  Filter,
+  Crown,
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RecurringAppointment, UserProfile, Service, Appointment } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
 import { userService } from '../../services/userService';
 import { serviceService } from '../../services/serviceService';
+import { subscriptionService } from '../../services/subscriptionService';
+import { formatAllowedDays, isDateAllowedForPlan } from '../../utils/subscriptionDays';
 import { format, parse, addMinutes, getDay, addDays, addMonths, isAfter, isBefore, isEqual } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -40,6 +45,8 @@ export function RecurringAppointments() {
   const [clients, setClients] = useState<UserProfile[]>([]);
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [syncing, setSyncing] = useState(false);
 
   // Form & modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -95,18 +102,58 @@ export function RecurringAppointments() {
 
   const loadDependencies = async () => {
     try {
-      const [allClients, allBarbers, allServices] = await Promise.all([
+      const [allClients, allBarbers, allServices, allSubs] = await Promise.all([
         userService.getAllClients(),
         userService.getAllBarbers(),
-        serviceService.getServices(true)
+        serviceService.getServices(true),
+        subscriptionService.getSubscriptions().catch(() => [])
       ]);
       setClients(allClients);
       setBarbers(allBarbers);
       setServices(allServices);
+      setSubscriptions(allSubs || []);
     } catch (error) {
       console.error("Erro ao carregar dados auxiliares:", error);
     }
   };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await appointmentService.syncAllRecurringAppointments();
+      toast.success("Agendamentos recorrentes sincronizados com sucesso!");
+      loadRecurring();
+    } catch (err: any) {
+      console.error("Erro ao sincronizar:", err);
+      toast.error("Erro ao sincronizar agendamentos recorrentes.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Identify active subscription for selected client
+  const selectedClientSubscription = useMemo(() => {
+    if (!selectedClientId) return null;
+    return subscriptions.find(s => 
+      (s.cliente_id === selectedClientId || (s as any).clienteId === selectedClientId) && 
+      (s.status === 'active' || s.status === 'ativo')
+    ) || null;
+  }, [selectedClientId, subscriptions]);
+
+  // Validate allowed days for the subscriber
+  const subDayValidation = useMemo(() => {
+    if (!selectedClientSubscription) return null;
+    const isAllowed = isDateAllowedForPlan(selectedClientSubscription.allowedDaysOfWeek, startDate);
+    const formattedDays = formatAllowedDays(
+      selectedClientSubscription.allowedDaysOfWeek, 
+      selectedClientSubscription.customRestrictionNote
+    );
+    return {
+      isAllowed,
+      formattedDays,
+      planName: selectedClientSubscription.planName || selectedClientSubscription.plano_nome || 'Clube de Assinatura'
+    };
+  }, [selectedClientSubscription, startDate]);
 
   // Automatically update endDate when startDate or durationPreset changes
   useEffect(() => {
@@ -280,6 +327,9 @@ export function RecurringAppointments() {
       const endParse = addMinutes(startParse, duration);
       const endTime = format(endParse, 'HH:mm');
 
+      const isSub = !!selectedClientSubscription && !!subDayValidation?.isAllowed;
+      const finalPrice = isSub ? 0 : (service.preco || 0);
+
       const appointmentTemplate: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'> = {
         cliente_id: selectedClientId || 'sem_cadastro',
         cliente_name: finalClientName,
@@ -292,9 +342,10 @@ export function RecurringAppointments() {
         startTime,
         endTime,
         duration,
-        price: service.preco || 0,
+        price: finalPrice,
         status: 'agendado',
         origin: 'recorrente',
+        isSubscription: isSub,
         notes: notes || undefined,
       };
 
@@ -309,6 +360,7 @@ export function RecurringAppointments() {
         startDate,
         appointmentTemplate,
         excludedDates: [],
+        allowConflict: !!allowConflict,
       };
       if (endDate) recPayload.endDate = endDate;
       if (pattern !== 'monthly') recPayload.dayOfWeek = finalDayOfWeek;
@@ -396,16 +448,28 @@ export function RecurringAppointments() {
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            resetForm();
-            setIsModalOpen(true);
-          }}
-          className="px-6 py-3.5 bg-primary hover:bg-slate-800 text-white font-bold rounded-2xl text-xs transition-all shadow-lg shadow-primary/10 flex items-center gap-2 active:scale-95 shrink-0"
-        >
-          <Plus size={18} />
-          <span>Novo Horário Recorrente</span>
-        </button>
+        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="px-4 py-3.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-2xl text-xs transition-all shadow-sm flex items-center gap-2 active:scale-95 shrink-0 disabled:opacity-50"
+            title="Sincronizar agendamentos pendentes das séries"
+          >
+            <RefreshCw size={16} className={syncing ? 'animate-spin text-primary' : 'text-slate-500'} />
+            <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : 'Sincronizar Séries'}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              resetForm();
+              setIsModalOpen(true);
+            }}
+            className="flex-1 sm:flex-initial px-6 py-3.5 bg-primary hover:bg-slate-800 text-white font-bold rounded-2xl text-xs transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 active:scale-95 shrink-0"
+          >
+            <Plus size={18} />
+            <span>Novo Horário Recorrente</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -485,13 +549,26 @@ export function RecurringAppointments() {
                       </div>
                       <div>
                         <h4 className="font-bold text-primary text-sm tracking-tight">{template.cliente_name}</h4>
-                        <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border ${
-                          isInactive 
-                            ? 'bg-amber-50 text-amber-700 border-amber-200' 
-                            : 'bg-slate-100 text-slate-500 border-slate-200'
-                        }`}>
-                          {isInactive ? 'Inativa' : 'Recorrente'}
-                        </span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border ${
+                            isInactive 
+                              ? 'bg-amber-50 text-amber-700 border-amber-200' 
+                              : 'bg-slate-100 text-slate-500 border-slate-200'
+                          }`}>
+                            {isInactive ? 'Inativa' : 'Recorrente'}
+                          </span>
+                          {rec.allowConflict && (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
+                              Encaixe Liberado
+                            </span>
+                          )}
+                          {template.isSubscription && (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                              <Crown size={10} className="text-emerald-600" />
+                              Assinante
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <button
@@ -780,6 +857,40 @@ export function RecurringAppointments() {
                   )}
                 </div>
 
+                {/* Subscriber Detection & Plan Coverage Banner */}
+                {selectedClientId && selectedClientSubscription && subDayValidation && (
+                  <div className={`p-4 rounded-2xl border text-xs flex items-start gap-3 transition-all ${
+                    subDayValidation.isAllowed 
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-950' 
+                      : 'bg-amber-50 border-amber-200 text-amber-950'
+                  }`}>
+                    {subDayValidation.isAllowed ? (
+                      <Crown size={20} className="text-emerald-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5" />
+                    )}
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black uppercase tracking-wider text-[10px] bg-white/90 px-2 py-0.5 rounded-full border border-slate-200 text-slate-800 shadow-xs">
+                          {subDayValidation.planName}
+                        </span>
+                        <span className="font-extrabold text-xs">
+                          {subDayValidation.isAllowed ? 'Coberto pela Assinatura (R$ 0,00)' : 'Data fora dos dias permitidos pelo Plano'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-slate-700 font-medium">
+                        {subDayValidation.isAllowed ? (
+                          <span>Este cliente é assinante ativo com cobertura neste dia da semana. Os agendamentos recorrentes serão gerados como benefício (R$ 0,00) vinculados ao clube.</span>
+                        ) : (
+                          <span>
+                            O plano deste assinante é restrito a: <strong>{subDayValidation.formattedDays}</strong>. Na data escolhida, o serviço será gerado com o valor de tabela normal da comanda.
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* 2. Service & Professional Selection Row */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -959,16 +1070,21 @@ export function RecurringAppointments() {
                       </div>
                     </div>
 
-                    <label className="flex items-center gap-2 pt-1 border-t border-red-200 cursor-pointer">
+                    <label className="flex items-start gap-2.5 pt-2.5 border-t border-red-200 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={allowConflict}
                         onChange={(e) => setAllowConflict(e.target.checked)}
-                        className="rounded text-red-600 focus:ring-red-500"
+                        className="mt-0.5 rounded text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
                       />
-                      <span className="text-xs font-bold text-red-900">
-                        Permitir agendar com conflito (Forçar Encaixe nas datas ocupadas)
-                      </span>
+                      <div>
+                        <span className="text-xs font-bold text-red-950 block">
+                          Permitir agendar com conflito (Forçar Encaixe nas datas ocupadas)
+                        </span>
+                        <span className="text-[11px] text-red-800 block mt-0.5 leading-snug">
+                          Caso o profissional já tenha finalizado o horário anterior ou vá atender simultaneamente, marque esta opção. As datas em conflito serão geradas na agenda marcadas como <strong>Encaixe</strong>.
+                        </span>
+                      </div>
                     </label>
                   </div>
                 ) : calculatedTargetDates.length > 0 && selectedBarberId ? (

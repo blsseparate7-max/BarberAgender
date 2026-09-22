@@ -31,6 +31,8 @@ import { getActiveTenantId, tenantService } from './tenantService';
 import { comandaService } from './comandaService';
 import { notificationService } from './notificationService';
 import { pushNotificationService } from './pushNotificationService';
+import { subscriptionService } from './subscriptionService';
+import { isDateAllowedForPlan } from '../utils/subscriptionDays';
 
 const COLLECTION = 'appointments';
 const RECURRING_COLLECTION = 'recurring_appointments';
@@ -1281,11 +1283,21 @@ export const appointmentService = {
     const seriesSnap = await getDocs(qSeries);
     const existingDates = new Set(seriesSnap.docs.map(doc => doc.data().date));
 
+    // Check if client has active subscription
+    let clientActiveSub: any = null;
+    const template = recurring.appointmentTemplate;
+    if (template.cliente_id && template.cliente_id !== 'sem_cadastro' && template.cliente_id !== 'avulso') {
+      try {
+        const subs = await subscriptionService.getSubscriptions(template.cliente_id);
+        clientActiveSub = subs.find(s => (s.status as string) === 'active' || (s.status as string) === 'ativo') || null;
+      } catch (err) {
+        console.warn("Could not check subscription for recurring client:", err);
+      }
+    }
+
     // For each target date, check if appointment already exists or create it
     for (const date of targetDates) {
       if (!existingDates.has(date)) {
-        const template = recurring.appointmentTemplate;
-        
         // Check availability
         const avail = await this.checkAvailability(
           template.profissional_id,
@@ -1294,11 +1306,31 @@ export const appointmentService = {
           template.endTime
         );
 
-        if (avail.available) {
+        // If slot is available OR recurring allows conflict (forced encaixe)
+        if (avail.available || recurring.allowConflict) {
+          const isEncaixe = !avail.available && !!recurring.allowConflict;
+
+          // Determine subscription status for this date
+          let isSubForDate = !!template.isSubscription;
+          let priceForDate = template.price ?? 0;
+
+          if (clientActiveSub) {
+            const isDayAllowed = isDateAllowedForPlan(clientActiveSub.allowedDaysOfWeek, date);
+            if (isDayAllowed) {
+              isSubForDate = true;
+              priceForDate = 0;
+            } else {
+              isSubForDate = false;
+              priceForDate = template.price > 0 ? template.price : 0;
+            }
+          }
+
           const payload = removeUndefinedFields({
             ...template,
             date,
-            origin: 'recorrente',
+            price: priceForDate,
+            isSubscription: isSubForDate,
+            origin: isEncaixe ? 'encaixe' : (template.origin || 'recorrente'),
             recurringAppointmentId: recurring.id,
             tenantId: getActiveTenantId(),
             createdAt: serverTimestamp(),

@@ -174,12 +174,24 @@ export function FechamentoMes() {
         });
     };
 
-    const [transactions, comandas, commissions, debtsSnap] = await Promise.all([
+    const isDocActive = (doc: any) => {
+      if (!doc) return false;
+      if (doc.is_deleted || doc.isDeleted) return false;
+      const st = String(doc.status || '').toLowerCase();
+      if (st === 'cancelado' || st === 'estornado' || st === 'excluido' || st === 'cancelled') return false;
+      return true;
+    };
+
+    const [transactionsRaw, comandasRaw, commissionsRaw, debtsSnap] = await Promise.all([
       safeDateQuery('financial_transactions'),
       safeDateQuery('comandas'),
       safeDateQuery('commissions'),
       getDocs(query(collection(db, 'client_debts'), where('tenantId', '==', currentTenantId)))
     ]);
+
+    const transactions = transactionsRaw.filter(isDocActive);
+    const comandas = comandasRaw.filter(isDocActive);
+    const commissions = commissionsRaw.filter(isDocActive);
 
     const debts = debtsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClientDebt));
     const stdMetrics = calculateStandardFinancialMetrics(transactions as FinancialTransaction[], debts);

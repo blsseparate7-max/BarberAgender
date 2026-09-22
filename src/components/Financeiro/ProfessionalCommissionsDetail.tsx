@@ -219,9 +219,20 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
     });
   }, [allCommissions, nonClosedComandaIds, localDateRange.start, localDateRange.end]);
 
+  const isAdvanceActive = (a: any) => {
+    if (!a) return false;
+    if (a.is_deleted) return false;
+    const st = String(a.status || '').toLowerCase();
+    if (st === 'cancelado' || st === 'estornado' || st === 'excluido' || st === 'cancelled') return false;
+    const desc = String(a.description || '').toLowerCase();
+    const cat = String(a.category || '').toLowerCase();
+    if (desc.includes('estorno') || cat.includes('estorno') || a.is_vale_refund) return false;
+    return true;
+  };
+
   const advances = React.useMemo(() => {
     return allAdvances.filter(a => {
-      if (a.status === 'cancelado') return false;
+      if (!isAdvanceActive(a)) return false;
       const d = extractDateOnly(a);
       return d >= localDateRange.start && d <= localDateRange.end;
     });
@@ -232,11 +243,11 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
   }, [allCommissions]);
 
   const allTimePendingAdvances = React.useMemo(() => {
-    return allAdvances.filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'));
+    return allAdvances.filter(a => isAdvanceActive(a) && (a.status === 'pendente' || (!a.status && !a.repasse_id)));
   }, [allAdvances]);
 
   const periodPendingAdvances = React.useMemo(() => {
-    return advances.filter(a => a.status === 'pendente' || (a.status !== 'pago' && a.status !== 'deduzido'));
+    return advances.filter(a => isAdvanceActive(a) && (a.status === 'pendente' || (!a.status && !a.repasse_id)));
   }, [advances]);
 
   const periodPendingAdvancesTotal = React.useMemo(() => {

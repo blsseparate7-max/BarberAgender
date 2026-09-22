@@ -83,13 +83,34 @@ export function calculateStandardFinancialMetrics(
   let totalDisponivelImediato = 0;
 
   transactions.forEach(t => {
+    if (!t) return;
+    if (t.is_deleted || (t as any).isDeleted) return;
+    const statusStr = String(t.status || '').toLowerCase();
+    if (statusStr === 'cancelado' || statusStr === 'estornado' || statusStr === 'cancelled') return;
+
     const amount = Number(t.amount) || 0;
     const netAmount = Number(t.net_amount !== undefined && t.net_amount !== null ? t.net_amount : amount);
-    const statusStr = String(t.status || '').toLowerCase();
     const typeStr = String(t.type || '').toLowerCase();
     const isPaid = statusStr === 'pago' || statusStr === 'liquidado' || statusStr === 'concluido' || statusStr === 'concluído';
 
+    const cat = (t.category || '').toLowerCase();
+    const desc = (t.description || '').toLowerCase();
+    const isValeRefund = (t as any).is_vale_refund || (t as any).is_neutral_transfer ||
+      cat.includes('estorno de vale') || desc.includes('estorno de vale') ||
+      cat === 'estorno de vale';
+
     if (typeStr === 'income') {
+      if (isValeRefund) {
+        // Estorno de vale devolvido no caixa é ajuste de liquidez física, não faturamento operacional
+        if (isPaid) {
+          let pmKey = (t.paymentMethod || 'outros').toLowerCase().trim();
+          if (pmKey.includes('dinheiro') || pmKey.includes('pix')) {
+            totalDisponivelImediato += netAmount;
+          }
+        }
+        return;
+      }
+
       if (isPaid) {
         totalEntradasBruto += amount;
         totalEntradasLiquido += netAmount;

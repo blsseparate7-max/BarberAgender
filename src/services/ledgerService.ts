@@ -267,7 +267,16 @@ export function calculateProfessionalLedger(
   // E. Vales e Adiantamentos Pendentes no Período Selecionado com deduplicação
   const proAdvancesAll = (allAdvances || [])
     .filter(isMatchingBarber)
-    .filter(a => a.status !== 'cancelado' && a.status !== 'excluido');
+    .filter(a => {
+      if (!a) return false;
+      if (a.is_deleted) return false;
+      const st = String(a.status || '').toLowerCase();
+      if (st === 'cancelado' || st === 'excluido' || st === 'estornado' || st === 'cancelled') return false;
+      const desc = String(a.description || '').toLowerCase();
+      const cat = String(a.category || '').toLowerCase();
+      if (desc.includes('estorno') || cat.includes('estorno') || a.is_vale_refund) return false;
+      return true;
+    });
 
   // Deduplicação de vales por ID único ou assinatura (data + valor + barbeiro) para evitar duplicações de sincronização
   const seenAdvanceIds = new Set<string>();

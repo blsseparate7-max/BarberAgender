@@ -35,8 +35,32 @@ import {
   Clock,
   CreditCard,
   Star,
-  ThumbsUp
+  ThumbsUp,
+  Eye,
+  EyeOff,
+  X,
+  ChevronDown,
+  ChevronUp,
+  Percent,
+  Layers,
+  Building2,
+  Receipt
 } from 'lucide-react';
+import { 
+  ResponsiveContainer, 
+  PieChart as RePieChart, 
+  Pie, 
+  Cell, 
+  Tooltip as ReTooltip, 
+  BarChart as ReBarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  AreaChart, 
+  Area, 
+  Legend 
+} from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfMonth, endOfMonth, parseISO, startOfDay, endOfDay, subDays, isWithinInterval } from 'date-fns';
 import { reportService, ReportFilter } from '../services/reportService';
@@ -1737,44 +1761,65 @@ function ReportProfessionals({ data, filters }: { data: any, filters: ReportFilt
 }
 
 // ==========================================
-// 5. REPORT FINANCEIRO (MÉTODOS DE PAGAMENTO E FLUXO)
+// 5. REPORT FINANCEIRO (MÉTODOS DE PAGAMENTO, DRE & DRILLDOWN ANALÍTICO)
 // ==========================================
+const METHOD_COLORS = ['#10b981', '#6366f1', '#3b82f6', '#f59e0b', '#ec4899', '#64748b'];
+const CATEGORY_PIE_COLORS = ['#ef4444', '#f97316', '#8b5cf6', '#ec4899', '#06b6d4', '#3b82f6', '#10b981', '#64748b'];
+
 function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter }) {
-  const [payableSearch, setPayableSearch] = useState('');
-  const [payableFilter, setPayableFilter] = useState<'all' | 'paid' | 'pending' | 'overdue'>('all');
+  const [drilldown, setDrilldown] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle: string;
+    filterType: 'category' | 'method' | 'all_income' | 'all_expense' | 'comissao' | 'sangria';
+    filterValue: string;
+  }>({
+    isOpen: false,
+    title: '',
+    subtitle: '',
+    filterType: 'category',
+    filterValue: ''
+  });
+
+  const [drilldownSearch, setDrilldownSearch] = useState('');
 
   if (!data || !data.stats || !data.transactions) return null;
   const { stats, transactions, byMethod } = data;
-  const payables = data.payables || [];
-  const payablesByCategory = data.payablesByCategory || {};
-  const payablesBySupplier = data.payablesBySupplier || {};
 
-  // Calculando comissão e faturamento por métodos de pagamento para Ranking
+  const translationTable: Record<string, string> = {
+    pix: 'Pix Instantâneo',
+    credito: 'Cartão de Crédito',
+    debito: 'Cartão de Débito',
+    dinheiro: 'Dinheiro Físico',
+    saldo_conta: 'Saldo em Conta Cliente',
+    outros: 'Outros Métodos'
+  };
+
+  // 1. Calculations for Payment Methods & Recharts Pie
   const methodList = Object.entries(byMethod || {})
     .map(([method, amount]: [string, any]) => ({
       method,
-      amount
+      name: translationTable[method.toLowerCase()] || method,
+      amount: Number(amount || 0)
     }))
     .sort((a, b) => b.amount - a.amount);
 
   const totalBilling = methodList.reduce((acc, m) => acc + m.amount, 0) || 1;
 
-  const translationTable: Record<string, string> = {
-    pix: 'Pix instantâneo',
-    credito: 'Cartão de Crédito',
-    debito: 'Cartão de Débito',
-    dinheiro: 'Dinheiro físico',
-    saldo_conta: 'Saldo em Conta Clientes',
-    outros: 'Outros Métodos'
-  };
+  const methodPieData = methodList.map(m => ({
+    name: m.name,
+    methodKey: m.method,
+    value: m.amount,
+    percentage: ((m.amount / totalBilling) * 100)
+  }));
 
-  // Grouping by categories for Entradas and Saídas
+  // 2. Calculations for Income & Expense Categories
   const incomeCategoryList = useMemo(() => {
     const groups: Record<string, number> = {};
     transactions
       .filter((t: any) => t.type === 'income' && t.status === 'pago')
       .forEach((t: any) => {
-        const cat = t.category || 'Outros';
+        const cat = t.category || 'Geral';
         groups[cat] = (groups[cat] || 0) + (t.amount || 0);
       });
     return Object.entries(groups)
@@ -1787,7 +1832,7 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
     transactions
       .filter((t: any) => t.type === 'expense' && t.status === 'pago')
       .forEach((t: any) => {
-        const cat = t.category || 'Outros';
+        const cat = t.category || 'Geral';
         groups[cat] = (groups[cat] || 0) + (t.amount || 0);
       });
     return Object.entries(groups)
@@ -1795,459 +1840,712 @@ function ReportFinanceiro({ data, filters }: { data: any, filters: ReportFilter 
       .sort((a, b) => b.amount - a.amount);
   }, [transactions]);
 
+  const expensePieData = expenseCategoryList.map(c => ({
+    name: c.name,
+    value: c.amount,
+    percentage: stats.expense > 0 ? (c.amount / stats.expense) * 100 : 0
+  }));
+
+  // 3. Daily Timeline Flow for Recharts AreaChart
+  const dailyFlowData = useMemo(() => {
+    const map = new Map<string, { dateLabel: string; rawDate: string; income: number; expense: number }>();
+
+    transactions.forEach((t: any) => {
+      if (t.status === 'pago' && t.date) {
+        const rawDate = t.date.substring(0, 10);
+        let dateLabel = rawDate;
+        try {
+          dateLabel = format(parseISO(rawDate), 'dd/MM');
+        } catch (e) {
+          dateLabel = rawDate;
+        }
+
+        if (!map.has(rawDate)) {
+          map.set(rawDate, { dateLabel, rawDate, income: 0, expense: 0 });
+        }
+
+        const entry = map.get(rawDate)!;
+        if (t.type === 'income') {
+          entry.income += t.amount || 0;
+        } else {
+          entry.expense += t.amount || 0;
+        }
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
+  }, [transactions]);
+
+  // 4. DRE Gerencial Calculations (Demonstração do Resultado do Exercício - Formato Barbearia)
+  const dreCalculations = useMemo(() => {
+    let faturamentoBruto = 0;
+    let comissoesEquipe = 0;
+    let custosInsumosProdutos = 0;
+    let despesasFixasOperacionais = 0;
+    let sangriasVales = 0;
+
+    transactions.forEach((t: any) => {
+      if (t.status === 'pago') {
+        const val = t.amount || 0;
+        const desc = (t.description || '').toLowerCase();
+        const cat = (t.category || '').toLowerCase();
+
+        if (t.type === 'income') {
+          faturamentoBruto += val;
+        } else if (t.type === 'expense') {
+          if (desc.includes('comissã') || desc.includes('comissao') || cat.includes('comissã') || cat.includes('comissao')) {
+            comissoesEquipe += val;
+          } else if (desc.includes('insumo') || desc.includes('produto') || cat.includes('insumo') || cat.includes('produto') || cat.includes('fornecedor')) {
+            custosInsumosProdutos += val;
+          } else if (desc.includes('sangria') || desc.includes('vale') || cat.includes('sangria') || cat.includes('vale')) {
+            sangriasVales += val;
+          } else {
+            despesasFixasOperacionais += val;
+          }
+        }
+      }
+    });
+
+    // Estimativa de Taxas de Cartão/MDR (~2.5% sobre faturamento de cartões)
+    const cardBilling = methodList
+      .filter(m => m.method.toLowerCase().includes('credito') || m.method.toLowerCase().includes('debito'))
+      .reduce((sum, m) => sum + m.amount, 0);
+    const taxasMDR = Math.round(cardBilling * 0.025);
+
+    const receitaLiquida = Math.max(0, faturamentoBruto - taxasMDR);
+    const custosVariaveisTotais = comissoesEquipe + custosInsumosProdutos;
+    const margemContribucionBruta = receitaLiquida - custosVariaveisTotais;
+    const margemContribucionPct = faturamentoBruto > 0 ? (margemContribucionBruta / faturamentoBruto) * 100 : 0;
+    
+    const lucroOperacionalLiquido = margemContribucionBruta - despesasFixasOperacionais - sangriasVales;
+    const margemLiquidaPct = faturamentoBruto > 0 ? (lucroOperacionalLiquido / faturamentoBruto) * 100 : 0;
+
+    return {
+      faturamentoBruto,
+      taxasMDR,
+      receitaLiquida,
+      comissoesEquipe,
+      custosInsumosProdutos,
+      custosVariaveisTotais,
+      margemContribucionBruta,
+      margemContribucionPct,
+      despesasFixasOperacionais,
+      sangriasVales,
+      lucroOperacionalLiquido,
+      margemLiquidaPct
+    };
+  }, [transactions, methodList]);
+
+  // Filtered transactions for the Drilldown Modal
+  const drilldownTransactions = useMemo(() => {
+    if (!drilldown.isOpen) return [];
+
+    let filtered = transactions.filter((t: any) => t.status === 'pago');
+
+    if (drilldown.filterType === 'category') {
+      filtered = filtered.filter((t: any) => (t.category || 'Geral') === drilldown.filterValue);
+    } else if (drilldown.filterType === 'method') {
+      filtered = filtered.filter((t: any) => (t.paymentMethod || '').toLowerCase() === drilldown.filterValue.toLowerCase());
+    } else if (drilldown.filterType === 'all_income') {
+      filtered = filtered.filter((t: any) => t.type === 'income');
+    } else if (drilldown.filterType === 'all_expense') {
+      filtered = filtered.filter((t: any) => t.type === 'expense');
+    } else if (drilldown.filterType === 'comissao') {
+      filtered = filtered.filter((t: any) => {
+        const desc = (t.description || '').toLowerCase();
+        const cat = (t.category || '').toLowerCase();
+        return desc.includes('comissã') || desc.includes('comissao') || cat.includes('comissã') || cat.includes('comissao');
+      });
+    } else if (drilldown.filterType === 'sangria') {
+      filtered = filtered.filter((t: any) => {
+        const desc = (t.description || '').toLowerCase();
+        const cat = (t.category || '').toLowerCase();
+        return desc.includes('sangria') || desc.includes('vale') || cat.includes('sangria') || cat.includes('vale');
+      });
+    }
+
+    if (drilldownSearch.trim()) {
+      const q = drilldownSearch.toLowerCase().trim();
+      filtered = filtered.filter((t: any) => 
+        (t.description || '').toLowerCase().includes(q) ||
+        (t.cliente_name || '').toLowerCase().includes(q) ||
+        (t.category || '').toLowerCase().includes(q) ||
+        (t.paymentMethod || '').toLowerCase().includes(q) ||
+        (t.amount || 0).toString().includes(q)
+      );
+    }
+
+    return filtered;
+  }, [drilldown, transactions, drilldownSearch]);
+
+  const drilldownTotal = useMemo(() => {
+    return drilldownTransactions.reduce((acc: number, t: any) => acc + (t.amount || 0), 0);
+  }, [drilldownTransactions]);
+
+  const handlePrintDRE = () => {
+    window.print();
+  };
+
   return (
     <div className="space-y-8" id="report-financial-tab">
+      {/* Top Indicators KPI Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-5" id="finance-kpi-sub-grid">
         <ReportKpi title="Entradas de Caixa" value={stats.income} isCurrency color="emerald" />
         <ReportKpi title="Custos / Despesas" value={stats.expense} isCurrency color="red" />
-        <ReportKpi title="Sangrias e Retiradas" value={stats.sangria} isCurrency color="amber" />
+        <ReportKpi title="Sangrias e Vales" value={stats.sangria} isCurrency color="amber" />
         <ReportKpi title="Resultado Líquido" value={stats.balance} isCurrency color="blue" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8" id="financial-bi-grid">
-        {/* Left Side: Payment Methods Ranking */}
-        <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm flex flex-col justify-between">
-          <div>
-            <h3 className="font-black text-xl text-primary tracking-tighter flex items-center gap-2">
-              <CreditCard className="text-zinc-500" size={22} />
-              Ranking de Meios de Pagamento
-            </h3>
-            <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1 mb-8">Participação de cada tipo de transação no faturamento</p>
+      {/* Visual Analytics / Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8" id="financial-charts-grid">
+        {/* Chart 1: Donut Meios de Pagamento */}
+        <div className="bg-surface border border-border rounded-[2.5rem] p-8 shadow-sm space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-black text-lg text-primary tracking-tighter flex items-center gap-2">
+                <CreditCard className="text-emerald-500" size={20} />
+                Meios de Pagamento (Faturamento)
+              </h3>
+              <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-0.5">Participação no faturamento bruto</p>
+            </div>
+            <button
+              onClick={() => setDrilldown({
+                isOpen: true,
+                title: 'Todas as Entradas por Canal',
+                subtitle: 'Visão de todas as movimentações recebidas por meio de pagamento',
+                filterType: 'all_income',
+                filterValue: ''
+              })}
+              className="p-2 text-primary hover:bg-slate-100 rounded-xl transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+              title="Auditar Entradas"
+            >
+              <Eye size={16} className="text-emerald-600" />
+              <span>Ver Lançamentos</span>
+            </button>
           </div>
 
-          <div className="space-y-6">
-            {methodList.map((m, idx) => {
-              const pct = Math.round((m.amount / totalBilling) * 100);
-              return (
-                <div className="space-y-2.5" key={`method-rank-${m.method}-${idx}`}>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
-                      <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
-                      {translationTable[m.method.toLowerCase()] || m.method}
-                    </span>
-                    <span className="font-bold text-muted text-[11px]">
-                      <strong>R$ {m.amount.toLocaleString('pt-BR')}</strong> ({pct}%)
-                    </span>
-                  </div>
-                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${pct}%` }}
-                      transition={{ duration: 1.2, ease: "easeOut" }}
-                      className={`h-full rounded-full ${
-                        idx === 0 ? 'bg-emerald-500' : idx === 1 ? 'bg-indigo-500' : 'bg-slate-400'
-                      }`}
+          {methodPieData.length === 0 ? (
+            <div className="h-60 flex items-center justify-center text-muted italic text-xs font-bold">
+              Sem dados de faturamento no período.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+              <div className="h-56 w-full flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RePieChart>
+                    <Pie
+                      data={methodPieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={4}
+                      dataKey="value"
+                    >
+                      {methodPieData.map((entry, index) => (
+                        <Cell key={`cell-method-${index}`} fill={METHOD_COLORS[index % METHOD_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <ReTooltip 
+                      formatter={(val: any) => [`R$ ${Number(val || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Faturamento']}
+                      contentStyle={{ borderRadius: '1rem', border: '1px solid #e2e8f0', fontSize: '11px', fontWeight: 'bold' }}
                     />
-                  </div>
-                </div>
-              );
-            })}
-            {methodList.length === 0 && (
-              <p className="text-center italic text-xs text-slate-500 py-12">Sem transações consolidadas no período.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Right Side: Detailed historical operations table */}
-        <div className="lg:col-span-2 bg-surface border border-border rounded-[2.5rem] overflow-hidden shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="p-8 border-b border-border bg-slate-50/30 flex justify-between items-center">
-              <h3 className="font-black text-lg text-primary tracking-tighter">Histórico Financeiro do Período</h3>
-              <span className="text-xs font-bold text-muted">{transactions.length} movimentações</span>
-            </div>
-            
-            <div className="overflow-y-auto max-h-[380px] no-scrollbar">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-border sticky top-0">
-                    <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Data</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Descrição de Transação</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center bg-slate-50">Canal</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center bg-slate-50">Tipo</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right bg-slate-50">Valor total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {transactions.map((t: any, i: number) => (
-                    <tr key={`trans-${t.id || i}-${i}`} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-8 py-4">
-                        <span className="text-xs font-bold text-primary">{format(parseISO(t.date), 'dd/MM/yyyy')}</span>
-                      </td>
-                      <td className="px-8 py-4 text-xs font-medium text-slate-600 truncate max-w-[200px]">{t.description}</td>
-                      <td className="px-8 py-4 text-center">
-                        <span className="text-[9px] font-black text-primary uppercase bg-slate-100 px-2.5 py-1 rounded-lg tracking-widest">{t.paymentMethod}</span>
-                      </td>
-                      <td className="px-8 py-4 text-center">
-                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                          t.type === 'income' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'
-                        }`}>
-                          {t.type === 'income' ? 'Entrada' : 'Saída'}
-                        </span>
-                      </td>
-                      <td className={`px-8 py-4 text-right font-black text-xs ${t.type === 'income' ? 'text-emerald-600' : 'text-red-500'}`}>
-                        {t.type === 'income' ? '+' : '-'} R$ {t.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                  ))}
-                  {transactions.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-8 py-16 text-center text-muted italic text-xs font-bold uppercase tracking-widest">Nenhuma movimentação de fluxo de caixa gravada no período.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Categories Breakdown Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8" id="financial-categories-bi-grid">
-        {/* Income Categories */}
-        <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm flex flex-col justify-between">
-          <div>
-            <h3 className="font-black text-xl text-primary tracking-tighter flex items-center gap-2">
-              <TrendingUp className="text-emerald-500" size={22} />
-              Entradas por Categoria
-            </h3>
-            <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1 mb-8">Breakdown de receitas operacionais e entradas</p>
-          </div>
-          <div className="space-y-6">
-            {incomeCategoryList.map((c, idx) => {
-              const pct = stats.income > 0 ? Math.round((c.amount / stats.income) * 100) : 0;
-              return (
-                <div className="space-y-2.5" key={`income-cat-${c.name}-${idx}`}>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
-                      <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
-                      {c.name}
-                    </span>
-                    <span className="font-bold text-muted text-[11px]">
-                      <strong>R$ {c.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> ({pct}%)
-                    </span>
-                  </div>
-                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${pct}%` }}
-                      transition={{ duration: 1.2, ease: "easeOut" }}
-                      className="h-full rounded-full bg-emerald-500"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-            {incomeCategoryList.length === 0 && (
-              <p className="text-center italic text-xs text-slate-500 py-12">Nenhuma categoria de entrada registrada no período.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Expense Categories */}
-        <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm flex flex-col justify-between">
-          <div>
-            <h3 className="font-black text-xl text-primary tracking-tighter flex items-center gap-2">
-              <TrendingDown className="text-red-500" size={22} />
-              Saídas por Categoria
-            </h3>
-            <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-1 mb-8">Breakdown de despesas corporativas e custos</p>
-          </div>
-          <div className="space-y-6">
-            {expenseCategoryList.map((c, idx) => {
-              const pct = stats.expense > 0 ? Math.round((c.amount / stats.expense) * 100) : 0;
-              return (
-                <div className="space-y-2.5" key={`expense-cat-${c.name}-${idx}`}>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="font-extrabold text-primary capitalize text-[11px] flex items-center gap-2">
-                      <span className="font-mono text-zinc-400 text-[10px] w-6 text-center font-bold">#{idx + 1}</span>
-                      {c.name}
-                    </span>
-                    <span className="font-bold text-muted text-[11px]">
-                      <strong>R$ {c.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> ({pct}%)
-                    </span>
-                  </div>
-                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${pct}%` }}
-                      transition={{ duration: 1.2, ease: "easeOut" }}
-                      className="h-full rounded-full bg-red-500"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-            {expenseCategoryList.length === 0 && (
-              <p className="text-center italic text-xs text-slate-500 py-12">Nenhuma categoria de saída registrada no período.</p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION: GESTÃO E RELATÓRIO DE CONTAS (BILLS & EXPENSES) */}
-      <div className="border-t border-slate-200/85 pt-10 animate-fade-in" id="bills-analytics-segment">
-        <div className="mb-6">
-          <span className="text-[10px] uppercase font-black tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full">Painel Avançado</span>
-          <h3 className="font-black text-2xl text-primary tracking-tighter mt-2 flex items-center gap-2">
-            <FileText className="text-indigo-600" size={24} />
-            Relatório de Contas & Despesas Operacionais
-          </h3>
-          <p className="text-muted text-sm font-medium mt-1">
-            Análise detalhada do fluxo de contas a pagar, aluguel, insumos, fornecedores e adimplência da empresa.
-          </p>
-        </div>
-
-        {/* 1. Payable KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8" id="payables-kpi-grid">
-          <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
-            <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Total de Contas</span>
-            <p className="text-2xl font-black text-slate-800 mt-1">
-              R$ {(stats.totalPayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
-            <p className="text-[10px] text-muted font-semibold mt-1">Compromissos agendados no período</p>
-          </div>
-          <div className="bg-surface border border-emerald-100 rounded-2xl p-6 shadow-sm bg-emerald-50/5">
-            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Contas Pagas (Custos)</span>
-            <p className="text-2xl font-black text-emerald-600 mt-1">
-              R$ {(stats.paidPayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
-            <p className="text-[10px] text-emerald-600 font-semibold mt-1">Despesas quitadas no período</p>
-          </div>
-          <div className="bg-surface border border-amber-100 rounded-2xl p-6 shadow-sm bg-amber-50/5">
-            <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Contas Pendentes</span>
-            <p className="text-2xl font-black text-amber-600 mt-1">
-              R$ {(stats.pendingPayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
-            <p className="text-[10px] text-amber-600 font-semibold mt-1">A vencer no período</p>
-          </div>
-          <div className="bg-surface border border-red-100 rounded-2xl p-6 shadow-sm bg-red-50/5">
-            <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Contas em Atraso</span>
-            <p className="text-2xl font-black text-red-500 mt-1">
-              R$ {(stats.overduePayablesAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
-            <p className="text-[10px] text-red-500 font-semibold mt-1">Vencidas e não pagas</p>
-          </div>
-        </div>
-
-        {/* Adimplência (Paid commitment health index) */}
-        {stats.totalPayablesAmount > 0 && (
-          <div className="bg-surface border border-border rounded-2xl p-6 mb-8 shadow-sm">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                <CheckCircle2 className="text-emerald-500" size={16} />
-                Índice de Adimplência Operacional
-              </span>
-              <span className="text-xs font-black text-primary">
-                {Math.round((stats.paidPayablesAmount / stats.totalPayablesAmount) * 100)}% das contas pagas
-              </span>
-            </div>
-            <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-emerald-500 rounded-full transition-all duration-1000" 
-                style={{ width: `${(stats.paidPayablesAmount / stats.totalPayablesAmount) * 100}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* 2. Bill Distributions (Category & Supplier) */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8" id="bills-distribution-grid">
-          {/* Bills by Category */}
-          <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm">
-            <h4 className="font-black text-lg text-primary tracking-tighter mb-1 flex items-center gap-2">
-              <TrendingDown className="text-indigo-600" size={20} />
-              Quais categorias gastaram mais?
-            </h4>
-            <p className="text-muted text-[11px] font-bold uppercase tracking-wider mb-6">Valores totais de contas por categoria de gasto</p>
-            <div className="space-y-5">
-              {Object.entries(payablesByCategory || {})
-                .sort((a, b) => (b[1] as number) - (a[1] as number))
-                .map(([category, amount]: [string, any], idx) => {
-                  const pct = stats.totalPayablesAmount > 0 ? Math.round((amount / stats.totalPayablesAmount) * 100) : 0;
-                  return (
-                    <div className="space-y-2" key={`payable-cat-${category}-${idx}`}>
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-bold text-slate-800 capitalize flex items-center gap-2">
-                          <span className="text-zinc-400 font-mono text-[10px]">#{idx + 1}</span>
-                          {category}
-                        </span>
-                        <span className="font-black text-slate-600">
-                          R$ {amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} <span className="text-zinc-400 font-semibold">({pct}%)</span>
-                        </span>
-                      </div>
-                      <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-indigo-600 rounded-full transition-all duration-1000"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              {Object.keys(payablesByCategory || {}).length === 0 && (
-                <p className="text-center italic text-xs text-slate-500 py-12">Nenhuma conta/gasto provisionado no período.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Bills by Supplier / Creditor */}
-          <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm">
-            <h4 className="font-black text-lg text-primary tracking-tighter mb-1 flex items-center gap-2">
-              <Users className="text-slate-500" size={20} />
-              Maiores Credores & Fornecedores
-            </h4>
-            <p className="text-muted text-[11px] font-bold uppercase tracking-wider mb-6">Valores totais destinados a cada fornecedor/parceiro</p>
-            <div className="space-y-5">
-              {Object.entries(payablesBySupplier || {})
-                .sort((a, b) => (b[1] as number) - (a[1] as number))
-                .slice(0, 5) // Top 5
-                .map(([supplier, amount]: [string, any], idx) => {
-                  const pct = stats.totalPayablesAmount > 0 ? Math.round((amount / stats.totalPayablesAmount) * 100) : 0;
-                  return (
-                    <div className="space-y-2" key={`payable-sup-${supplier}-${idx}`}>
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-bold text-slate-800 truncate max-w-[200px] flex items-center gap-2">
-                          <span className="text-zinc-400 font-mono text-[10px]">#{idx + 1}</span>
-                          {supplier}
-                        </span>
-                        <span className="font-black text-slate-600">
-                          R$ {amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} <span className="text-zinc-400 font-semibold">({pct}%)</span>
-                        </span>
-                      </div>
-                      <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-slate-500 rounded-full transition-all duration-1000"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              {Object.keys(payablesBySupplier || {}).length === 0 && (
-                <p className="text-center italic text-xs text-slate-500 py-12">Nenhum credor/fornecedor listado no período.</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Bills List with Filters & Search */}
-        <div className="bg-surface border border-border rounded-[2.5rem] overflow-hidden shadow-sm flex flex-col justify-between">
-          <div className="p-8 border-b border-border bg-slate-50/30 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h4 className="font-black text-lg text-primary tracking-tighter">Histórico Consolidado de Contas do Período</h4>
-                <p className="text-xs text-muted font-medium uppercase tracking-wider mt-0.5">Listagem analítica e detalhada das provisões financeiras</p>
+                  </RePieChart>
+                </ResponsiveContainer>
               </div>
-              
-              {/* Filter Tabs */}
-              <div className="flex gap-1.5 p-1 bg-slate-100 rounded-xl" id="bill-filter-tabs">
-                {(['all', 'paid', 'pending', 'overdue'] as const).map((filterOpt) => (
-                  <button
-                    key={`opt-${filterOpt}`}
-                    onClick={() => setPayableFilter(filterOpt)}
-                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                      payableFilter === filterOpt
-                        ? 'bg-white text-primary shadow-sm'
-                        : 'text-zinc-500 hover:text-primary'
-                    }`}
+
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {methodPieData.map((item, idx) => (
+                  <div 
+                    key={`method-legend-${idx}`} 
+                    onClick={() => setDrilldown({
+                      isOpen: true,
+                      title: `Auditoria: ${item.name}`,
+                      subtitle: `Todos os lançamentos recebidos via ${item.name}`,
+                      filterType: 'method',
+                      filterValue: item.methodKey
+                    })}
+                    className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:bg-emerald-50/50 hover:border-emerald-200 cursor-pointer transition-all group"
                   >
-                    {filterOpt === 'all' && 'Todas'}
-                    {filterOpt === 'paid' && 'Pagas'}
-                    {filterOpt === 'pending' && 'A vencer'}
-                    {filterOpt === 'overdue' && 'Atrasadas'}
-                  </button>
+                    <div className="flex items-center gap-2 truncate pr-2">
+                      <span 
+                        className="w-3 h-3 rounded-full shrink-0" 
+                        style={{ backgroundColor: METHOD_COLORS[idx % METHOD_COLORS.length] }} 
+                      />
+                      <span className="font-bold text-primary truncate group-hover:text-emerald-700">{item.name}</span>
+                    </div>
+                    <div className="text-right shrink-0 flex items-center gap-2">
+                      <div>
+                        <p className="font-black text-slate-800">R$ {item.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        <span className="text-[9px] font-bold text-slate-400">{item.percentage.toFixed(1)}%</span>
+                      </div>
+                      <Eye size={14} className="text-slate-400 group-hover:text-emerald-600" />
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
+          )}
+        </div>
 
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1 relative">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                <input
-                  type="text"
-                  placeholder="Buscar conta por descrição ou fornecedor..."
-                  value={payableSearch}
-                  onChange={(e) => setPayableSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-100 focus:bg-white border-none rounded-xl text-xs font-semibold placeholder:text-zinc-400 focus:ring-2 focus:ring-indigo-600/20 transition-all outline-none"
+        {/* Chart 2: Donut Saídas por Categoria */}
+        <div className="bg-surface border border-border rounded-[2.5rem] p-8 shadow-sm space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-black text-lg text-primary tracking-tighter flex items-center gap-2">
+                <TrendingDown className="text-rose-500" size={20} />
+                Saídas e Gastos por Categoria
+              </h3>
+              <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-0.5">Destino do dinheiro e despesas</p>
+            </div>
+            <button
+              onClick={() => setDrilldown({
+                isOpen: true,
+                title: 'Todas as Saídas & Gastos',
+                subtitle: 'Auditoria de todos os pagamentos e custos realizados no período',
+                filterType: 'all_expense',
+                filterValue: ''
+              })}
+              className="p-2 text-primary hover:bg-slate-100 rounded-xl transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+              title="Auditar Saídas"
+            >
+              <Eye size={16} className="text-rose-600" />
+              <span>Ver Lançamentos</span>
+            </button>
+          </div>
+
+          {expensePieData.length === 0 ? (
+            <div className="h-60 flex items-center justify-center text-muted italic text-xs font-bold">
+              Sem despesas ou saídas registradas no período.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+              <div className="h-56 w-full flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RePieChart>
+                    <Pie
+                      data={expensePieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={4}
+                      dataKey="value"
+                    >
+                      {expensePieData.map((entry, index) => (
+                        <Cell key={`cell-exp-${index}`} fill={CATEGORY_PIE_COLORS[index % CATEGORY_PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <ReTooltip 
+                      formatter={(val: any) => [`R$ ${Number(val || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Gasto']}
+                      contentStyle={{ borderRadius: '1rem', border: '1px solid #e2e8f0', fontSize: '11px', fontWeight: 'bold' }}
+                    />
+                  </RePieChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {expensePieData.map((item, idx) => (
+                  <div 
+                    key={`exp-cat-legend-${idx}`} 
+                    onClick={() => setDrilldown({
+                      isOpen: true,
+                      title: `Auditoria: ${item.name}`,
+                      subtitle: `Listagem de todas as despesas da categoria "${item.name}"`,
+                      filterType: 'category',
+                      filterValue: item.name
+                    })}
+                    className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:bg-rose-50/50 hover:border-rose-200 cursor-pointer transition-all group"
+                  >
+                    <div className="flex items-center gap-2 truncate pr-2">
+                      <span 
+                        className="w-3 h-3 rounded-full shrink-0" 
+                        style={{ backgroundColor: CATEGORY_PIE_COLORS[idx % CATEGORY_PIE_COLORS.length] }} 
+                      />
+                      <span className="font-bold text-primary truncate group-hover:text-rose-700">{item.name}</span>
+                    </div>
+                    <div className="text-right shrink-0 flex items-center gap-2">
+                      <div>
+                        <p className="font-black text-slate-800">R$ {item.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                        <span className="text-[9px] font-bold text-slate-400">{item.percentage.toFixed(1)}%</span>
+                      </div>
+                      <Eye size={14} className="text-slate-400 group-hover:text-rose-600" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Chart 3: Cash Flow Timeline (Entradas x Saídas no Tempo) */}
+      <div className="bg-surface border border-border rounded-[2.5rem] p-8 shadow-sm space-y-6">
+        <div>
+          <h3 className="font-black text-lg text-primary tracking-tighter flex items-center gap-2">
+            <BarChart3 className="text-indigo-600" size={20} />
+            Evolução Diária do Fluxo de Caixa (Entradas x Saídas)
+          </h3>
+          <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-0.5">Comportamento financeiro ao longo dos dias do período</p>
+        </div>
+
+        {dailyFlowData.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-muted italic text-xs font-bold">
+            Sem dados no período selecionado.
+          </div>
+        ) : (
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={dailyFlowData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="dateLabel" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                <ReTooltip 
+                  formatter={(val: any) => [`R$ ${Number(val || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, '']}
+                  contentStyle={{ borderRadius: '1rem', border: '1px solid #e2e8f0', fontSize: '11px', fontWeight: 'bold' }}
                 />
+                <Area type="monotone" dataKey="income" name="Entradas" stroke="#10b981" fillOpacity={1} fill="url(#colorIncome)" strokeWidth={2.5} />
+                <Area type="monotone" dataKey="expense" name="Saídas" stroke="#ef4444" fillOpacity={1} fill="url(#colorExpense)" strokeWidth={2.5} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* DRE GERENCIAL CONTÁBIL (DEMONSTRAÇÃO DO RESULTADO DO EXERCÍCIO) */}
+      <div className="bg-surface border border-border rounded-[2.5rem] p-10 shadow-sm space-y-8" id="dre-gerencial-section">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-6">
+          <div>
+            <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600 bg-emerald-50 border border-emerald-100 px-3 py-1 rounded-full">
+              Contabilidade Gerencial
+            </span>
+            <h3 className="font-black text-2xl text-primary tracking-tighter mt-2 flex items-center gap-2">
+              <FileText className="text-emerald-600" size={24} />
+              Demonstração do Resultado do Exercício (DRE Gerencial)
+            </h3>
+            <p className="text-muted text-xs font-semibold uppercase tracking-wider mt-0.5">
+              Estrutura contábil em cascata para tomada de decisão em barbearia
+            </p>
+          </div>
+
+          <button
+            onClick={handlePrintDRE}
+            className="px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center gap-2 shadow-sm cursor-pointer self-start sm:self-auto"
+          >
+            <Printer size={16} />
+            Imprimir / Exportar DRE
+          </button>
+        </div>
+
+        {/* Cascata DRE em Tabela Elegante */}
+        <div className="space-y-3 font-sans">
+          {/* Nível 1: Faturamento Bruto */}
+          <div className="p-4 bg-emerald-50/60 border border-emerald-200/80 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="font-black text-xs text-emerald-800 uppercase tracking-wider">
+                (+) 1. Faturamento Bruto Operacional
+              </span>
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                Serviços + Produtos + Clubes
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="font-black text-base text-emerald-800">
+                R$ {dreCalculations.faturamentoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <button
+                onClick={() => setDrilldown({
+                  isOpen: true,
+                  title: 'Auditoria: Faturamento Bruto Operacional',
+                  subtitle: 'Todos os recebimentos brutos registrados no período',
+                  filterType: 'all_income',
+                  filterValue: ''
+                })}
+                className="p-1.5 text-emerald-700 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
+                title="Auditar Faturamento Bruto"
+              >
+                <Eye size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Nível 2: Deduções / Taxas Maquininha */}
+          <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between pl-8">
+            <div className="flex items-center gap-3">
+              <span className="font-bold text-xs text-slate-700">
+                (-) 2. Estimativa de Taxas de Maquininha & MDR
+              </span>
+              <span className="text-[10px] text-slate-400 font-semibold">
+                (~2.5% em crédito/débito)
+              </span>
+            </div>
+            <span className="font-extrabold text-sm text-rose-600">
+              - R$ {dreCalculations.taxasMDR.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {/* Subtotal: Receita Líquida */}
+          <div className="p-4 bg-slate-100/80 border border-slate-300/80 rounded-2xl flex items-center justify-between pl-6 font-bold text-xs text-slate-900">
+            <span>(=) Receita Operacional Líquida</span>
+            <span className="font-black text-sm text-slate-900">
+              R$ {dreCalculations.receitaLiquida.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {/* Nível 3: Custos Variáveis & Comissões */}
+          <div className="p-4 bg-rose-50/40 border border-rose-100 rounded-2xl space-y-2 pl-8">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-xs text-rose-900">
+                (-) 3. Custos Variáveis Operacionais (CMV & Comissões)
+              </span>
+              <span className="font-extrabold text-sm text-rose-700">
+                - R$ {dreCalculations.custosVariaveisTotais.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-rose-100 text-[11px]">
+              <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100">
+                <span className="text-slate-600 font-medium">Comissões de Barbeiros & Equipe:</span>
+                <div className="flex items-center gap-2">
+                  <strong className="text-rose-700">R$ {dreCalculations.comissoesEquipe.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                  <button
+                    onClick={() => setDrilldown({
+                      isOpen: true,
+                      title: 'Auditoria: Comissões e Vales da Equipe',
+                      subtitle: 'Lançamentos de comissões pagas aos profissionais',
+                      filterType: 'comissao',
+                      filterValue: ''
+                    })}
+                    className="p-1 text-slate-400 hover:text-rose-700"
+                  >
+                    <Eye size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100">
+                <span className="text-slate-600 font-medium">Insumos, Produtos & Matéria-Prima:</span>
+                <strong className="text-rose-700">R$ {dreCalculations.custosInsumosProdutos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
               </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="bg-slate-50 border-b border-border">
-                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Descrição</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Categoria</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest bg-slate-50">Credor / Fornecedor</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center bg-slate-50">Vencimento</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-center bg-slate-50">Status</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest text-right bg-slate-50">Valor</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {(() => {
-                  const todayStr = format(new Date(), 'yyyy-MM-dd');
-                  const filteredPayables = (payables || [])
-                    .filter((p: any) => {
-                      const matchesSearch = 
-                        (p.description || '').toLowerCase().includes(payableSearch.toLowerCase()) ||
-                        (p.supplier || '').toLowerCase().includes(payableSearch.toLowerCase());
-                      
-                      if (!matchesSearch) return false;
+          {/* Subtotal: Margem de Contribuição */}
+          <div className="p-4 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl flex items-center justify-between">
+            <div>
+              <span className="font-black text-xs text-indigo-900 uppercase tracking-wider">
+                (=) Margem de Contribuição Bruta
+              </span>
+              <span className="text-[10px] font-bold text-indigo-700 block mt-0.5">
+                Retenção após custos variáveis e comissões
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-black text-base text-indigo-900 block">
+                R$ {dreCalculations.margemContribucionBruta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <span className="text-xs font-black text-indigo-600">
+                {dreCalculations.margemContribucionPct.toFixed(1)}% do faturamento
+              </span>
+            </div>
+          </div>
 
-                      if (payableFilter === 'paid') return p.status === 'paid';
-                      if (payableFilter === 'pending') return p.status === 'pending' && p.dueDate >= todayStr;
-                      if (payableFilter === 'overdue') return p.status === 'pending' && p.dueDate < todayStr;
-                      return true;
-                    });
+          {/* Nível 4: Despesas Fixas & Sangrias */}
+          <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2 pl-8">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-xs text-slate-800">
+                (-) 4. Despesas Fixas Operacionais & Sangrias
+              </span>
+              <span className="font-extrabold text-sm text-rose-600">
+                - R$ {(dreCalculations.despesasFixasOperacionais + dreCalculations.sangriasVales).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
 
-                  if (filteredPayables.length === 0) {
-                    return (
-                      <tr>
-                        <td colSpan={6} className="px-8 py-16 text-center text-muted italic text-xs font-bold uppercase tracking-widest">Nenhuma conta cadastrada ou provisionada no período com esses filtros.</td>
-                      </tr>
-                    );
-                  }
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200 text-[11px]">
+              <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200">
+                <span className="text-slate-600 font-medium">Despesas Estruturais (Aluguel, Luz, Net, Mkt):</span>
+                <strong className="text-slate-800">R$ {dreCalculations.despesasFixasOperacionais.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+              </div>
 
-                  return filteredPayables.map((p: any, idx: number) => {
-                    const isOverdue = p.status === 'pending' && p.dueDate < todayStr;
-                    return (
-                      <tr key={`payable-row-${p.id || idx}-${idx}`} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-8 py-4">
-                          <span className="text-xs font-bold text-slate-800">{p.description}</span>
-                        </td>
-                        <td className="px-8 py-4">
-                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg capitalize">{p.category}</span>
-                        </td>
-                        <td className="px-8 py-4 text-xs font-medium text-slate-600">{p.supplier || '-'}</td>
-                        <td className="px-8 py-4 text-center">
-                          <span className="text-xs font-bold text-slate-600">{format(parseISO(p.dueDate), 'dd/MM/yyyy')}</span>
-                        </td>
-                        <td className="px-8 py-4 text-center">
-                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                            p.status === 'paid'
-                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                              : isOverdue
-                              ? 'bg-red-50 text-red-600 border border-red-100'
-                              : 'bg-amber-50 text-amber-600 border border-amber-100'
-                          }`}>
-                            {p.status === 'paid' ? 'Paga' : isOverdue ? 'Atrasada' : 'A vencer'}
-                          </span>
-                        </td>
-                        <td className="px-8 py-4 text-right font-black text-xs text-slate-800">
-                          R$ {(p.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    );
-                  });
-                })()}
-              </tbody>
-            </table>
+              <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200">
+                <span className="text-slate-600 font-medium">Sangrias e Retiradas Avulsas:</span>
+                <div className="flex items-center gap-2">
+                  <strong className="text-slate-800">R$ {dreCalculations.sangriasVales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                  <button
+                    onClick={() => setDrilldown({
+                      isOpen: true,
+                      title: 'Auditoria: Sangrias e Vales Avulsos',
+                      subtitle: 'Retiradas diretas de caixa efetuadas no período',
+                      filterType: 'sangria',
+                      filterValue: ''
+                    })}
+                    className="p-1 text-slate-400 hover:text-primary"
+                  >
+                    <Eye size={14} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* RESULTADO FINAL DRE: Lucro Operacional Líquido */}
+          <div className={`p-6 rounded-2xl border flex items-center justify-between ${
+            dreCalculations.lucroOperacionalLiquido >= 0 
+              ? 'bg-emerald-600 text-white border-emerald-700 shadow-md shadow-emerald-600/10' 
+              : 'bg-rose-600 text-white border-rose-700 shadow-md shadow-rose-600/10'
+          }`}>
+            <div>
+              <span className="font-black text-sm uppercase tracking-wider block">
+                (=) Lucro Operacional Líquido (EBITDA de Barbearia)
+              </span>
+              <span className="text-xs font-semibold opacity-90 mt-0.5 block">
+                Resultado final efetivo do negócio no período
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-black text-2xl block">
+                R$ {dreCalculations.lucroOperacionalLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+              <span className="text-xs font-black bg-white/20 px-2.5 py-0.5 rounded-md inline-block mt-1">
+                Margem Líquida: {dreCalculations.margemLiquidaPct.toFixed(1)}%
+              </span>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* DRILLDOWN ANALÍTICO MODAL (RAIO-X DOS GASTOS COM EYE 👁️) */}
+      <AnimatePresence>
+        {drilldown.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white border border-slate-200 w-full max-w-3xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                    <Eye size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-primary">{drilldown.title}</h3>
+                    <p className="text-xs text-muted font-medium">{drilldown.subtitle}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setDrilldown({ isOpen: false, title: '', subtitle: '', filterType: 'category', filterValue: '' });
+                    setDrilldownSearch('');
+                  }}
+                  className="p-2 text-slate-400 hover:text-primary rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Controls & Stats */}
+              <div className="p-6 bg-slate-50/50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Buscar por descrição, cliente ou valor nesta categoria..."
+                    value={drilldownSearch}
+                    onChange={(e) => setDrilldownSearch(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2 text-xs font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3 text-xs font-bold text-slate-700 bg-white px-4 py-2 border border-slate-200 rounded-xl">
+                  <span>Total Filtrado:</span>
+                  <span className="font-black text-emerald-600 text-sm">
+                    R$ {drilldownTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-slate-400 font-semibold">({drilldownTransactions.length} itens)</span>
+                </div>
+              </div>
+
+              {/* Modal Table Content */}
+              <div className="overflow-y-auto flex-1 p-6">
+                {drilldownTransactions.length === 0 ? (
+                  <div className="py-16 text-center text-muted italic font-bold text-xs">
+                    Nenhum lançamento encontrado para os critérios selecionados.
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100">
+                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Data</th>
+                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Descrição</th>
+                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase">Cliente / Favorecido</th>
+                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-center">Canal</th>
+                        <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase text-right">Valor (R$)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {drilldownTransactions.map((t: any, idx: number) => {
+                        const isIncome = t.type === 'income';
+                        return (
+                          <tr key={`drill-${t.id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
+                            <td className="px-4 py-3 text-xs font-bold text-slate-500 whitespace-nowrap">
+                              {t.date ? format(parseISO(t.date), 'dd/MM/yyyy') : '-'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <p className="text-xs font-black text-primary">{t.description || 'Lançamento sem descrição'}</p>
+                              {t.category && (
+                                <span className="text-[9px] font-bold text-slate-400 uppercase">{t.category}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-xs font-medium text-slate-600">
+                              {t.cliente_name || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-extrabold rounded-md uppercase">
+                                {t.paymentMethod || 'Outro'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right font-black text-xs whitespace-nowrap">
+                              <span className={isIncome ? 'text-emerald-600' : 'text-rose-600'}>
+                                {isIncome ? '+' : '-'} R$ {(t.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-100 text-right">
+                <button
+                  onClick={() => {
+                    setDrilldown({ isOpen: false, title: '', subtitle: '', filterType: 'category', filterValue: '' });
+                    setDrilldownSearch('');
+                  }}
+                  className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Fechar Raio-X
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

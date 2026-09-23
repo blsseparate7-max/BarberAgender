@@ -22,6 +22,29 @@ import { getActiveTenantId } from './tenantService';
 const PAYABLES_COLLECTION = 'accounts_payable';
 const RECEIVABLES_COLLECTION = 'accounts_receivable';
 
+function addRecurrencePeriod(baseDateStr: string, offset: number, recurrence: AccountPayable['recurrence']): string {
+  if (!baseDateStr) return baseDateStr;
+  const [y, m, d] = baseDateStr.split('-').map(Number);
+  const baseDate = new Date(y, m - 1, d, 12, 0, 0);
+
+  if (recurrence === 'weekly') {
+    baseDate.setDate(baseDate.getDate() + 7 * offset);
+  } else if (recurrence === 'biweekly') {
+    baseDate.setDate(baseDate.getDate() + 14 * offset);
+  } else if (recurrence === 'monthly') {
+    baseDate.setMonth(baseDate.getMonth() + offset);
+  } else if (recurrence === 'quarterly') {
+    baseDate.setMonth(baseDate.getMonth() + 3 * offset);
+  } else if (recurrence === 'yearly') {
+    baseDate.setFullYear(baseDate.getFullYear() + offset);
+  }
+
+  const ny = baseDate.getFullYear();
+  const nm = String(baseDate.getMonth() + 1).padStart(2, '0');
+  const nd = String(baseDate.getDate()).padStart(2, '0');
+  return `${ny}-${nm}-${nd}`;
+}
+
 export const billService = {
   // --- Accounts Payable (Contas a Pagar) ---
   async getPayables(startDate?: string, endDate?: string) {
@@ -51,27 +74,121 @@ export const billService = {
   },
 
   async createPayable(data: Omit<AccountPayable, 'id' | 'createdAt' | 'updatedAt'>) {
-    const docRef = doc(collection(db, PAYABLES_COLLECTION));
-    const newPayable: AccountPayable = {
-      ...data,
-      tenantId: getActiveTenantId(),
-      id: docRef.id,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    };
-    await setDoc(docRef, newPayable);
-    return docRef.id;
+    const activeTenantId = getActiveTenantId();
+    const isInstallments = data.totalInstallments && data.totalInstallments > 1;
+    const isRecurring = data.recurrence && data.recurrence !== 'none';
+
+    // If neither installment nor recurrence series, save as single bill
+    if (!isInstallments && !isRecurring) {
+      const docRef = doc(collection(db, PAYABLES_COLLECTION));
+      const newPayable: AccountPayable = {
+        ...data,
+        tenantId: activeTenantId,
+        id: docRef.id,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+      await setDoc(docRef, newPayable);
+      return docRef.id;
+    }
+
+    // Series creation (Installments or Recurring)
+    const seriesId = data.seriesId || `series_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const count = isInstallments 
+      ? data.totalInstallments! 
+      : (data.recurrence === 'monthly' ? 12 : data.recurrence === 'weekly' ? 12 : data.recurrence === 'biweekly' ? 12 : data.recurrence === 'quarterly' ? 4 : 2);
+
+    let firstDocId = '';
+
+    for (let i = 0; i < count; i++) {
+      const docRef = doc(collection(db, PAYABLES_COLLECTION));
+      if (i === 0) firstDocId = docRef.id;
+
+      const currentDueDate = addRecurrencePeriod(data.dueDate, i, isInstallments ? 'monthly' : data.recurrence);
+      const installmentLabel = isInstallments ? ` (${i + 1}/${count})` : ` [Recorrente]`;
+      const cleanDesc = data.description.replace(/\s*\(\d+\/\d+\)$/, '').replace(/\s*\[Recorrente\]$/, '');
+
+      const newPayable: AccountPayable = {
+        ...data,
+        description: `${cleanDesc}${installmentLabel}`,
+        dueDate: currentDueDate,
+        tenantId: activeTenantId,
+        seriesId,
+        installmentNumber: i + 1,
+        totalInstallments: isInstallments ? count : undefined,
+        isRecurring: isRecurring,
+        id: docRef.id,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      await setDoc(docRef, newPayable);
+    }
+
+    return firstDocId;
   },
 
-  async updatePayable(id: string, data: Partial<AccountPayable>) {
+  async updatePayable(
+    id: string, 
+    data: Partial<AccountPayable>, 
+    updateScope: 'single' | 'future' | 'series' = 'single'
+  ) {
     const docRef = doc(db, PAYABLES_COLLECTION, id);
-    await updateDoc(docRef, {
-      ...data,
-      updatedAt: serverTimestamp()
-    });
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+
+    const currentPayable = { id: snap.id, ...snap.data() } as AccountPayable;
+
+    // Single update
+    if (updateScope === 'single' || !currentPayable.seriesId) {
+      await updateDoc(docRef, {
+        ...data,
+        updatedAt: serverTimestamp()
+      });
+      return;
+    }
+
+    // Series update (future or all)
+    const qSeries = query(
+      collection(db, PAYABLES_COLLECTION),
+      where('tenantId', '==', getActiveTenantId()),
+      where('seriesId', '==', currentPayable.seriesId)
+    );
+    const seriesSnap = await getDocs(qSeries);
+
+    const baseCleanDesc = (data.description || currentPayable.description)
+      .replace(/\s*\(\d+\/\d+\)$/, '')
+      .replace(/\s*\[Recorrente\]$/, '');
+
+    for (const d of seriesSnap.docs) {
+      const item = { id: d.id, ...d.data() } as AccountPayable;
+
+      // Only update pending bills
+      if (item.status === 'paid') continue;
+
+      if (updateScope === 'future' && item.dueDate < currentPayable.dueDate) {
+        continue; // skip past instances
+      }
+
+      const itemRef = doc(db, PAYABLES_COLLECTION, item.id);
+      const installmentLabel = item.totalInstallments ? ` (${item.installmentNumber}/${item.totalInstallments})` : ` [Recorrente]`;
+
+      const updateData: any = {
+        ...data,
+        description: `${baseCleanDesc}${installmentLabel}`,
+        updatedAt: serverTimestamp()
+      };
+
+      // If updating single or future, preserve existing due date unless explicitly changed
+      if (!data.dueDate) {
+        delete updateData.dueDate;
+      }
+
+      await updateDoc(itemRef, updateData);
+    }
   },
 
-  async deletePayable(id: string) {
+  async deletePayable(id: string, deleteScope: 'single' | 'future' | 'series' = 'single') {
     const docRef = doc(db, PAYABLES_COLLECTION, id);
     let payableData: AccountPayable | null = null;
     try {
@@ -81,23 +198,50 @@ export const billService = {
       }
     } catch (_) {}
 
+    if (!payableData) return;
+
+    if (deleteScope === 'single' || !payableData.seriesId) {
+      await this.deleteSinglePayableDoc(id, payableData);
+      return;
+    }
+
+    // Series deletion
+    const qSeries = query(
+      collection(db, PAYABLES_COLLECTION),
+      where('tenantId', '==', getActiveTenantId()),
+      where('seriesId', '==', payableData.seriesId)
+    );
+    const seriesSnap = await getDocs(qSeries);
+
+    for (const d of seriesSnap.docs) {
+      const item = { id: d.id, ...d.data() } as AccountPayable;
+
+      // Don't delete paid bills unless deleting whole series explicitly
+      if (item.status === 'paid' && deleteScope !== 'series') continue;
+
+      if (deleteScope === 'future' && item.dueDate < payableData.dueDate) {
+        continue;
+      }
+
+      await this.deleteSinglePayableDoc(item.id, item);
+    }
+  },
+
+  async deleteSinglePayableDoc(id: string, payableData: AccountPayable) {
+    const docRef = doc(db, PAYABLES_COLLECTION, id);
     await deleteDoc(docRef);
 
     if (payableData) {
-      // 1. Delete linked transaction if exists
       if (payableData.transactionId) {
         try {
           const txRef = doc(db, 'financial_transactions', payableData.transactionId);
           const txSnap = await getDoc(txRef);
-          if (txSnap.exists()) {
-            await deleteDoc(txRef);
-          }
+          if (txSnap.exists()) await deleteDoc(txRef);
         } catch (e) {
           console.warn("Aviso ao deletar transação de conta a pagar excluída:", e);
         }
       }
 
-      // 2. Delete linked advance
       try {
         const qAdv = query(
           collection(db, 'professional_advances'),
@@ -106,16 +250,6 @@ export const billService = {
         const snapAdv = await getDocs(qAdv);
         for (const d of snapAdv.docs) {
           await deleteDoc(d.ref);
-        }
-        if (payableData.transactionId) {
-          const qAdvTx = query(
-            collection(db, 'professional_advances'),
-            where('transaction_id', '==', payableData.transactionId)
-          );
-          const snapAdvTx = await getDocs(qAdvTx);
-          for (const d of snapAdvTx.docs) {
-            await deleteDoc(d.ref);
-          }
         }
       } catch (e) {
         console.warn("Aviso ao deletar vale vinculado a conta a pagar excluída:", e);

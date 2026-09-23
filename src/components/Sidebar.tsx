@@ -207,15 +207,15 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
     },
     {
       id: 'financeiro',
-      label: 'Financeiro & DRE',
+      label: 'Gestão Financeira',
       icon: <DollarSign size={20} />,
       roles: ['admin', 'gerente'],
       subItems: [
         { id: 'financeiro-fluxo', label: 'Fluxo de Caixa Consolidado', roles: ['admin', 'gerente'] },
-        { id: 'financeiro-dre', label: 'DRE Gerencial & Lucro', roles: ['admin', 'gerente'] },
         { id: 'financeiro-fiados', label: 'Conta do Cliente (Fiados)', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-receber', label: 'Contas a Receber', roles: ['admin', 'gerente'] },
         { id: 'financeiro-contas-pagar', label: 'Contas a Pagar', roles: ['admin', 'gerente'] },
+        { id: 'cadastros-categorias', label: 'Categorias de Despesas', roles: ['admin', 'gerente'] },
         { id: 'financeiro-historico', label: 'Histórico de Caixas', roles: ['admin', 'gerente'] },
         { id: 'financeiro-conta-digital', label: 'Conta Digital (Asaas)', roles: ['admin', 'gerente'] },
         { id: 'financeiro-inconsistencias', label: 'Auditoria Financeira', roles: ['admin', 'gerente'] },

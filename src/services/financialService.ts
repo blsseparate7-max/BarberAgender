@@ -286,6 +286,11 @@ export const financialService = {
     return docRef.id;
   },
 
+  async deleteCategory(categoryId: string) {
+    const categoryRef = doc(db, CATEGORIES_COLLECTION, categoryId);
+    await updateDoc(categoryRef, { active: false });
+  },
+
   // --- Reports & Stats ---
   async getFinancialStats(startDate: string, endDate: string) {
     const transactions = await this.getTransactions(startDate, endDate);

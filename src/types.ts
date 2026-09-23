@@ -886,6 +886,11 @@ export interface AccountPayable {
   dueDate: string;
   supplier: string;
   recurrence: 'none' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'yearly';
+  seriesId?: string;
+  installmentNumber?: number;
+  totalInstallments?: number;
+  isRecurring?: boolean;
+  notes?: string;
   status: 'pending' | 'paid' | 'overdue';
   paidAt?: any;
   paymentMethod?: string;

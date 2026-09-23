@@ -109,7 +109,6 @@ import { useAsyncAction } from '../hooks/useAsyncAction';
 import { parseDate } from '../lib/utils';
 import { normalizeDate, isDateInRange, calculateStandardFinancialMetrics } from '../utils/financialCalculations';
 import { ProfessionalCommissions } from '../components/Financeiro/ProfessionalCommissions';
-import { DREGerencial } from '../components/Financeiro/DREGerencial';
 import { AccountsPayableManager } from '../components/AccountsPayableManager';
 import { AccountsReceivableManager } from '../components/AccountsReceivableManager';
 import { InputModal } from '../components/InputModal';
@@ -220,7 +219,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const { user, profile, isAdmin, isGerente } = useAuth();
   const { tenantId, tenant } = useTenant();
   const currentTenantId = tenantId || tenant?.id || profile?.tenantId || getActiveTenantId();
-  const [activeTab, setActiveTab] = useState<'overview' | 'dre' | 'digital-account' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new' | 'accounts-receivable'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'digital-account' | 'daily-cash' | 'cash-history' | 'entries' | 'exits' | 'entries-exits' | 'client-accounts' | 'professional-accounts' | 'receivables' | 'commissions' | 'payment-methods' | 'inconsistencies' | 'inventory-finance' | 'subscriptions' | 'accounts-payable' | 'accounts-receivable-new' | 'accounts-receivable'>('overview');
   const [dateRange, setDateRange] = useState(() => {
     const now = new Date();
     const startOfMonth = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
@@ -470,7 +469,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       const tabMap: Record<string, typeof activeTab> = {
         'financeiro-conta-digital': 'digital-account',
         'financeiro-fluxo': 'overview',
-        'financeiro-dre': 'dre',
+        'financeiro-dre': 'overview',
         'financeiro-caixa': 'daily-cash',
         'financeiro-historico': 'cash-history',
         'financeiro-movimentacoes': 'entries-exits',
@@ -721,7 +720,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         setCashHistory(history);
       }
 
-      if (activeTab === 'commissions' || activeTab === 'professional-accounts' || activeTab === 'dre') {
+      if (activeTab === 'commissions' || activeTab === 'professional-accounts') {
         const filters: any = {
           startDate: dateRange.start,
           endDate: dateRange.end
@@ -1055,10 +1054,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
       title: 'Fluxo de Caixa',
       subtitle: 'Controle e visão consolidada de entradas, saídas e movimentações.'
     },
-    'dre': {
-      title: 'DRE Gerencial',
-      subtitle: 'Demonstração do Resultado do Exercício com margens e faturamento.'
-    },
     'daily-cash': {
       title: 'Caixa do Dia',
       subtitle: 'Abertura, fechamento, reforços e sangrias do caixa atual.'
@@ -1133,11 +1128,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           id: 'overview',
           label: 'Fluxo de Caixa',
           icon: <PieChart size={16} />
-        },
-        {
-          id: 'dre',
-          label: 'DRE Gerencial',
-          icon: <BarChart3 size={16} />
         }
       ]
     },
@@ -1229,7 +1219,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         </div>
         
         {/* Filtro Global de Período para abas temporais */}
-        {['overview', 'dre', 'cash-history', 'entries-exits', 'commissions', 'professional-accounts'].includes(activeTab) && (
+        {['overview', 'cash-history', 'entries-exits', 'commissions', 'professional-accounts'].includes(activeTab) && (
           <div className="flex flex-col sm:flex-row items-center gap-2 self-start lg:self-auto">
             <div className="flex items-center bg-white border border-slate-200 rounded-[1.25rem] px-4 py-2.5 shadow-sm">
               <div className="flex items-center gap-2">
@@ -1759,22 +1749,6 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                 className="space-y-8"
               >
                 <AccountsReceivableManager userId={user?.uid || ''} userName={user?.displayName || 'Sistema'} />
-              </motion.div>
-            )}
-
-            {activeTab === 'dre' && (
-              <motion.div 
-                key="dre"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-8"
-              >
-                <DREGerencial 
-                  transactions={transactions} 
-                  commissions={commissions} 
-                  dateRange={dateRange}
-                />
               </motion.div>
             )}
 

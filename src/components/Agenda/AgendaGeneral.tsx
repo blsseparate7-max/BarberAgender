@@ -575,7 +575,7 @@ export function AgendaGeneral({
               </div>
               <div className="mt-2 space-y-1.5">
                 {topBarberDayRanking.slice(0, 2).map((item, index) => (
-                  <div key={item.id} className="flex items-center justify-between text-xs py-0.5">
+                  <div key={`top-barber-${item.id || item.nome || index}-${index}`} className="flex items-center justify-between text-xs py-0.5">
                     <div className="flex items-center gap-2 overflow-hidden">
                       <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-black ${index === 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>
                         {index + 1}
@@ -721,7 +721,7 @@ export function AgendaGeneral({
                 </div>
               ) : (
                 timeSlots.map((time, index) => (
-                  <div key={time} className="flex border-b border-slate-100 group relative" style={{ zIndex: 100 - index }}>
+                  <div key={`slot-time-${time}-${index}`} className="flex border-b border-slate-100 group relative" style={{ zIndex: 100 - index }}>
                     <div className="w-20 flex-shrink-0 border-r border-border p-3.5 flex items-center justify-center bg-slate-50/90 sticky left-0 z-20 backdrop-blur-sm">
                       <span className="text-xs font-black text-slate-600 font-mono">{time}</span>
                     </div>

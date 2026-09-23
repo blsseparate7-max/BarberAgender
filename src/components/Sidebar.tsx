@@ -313,14 +313,14 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
 
         {/* Navigation */}
         <nav className="space-y-2 flex-1 overflow-y-auto pr-1 custom-scrollbar">
-          {filteredMenu.map((item) => {
+          {filteredMenu.map((item, index) => {
             const isExpanded = expandedMenus[item.id];
             const hasSubItems = item.subItems && item.subItems.length > 0;
             const isActive = activeTab === item.id || item.subItems?.some(sub => sub.id === activeTab);
 
             if (isCollapsed) {
               return (
-                <div key={item.id} className="relative group">
+                <div key={`nav-col-${item.id || index}-${index}`} className="relative group">
                   <button
                     onClick={() => {
                       if (hasSubItems) {
@@ -368,7 +368,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen }: SidebarP
             }
 
             return (
-              <div key={item.id} className="space-y-1.5">
+              <div key={`nav-exp-${item.id || index}-${index}`} className="space-y-1.5">
                 <button 
                   onClick={() => {
                     handleNavItemClick(item.id);

@@ -145,7 +145,7 @@ export function ProfessionalSchedules() {
             </div>
           ) : schedule ? (
             <div className="space-y-4">
-              {daysOfWeek.map(day => {
+              {daysOfWeek.map((day, dIdx) => {
                 const wh = schedule.workingHours.find(h => h.dayOfWeek === day.id) || {
                   dayOfWeek: day.id,
                   isOpen: false,
@@ -154,7 +154,7 @@ export function ProfessionalSchedules() {
                 };
 
                 return (
-                  <div key={day.id} className={`p-6 rounded-[1.5rem] border transition-all ${
+                  <div key={`sched-day-${day.id || dIdx}-${dIdx}`} className={`p-6 rounded-[1.5rem] border transition-all ${
                     wh.isOpen ? 'bg-slate-50/50 border-slate-200' : 'bg-slate-50/20 border-slate-100 opacity-60'
                   }`}>
                     <div className="flex flex-col sm:flex-row sm:items-center gap-6">

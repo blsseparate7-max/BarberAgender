@@ -103,12 +103,16 @@ export const commissionService = {
   async getAdvances(filters: { profissional_id?: string; profissional_name?: string; startDate?: string; endDate?: string; tenantId?: string; status?: string }) {
     const activeTenant = filters.tenantId || getActiveTenantId();
     let queryConstraints: any[] = [];
-    if (activeTenant) {
+    if (activeTenant && activeTenant !== 'gbcortes7') {
       queryConstraints.push(where('tenantId', '==', activeTenant));
     }
 
     let snap = await getDocs(query(collection(db, ADVANCES_COLLECTION), ...queryConstraints));
     let results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance));
+
+    if (activeTenant === 'gbcortes7') {
+      results = results.filter(a => !a.tenantId || a.tenantId === 'gbcortes7');
+    }
 
     // Excluir vales cancelados, estornados, excluídos ou deletados
     results = results.filter(a => {
@@ -122,18 +126,21 @@ export const commissionService = {
       return true;
     });
 
-    // Filtro 100% por ID quando informado
+    // Filtro por ID quando informado (com suporte a aliases e campos legados)
     if (filters.profissional_id) {
       const targetId = filters.profissional_id;
       results = results.filter(a => {
-        const proId = a.profissional_id || (a as any).barber_id || (a as any).barbeiro_id;
-        return proId === targetId;
+        const proId = a.profissional_id || (a as any).barber_id || (a as any).barbeiro_id || (a as any).professionalId;
+        if (proId === targetId) return true;
+        if (targetId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && proId === 'XpDGfA241JOx7dzoAgKugo86ld62') return true;
+        if (targetId === 'XpDGfA241JOx7dzoAgKugo86ld62' && proId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2') return true;
+        return false;
       });
     } else if (filters.profissional_name) {
       const targetName = filters.profissional_name.toLowerCase().trim();
       results = results.filter(a => {
-        const aName = (a.profissional_name || '').toLowerCase().trim();
-        return aName === targetName;
+        const aName = (a.profissional_name || (a as any).barber_name || (a as any).barbeiro_name || '').toLowerCase().trim();
+        return aName === targetName || (targetName.length > 2 && aName.includes(targetName));
       });
     }
 
@@ -176,8 +183,8 @@ export const commissionService = {
     profissional_id: string;
     profissional_name: string;
     amount: number;
-    date: string;
-    description: string;
+    date?: string;
+    description?: string;
     category?: string;
     source: 'caixa' | 'financeiro';
     paymentMethod: string;
@@ -186,7 +193,9 @@ export const commissionService = {
     currentCashId?: string;
   }): Promise<{ advanceId: string; transactionId: string; movementId?: string }> {
     const activeTenant = getActiveTenantId();
-    const dateStr = data.date || new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const localDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const dateStr = data.date || localDateStr;
     const categoryName = data.category || 'Adiantamento de Comissão';
     const isCaixa = data.source === 'caixa';
     
@@ -195,18 +204,28 @@ export const commissionService = {
     if (isCaixa) {
       if (!targetCashId) {
         const cashForDate = await cashService.getCashByDate(dateStr);
-        if (!cashForDate || (cashForDate.status !== 'open' && cashForDate.status !== 'reopened')) {
-          throw new Error(`O caixa de ${dateStr} não está aberto para saída em dinheiro na gaveta. Selecione a opção "Financeiro Geral (Bancos)" ou reabra o caixa do dia.`);
+        if (cashForDate && (cashForDate.status === 'open' || cashForDate.status === 'reopened')) {
+          targetCashId = cashForDate.id;
+        } else {
+          // Check current cash as fallback
+          const curr = await cashService.getCurrentCash();
+          if (curr && (curr.status === 'open' || curr.status === 'reopened')) {
+            targetCashId = curr.id;
+          }
         }
-        targetCashId = cashForDate.id;
       }
     }
 
-    // 2. Register Advance in professional_advances
+    // 2. Register Advance in professional_advances (enrich with multiple alias keys for universal lookup)
     const advanceRef = await addDoc(collection(db, ADVANCES_COLLECTION), {
       tenantId: activeTenant,
       profissional_id: data.profissional_id,
+      barber_id: data.profissional_id,
+      barbeiro_id: data.profissional_id,
+      professionalId: data.profissional_id,
       profissional_name: data.profissional_name,
+      barber_name: data.profissional_name,
+      barbeiro_name: data.profissional_name,
       amount: data.amount,
       date: dateStr,
       description: data.description || 'Vale/Adiantamento Avulso',
@@ -222,6 +241,7 @@ export const commissionService = {
 
     // 3. Register Financial Transaction (Always! Expense for the establishment)
     const transactionId = await financialService.createTransaction({
+      tenantId: activeTenant,
       type: 'expense',
       category: categoryName,
       description: `Vale: ${data.profissional_name} (${data.description || 'Adiantamento'})`,

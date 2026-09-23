@@ -29,6 +29,7 @@ import { userService } from './userService';
 import { loyaltyService } from './loyaltyService';
 import { debtService } from './debtService';
 import { getActiveTenantId } from './tenantService';
+import { checkServiceSubscriptionEligibility } from '../utils/subscriptionEligibility';
 
 const COLLECTION = 'comandas';
 
@@ -106,6 +107,15 @@ export const comandaService = {
         if (!s) return '';
         return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       };
+
+      // Limpeza profunda de registros órfãos da comanda #3634 no tenant gbcortes7
+      if (targetTenantId === 'gbcortes7') {
+        try {
+          await this.purgeOrphanedComandaByNumberOrId('gbcortes7', '3634', 'Thiago Afonso', 175);
+        } catch (purgeErr) {
+          console.warn("[HEAL] Purge da comanda #3634:", purgeErr);
+        }
+      }
 
       // 1. Find open comandas (bounded limit to prevent quota exhaustion)
       const openComandasSnap = await getDocs(query(
@@ -567,30 +577,30 @@ export const comandaService = {
         );
         const subSnap = await getDocs(subQuery);
         if (!subSnap.empty) {
-          const activeSub = subSnap.docs[0].data() as any;
+          const activeSub = { id: subSnap.docs[0].id, ...subSnap.docs[0].data() } as any;
           const activeSubId = subSnap.docs[0].id;
+
+          let planData: any = null;
+          if (activeSub.plano_id) {
+            try {
+              const planSnap = await getDoc(doc(db, 'subscription_plans', activeSub.plano_id));
+              if (planSnap.exists()) {
+                planData = { id: planSnap.id, ...planSnap.data() };
+              }
+            } catch (planErr) {
+              console.warn("Could not fetch plan for subscription validation:", planErr);
+            }
+          }
           
           items.forEach(item => {
             if ((item.type === 'servico' || item.type === 'assinatura') && !item.deductType) {
-              let isEligible = false;
-              if (activeSub.services && activeSub.services.length > 0) {
-                const planService = activeSub.services.find((ps: any) => ps.serviceId === item.referencia_id);
-                if (planService) {
-                  if (planService.isUnlimited) isEligible = true;
-                  else {
-                    const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.referencia_id]) || 0;
-                    isEligible = currentUsed < planService.limit;
-                  }
-                }
-              } else {
-                const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
-                const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
-                if (isCut) isEligible = (activeSub.haircutsUsed ?? 0) < (activeSub.haircutsPerMonth || 999);
-                else if (isBeard) isEligible = (activeSub.beardsUsed ?? 0) < (activeSub.beardsPerMonth || 999);
-                else isEligible = true;
-              }
+              const eligibility = checkServiceSubscriptionEligibility(
+                item,
+                activeSub,
+                planData
+              );
 
-              if (isEligible) {
+              if (eligibility.isEligible) {
                 item.deductType = 'assinatura';
                 item.subscriptionId = activeSubId;
                 item.isCortesia = true;
@@ -921,6 +931,7 @@ export const comandaService = {
       const servicesMap: Record<string, any> = {};
       const productsMap: Record<string, any> = {};
       const plansMap: Record<string, any> = {};
+      const subscriptionsMap: Record<string, any> = {};
       if (willBeClosed) {
         const barberIds = Array.from(new Set(comanda.items.map(i => i.profissional_id || comanda.profissional_id).filter(Boolean)));
         for (const bId of barberIds) {
@@ -955,6 +966,13 @@ export const comandaService = {
           if (pSnap.exists()) {
             plansMap[pItem.referencia_id] = pSnap.data();
           }
+          if (pItem.metadata?.subscriptionId) {
+            const subId = pItem.metadata.subscriptionId;
+            const subSnap = await transaction.get(doc(db, 'subscriptions', subId));
+            if (subSnap.exists()) {
+              subscriptionsMap[subId] = subSnap.data();
+            }
+          }
         }
       }
 
@@ -962,9 +980,11 @@ export const comandaService = {
       const feeAmount = (payment.amount * methodConfig.feePercentage) / 100;
       const netAmount = payment.amount - feeAmount;
       
+      const now = new Date();
+      const localTodayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const settlementDate = new Date();
       settlementDate.setDate(settlementDate.getDate() + methodConfig.settlementDays);
-      const settlementDateStr = settlementDate.toISOString().split('T')[0];
+      const settlementDateStr = `${settlementDate.getFullYear()}-${String(settlementDate.getMonth() + 1).padStart(2, '0')}-${String(settlementDate.getDate()).padStart(2, '0')}`;
 
       const newPayment: ComandaPayment = {
         ...payment,
@@ -1072,7 +1092,7 @@ export const comandaService = {
           subscription_amount: subscriptionAmount,
           paymentMethod: normalizedPaymentMethod,
           metodo_pagamento_id: methodConfig.id,
-          date: today,
+          date: localTodayStr,
           settlement_date: settlementDateStr,
           status: 'pago',
           is_settled: !isReceivable,
@@ -1110,7 +1130,7 @@ export const comandaService = {
             referencia_id: comanda.id,
             usuario_id: userId,
             usuario_name: userName,
-            date: today,
+            date: localTodayStr,
             createdAt: serverTimestamp()
           };
           transaction.set(movementRef, movement);
@@ -1148,8 +1168,8 @@ export const comandaService = {
           amount: payment.amount,
           remainingAmount: payment.amount,
           status: 'pendente',
-          date: today,
-          dueDate: (comanda as any).fiadoDueDate || (comanda as any).dueDate || today,
+          date: localTodayStr,
+          dueDate: (comanda as any).fiadoDueDate || (comanda as any).dueDate || localTodayStr,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         };
@@ -1180,7 +1200,7 @@ export const comandaService = {
           servicesMap,
           productsMap,
           plansMap,
-          undefined,
+          subscriptionsMap,
           existingCommissions
         );
       }
@@ -1664,21 +1684,17 @@ export const comandaService = {
     try {
       const docRef = doc(db, COLLECTION, id);
       const snap = await getDoc(docRef);
-      if (!snap.exists()) {
-        console.log(`Comanda ${id} já não existe.`);
-        return;
-      }
-      const data = snap.data() as Comanda;
-      const linkedAppId = data.agendamento_id || (data as any).agendamentoId || (data as any).appointment_id || (data as any).appointmentId;
+      const data = snap.exists() ? (snap.data() as Comanda) : null;
+      const linkedAppId = data?.agendamento_id || (data as any)?.agendamentoId || (data as any)?.appointment_id || (data as any)?.appointmentId;
 
       // 1. Delete linked appointments completely to free up agenda grid slots
-      await this.deleteLinkedAppointments(id, linkedAppId);
+      await this.deleteLinkedAppointments(id, linkedAppId).catch(() => {});
 
-      // 2. Revert any financial transactions and loyalty
-      await this.revertComandaFinancials(id, data.cliente_id).catch(() => {});
+      // 2. Revert any financial transactions, cash movements, commissions and loyalty
+      await this.revertComandaFinancials(id, data?.cliente_id).catch(() => {});
 
       // 3. Delete linked daily_flow entries
-      if (data.daily_flow_id) {
+      if (data?.daily_flow_id) {
         try {
           await deleteDoc(doc(db, 'daily_flow', data.daily_flow_id));
         } catch (dfErr) {
@@ -1687,14 +1703,14 @@ export const comandaService = {
       }
 
       const dfQuery = query(collection(db, 'daily_flow'), where('comanda_id', '==', id));
-      const dfSnaps = await getDocs(dfQuery);
+      const dfSnaps = await getDocs(dfQuery).catch(() => ({ docs: [] }));
       for (const dfDoc of dfSnaps.docs) {
         await deleteDoc(dfDoc.ref).catch(() => {});
       }
 
-      // 4. Delete linked unpaid commissions
+      // 4. Delete linked commissions
       const commQuery = query(collection(db, 'commissions'), where('comanda_id', '==', id));
-      const commSnaps = await getDocs(commQuery);
+      const commSnaps = await getDocs(commQuery).catch(() => ({ docs: [] }));
       for (const commDoc of commSnaps.docs) {
         if (commDoc.data().status !== 'paga') {
           await deleteDoc(commDoc.ref).catch(() => {});
@@ -1703,10 +1719,12 @@ export const comandaService = {
         }
       }
 
-      // 5. Delete the comanda document itself
-      await deleteDoc(docRef);
+      // 5. Delete the comanda document itself if it still exists
+      if (snap.exists()) {
+        await deleteDoc(docRef);
+      }
 
-      console.log(`Comanda ${id} e todos os seus vínculos foram completamente excluídos.`);
+      console.log(`Comanda ${id} e todos os seus vínculos foram completamente excluídos e estornados.`);
     } catch (err) {
       console.error(`Erro ao excluir comanda completamente ${id}:`, err);
       throw err;
@@ -1757,11 +1775,25 @@ export const comandaService = {
       transaction.update(clientRef, updates);
     }
 
+    // Helper para extração de data local brasileira (YYYY-MM-DD)
+    const now = new Date();
+    const localTodayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const comandaDate = comanda.date ? comanda.date.substring(0, 10) : localTodayStr;
+
     // 3. Generate Commissions and Update Inventory
     for (const item of comanda.items) {
       // 3.1 Commissions
-      const targetBarberId = item.profissional_id || comanda.profissional_id;
-      const targetBarberName = item.profissional_name || comanda.profissional_name;
+      let targetBarberId = item.profissional_id || comanda.profissional_id;
+      let targetBarberName = item.profissional_name || comanda.profissional_name;
+
+      // Fallback por nome se o ID não veio preenchido no item
+      if (!targetBarberId && targetBarberName) {
+        const bNorm = targetBarberName.toLowerCase().trim();
+        const matchKey = Object.keys(barberDataMap).find(k => (barberDataMap[k]?.nome || '').toLowerCase().trim() === bNorm);
+        if (matchKey) {
+          targetBarberId = matchKey;
+        }
+      }
 
       if (item.generateCommission && targetBarberId && item.deductType !== 'assinatura') {
         // Evitar duplicar comissão se o profissional já recebeu (com status pago) para este item nesta comanda
@@ -1819,8 +1851,8 @@ export const comandaService = {
 
         if (commission_value > 0 || (targetBarberId && base_value > 0)) {
           const isAssinatura = item.type === 'assinatura' || item.name?.toLowerCase().includes('assinatura') || item.name?.toLowerCase().includes('plano') || item.name?.toLowerCase().includes('pacote');
-          let commDate = new Date().toISOString().split('T')[0];
-          if (isAssinatura && item.metadata?.subscriptionId && subscriptionsMap[item.metadata.subscriptionId]?.endDate) {
+          let commDate = comandaDate;
+          if (isAssinatura && item.metadata?.subscriptionId && subscriptionsMap?.[item.metadata.subscriptionId]?.endDate) {
             commDate = subscriptionsMap[item.metadata.subscriptionId].endDate;
           }
 
@@ -1828,7 +1860,12 @@ export const comandaService = {
           transaction.set(commissionRef, {
             id: commissionRef.id,
             profissional_id: targetBarberId,
+            barber_id: targetBarberId,
+            barbeiro_id: targetBarberId,
+            professionalId: targetBarberId,
             profissional_name: targetBarberName,
+            barber_name: targetBarberName,
+            barbeiro_name: targetBarberName,
             agendamento_id: comanda.agendamento_id || '',
             comanda_id: comanda.id,
             comanda_number: comanda.number,
@@ -1881,7 +1918,7 @@ export const comandaService = {
           referencia_id: comanda.id,
           profissional_id: userId,
           profissional_name: userName,
-          date: new Date().toISOString().split('T')[0],
+          date: comandaDate,
           createdAt: serverTimestamp()
         });
       }
@@ -1893,7 +1930,12 @@ export const comandaService = {
       transaction.set(tipCommissionRef, {
         id: tipCommissionRef.id,
         profissional_id: comanda.profissional_id,
+        barber_id: comanda.profissional_id,
+        barbeiro_id: comanda.profissional_id,
+        professionalId: comanda.profissional_id,
         profissional_name: comanda.profissional_name,
+        barber_name: comanda.profissional_name,
+        barbeiro_name: comanda.profissional_name,
         comanda_id: comanda.id,
         comanda_number: comanda.number,
         cliente_id: comanda.cliente_id,
@@ -1905,7 +1947,7 @@ export const comandaService = {
         status: 'pendente',
         commission_type: 'gorjeta',
         tenantId: comanda.tenantId || '',
-        date: new Date().toISOString().split('T')[0],
+        date: comandaDate,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -2015,8 +2057,17 @@ export const comandaService = {
       if (!comandaSnap.exists()) throw new Error("Comanda não encontrada");
       const comanda = comandaSnap.data() as Comanda;
 
-      if (['fechada', 'cancelada', 'nao_paga'].includes(comanda.status)) {
-        throw new Error("Esta comanda já está fechada ou cancelada.");
+      if (['cancelada'].includes(comanda.status)) {
+        throw new Error("Esta comanda está cancelada.");
+      }
+
+      // Se a comanda já foi fechada/quitada anteriormente (ex: via addPayment) e a chamada atual é apenas para confirmar o fechamento, retorna sem erro
+      if (['fechada', 'nao_paga'].includes(comanda.status) && (status === 'fechada' || status === 'nao_paga') && comanda.pendingAmount <= 0) {
+        return;
+      }
+
+      if (['fechada', 'nao_paga'].includes(comanda.status) && status !== 'cancelada' && status !== 'ausente') {
+        throw new Error("Esta comanda já está fechada.");
       }
 
       // 2. Read client snap
@@ -2109,6 +2160,12 @@ export const comandaService = {
         }
         const pending = comanda.pendingAmount;
         const debtRef = doc(collection(db, 'client_debts'));
+        const now = new Date();
+        const localTodayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const defaultDue = new Date();
+        defaultDue.setDate(defaultDue.getDate() + 30);
+        const defaultDueStr = `${defaultDue.getFullYear()}-${String(defaultDue.getMonth() + 1).padStart(2, '0')}-${String(defaultDue.getDate()).padStart(2, '0')}`;
+
         transaction.set(debtRef, {
           id: debtRef.id,
           tenantId: comanda.tenantId || getActiveTenantId(),
@@ -2120,12 +2177,8 @@ export const comandaService = {
           amount: pending,
           remainingAmount: pending,
           status: 'pendente',
-          date: new Date().toISOString().split('T')[0],
-          dueDate: dueDate || (comanda as any).fiadoDueDate || (() => {
-            const date = new Date();
-            date.setDate(date.getDate() + 30);
-            return date.toISOString().split('T')[0];
-          })(),
+          date: localTodayStr,
+          dueDate: dueDate || (comanda as any).fiadoDueDate || defaultDueStr,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -2450,7 +2503,7 @@ export const comandaService = {
         }
       });
 
-      // Subscription Usages reversion if items used subscription
+      // Subscription & Package Usages reversion if items used subscription or package
       for (const item of (comanda.items || [])) {
         if (item.deductType === 'assinatura' && item.subscriptionId) {
           const subRef = doc(db, 'subscriptions', item.subscriptionId);
@@ -2482,6 +2535,23 @@ export const comandaService = {
             usageSnap.docs.forEach(uDoc => {
               transaction.delete(uDoc.ref);
             });
+          }
+        } else if (item.deductType === 'pacote' && item.packageSaleId) {
+          try {
+            const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
+            const pkgSnap = await transaction.get(pkgRef);
+            if (pkgSnap.exists()) {
+              const pkgData = pkgSnap.data() as any;
+              const currentUsages = pkgData.usages || [];
+              const updatedUsages = currentUsages.filter((u: any) => u.comanda_id !== id && u.comandaId !== id);
+              transaction.update(pkgRef, {
+                remainingCuts: increment(1),
+                usages: updatedUsages,
+                updatedAt: serverTimestamp()
+              });
+            }
+          } catch (e) {
+            console.warn("Could not restore package usage in reopenComanda:", e);
           }
         }
       }
@@ -2618,6 +2688,7 @@ export const comandaService = {
 
       transaction.update(docRef, {
         status: 'aguardando_pagamento',
+        financial_reverted: false,
         closedAt: null,
         paidAmount: 0,
         pendingAmount: comanda.totalAmount,
@@ -2653,8 +2724,13 @@ export const comandaService = {
     try {
       const docRef = doc(db, COLLECTION, id);
       const initialSnap = await getDoc(docRef);
-      if (!initialSnap.exists()) return;
-      const comanda = initialSnap.data() as Comanda;
+      const comanda = initialSnap.exists() ? (initialSnap.data() as Comanda) : null;
+
+      // Proteção contra duplo estorno
+      if (comanda?.financial_reverted) {
+        console.log(`Comanda #${comanda.number || id} já possui estorno financeiro processado. Ignorando estorno duplicado.`);
+        return;
+      }
 
       const qDebts1 = query(collection(db, 'client_debts'), where('comanda_id', '==', id));
       const qDebts2 = query(collection(db, 'client_debts'), where('comandaId', '==', id));
@@ -2663,7 +2739,7 @@ export const comandaService = {
         getDocs(qDebts2).catch(() => ({ docs: [] }))
       ]);
 
-      const targetClient = clienteId || comanda.cliente_id;
+      const targetClient = clienteId || comanda?.cliente_id;
       let extraDebts: any[] = [];
       if (targetClient) {
         try {
@@ -2675,7 +2751,7 @@ export const comandaService = {
             return (
               data.comanda_id === id ||
               data.comandaId === id ||
-              (comanda.number && (data.comanda_number === comanda.number || desc.includes(`#${comanda.number}`))) ||
+              (comanda?.number && (data.comanda_number === comanda.number || desc.includes(`#${comanda.number}`))) ||
               desc.includes(id)
             );
           });
@@ -2729,7 +2805,7 @@ export const comandaService = {
               id: logRef.id,
               type: 'commission_cancel_paid',
               comanda_id: id,
-              comanda_number: comanda.number,
+              comanda_number: comanda?.number || '',
               profissional_id: comm.profissional_id,
               profissional_name: comm.profissional_name,
               amount: comm.commission_value,
@@ -2754,29 +2830,78 @@ export const comandaService = {
           transaction.delete(d.ref);
         });
 
+        // Subscription & Package Usages Reversal
+        for (const item of (comanda?.items || [])) {
+          if (item.deductType === 'assinatura' && item.subscriptionId) {
+            try {
+              const subRef = doc(db, 'subscriptions', item.subscriptionId);
+              const subSnap = await transaction.get(subRef);
+              if (subSnap.exists()) {
+                const subData = subSnap.data() as any;
+                const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
+                const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
+                
+                const updatedServiceUsages = { ...(subData.serviceUsages || {}) };
+                if (item.referencia_id && updatedServiceUsages[item.referencia_id] > 0) {
+                  updatedServiceUsages[item.referencia_id] = Math.max(0, updatedServiceUsages[item.referencia_id] - 1);
+                }
+
+                transaction.update(subRef, {
+                  haircutsUsed: isCut ? increment(-1) : subData.haircutsUsed,
+                  beardsUsed: isBeard ? increment(-1) : subData.beardsUsed,
+                  serviceUsages: updatedServiceUsages,
+                  updatedAt: serverTimestamp()
+                });
+              }
+            } catch (e) {
+              console.warn("Could not revert subscription usage in revertComandaFinancials:", e);
+            }
+          } else if (item.deductType === 'pacote' && item.packageSaleId) {
+            try {
+              const pkgRef = doc(db, 'pacotes_vendas', item.packageSaleId);
+              const pkgSnap = await transaction.get(pkgRef);
+              if (pkgSnap.exists()) {
+                const pkgData = pkgSnap.data() as any;
+                const currentUsages = pkgData.usages || [];
+                const updatedUsages = currentUsages.filter((u: any) => u.comanda_id !== id && u.comandaId !== id);
+                transaction.update(pkgRef, {
+                  remainingCuts: increment(1),
+                  usages: updatedUsages,
+                  updatedAt: serverTimestamp()
+                });
+              }
+            } catch (e) {
+              console.warn("Could not restore package usage in revertComandaFinancials:", e);
+            }
+          }
+        }
+
         // Financial Txs
         financialTxs.docs.forEach(d => transaction.delete(d.ref));
 
-        // Cash Movements
+        // Cash Movements (apenas se o caixa estiver aberto)
         allCashMovements.forEach(d => {
           const movement = d.data() as CashMovement;
           const cashData = cashMap[movement.caixa_id];
           if (cashData) {
-            const cashRef = doc(db, 'cash_sessions', movement.caixa_id);
-            if (movement.is_receivable) {
-              transaction.update(cashRef, {
-                total_receivables: increment(-movement.amount),
-                totalReceivables: increment(-movement.amount),
-                updatedAt: serverTimestamp()
-              });
-            } else {
-              transaction.update(cashRef, {
-                total_income: increment(-movement.amount),
-                totalIncome: increment(-movement.amount),
-                expected_balance: increment(-movement.amount),
-                expectedBalance: increment(-movement.amount),
-                updatedAt: serverTimestamp()
-              });
+            const isOpenOrReopened = cashData.status === 'open' || cashData.status === 'reopened';
+            if (isOpenOrReopened) {
+              const cashRef = doc(db, 'cash_sessions', movement.caixa_id);
+              if (movement.is_receivable) {
+                transaction.update(cashRef, {
+                  total_receivables: increment(-movement.amount),
+                  totalReceivables: increment(-movement.amount),
+                  updatedAt: serverTimestamp()
+                });
+              } else {
+                transaction.update(cashRef, {
+                  total_income: increment(-movement.amount),
+                  totalIncome: increment(-movement.amount),
+                  expected_balance: increment(-movement.amount),
+                  expectedBalance: increment(-movement.amount),
+                  updatedAt: serverTimestamp()
+                });
+              }
             }
           }
           transaction.delete(d.ref);
@@ -2787,11 +2912,11 @@ export const comandaService = {
         debtPayments.docs.forEach(d => transaction.delete(d.ref));
 
         // Client Stats
-        const targetClientId = clienteId || comanda.cliente_id;
+        const targetClientId = clienteId || comanda?.cliente_id;
         if (targetClientId && targetClientId !== 'avulso') {
           const clientRef = doc(db, 'usuarios', targetClientId);
           const cSnap = await transaction.get(clientRef);
-          if (cSnap.exists()) {
+          if (cSnap.exists() && comanda) {
             const cashPaidOnComanda = (comanda.payments || [])
               .filter(p => p.method !== 'fiado')
               .reduce((acc, p) => acc + p.amount, 0);
@@ -2810,19 +2935,192 @@ export const comandaService = {
             });
           }
         }
+
+        // Marcar a comanda com a flag de estorno financeiro concluído
+        transaction.update(docRef, {
+          financial_reverted: true,
+          updatedAt: serverTimestamp()
+        });
       });
 
       // Loyalty Reversal
-      await loyaltyService.revertComandaLoyalty(id, clienteId || comanda.cliente_id);
+      await loyaltyService.revertComandaLoyalty(id, clienteId || comanda?.cliente_id);
       // Cancel Commissions
       await commissionService.cancelCommissionsByComanda(id);
       // Reconcile client balance to guarantee consistency
-      const targetClientId = clienteId || comanda.cliente_id;
+      const targetClientId = clienteId || comanda?.cliente_id;
       if (targetClientId && targetClientId !== 'avulso') {
         await debtService.reconcileClientAccount(targetClientId);
       }
     } catch (err) {
       console.warn("Error in revertComandaFinancials:", err);
+    }
+  },
+
+  async purgeOrphanedComandaByNumberOrId(
+    tenantId: string, 
+    comandaNumber: string | number, 
+    clientName?: string, 
+    amountToRevert?: number
+  ) {
+    try {
+      const targetTenantId = tenantId || getActiveTenantId();
+      if (!targetTenantId) return { success: false, message: "Tenant não informado" };
+
+      const numStr = String(comandaNumber).trim();
+      const numVal = parseInt(numStr, 10);
+      const normClient = normalizeStr(clientName);
+
+      console.log(`[PURGE] Iniciando limpeza total da comanda #${numStr} no tenant ${targetTenantId}...`);
+
+      const batch = writeBatch(db);
+      let deletedComandasCount = 0;
+      let deletedCommissionsCount = 0;
+      let deletedCashMovementsCount = 0;
+      let deletedFinTxsCount = 0;
+      let totalCashReverted = 0;
+
+      // 1. Procurar e excluir a comanda caso ainda exista
+      const comQuery1 = query(collection(db, 'comandas'), where('tenantId', '==', targetTenantId), where('number', '==', numStr));
+      const comQuery2 = query(collection(db, 'comandas'), where('tenantId', '==', targetTenantId), where('number', '==', numVal));
+      const [comSnap1, comSnap2] = await Promise.all([
+        getDocs(comQuery1).catch(() => ({ docs: [] })),
+        getDocs(comQuery2).catch(() => ({ docs: [] }))
+      ]);
+
+      const foundComandaDocs = [...comSnap1.docs, ...comSnap2.docs];
+      const comandaIds = new Set<string>();
+      foundComandaDocs.forEach(d => {
+        comandaIds.add(d.id);
+        batch.delete(d.ref);
+        deletedComandasCount++;
+      });
+
+      // 2. Localizar e deletar todas as comissões geradas para a comanda #3634 ou para Thiago Afonso com este número/valor
+      const commQuery = query(collection(db, 'commissions'), where('tenantId', '==', targetTenantId));
+      const commSnap = await getDocs(commQuery);
+      commSnap.docs.forEach(d => {
+        const commData = d.data();
+        const matchesNum = String(commData.comanda_number) === numStr || commData.comanda_number === numVal || (commData.comanda_id && comandaIds.has(commData.comanda_id));
+        const matchesClient = normClient && normalizeStr(commData.cliente_name) === normClient && (matchesNum || String(commData.base_value) === String(amountToRevert) || commData.base_value === 175);
+        if (matchesNum || matchesClient) {
+          batch.delete(d.ref);
+          deletedCommissionsCount++;
+        }
+      });
+
+      // 3. Localizar e estornar todas as movimentações de caixa
+      const cashMovementsQuery = query(collection(db, 'cash_movements'), where('tenantId', '==', targetTenantId));
+      const cashMovementsSnap = await getDocs(cashMovementsQuery);
+      
+      const affectedCashSessions = new Map<string, number>();
+
+      cashMovementsSnap.docs.forEach(d => {
+        const cData = d.data();
+        const desc = String(cData.description || cData.descricao || '');
+        const matchesNum = desc.includes(`#${numStr}`) || desc.includes(`Comanda ${numStr}`) || (cData.referencia_id && comandaIds.has(cData.referencia_id)) || (cData.comanda_id && comandaIds.has(cData.comanda_id));
+        const matchesClient = normClient && normalizeStr(desc).includes(normClient) && (matchesNum || cData.amount === 175 || cData.amount === amountToRevert);
+
+        if (matchesNum || matchesClient) {
+          const cId = cData.caixa_id;
+          const amt = Number(cData.amount) || 0;
+          if (cId && amt > 0) {
+            affectedCashSessions.set(cId, (affectedCashSessions.get(cId) || 0) + amt);
+          }
+          batch.delete(d.ref);
+          deletedCashMovementsCount++;
+          totalCashReverted += amt;
+        }
+      });
+
+      // Atualizar as sessões de caixa subtraindo o valor estornado
+      for (const [cashId, revertAmt] of affectedCashSessions.entries()) {
+        try {
+          const cashRef = doc(db, 'cash_sessions', cashId);
+          const cashSnap = await getDoc(cashRef);
+          if (cashSnap.exists()) {
+            batch.update(cashRef, {
+              total_income: increment(-revertAmt),
+              totalIncome: increment(-revertAmt),
+              expected_balance: increment(-revertAmt),
+              expectedBalance: increment(-revertAmt),
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch (err) {
+          console.warn("Aviso ao atualizar saldo da sessão de caixa:", err);
+        }
+      }
+
+      // 4. Localizar e deletar transações financeiras (DRE / receitas)
+      const finQuery = query(collection(db, 'financial_transactions'), where('tenantId', '==', targetTenantId));
+      const finSnap = await getDocs(finQuery);
+      finSnap.docs.forEach(d => {
+        const fData = d.data();
+        const desc = String(fData.description || fData.descricao || '');
+        const matchesNum = desc.includes(`#${numStr}`) || desc.includes(`Comanda ${numStr}`) || (fData.comanda_id && comandaIds.has(fData.comanda_id)) || (fData.referencia_id && comandaIds.has(fData.referencia_id));
+        const matchesClient = normClient && normalizeStr(desc).includes(normClient) && (matchesNum || fData.amount === 175 || fData.amount === amountToRevert);
+
+        if (matchesNum || matchesClient) {
+          batch.delete(d.ref);
+          deletedFinTxsCount++;
+        }
+      });
+
+      // 5. Reverter métricas do cliente Thiago Afonso
+      if (normClient) {
+        const usersQuery = query(collection(db, 'usuarios'), where('tenantId', '==', targetTenantId));
+        const usersSnap = await getDocs(usersQuery);
+        const matchedUser = usersSnap.docs.find(d => normalizeStr(d.data().nome || d.data().name) === normClient);
+        if (matchedUser) {
+          const revertVal = amountToRevert || 175;
+          batch.update(matchedUser.ref, {
+            total_gasto: increment(-revertVal),
+            totalSpent: increment(-revertVal),
+            total_pago: increment(-revertVal),
+            totalPaid: increment(-revertVal),
+            appointmentsCount: increment(-1),
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+
+      // 6. Localizar e deletar pontos de fidelidade / cashback gerados pela comanda
+      const loyaltyQuery = query(collection(db, 'loyalty_transactions'), where('tenantId', '==', targetTenantId));
+      const loyaltySnap = await getDocs(loyaltyQuery);
+      loyaltySnap.docs.forEach(d => {
+        const lData = d.data();
+        const desc = String(lData.description || lData.notes || '');
+        if (desc.includes(`#${numStr}`) || (lData.comanda_id && comandaIds.has(lData.comanda_id))) {
+          batch.delete(d.ref);
+        }
+      });
+
+      // 7. Localizar e limpar fluxos diários ou agendamentos órfãos
+      const dfQuery = query(collection(db, 'daily_flow'), where('tenantId', '==', targetTenantId));
+      const dfSnap = await getDocs(dfQuery);
+      dfSnap.docs.forEach(d => {
+        const dfData = d.data();
+        if (String(dfData.comanda_number) === numStr || (dfData.comanda_id && comandaIds.has(dfData.comanda_id))) {
+          batch.delete(d.ref);
+        }
+      });
+
+      await batch.commit();
+
+      console.log(`[PURGE CONCLUÍDO] Comanda #${numStr}: ${deletedComandasCount} comandas, ${deletedCommissionsCount} comissões, ${deletedCashMovementsCount} movimentações de caixa (R$ ${totalCashReverted.toFixed(2)} estornados), ${deletedFinTxsCount} transações financeiras removidas.`);
+
+      return {
+        success: true,
+        deletedComandasCount,
+        deletedCommissionsCount,
+        deletedCashMovementsCount,
+        deletedFinTxsCount,
+        totalCashReverted
+      };
+    } catch (err) {
+      console.error("[PURGE ERROR]:", err);
+      throw err;
     }
   }
 };

@@ -361,15 +361,32 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
 
 
 
-    // 2. Escuta vales do profissional estritamente por ID único na coleção oficial professional_advances
+    // 2. Escuta vales do profissional com suporte completo a tenant e identificadores
+    const tenantCondition = tenantId === 'gbcortes7' 
+      ? where('tenantId', 'in', [tenantId, '']) 
+      : where('tenantId', '==', tenantId);
     const advsQuery = query(
       collection(db, 'professional_advances'),
-      where('profissional_id', '==', professionalId)
+      tenantCondition
     );
     const unsubAdvs = onSnapshot(advsQuery, (snapshot) => {
+      const normName = (professionalName || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       const advsList = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as ProfessionalAdvance))
-        .filter(a => !tenantId || !a.tenantId || a.tenantId === tenantId || (tenantId === 'gbcortes7' && (!a.tenantId || a.tenantId === 'gbcortes7')));
+        .filter(a => {
+          if (!a) return false;
+          const proId = a.profissional_id || (a as any).barber_id || (a as any).barbeiro_id || (a as any).professionalId;
+          if (proId && (proId === professionalId || (professionalId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2' && proId === 'XpDGfA241JOx7dzoAgKugo86ld62') || (professionalId === 'XpDGfA241JOx7dzoAgKugo86ld62' && proId === 'QoaTs0kU4vaWC7l1F0BfT3Fj5IX2'))) {
+            return true;
+          }
+          if (!proId && normName.length > 2) {
+            const aName = (a.profissional_name || (a as any).barber_name || (a as any).barbeiro_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+            if (aName && (aName === normName || aName.includes(normName) || normName.includes(aName))) {
+              return true;
+            }
+          }
+          return false;
+        });
       setAllAdvances(advsList);
     }, (error) => {
       console.error("Erro ao escutar vales detalhados:", error);
@@ -559,7 +576,8 @@ export function ProfessionalCommissionsDetail({ professionalId, professionalName
         return;
       }
 
-      const todayString = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const todayString = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const isCaixa = valeData.source === 'caixa';
       
       if (isCaixa && !isOpenCash) {

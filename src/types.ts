@@ -478,6 +478,7 @@ export interface Comanda {
   reopenHistory?: ReopenLog[];
   openedAt: any;
   closedAt?: any;
+  financial_reverted?: boolean;
   createdAt: any;
   updatedAt: any;
 }
@@ -671,7 +672,7 @@ export interface Stats {
   rankingBarbeiros?: { nome: string; atendimentos: number; faturamento: number }[];
 }
 
-export type SubscriptionStatus = 'active' | 'expired' | 'canceled' | 'paused' | 'pending';
+export type SubscriptionStatus = 'active' | 'expired' | 'canceled' | 'paused' | 'pending' | 'past_due';
 
 export interface SubscriptionDiscount {
   itemId: string; // ID of the service, product, or 'all_services', or 'all_products'
@@ -720,6 +721,9 @@ export interface Subscription {
   autoRenew: boolean;
   haircutsUsed: number;
   beardsUsed: number;
+  haircutsPerMonth?: number;
+  beardsPerMonth?: number;
+  services?: SubscriptionPlanService[];
   serviceUsages?: Record<string, number>;
   lastRenewalDate: string;
   discounts?: SubscriptionDiscount[];

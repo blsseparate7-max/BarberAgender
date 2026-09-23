@@ -19,6 +19,7 @@ import { SubscriptionPlan, Subscription, SubscriptionUsage, SubscriptionStatus }
 import { format, addDays, addMonths } from 'date-fns';
 import { getActiveTenantId } from './tenantService';
 import { cashService } from './cashService';
+import { checkServiceSubscriptionEligibility } from '../utils/subscriptionEligibility';
 
 const PLANS_COLLECTION = 'subscription_plans';
 const SUBSCRIPTIONS_COLLECTION = 'subscriptions';
@@ -366,28 +367,15 @@ export const subscriptionService = {
       if (!planSnap.exists()) throw new Error("Plano não encontrado");
       const plan = planSnap.data() as SubscriptionPlan;
 
-      // Check limits
-      if (plan.services && plan.services.length > 0) {
-        if (service_id) {
-          const planService = plan.services.find(ps => ps.serviceId === service_id);
-          if (planService && !planService.isUnlimited) {
-            const currentUsed = (sub.serviceUsages && sub.serviceUsages[service_id]) || 0;
-            if (currentUsed >= planService.limit) {
-              throw new Error(`Limite mensal do serviço "${planService.name}" atingido`);
-            }
-          }
-        }
-      } else {
-        // Legacy check limits fallback
-        const isUnlimitedCuts = !plan.haircutsPerMonth || plan.haircutsPerMonth >= 999 || plan.haircutsPerMonth === 0;
-        const isUnlimitedBeards = !plan.beardsPerMonth || plan.beardsPerMonth >= 999 || plan.beardsPerMonth === 0;
+      // Strict validation against client's subscription plan
+      const eligibility = checkServiceSubscriptionEligibility(
+        { id: service_id, name: service_name, type },
+        sub,
+        plan
+      );
 
-        if (!isUnlimitedCuts && type === 'haircut' && sub.haircutsUsed >= plan.haircutsPerMonth) {
-          throw new Error("Limite de cortes mensais atingido");
-        }
-        if (!isUnlimitedBeards && type === 'beard' && sub.beardsUsed >= plan.beardsPerMonth) {
-          throw new Error("Limite de barbas mensais atingido");
-        }
+      if (!eligibility.isEligible) {
+        throw new Error(eligibility.reason || `O serviço "${service_name || 'selecionado'}" não está contemplado no plano "${plan.name}".`);
       }
 
       // Register usage

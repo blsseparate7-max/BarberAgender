@@ -730,8 +730,8 @@ export function Comissoes() {
               className="w-full bg-slate-50 border border-slate-300 hover:border-slate-400 text-slate-900 text-sm font-black py-2.5 px-3 rounded-xl outline-none focus:border-blue-500 transition-colors cursor-pointer"
             >
               <option value="">💈 Todos os Profissionais (Visão Geral da Barbearia)</option>
-              {teamRoster.map((b) => (
-                <option key={`opt-b-${b.uid}`} value={b.uid}>
+              {teamRoster.map((b, bIdx) => (
+                <option key={`opt-b-${b.uid || bIdx}-${bIdx}`} value={b.uid}>
                   ✂️ {b.nome} ({b.percentualComissao || 50}% de comissão)
                 </option>
               ))}

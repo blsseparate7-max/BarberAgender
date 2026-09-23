@@ -251,7 +251,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
   const [isSangriaModalOpen, setIsSangriaModalOpen] = useState(false);
   const [isReforcoModalOpen, setIsReforcoModalOpen] = useState(false);
-  const [sangriaData, setSangriaData] = useState<{ amount: string; description: string; categoryType: 'transferencia' | 'despesa' }>({ amount: '', description: '', categoryType: 'transferencia' });
+  const [sangriaData, setSangriaData] = useState<{ amount: string; description: string; categoryType: 'transferencia' | 'despesa' | 'vale'; selectedBarberId?: string }>({ amount: '', description: '', categoryType: 'transferencia', selectedBarberId: '' });
   const [reforcoData, setReforcoData] = useState({ amount: '', description: '' });
   const [inconsistencyLogs, setInconsistencyLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -885,7 +885,44 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
     }
 
     try {
+      const isVale = sangriaData.categoryType === 'vale';
       const isExpense = sangriaData.categoryType === 'despesa';
+      const now = new Date();
+      const localTodayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      // Fluxo Especial: Vale / Adiantamento de Profissional
+      if (isVale) {
+        if (!sangriaData.selectedBarberId) {
+          toast.error("Selecione o profissional beneficiário do vale.");
+          return;
+        }
+        const prof = (professionals || []).find(b => b.uid === sangriaData.selectedBarberId || b.id === sangriaData.selectedBarberId);
+        if (!prof) {
+          toast.error("Profissional selecionado inválido.");
+          return;
+        }
+
+        await commissionService.registerCompleteVale({
+          profissional_id: prof.uid,
+          profissional_name: prof.nome || 'Profissional',
+          amount,
+          date: localTodayStr,
+          description: sangriaData.description || `Vale pago pelo caixa a ${prof.nome}`,
+          category: 'Adiantamento de Comissão',
+          source: 'caixa',
+          paymentMethod: 'dinheiro',
+          userId: user.uid,
+          userName: profile?.nome || 'Admin',
+          currentCashId: currentCash.id
+        });
+
+        toast.success(`Vale de R$ ${amount.toFixed(2)} registrado e abatido da comissão de ${prof.nome}!`);
+        setIsSangriaModalOpen(false);
+        setSangriaData({ amount: '', description: '', categoryType: 'transferencia', selectedBarberId: '' });
+        loadData();
+        return;
+      }
+
       const categoryName = isExpense ? 'Sangria - Despesa pelo Caixa' : 'Sangria - Transferência Cofre/Banco';
       const defaultDesc = isExpense ? 'Despesa em dinheiro paga pelo caixa' : 'Retirada para cofre/depósito';
 
@@ -900,7 +937,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
         is_receivable: false,
         usuario_id: user.uid,
         usuario_name: profile?.nome || 'Admin',
-        date: new Date().toISOString().split('T')[0]
+        date: localTodayStr
       });
 
       // 2. If categorized as operational expense paid in cash, also create ledger transaction for DRE
@@ -914,8 +951,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
           net_amount: amount,
           fee_amount: 0,
           paymentMethod: 'dinheiro',
-          date: new Date().toISOString().split('T')[0],
-          settlement_date: new Date().toISOString().split('T')[0],
+          date: localTodayStr,
+          settlement_date: localTodayStr,
           status: 'pago',
           is_settled: true,
           responsavel_id: user.uid,
@@ -925,7 +962,7 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
 
       toast.success(isExpense ? "Sangria e despesa financeira registradas com sucesso!" : "Sangria de transferência registrada com sucesso!");
       setIsSangriaModalOpen(false);
-      setSangriaData({ amount: '', description: '', categoryType: 'transferencia' });
+      setSangriaData({ amount: '', description: '', categoryType: 'transferencia', selectedBarberId: '' });
       loadData();
     } catch (error: any) {
       console.error("Erro ao registrar sangria:", error);
@@ -3606,8 +3643,8 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                     className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
                   >
                     <option value="">Selecione um cliente...</option>
-                    {clients.map((c) => (
-                      <option key={`opt-client-${c.uid}`} value={c.uid}>
+                    {clients.map((c, cIdx) => (
+                      <option key={`opt-client-${c.uid || c.id || cIdx}-${cIdx}`} value={c.uid}>
                         {c.nome} {c.phone ? `(${c.phone})` : ''}
                       </option>
                     ))}
@@ -3809,8 +3846,56 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                         </p>
                       </div>
                     </label>
+
+                    <label
+                      onClick={() => setSangriaData(prev => ({ ...prev, categoryType: 'vale' }))}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start gap-3 ${
+                        sangriaData.categoryType === 'vale'
+                          ? 'bg-amber-50/80 border-amber-300 ring-2 ring-amber-500/20'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100/80'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="sangriaType"
+                        checked={sangriaData.categoryType === 'vale'}
+                        onChange={() => setSangriaData(prev => ({ ...prev, categoryType: 'vale' }))}
+                        className="mt-1 text-amber-600 focus:ring-amber-500"
+                      />
+                      <div>
+                        <p className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                          <span>👤 Vale / Adiantamento a Barbeiro / Profissional</span>
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-medium leading-relaxed mt-0.5">
+                          Reduz o dinheiro na gaveta E abate imediatamente o valor do extrato de comissões do profissional.
+                        </p>
+                      </div>
+                    </label>
                   </div>
                 </div>
+
+                {/* Seletor de Barbeiro se for Vale */}
+                {sangriaData.categoryType === 'vale' && (
+                  <div className="space-y-1.5 p-3.5 bg-amber-50/60 border border-amber-200 rounded-2xl animate-fade-in">
+                    <label className="text-[10px] font-black text-amber-800 uppercase tracking-widest flex items-center gap-1">
+                      <User size={13} className="text-amber-600" />
+                      <span>Profissional Beneficiário</span>
+                    </label>
+                    <select
+                      required
+                      value={sangriaData.selectedBarberId || ''}
+                      onChange={(e) => setSangriaData(prev => ({ ...prev, selectedBarberId: e.target.value }))}
+                      className="w-full bg-white border border-amber-200 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 shadow-sm"
+                    >
+                      <option value="">-- Selecione o Barbeiro / Profissional --</option>
+                      {(professionals || []).map((b, idx) => (
+                        <option key={`sangria-barber-${b.uid || idx}`} value={b.uid}>
+                          {b.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 {/* Descrição */}
                 <div className="space-y-1.5">
@@ -3823,7 +3908,9 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
                     placeholder={
                       sangriaData.categoryType === 'transferencia'
                         ? 'Ex: Sangria para cofre ao atingir R$ 1.000'
-                        : 'Ex: Compra de pó de café e água no mercado'
+                        : sangriaData.categoryType === 'vale'
+                          ? 'Ex: Adiantamento semanal de comissão em dinheiro'
+                          : 'Ex: Compra de pó de café e água no mercado'
                     }
                     value={sangriaData.description}
                     onChange={(e) => setSangriaData(prev => ({ ...prev, description: e.target.value }))}

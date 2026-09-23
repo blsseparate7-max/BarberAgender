@@ -1162,7 +1162,8 @@ export function Assinaturas({ defaultTab }: AssinaturasProps) {
       expired: 'expirada',
       canceled: 'cancelada',
       paused: 'pausada',
-      pending: 'marcada como pendente'
+      pending: 'marcada como pendente',
+      past_due: 'marcada como vencida'
     };
     try {
       await subscriptionService.updateSubscriptionStatus(subId, status);
@@ -6275,7 +6276,8 @@ function SubscriptionCard({
     expired: 'bg-red-50 text-red-600 border-red-100',
     canceled: 'bg-slate-50 text-slate-600 border-slate-100',
     paused: 'bg-amber-50 text-amber-600 border-amber-100',
-    pending: 'bg-purple-50 text-purple-600 border-purple-100'
+    pending: 'bg-purple-50 text-purple-600 border-purple-100',
+    past_due: 'bg-red-50 text-red-600 border-red-100'
   };
 
   const showRecobrar = isAdmin && onRecobrar && isSubOverdueOrFailed(sub);
@@ -6626,7 +6628,8 @@ function SubscriptionTableRow({
     expired: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', label: 'Expirada' },
     canceled: { bg: 'bg-slate-100', text: 'text-slate-600', border: 'border-slate-200', label: 'Cancelada' },
     paused: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', label: 'Pausada' },
-    pending: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', label: 'Aguardando Pgto' }
+    pending: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', label: 'Aguardando Pgto' },
+    past_due: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', label: 'Vencida' }
   };
 
   const currentStatus = statusColors[sub.status] || statusColors.active;

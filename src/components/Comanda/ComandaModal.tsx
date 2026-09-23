@@ -57,6 +57,7 @@ import { loyaltyService } from '../../services/loyaltyService';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 import { format, parse, addMinutes } from 'date-fns';
+import { checkServiceSubscriptionEligibility } from '../../utils/subscriptionEligibility';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { InputModal } from '../InputModal';
 import { parseDate, formatErrorMessage } from '../../lib/utils';
@@ -496,29 +497,19 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
     if (comanda && comanda.status === 'aberta' && clientSubscriptions && clientSubscriptions.length > 0 && user) {
       const activeSub = clientSubscriptions.find(s => s.status === 'active');
       if (activeSub) {
+        const plan = subscriptionPlans.find(p => p.id === activeSub.plano_id);
         let hasChanges = false;
         const updatedItems = comanda.items.map(item => {
           if ((item.type === 'servico' || item.type === 'assinatura') && !item.deductType) {
-            // Check eligibility
-            let isEligible = false;
-            if (activeSub.services && activeSub.services.length > 0) {
-              const planService = activeSub.services.find((ps: any) => ps.serviceId === item.referencia_id);
-              if (planService) {
-                if (planService.isUnlimited) isEligible = true;
-                else {
-                  const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.referencia_id]) || 0;
-                  isEligible = currentUsed < planService.limit;
-                }
-              }
-            } else {
-              // Legacy fallback
-              const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
-              const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
-              if (isCut) isEligible = activeSub.haircutsUsed < (activeSub.haircutsPerMonth || 999);
-              if (isBeard) isEligible = activeSub.beardsUsed < (activeSub.beardsPerMonth || 999);
-            }
+            // Strict eligibility check
+            const eligibility = checkServiceSubscriptionEligibility(
+              item,
+              activeSub,
+              plan,
+              comanda.created_at || new Date().toISOString()
+            );
 
-            if (isEligible) {
+            if (eligibility.isEligible) {
               hasChanges = true;
               return {
                 ...item,
@@ -546,7 +537,7 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         }
       }
     }
-  }, [clientSubscriptions, comanda?.id, comanda?.status, user]);
+  }, [clientSubscriptions, subscriptionPlans, comanda?.id, comanda?.status, user]);
 
   // Virtual packages purchased in the active comanda but not finalized/saved to DB yet
   const virtualPackages = React.useMemo(() => {
@@ -941,32 +932,21 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
 
       const activeSub = clientSubscriptions?.find(s => s.status === 'active');
       if (type === 'servico' && activeSub && !isCortesia) {
-        let isEligible = false;
-        if (activeSub.services && activeSub.services.length > 0) {
-          const planService = activeSub.services.find((ps: any) => ps.serviceId === item.id);
-          if (planService) {
-            if (planService.isUnlimited) isEligible = true;
-            else {
-              const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.id]) || 0;
-              isEligible = currentUsed < planService.limit;
-            }
-          }
-        } else {
-          const itemDisplayName = (item as Service).nome || item.name || '';
-          const isCut = itemDisplayName.toLowerCase().includes('corte') || itemDisplayName.toLowerCase().includes('cabelo') || itemDisplayName.toLowerCase().includes('hair');
-          const isBeard = itemDisplayName.toLowerCase().includes('barba') || itemDisplayName.toLowerCase().includes('beard');
-          if (isCut) isEligible = (activeSub.haircutsUsed ?? 0) < (activeSub.haircutsPerMonth || 999);
-          else if (isBeard) isEligible = (activeSub.beardsUsed ?? 0) < (activeSub.beardsPerMonth || 999);
-          else isEligible = true;
-        }
+        const plan = subscriptionPlans.find(p => p.id === activeSub.plano_id);
+        const eligibility = checkServiceSubscriptionEligibility(
+          item,
+          activeSub,
+          plan,
+          comanda.created_at || new Date().toISOString()
+        );
 
-        if (isEligible) {
+        if (eligibility.isEligible) {
           deductTypeVal = 'assinatura';
           subscriptionIdVal = activeSub.id;
           isCortesiaVal = true;
           totalPriceVal = 0;
           generateCommVal = false;
-          toast.info(`Serviço coberto e zerado pelo Clube de Assinatura!`);
+          toast.info(`Serviço coberto e zerado pelo Clube de Assinatura (${eligibility.planName})!`);
         }
       }
 
@@ -1364,11 +1344,28 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             };
           } else if (type === 'assinatura') {
             const activeSub = clientSubscriptions.find(s => s.status === 'active');
+            if (!activeSub) {
+              toast.error("Cliente não possui assinatura ativa.");
+              return i;
+            }
+            const plan = subscriptionPlans.find(p => p.id === activeSub.plano_id);
+            const eligibility = checkServiceSubscriptionEligibility(
+              i,
+              activeSub,
+              plan,
+              comanda.created_at || new Date().toISOString()
+            );
+
+            if (!eligibility.isEligible) {
+              toast.error(eligibility.reason || "Este serviço não está incluso no plano de assinatura do cliente.");
+              return i;
+            }
+
             return {
               ...i,
               deductType: 'assinatura' as const,
               packageSaleId: '',
-              subscriptionId: activeSub?.id || '',
+              subscriptionId: activeSub.id,
               isCortesia: true,
               totalPrice: 0,
               generateCommission: false
@@ -2701,24 +2698,11 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                             p => p.remainingCuts > 0 && (p.serviceId === item.referencia_id || p.packageName.toLowerCase().includes(item.name.toLowerCase()))
                           );
                           const activeSub = clientSubscriptions.find(s => s.status === 'active');
-                          const hasSub = activeSub && (() => {
-                            if (activeSub.services && activeSub.services.length > 0) {
-                              const planService = activeSub.services.find((ps: any) => ps.serviceId === item.referencia_id);
-                              if (planService) {
-                                if (planService.isUnlimited) return true;
-                                const currentUsed = (activeSub.serviceUsages && activeSub.serviceUsages[item.referencia_id]) || 0;
-                                return currentUsed < planService.limit;
-                              }
-                              return false;
-                            }
-                            
-                            // Legacy fallback (haircuts and beards)
-                            const isCut = item.name.toLowerCase().includes('corte') || item.name.toLowerCase().includes('cabelo') || item.name.toLowerCase().includes('hair');
-                            const isBeard = item.name.toLowerCase().includes('barba') || item.name.toLowerCase().includes('beard');
-                            if (isCut) return activeSub.haircutsUsed < (activeSub.haircutsPerMonth || 999);
-                            if (isBeard) return activeSub.beardsUsed < (activeSub.beardsPerMonth || 999);
-                            return false;
-                          })();
+                          const activePlan = activeSub ? subscriptionPlans.find(p => p.id === activeSub.plano_id) : null;
+                          const subEligibility = (activeSub && isService) 
+                            ? checkServiceSubscriptionEligibility(item, activeSub, activePlan, comanda.created_at || new Date().toISOString())
+                            : { isEligible: false };
+                          const hasSub = subEligibility.isEligible;
 
                           const catStyle = isService ? getCategoryStyle(item.category || item.name) : null;
 
@@ -2828,15 +2812,24 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
                                           );
                                         })}
 
-                                        {hasSub && item.deductType !== 'assinatura' && (
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleItemDeduction(item.id, 'assinatura')}
-                                            className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-1 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                                          >
-                                            <Sparkles size={10} fill="currentColor" />
-                                            <span>Vincular ao Clube (R$ 0)</span>
-                                          </button>
+                                        {activeSub && item.deductType !== 'assinatura' && (
+                                          hasSub ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleItemDeduction(item.id, 'assinatura')}
+                                              className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-1 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                            >
+                                              <Sparkles size={10} fill="currentColor" />
+                                              <span>Vincular ao Clube (R$ 0)</span>
+                                            </button>
+                                          ) : (
+                                            <span 
+                                              className="px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200 cursor-help"
+                                              title={subEligibility.reason || "Serviço não contemplado no plano de assinatura do cliente"}
+                                            >
+                                              Fora da Assinatura
+                                            </span>
+                                          )
                                         )}
                                       </div>
                                     )}

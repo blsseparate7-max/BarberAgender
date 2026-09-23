@@ -66,7 +66,10 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
   const [selectedBarberId, setSelectedBarberId] = useState<string>('');
   const [valeSource, setValeSource] = useState<'caixa' | 'financeiro'>('caixa');
   const [valePaymentMethod, setValePaymentMethod] = useState<string>('dinheiro');
-  const [valeDate, setValeDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [valeDate, setValeDate] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  });
   const [barbers, setBarbers] = useState<UserProfile[]>([]);
   const [barberBalanceLoading, setBarberBalanceLoading] = useState(false);
   const [barberBalance, setBarberBalance] = useState<{
@@ -122,9 +125,19 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
       toast.error("Saldo insuficiente no caixa para realizar esta retirada!");
       return;
     }
+
+    // Se o usuário selecionou categoria de Vale / Adiantamento pela modal de retirada genérica
+    if (withdrawType === 'expense' && (withdrawCategory.toLowerCase().includes('vale') || withdrawCategory.toLowerCase().includes('adiantamento'))) {
+      toast.error("Para lançar Vale/Adiantamento de Barbeiro com desconto automático na comissão, use a opção 'Lançar Vale'.");
+      setShowWithdrawModal(false);
+      setShowValeModal(true);
+      return;
+    }
+
     setActionLoading(true);
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
       if (withdrawType === 'expense') {
         // 1. Register Financial Transaction (Expense)
@@ -254,11 +267,13 @@ export function CashWidget({ onNavigate }: CashWidgetProps = {}) {
 
     setActionLoading(true);
     try {
+      const now = new Date();
+      const localDateFallback = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       await commissionService.registerCompleteVale({
         profissional_id: selectedBarberId,
         profissional_name: selectedBarber.nome || selectedBarber.displayName || 'Profissional',
         amount: val,
-        date: valeDate || new Date().toISOString().split('T')[0],
+        date: valeDate || localDateFallback,
         description: valeDescription || 'Adiantamento de comissão',
         category: valeCategory || 'Adiantamento de Comissão',
         source: valeSource,

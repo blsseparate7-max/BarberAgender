@@ -33,6 +33,8 @@ import { notificationService } from './notificationService';
 import { pushNotificationService } from './pushNotificationService';
 import { subscriptionService } from './subscriptionService';
 import { isDateAllowedForPlan } from '../utils/subscriptionDays';
+import { checkServiceSubscriptionEligibility } from '../utils/subscriptionEligibility';
+import { SubscriptionPlan } from '../types';
 
 const COLLECTION = 'appointments';
 const RECURRING_COLLECTION = 'recurring_appointments';
@@ -1283,13 +1285,20 @@ export const appointmentService = {
     const seriesSnap = await getDocs(qSeries);
     const existingDates = new Set(seriesSnap.docs.map(doc => doc.data().date));
 
-    // Check if client has active subscription
+    // Check if client has active subscription and load their plan
     let clientActiveSub: any = null;
+    let clientPlan: SubscriptionPlan | null = null;
     const template = recurring.appointmentTemplate;
     if (template.cliente_id && template.cliente_id !== 'sem_cadastro' && template.cliente_id !== 'avulso') {
       try {
         const subs = await subscriptionService.getSubscriptions(template.cliente_id);
         clientActiveSub = subs.find(s => (s.status as string) === 'active' || (s.status as string) === 'ativo') || null;
+        if (clientActiveSub && clientActiveSub.plano_id) {
+          const planSnap = await getDoc(doc(db, 'subscription_plans', clientActiveSub.plano_id));
+          if (planSnap.exists()) {
+            clientPlan = { id: planSnap.id, ...planSnap.data() } as SubscriptionPlan;
+          }
+        }
       } catch (err) {
         console.warn("Could not check subscription for recurring client:", err);
       }
@@ -1310,13 +1319,19 @@ export const appointmentService = {
         if (avail.available || recurring.allowConflict) {
           const isEncaixe = !avail.available && !!recurring.allowConflict;
 
-          // Determine subscription status for this date
-          let isSubForDate = !!template.isSubscription;
+          // Determine subscription status for this date with strict service eligibility check
+          let isSubForDate = false;
           let priceForDate = template.price ?? 0;
 
           if (clientActiveSub) {
-            const isDayAllowed = isDateAllowedForPlan(clientActiveSub.allowedDaysOfWeek, date);
-            if (isDayAllowed) {
+            const eligibility = checkServiceSubscriptionEligibility(
+              { id: template.servico_id, name: template.servico_name, price: template.price },
+              clientActiveSub,
+              clientPlan,
+              date
+            );
+
+            if (eligibility.isEligible) {
               isSubForDate = true;
               priceForDate = 0;
             } else {

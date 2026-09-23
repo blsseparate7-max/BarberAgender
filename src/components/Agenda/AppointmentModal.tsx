@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, Calendar, Clock, User, Scissors, Loader2, AlertCircle, Check, Receipt, Award, Sparkles, CheckCircle2, ChevronDown, Search, Plus, Trash2, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Appointment, Service, UserProfile, AppointmentStatus } from '../../types';
 import { appointmentService } from '../../services/appointmentService';
@@ -14,6 +14,8 @@ import { toast } from 'sonner';
 import { format, addMinutes, parse } from 'date-fns';
 import { ClientSelectCombobox } from '../Common/ClientSelectCombobox';
 import { isDateAllowedForPlan, formatAllowedDays, isDateWithinSubscriptionCycle } from '../../utils/subscriptionDays';
+import { checkServiceSubscriptionEligibility } from '../../utils/subscriptionEligibility';
+import { getActiveTenantId } from '../../services/tenantService';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -82,6 +84,7 @@ export function AppointmentModal({
 
   const [clientPackages, setClientPackages] = useState<any[]>([]);
   const [clientSubscriptions, setClientSubscriptions] = useState<any[]>([]);
+  const [subscriptionPlans, setSubscriptionPlans] = useState<any[]>([]);
 
   // Group services by category for clean, categorized selection
   const categorizedServices = useMemo(() => {
@@ -120,6 +123,9 @@ export function AppointmentModal({
     if (isOpen) {
       loadInitialData();
       setShowDeleteConfirm(false);
+      getDocs(query(collection(db, 'subscription_plans'), where('tenantId', '==', getActiveTenantId())))
+        .then(snap => setSubscriptionPlans(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(err => console.error("Error loading subscription plans in AppointmentModal:", err));
     }
   }, [isOpen]);
 
@@ -852,25 +858,21 @@ export function AppointmentModal({
           {/* Service benefit details */}
           {formData.servico_id && (() => {
             const selectedService = services.find(s => s.id === formData.servico_id);
-            const isHaircut = selectedService?.name?.toLowerCase().includes('corte') || 
-                              selectedService?.name?.toLowerCase().includes('cabelo') || 
-                              selectedService?.name?.toLowerCase().includes('hair');
-            const isBeard = selectedService?.name?.toLowerCase().includes('barba') || 
-                            selectedService?.name?.toLowerCase().includes('beard');
 
             const matchingPackage = clientPackages.find(
               p => p.remainingCuts > 0 && (p.serviceId === formData.servico_id || p.packageName.toLowerCase().includes(selectedService?.name?.toLowerCase() || ''))
             );
 
             const activeSub = clientSubscriptions.find(s => s.status === 'active');
+            const activePlan = activeSub ? subscriptionPlans.find(p => p.id === activeSub.plano_id) : null;
+            const subEligibility = activeSub 
+              ? checkServiceSubscriptionEligibility(selectedService, activeSub, activePlan, formData.date)
+              : { isEligible: false };
+
             const cycleCheck = isDateWithinSubscriptionCycle(activeSub, formData.date);
-            const isSubDayAllowed = activeSub ? isDateAllowedForPlan(activeSub.allowedDaysOfWeek, formData.date) : true;
-            const isSubValidForDate = isSubDayAllowed && cycleCheck.isWithinCycle;
+            const isSubDayAllowed = activeSub ? isDateAllowedForPlan(activeSub.allowedDaysOfWeek || activePlan?.allowedDaysOfWeek, formData.date) : true;
 
-            const subHasRemainingCuts = activeSub && isHaircut && (activeSub.haircutsUsed < (activeSub.haircutsPerMonth || 999));
-            const subHasRemainingBeards = activeSub && isBeard && (activeSub.beardsUsed < (activeSub.beardsPerMonth || 999));
-
-            if (matchingPackage || (isSubValidForDate && (subHasRemainingCuts || subHasRemainingBeards))) {
+            if (matchingPackage || subEligibility.isEligible) {
               return (
                 <div className="p-4 bg-emerald-50 border border-emerald-100/50 rounded-2xl flex items-start gap-3 text-emerald-800 animate-in slide-in-from-top-4 duration-300">
                   <CheckCircle2 size={18} className="text-emerald-600 mt-0.5 shrink-0" />
@@ -879,15 +881,15 @@ export function AppointmentModal({
                     {matchingPackage && (
                       <p className="font-semibold text-emerald-700">O cliente possui o pacote <strong className="font-extrabold">"{matchingPackage.packageName}"</strong> com <strong className="font-black">{matchingPackage.remainingCuts} cortes</strong> em haver. Este atendimento poderá ser descontado diretamente do pacote na comanda.</p>
                     )}
-                    {isSubValidForDate && (subHasRemainingCuts || subHasRemainingBeards) && (
-                      <p className="font-semibold text-emerald-700">O cliente é assinante ativo do plano <strong className="font-extrabold">"{activeSub?.planName}"</strong>. Este serviço ({isHaircut ? 'Corte' : 'Barba'}) poderá ser consumido da assinatura.</p>
+                    {subEligibility.isEligible && (
+                      <p className="font-semibold text-emerald-700">O cliente é assinante ativo do plano <strong className="font-extrabold">"{subEligibility.planName}"</strong>. Este serviço ({selectedService?.name}) está coberto e será consumido da assinatura (R$ 0,00).</p>
                     )}
                   </div>
                 </div>
               );
             }
 
-            if (activeSub && !cycleCheck.isWithinCycle && (subHasRemainingCuts || subHasRemainingBeards)) {
+            if (activeSub && !cycleCheck.isWithinCycle) {
               return (
                 <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3 text-amber-900 animate-in slide-in-from-top-4 duration-300">
                   <AlertCircle size={18} className="text-amber-600 mt-0.5 shrink-0" />
@@ -904,14 +906,14 @@ export function AppointmentModal({
               );
             }
 
-            if (activeSub && !isSubDayAllowed && (subHasRemainingCuts || subHasRemainingBeards)) {
+            if (activeSub && !isSubDayAllowed) {
               return (
                 <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3 text-amber-900 animate-in slide-in-from-top-4 duration-300">
                   <AlertCircle size={18} className="text-amber-600 mt-0.5 shrink-0" />
                   <div className="text-xs space-y-1">
                     <p className="font-black uppercase tracking-widest text-amber-950">Assinatura com Restrição de Dias</p>
                     <p className="font-semibold text-amber-800">
-                      O cliente é assinante do plano <strong className="font-extrabold">"{activeSub?.planName}"</strong>, que é válido exclusivamente em <strong>{formatAllowedDays(activeSub?.allowedDaysOfWeek, activeSub?.customRestrictionNote)}</strong>.
+                      O cliente é assinante do plano <strong className="font-extrabold">"{activeSub?.planName}"</strong>, que é válido exclusivamente em <strong>{formatAllowedDays(activeSub?.allowedDaysOfWeek || activePlan?.allowedDaysOfWeek, activeSub?.customRestrictionNote || activePlan?.customRestrictionNote)}</strong>.
                     </p>
                     <p className="text-[11px] text-amber-700 font-medium">
                       Para a data selecionada ({formData.date ? format(parse(formData.date, 'yyyy-MM-dd', new Date()), 'dd/MM/yyyy') : ''}), este atendimento <strong>não</strong> está coberto pela assinatura e deverá ser cobrado pelo valor avulso na comanda.
@@ -920,6 +922,24 @@ export function AppointmentModal({
                 </div>
               );
             }
+
+            if (activeSub && !subEligibility.isEligible && selectedService) {
+              return (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-start gap-3 text-slate-800 animate-in slide-in-from-top-4 duration-300">
+                  <AlertCircle size={18} className="text-slate-500 mt-0.5 shrink-0" />
+                  <div className="text-xs space-y-1">
+                    <p className="font-black uppercase tracking-widest text-slate-900">Serviço não contemplado na Assinatura</p>
+                    <p className="font-semibold text-slate-700">
+                      O cliente é assinante do plano <strong className="font-extrabold">"{activeSub?.planName}"</strong>, mas o serviço selecionado (<strong className="text-slate-900">{selectedService.name}</strong>) não faz parte dos serviços inclusos neste plano.
+                    </p>
+                    <p className="text-[11px] text-slate-600 font-medium">
+                      Este atendimento será cobrado pelo valor avulso normal na comanda (R$ {(selectedService.price || (selectedService as any).preco || 0).toFixed(2)}).
+                    </p>
+                  </div>
+                </div>
+              );
+            }
+
             return null;
           })()}
 

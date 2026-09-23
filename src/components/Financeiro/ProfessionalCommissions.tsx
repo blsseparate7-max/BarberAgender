@@ -267,19 +267,27 @@ export function ProfessionalCommissions({
         }
       });
 
-      // Helper para associar barbeiro pelo texto da descrição quando o campo do profissional vier vazio
+      // Helper universal e dinâmico para associar barbeiro pelo texto da descrição quando o campo do profissional vier vazio
       const resolveBarberFromText = (text: string) => {
         if (!text) return null;
         const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (lower.includes('luiz miguel') || (lower.includes('miguel') && !lower.includes('henrique') && !lower.includes('rick'))) {
-          return barbers.find(b => (b.nome || '').toLowerCase().includes('miguel') || (b.email || '').toLowerCase().includes('luizmiguel'));
+        for (const b of barbers) {
+          const bName = (b.nome || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          if (!bName) continue;
+          const firstName = bName.split(' ')[0];
+          if (firstName.length >= 3 && lower.includes(firstName)) {
+            return b;
+          }
+          if (bName.length >= 3 && lower.includes(bName)) {
+            return b;
+          }
+          if (b.email) {
+            const emailUser = b.email.split('@')[0].toLowerCase();
+            if (emailUser.length >= 3 && lower.includes(emailUser)) {
+              return b;
+            }
+          }
         }
-        if (lower.includes('luiz henrique') || lower.includes('rick') || lower.includes('henrique')) {
-          return barbers.find(b => (b.nome || '').toLowerCase().includes('henrique') || (b.nome || '').toLowerCase().includes('rick') || (b.email || '').toLowerCase().includes('rickbolado'));
-        }
-        if (lower.includes('mateus') || lower.includes('matheus')) return barbers.find(b => (b.nome || '').toLowerCase().includes('mateus') || (b.nome || '').toLowerCase().includes('matheus'));
-        if (lower.includes('moises')) return barbers.find(b => (b.nome || '').toLowerCase().includes('moises'));
-        if (lower.includes('gabriel')) return barbers.find(b => (b.nome || '').toLowerCase().includes('gabriel'));
         return null;
       };
 
@@ -472,7 +480,8 @@ export function ProfessionalCommissions({
     }
 
     try {
-      const todayString = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const todayString = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const isCaixa = valeData.source === 'caixa';
       let cashId: string | undefined;
 
@@ -485,8 +494,10 @@ export function ProfessionalCommissions({
         cashId = cash.id;
       }
 
+      const proId = valePro.id || (valePro as any).uid;
+
       await commissionService.registerCompleteVale({
-        profissional_id: valePro.id,
+        profissional_id: proId,
         profissional_name: valePro.nome,
         amount,
         description: valeData.description || 'Vale/Adiantamento',

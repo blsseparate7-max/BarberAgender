@@ -59,11 +59,22 @@ export function calculateProfessionalLedger(
     matchingUids.add('XpDGfA241JOx7dzoAgKugo86ld62');
   }
 
-  // Correspondência estrita e 100% baseada no ID único do profissional
+  const normalizeStr = (s?: string) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const barberNameNorm = normalizeStr(barber.nome);
+
+  // Correspondência estrita baseada em ID do profissional com fallback inteligente de alias e nome
   const isMatchingBarber = (item: any): boolean => {
     if (!item) return false;
-    const proId = item.profissional_id || item.barbeiro_id || item.barber_id;
+    const proId = item.profissional_id || item.barbeiro_id || item.barber_id || item.professionalId || item.barberId || item.userId || item.user_id;
     if (proId && matchingUids.has(proId)) return true;
+
+    // Fallback por correspondência de nome do profissional caso ID venha ausente ou vazio
+    if (!proId && barberNameNorm.length > 2) {
+      const itemProName = normalizeStr(item.profissional_name || item.barber_name || item.barbeiro_name || item.professionalName || item.supplier);
+      if (itemProName && (itemProName === barberNameNorm || itemProName.includes(barberNameNorm) || barberNameNorm.includes(itemProName))) {
+        return true;
+      }
+    }
     return false;
   };
 

@@ -926,8 +926,8 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
               </p>
               {showOpenComandas && (
                 <div className="max-h-48 overflow-y-auto space-y-1.5 pt-2 border-t border-amber-200">
-                  {openFlowComandas.map(cmd => (
-                    <div key={cmd.id} className="flex items-center justify-between p-2 rounded-xl bg-white/80 border border-amber-200/60 text-xs">
+                  {openFlowComandas.map((cmd, cIdx) => (
+                    <div key={`open-cmd-${cmd.id || cIdx}-${cIdx}`} className="flex items-center justify-between p-2 rounded-xl bg-white/80 border border-amber-200/60 text-xs">
                       <span className="font-bold text-slate-800">Comanda #{cmd.number} - {cmd.clientName}</span>
                       <span className="text-slate-500">{cmd.date} | Barbeiro: <strong>{cmd.barberName}</strong></span>
                       <span className="font-black text-emerald-700">{formatCurrency(cmd.totalAmount)}</span>
@@ -974,14 +974,14 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {auditSummaries.map(s => {
+                    {auditSummaries.map((s, sIdx) => {
                       const isExpanded = expandedBarber === s.uid;
                       const hasProductionDiff = Math.abs(s.recalculatedProduction - s.currentProduction) > 0.01;
                       const hasCommissionDiff = Math.abs(s.recalculatedCommission - s.currentCommission) > 0.01;
                       const hasAdvancesDiff = Math.abs(s.recalculatedAdvances - s.currentAdvances) > 0.01;
 
                       return (
-                        <React.Fragment key={s.uid}>
+                        <React.Fragment key={`aud-sum-${s.uid || sIdx}-${sIdx}`}>
                           <tr className={`hover:bg-slate-50/80 transition-colors ${hasCommissionDiff ? 'bg-amber-50/20' : ''}`}>
                             <td className="p-3.5">
                               <div className="font-black text-slate-900 flex items-center gap-1.5">
@@ -1051,7 +1051,7 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
                                     ) : (
                                       <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
                                         {s.servicesList.map((srv, idx) => (
-                                          <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white border border-slate-200 text-xs gap-3 shadow-xs">
+                                          <div key={`srv-item-${srv.id || idx}-${idx}`} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white border border-slate-200 text-xs gap-3 shadow-xs">
                                             <div className="flex-1">
                                               <div className="font-black text-slate-800 text-xs flex items-center gap-1.5">
                                                 <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
@@ -1088,8 +1088,8 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
                                                   onChange={(e) => handleServiceBarberChange(srv.id || '', e.target.value)}
                                                   className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-1 px-2 rounded-lg border border-slate-200 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer transition-all"
                                                 >
-                                                  {barbers.map(b => (
-                                                    <option key={b.uid} value={b.uid}>
+                                                  {barbers.map((b, bIdx) => (
+                                                    <option key={`aud-b1-${b.uid || bIdx}-${bIdx}`} value={b.uid}>
                                                       {b.nome}
                                                     </option>
                                                   ))}
@@ -1113,7 +1113,7 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
                                     ) : (
                                       <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
                                         {s.advancesList.map((adv, idx) => (
-                                          <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white border border-slate-200 text-xs gap-3 shadow-xs">
+                                          <div key={`adv-item-${adv.id || idx}-${idx}`} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white border border-slate-200 text-xs gap-3 shadow-xs">
                                             <div className="flex-1">
                                               <div className="font-black text-slate-800 text-sm flex items-center gap-1.5 mb-0.5">
                                                 <span className="inline-block w-2 h-2 rounded-full bg-amber-500"></span>
@@ -1138,8 +1138,8 @@ export const CommissionAuditRecoveryModal: React.FC<CommissionAuditRecoveryModal
                                                   onChange={(e) => handleValeReassign(adv.id, e.target.value)}
                                                   className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-1.5 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer transition-all"
                                                 >
-                                                  {barbers.map(b => (
-                                                    <option key={b.uid} value={b.uid}>
+                                                  {barbers.map((b, bIdx) => (
+                                                    <option key={`aud-b2-${b.uid || bIdx}-${bIdx}`} value={b.uid}>
                                                       {b.nome}
                                                     </option>
                                                   ))}

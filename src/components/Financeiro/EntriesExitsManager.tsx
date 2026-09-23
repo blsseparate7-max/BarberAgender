@@ -323,8 +323,8 @@ export function EntriesExitsManager({
               className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-primary focus:outline-none focus:ring-1 focus:ring-accent shadow-2xs cursor-pointer"
             >
               <option value="all">Todas as Categorias</option>
-              {availableCategories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
+              {availableCategories.map((cat, cIdx) => (
+                <option key={`cat-filter-${cat || cIdx}-${cIdx}`} value={cat}>{cat}</option>
               ))}
             </select>
 
@@ -832,8 +832,8 @@ function EditTransactionModal({
                 placeholder="Ex: Geral, Materiais..."
               />
               <datalist id="category-suggestions">
-                {categories.map(cat => (
-                  <option key={cat} value={cat} />
+                {categories.map((cat, cIdx) => (
+                  <option key={`cat-sug-${cat || cIdx}-${cIdx}`} value={cat} />
                 ))}
               </datalist>
             </div>

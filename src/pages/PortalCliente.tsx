@@ -61,6 +61,7 @@ import { UserProfile, UserRole, Appointment, Service, Product, LoyaltyPoints, Lo
 import { format, parse, addMinutes, isAfter, isBefore, isEqual, getDay, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { isDateAllowedForPlan, formatAllowedDays, isDateWithinSubscriptionCycle } from '../utils/subscriptionDays';
+import { checkServiceSubscriptionEligibility } from '../utils/subscriptionEligibility';
 import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
 
 function formatPhone(value: string) {
@@ -802,116 +803,51 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   // Helper to check if a specific service is covered by the user's active subscription
   const getServiceSubscriptionStatus = (service: Service | null | undefined, targetDateStr?: string) => {
     if (!service || !profile) {
-      return { isCovered: false, effectivePrice: service ? (service.preco || service.price || 0) : 0, planName: null, isDayBlocked: false, allowedDaysText: '' };
+      return { isCovered: false, effectivePrice: service ? (service.preco || service.price || 0) : 0, planName: null, isDayBlocked: false, isCycleBlocked: false, allowedDaysText: '' };
     }
 
     const activeSub = subscriptions.find(s => s.status === 'active');
     if (!activeSub) {
-      return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null, isDayBlocked: false, allowedDaysText: '' };
+      return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null, isDayBlocked: false, isCycleBlocked: false, allowedDaysText: '' };
     }
 
     const plan = availablePlans.find(p => p.id === activeSub.plano_id);
-    const serviceName = (service.nome || service.name || '').toLowerCase().trim();
-
-    // Day restriction check and 30-day Cycle Validity check
     const checkDate = targetDateStr || selectedDate;
-    const allowedDays = activeSub.allowedDaysOfWeek || plan?.allowedDaysOfWeek;
-    const isDayAllowed = isDateAllowedForPlan(allowedDays, checkDate);
-    const cycleCheck = isDateWithinSubscriptionCycle(activeSub, checkDate);
 
-    if (!cycleCheck.isWithinCycle) {
-      return { 
-        isCovered: false, 
-        effectivePrice: service.preco || service.price || 0, 
-        planName: activeSub.planName || plan?.name || null,
+    const eligibility = checkServiceSubscriptionEligibility(
+      service,
+      activeSub,
+      plan,
+      checkDate
+    );
+
+    if (eligibility.isEligible) {
+      return {
+        isCovered: true,
+        effectivePrice: 0,
+        planName: eligibility.planName || activeSub.planName || plan?.name || 'Clube de Assinatura',
+        limit: eligibility.limit || 0,
+        used: eligibility.used || 0,
+        isUnlimited: !!eligibility.isUnlimited,
         isDayBlocked: false,
-        isCycleBlocked: true,
-        cycleEndDateStr: cycleCheck.endDateStr,
-        allowedDaysText: '',
-        limit: 0, 
-        used: 0, 
-        isUnlimited: false 
-      };
-    }
-
-    if (!isDayAllowed) {
-      return { 
-        isCovered: false, 
-        effectivePrice: service.preco || service.price || 0, 
-        planName: activeSub.planName || plan?.name || null,
-        isDayBlocked: true,
         isCycleBlocked: false,
-        allowedDaysText: formatAllowedDays(allowedDays, activeSub.customRestrictionNote || plan?.customRestrictionNote),
-        limit: 0, 
-        used: 0, 
-        isUnlimited: false 
+        allowedDaysText: ''
       };
     }
 
-    // 1. Specific services declared in plan.services (e.g. Acabamento, Barboterapia, etc.)
-    if (plan?.services && plan.services.length > 0) {
-      const planService = plan.services.find((ps: any) => 
-        (ps.serviceId && ps.serviceId === service.id) ||
-        (ps.name && ps.name.toLowerCase().trim() === serviceName)
-      );
-
-      if (planService) {
-        const used = (activeSub.serviceUsages && (activeSub.serviceUsages[planService.serviceId] || activeSub.serviceUsages[service.id])) || 0;
-        const isUnlimited = planService.isUnlimited || planService.limit >= 99 || planService.limit === 0;
-        if (isUnlimited || used < planService.limit) {
-          return { 
-            isCovered: true, 
-            effectivePrice: 0, 
-            planName: activeSub.planName || plan.name, 
-            limit: planService.limit, 
-            used, 
-            isUnlimited,
-            isDayBlocked: false,
-            allowedDaysText: ''
-          };
-        }
-      }
-    } else if (plan) {
-      // 2. Legacy fallback for plans with haircutsPerMonth or beardsPerMonth
-      const isCorte = serviceName.includes('corte') || serviceName.includes('cabelo') || serviceName.includes('acabamento') || serviceName.includes('pezinho') || serviceName.includes('hair');
-      const isBarba = serviceName.includes('barba') || serviceName.includes('beard');
-
-      if (isCorte && (plan.haircutsPerMonth > 0 || plan.haircutsPerMonth >= 99)) {
-        const used = activeSub.haircutsUsed || 0;
-        const isUnlimited = plan.haircutsPerMonth >= 99 || plan.haircutsPerMonth === 0;
-        if (isUnlimited || used < plan.haircutsPerMonth) {
-          return { 
-            isCovered: true, 
-            effectivePrice: 0, 
-            planName: activeSub.planName || plan.name, 
-            limit: plan.haircutsPerMonth, 
-            used, 
-            isUnlimited,
-            isDayBlocked: false,
-            allowedDaysText: ''
-          };
-        }
-      }
-
-      if (isBarba && (plan.beardsPerMonth > 0 || plan.beardsPerMonth >= 99)) {
-        const used = activeSub.beardsUsed || 0;
-        const isUnlimited = plan.beardsPerMonth >= 99 || plan.beardsPerMonth === 0;
-        if (isUnlimited || used < plan.beardsPerMonth) {
-          return { 
-            isCovered: true, 
-            effectivePrice: 0, 
-            planName: activeSub.planName || plan.name, 
-            limit: plan.beardsPerMonth, 
-            used, 
-            isUnlimited,
-            isDayBlocked: false,
-            allowedDaysText: ''
-          };
-        }
-      }
-    }
-
-    return { isCovered: false, effectivePrice: service.preco || service.price || 0, planName: null, isDayBlocked: false, allowedDaysText: '' };
+    return {
+      isCovered: false,
+      effectivePrice: service.preco || service.price || 0,
+      planName: eligibility.planName || activeSub.planName || plan?.name || null,
+      isDayBlocked: !!eligibility.isDayBlocked,
+      isCycleBlocked: !!eligibility.isCycleBlocked,
+      cycleEndDateStr: eligibility.cycleEndDateStr,
+      allowedDaysText: eligibility.allowedDaysText || '',
+      limit: eligibility.limit || 0,
+      used: eligibility.used || 0,
+      isUnlimited: !!eligibility.isUnlimited,
+      reason: eligibility.reason
+    };
   };
 
   const calculateEffectivePrice = (serviceList: Service[]) => {

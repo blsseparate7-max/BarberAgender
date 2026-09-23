@@ -28,6 +28,7 @@ import { userService } from '../../services/userService';
 import { serviceService } from '../../services/serviceService';
 import { subscriptionService } from '../../services/subscriptionService';
 import { formatAllowedDays, isDateAllowedForPlan } from '../../utils/subscriptionDays';
+import { checkServiceSubscriptionEligibility } from '../../utils/subscriptionEligibility';
 import { format, parse, addMinutes, getDay, addDays, addMonths, isAfter, isBefore, isEqual } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -140,7 +141,21 @@ export function RecurringAppointments() {
     ) || null;
   }, [selectedClientId, subscriptions]);
 
-  // Validate allowed days for the subscriber
+  // Validate allowed days and service eligibility for the subscriber
+  const selectedService = useMemo(() => {
+    return services.find(s => s.id === selectedServiceId) || null;
+  }, [selectedServiceId, services]);
+
+  const serviceEligibility = useMemo(() => {
+    if (!selectedClientSubscription) return null;
+    return checkServiceSubscriptionEligibility(
+      selectedService,
+      selectedClientSubscription,
+      null,
+      startDate
+    );
+  }, [selectedClientSubscription, selectedService, startDate]);
+
   const subDayValidation = useMemo(() => {
     if (!selectedClientSubscription) return null;
     const isAllowed = isDateAllowedForPlan(selectedClientSubscription.allowedDaysOfWeek, startDate);
@@ -327,7 +342,7 @@ export function RecurringAppointments() {
       const endParse = addMinutes(startParse, duration);
       const endTime = format(endParse, 'HH:mm');
 
-      const isSub = !!selectedClientSubscription && !!subDayValidation?.isAllowed;
+      const isSub = !!selectedClientSubscription && !!serviceEligibility?.isEligible;
       const finalPrice = isSub ? 0 : (service.preco || 0);
 
       const appointmentTemplate: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'> = {
@@ -858,13 +873,13 @@ export function RecurringAppointments() {
                 </div>
 
                 {/* Subscriber Detection & Plan Coverage Banner */}
-                {selectedClientId && selectedClientSubscription && subDayValidation && (
+                {selectedClientId && selectedClientSubscription && (
                   <div className={`p-4 rounded-2xl border text-xs flex items-start gap-3 transition-all ${
-                    subDayValidation.isAllowed 
+                    serviceEligibility?.isEligible 
                       ? 'bg-emerald-50 border-emerald-200 text-emerald-950' 
                       : 'bg-amber-50 border-amber-200 text-amber-950'
                   }`}>
-                    {subDayValidation.isAllowed ? (
+                    {serviceEligibility?.isEligible ? (
                       <Crown size={20} className="text-emerald-600 shrink-0 mt-0.5" />
                     ) : (
                       <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5" />
@@ -872,18 +887,26 @@ export function RecurringAppointments() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-black uppercase tracking-wider text-[10px] bg-white/90 px-2 py-0.5 rounded-full border border-slate-200 text-slate-800 shadow-xs">
-                          {subDayValidation.planName}
+                          {selectedClientSubscription.planName || 'Clube de Assinatura'}
                         </span>
                         <span className="font-extrabold text-xs">
-                          {subDayValidation.isAllowed ? 'Coberto pela Assinatura (R$ 0,00)' : 'Data fora dos dias permitidos pelo Plano'}
+                          {serviceEligibility?.isEligible 
+                            ? 'Coberto pela Assinatura (R$ 0,00)' 
+                            : (serviceEligibility?.reason || (subDayValidation?.isAllowed === false ? 'Data fora dos dias permitidos pelo Plano' : 'Serviço não coberto pelo Plano'))
+                          }
                         </span>
                       </div>
                       <p className="text-[11px] leading-relaxed text-slate-700 font-medium">
-                        {subDayValidation.isAllowed ? (
-                          <span>Este cliente é assinante ativo com cobertura neste dia da semana. Os agendamentos recorrentes serão gerados como benefício (R$ 0,00) vinculados ao clube.</span>
+                        {serviceEligibility?.isEligible ? (
+                          <span>Este cliente é assinante ativo e o serviço selecionado faz parte do plano. Os agendamentos recorrentes serão gerados como benefício (R$ 0,00) vinculados ao clube.</span>
                         ) : (
                           <span>
-                            O plano deste assinante é restrito a: <strong>{subDayValidation.formattedDays}</strong>. Na data escolhida, o serviço será gerado com o valor de tabela normal da comanda.
+                            {serviceEligibility?.reason 
+                              ? `${serviceEligibility.reason}. Os agendamentos desta recorrência serão gerados com o valor normal de tabela.`
+                              : subDayValidation?.isAllowed === false 
+                                ? `O plano deste assinante é restrito a: ${subDayValidation.formattedDays}. Na data escolhida, o serviço será cobrado com o valor normal de tabela.`
+                                : `Este serviço não está incluso no plano do cliente e será gerado com o valor normal de tabela.`
+                            }
                           </span>
                         )}
                       </p>

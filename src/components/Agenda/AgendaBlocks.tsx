@@ -143,8 +143,8 @@ export function AgendaBlocks({ selectedDate }: AgendaBlocksProps = {}) {
                 </td>
               </tr>
             ) : (
-              blocks.map(block => (
-                <tr key={block.id} className="hover:bg-slate-50/50 transition-colors">
+              blocks.map((block, bIdx) => (
+                <tr key={`agenda-blk-${block.id || bIdx}-${bIdx}`} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-6 py-4 text-sm text-primary">{block.date}</td>
                   <td className="px-6 py-4 text-sm text-slate-500">{block.startTime} - {block.endTime}</td>
                   <td className="px-6 py-4">

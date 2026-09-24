@@ -849,7 +849,9 @@ export function ClientAccountDetailsModal({
                           </span>
                         )}
                       </div>
-                      <p className="text-sm font-bold text-primary">Comanda #{debt.comanda_id?.substring(0, 8) || 'N/A'}</p>
+                      <p className="text-sm font-bold text-primary">
+                        {debt.comanda_number ? `Comanda #${debt.comanda_number}` : debt.comanda_id ? `Comanda #${debt.comanda_id.substring(0, 8)}` : (debt.description || 'Fiado / Débito')}
+                      </p>
                       <p className="text-xs text-muted">Original: R$ {debt.amount.toFixed(2)}</p>
                       {debt.description && <p className="text-[11px] text-slate-500 italic">{debt.description}</p>}
                     </div>

@@ -9,6 +9,7 @@ export interface ProfessionalLedger {
   avatar?: string;
   percentualComissao: number;
   metaMensal: number;
+  remuneracaoFixa: number;
   
   // Métricas do Período Filtrado / Mês Selecionado (para exibição em tempo real nos cards)
   totalAtendimentosMes: number;
@@ -326,6 +327,7 @@ export function calculateProfessionalLedger(
     avatar: barber.avatar,
     percentualComissao: barber.percentual_comissao ?? barber.commission_percentage ?? 50,
     metaMensal: barber.meta_mensal ?? barber.monthly_goal ?? 0,
+    remuneracaoFixa: Number(barber.remuneracao_fixa || (barber as any).fixedSalary || 0),
     totalAtendimentosMes,
     faturamentoBrutoMes,
     comissaoGeradaMes,

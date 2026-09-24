@@ -775,9 +775,12 @@ export function Financeiro({ activeSubTab }: { activeSubTab?: string }) {
 
         const uniqueClients = Array.from(new Map(allClients.map(c => {
           const uid = c.uid || (c as any).id;
-          const calculatedDebt = debtsByClient[uid];
-          if (calculatedDebt !== undefined && (calculatedDebt > 0.001 || (c.total_em_aberto || 0) === 0)) {
-            return [uid, { ...c, total_em_aberto: calculatedDebt, saldo_devedor: calculatedDebt }];
+          const calculatedDebt = debtsByClient[uid] || 0;
+          const importedDebt = Number(c.saldo_devedor_inicial ?? c.total_em_aberto_importado ?? 0);
+          const totalOpen = Number((calculatedDebt + importedDebt).toFixed(2));
+          if (totalOpen > 0.001 || (c.total_em_aberto || 0) > 0) {
+            const finalOpen = Math.max(totalOpen, c.total_em_aberto || 0);
+            return [uid, { ...c, total_em_aberto: finalOpen, saldo_devedor: finalOpen }];
           }
           return [uid, c];
         })).values());

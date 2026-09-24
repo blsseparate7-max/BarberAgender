@@ -684,30 +684,6 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
         if (docSnap.exists()) {
           const data = { id: docSnap.id, ...docSnap.data() } as Comanda;
 
-          if (initialData) {
-            const normInitClient = (initialData.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-            const normComClient = (data.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-            const isMismatched = normInitClient && normComClient && normInitClient !== normComClient && normInitClient !== 'consumidor final' && normComClient !== 'consumidor final';
-            
-            if (data.status === 'fechada' || isMismatched) {
-              console.warn(`ComandaModal: comanda ${idToListen} is closed/mismatched (${data.cliente_name}), generating fresh comanda for ${initialData.cliente_name}`);
-              if (initialData.agendamento_id) {
-                try {
-                  await updateDoc(doc(db, 'appointments', initialData.agendamento_id), {
-                    comanda_id: deleteField(),
-                    comanda_number: deleteField()
-                  });
-                } catch (_) {}
-              }
-              setActiveComandaId(null);
-              setComanda(null);
-              if (!hasOpenedComanda.current && user) {
-                handleOpenComanda();
-              }
-              return;
-            }
-          }
-
           setComanda(data);
           setFormData({
             cliente_id: data.cliente_id,
@@ -1027,22 +1003,26 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
       if (type === 'servico') {
         try {
           const serviceDur = (item as Service).duracao_minutos || (item as Service).duration || 30;
-          let dateStr = format(new Date(), 'yyyy-MM-dd');
+          let dateStr = (comanda as any).date || initialData?.date || format(new Date(), 'yyyy-MM-dd');
           let startTimeStr = format(new Date(), 'HH:mm');
           let parentStatus = 'confirmado';
 
+          const linkedApptId = comanda.agendamento_id || (comanda as any).agendamentoId || initialData?.agendamento_id || (initialData as any)?.agendamentoId;
+
           if (comanda.status === 'fechada') {
             parentStatus = 'concluído';
-          } else if (comanda.agendamento_id) {
-            const parentAppSnap = await getDoc(doc(db, 'appointments', comanda.agendamento_id));
+          } else if (linkedApptId) {
+            const parentAppSnap = await getDoc(doc(db, 'appointments', linkedApptId));
             if (parentAppSnap.exists()) {
               const pData = parentAppSnap.data();
               if (pData.date) dateStr = pData.date;
               if (pData.endTime) startTimeStr = pData.endTime;
-              if (pData.status) {
-                parentStatus = pData.status;
-              } else if (comanda.status === 'em_atendimento') {
+              if (pData.status === 'concluído' || comanda.status === 'fechada') {
+                parentStatus = 'concluído';
+              } else if (pData.status === 'em_atendimento' || comanda.status === 'em_atendimento') {
                 parentStatus = 'em_atendimento';
+              } else if (pData.status) {
+                parentStatus = pData.status;
               }
             }
           } else {
@@ -1052,26 +1032,41 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
             }
           }
 
-          // Busca todos os agendamentos já agendados para este cliente no mesmo dia para encadear os horários sequencialmente
-          if (comanda.cliente_id) {
-            try {
+          // Busca todos os agendamentos já agendados para este cliente ou vinculados a esta comanda no mesmo dia
+          try {
+            let latestEndTime = startTimeStr;
+
+            // 1. Busca outros agendamentos desta mesma comanda para encadear perfeitamente
+            const comApptsQuery = query(
+              collection(db, 'appointments'),
+              where('comanda_id', '==', comanda.id)
+            );
+            const comApptsSnap = await getDocs(comApptsQuery);
+            comApptsSnap.forEach((docSnap) => {
+              const data = docSnap.data();
+              if (data.endTime && data.endTime > latestEndTime && data.status !== 'cancelado') {
+                latestEndTime = data.endTime;
+              }
+            });
+
+            // 2. Busca agendamentos do cliente no mesmo dia
+            if (comanda.cliente_id && comanda.cliente_id !== 'avulso') {
               const apptsQuery = query(
                 collection(db, 'appointments'),
                 where('cliente_id', '==', comanda.cliente_id),
                 where('date', '==', dateStr)
               );
               const apptsSnap = await getDocs(apptsQuery);
-              let latestEndTime = startTimeStr;
               apptsSnap.forEach((docSnap) => {
                 const data = docSnap.data();
                 if (data.endTime && data.endTime > latestEndTime && data.status !== 'cancelado') {
                   latestEndTime = data.endTime;
                 }
               });
-              startTimeStr = latestEndTime;
-            } catch (queryErr) {
-              console.error("Erro ao buscar agendamentos existentes para encadeamento:", queryErr);
             }
+            startTimeStr = latestEndTime;
+          } catch (queryErr) {
+            console.error("Erro ao buscar agendamentos existentes para encadeamento:", queryErr);
           }
 
           const momentStart = parse(startTimeStr, 'HH:mm', new Date());
@@ -1079,8 +1074,8 @@ export function ComandaModal({ comanda_id, initialData, onClose, onSave }: Coman
           const endTimeStr = format(momentEnd, 'HH:mm');
 
           await appointmentService.createAppointment({
-            cliente_id: comanda.cliente_id || '',
-            cliente_name: comanda.cliente_name || 'Cliente Avulso',
+            cliente_id: comanda.cliente_id || initialData?.cliente_id || '',
+            cliente_name: comanda.cliente_name || initialData?.cliente_name || 'Cliente Avulso',
             profissional_id: targetBarberId,
             profissional_name: targetBarberName,
             servico_id: item.id,

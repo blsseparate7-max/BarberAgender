@@ -261,36 +261,6 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
   const [subscriptionInvoices, setSubscriptionInvoices] = useState<any[]>([]);
   const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<any | null>(null);
   const [renewalModalSub, setRenewalModalSub] = useState<Subscription | null>(null);
-  const [isManualRenewing, setIsManualRenewing] = useState(false);
-
-  const handleManualRenewSubscription = async (sub: Subscription) => {
-    setIsManualRenewing(true);
-    try {
-      await subscriptionService.renewSubscription(sub.id);
-      toast.success("Assinatura renovada com sucesso! Seu período foi estendido por mais 30 dias.");
-      setRenewalModalSub(null);
-      if (profile?.uid) {
-        const updatedSubs = await subscriptionService.getSubscriptions(profile.uid);
-        setSubscriptions(updatedSubs);
-        
-        // Refresh invoices
-        const qInvoices = query(
-          collection(db, 'financial_transactions'),
-          where('cliente_id', '==', profile.uid),
-          where('category', '==', 'Assinaturas')
-        );
-        const invSnap = await getDocs(qInvoices);
-        const invList = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        invList.sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
-        setSubscriptionInvoices(invList);
-      }
-    } catch (err: any) {
-      console.error("Erro ao renovar assinatura manualmente:", err);
-      toast.error(err.message || "Erro ao renovar assinatura.");
-    } finally {
-      setIsManualRenewing(false);
-    }
-  };
 
   const handleCancelSubscriptionByClient = async () => {
     if (!subToCancel) return;
@@ -602,8 +572,9 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
     e.preventDefault();
     if (!clientCardModalSub) return;
     setIsUpdatingCard(true);
+    const targetSubId = clientCardModalSub.id;
     try {
-      const res = await subscriptionService.updateCreditCard(clientCardModalSub.id, {
+      const res = await subscriptionService.updateCreditCard(targetSubId, {
         holderName: ccHolderName,
         number: ccNumber.replace(/\D/g, ''),
         expiryMonth: ccExpiryMonth,
@@ -615,9 +586,20 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
         cpfCnpj: (profile as any).cpfCnpj || profile.cpf || ''
       });
       if (res.success) {
-        toast.success("Cartão de crédito atualizado com sucesso!");
+        toast.success(res.message || "Cartão de crédito atualizado com sucesso!");
         setClientCardModalSub(null);
         setCcNumber(''); setCcHolderName(''); setCcExpiryMonth(''); setCcExpiryYear(''); setCcCcv('');
+
+        // Sincronizar status do pagamento no Asaas imediatamente
+        try {
+          await subscriptionService.checkAsaasPaymentStatus(targetSubId);
+          if (profile?.uid) {
+            const updated = await subscriptionService.getSubscriptions(profile.uid);
+            setSubscriptions(updated);
+          }
+        } catch (syncErr) {
+          console.warn("Aviso ao sincronizar pós-atualização de cartão:", syncErr);
+        }
       } else {
         toast.error(res.error || "Erro ao atualizar cartão.");
       }
@@ -6490,24 +6472,17 @@ export function PortalCliente({ profile, onLoginClick, onBackToLanding }: Portal
                     );
                   })()}
 
-                  {/* Option 3: Direct Manual Renewal */}
-                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-slate-800 text-amber-400 rounded-xl">
-                        <ShieldCheck size={18} />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-black text-slate-800">Renovação Direta (+30 Dias)</h4>
-                        <p className="text-[10px] text-slate-500 font-semibold">Caso já tenha pago na barbearia ou via PIX direto</p>
-                      </div>
+                  {/* Informação sobre pagamento presencial / balcão */}
+                  <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center gap-3">
+                    <div className="p-2.5 bg-slate-200 text-slate-700 rounded-xl shrink-0">
+                      <ShieldCheck size={18} />
                     </div>
-                    <button
-                      onClick={() => handleManualRenewSubscription(renewalModalSub)}
-                      disabled={isManualRenewing}
-                      className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-50"
-                    >
-                      {isManualRenewing ? 'Renovando...' : 'Reativar Agora'}
-                    </button>
+                    <div>
+                      <h4 className="text-xs font-black text-slate-800">Pagamento Presencial no Balcão</h4>
+                      <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                        Caso queira pagar em dinheiro físico ou direto no balcão da barbearia, a ativação manual é realizada diretamente na recepção.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -2963,28 +2963,57 @@ function encodeFirestoreFields(data: any): any {
         return res.status(400).json({ error: errorDesc });
       }
 
+      // Update payment method
+      const updateFieldsToSave: any = {
+        paymentMethod: 'cartao_credito_recorrente',
+        billingType: 'CREDIT_CARD',
+        updatedAt: new Date()
+      };
+
+      // Check with Asaas whether a payment was genuinely processed/confirmed
+      let isPaymentConfirmed = false;
+      let confirmedPaymentObj: any = null;
+      if (asaasSubId && asaasSubId.startsWith('sub_')) {
+        try {
+          const subPayRes = await fetch(`${baseUrl}/subscriptions/${asaasSubId}/payments`, {
+            headers: { 'access_token': asaasApiKey }
+          });
+          const subPayData = await safeJsonFetch(subPayRes);
+          if (subPayData?.data && Array.isArray(subPayData.data) && subPayData.data.length > 0) {
+            const paid = subPayData.data.find((p: any) => 
+              p.status === 'RECEIVED' || p.status === 'CONFIRMED' || p.status === 'RECEIVED_IN_CASH' || p.status === 'RECEIVED_IN_CASH_FEE'
+            );
+            if (paid) {
+              isPaymentConfirmed = true;
+              confirmedPaymentObj = paid;
+            }
+          }
+        } catch (payCheckErr) {
+          console.warn("Aviso ao verificar pagamentos após atualizar cartão:", payCheckErr);
+        }
+      }
+
+      if (isPaymentConfirmed) {
+        updateFieldsToSave.status = 'active';
+        updateFieldsToSave.asaasPaymentStatus = 'received';
+        if (confirmedPaymentObj?.id) updateFieldsToSave.asaasInvoiceId = confirmedPaymentObj.id;
+        if (confirmedPaymentObj?.customer) updateFieldsToSave.asaasCustomerId = confirmedPaymentObj.customer;
+      }
+
       if (subDocRef) {
         try {
-          await subDocRef.update({
-            paymentMethod: 'cartao_credito_recorrente',
-            billingType: 'CREDIT_CARD',
-            status: 'active',
-            asaasPaymentStatus: 'received',
-            updatedAt: new Date()
-          });
+          await subDocRef.update(updateFieldsToSave);
         } catch (_) {}
       } else if (subData) {
         try {
           const projId = process.env.FIREBASE_PROJECT_ID || "gbagender";
-          await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${subscriptionId}?updateMask.fieldPaths=paymentMethod&updateMask.fieldPaths=billingType&updateMask.fieldPaths=status&updateMask.fieldPaths=asaasPaymentStatus&updateMask.fieldPaths=updatedAt`, {
+          const fieldPaths = Object.keys(updateFieldsToSave).map(k => `updateMask.fieldPaths=${k}`).join('&');
+          await fetch(`https://firestore.googleapis.com/v1/projects/${projId}/databases/(default)/documents/subscriptions/${subscriptionId}?${fieldPaths}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               fields: encodeFirestoreFields({
-                paymentMethod: 'cartao_credito_recorrente',
-                billingType: 'CREDIT_CARD',
-                status: 'active',
-                asaasPaymentStatus: 'received',
+                ...updateFieldsToSave,
                 updatedAt: new Date().toISOString()
               })
             })
@@ -2992,7 +3021,13 @@ function encodeFirestoreFields(data: any): any {
         } catch (_) {}
       }
 
-      return res.json({ success: true, message: "Cartão de crédito atualizado com sucesso no Asaas!" });
+      return res.json({ 
+        success: true, 
+        paid: isPaymentConfirmed,
+        message: isPaymentConfirmed 
+          ? "Cartão atualizado e pagamento confirmado com sucesso!" 
+          : "Cartão de crédito atualizado no Asaas! A cobrança está sendo processada pela operadora." 
+      });
     } catch (error: any) {
       console.error("Erro ao atualizar cartão:", error);
       res.status(500).json({ error: error.message || "Falha ao atualizar cartão." });

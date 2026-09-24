@@ -46,6 +46,8 @@ import { getActiveTenantId } from '../services/tenantService';
 import { toast } from 'sonner';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 import { PushNotificationPrompt } from '../components/PushNotificationPrompt';
+import { NotificationDiagnosticsModal } from '../components/NotificationDiagnosticsModal';
+import { Activity } from 'lucide-react';
 
 enum OperationType {
   CREATE = 'create',
@@ -141,6 +143,7 @@ export function Lembretes() {
 
   // Confirmation Modals States
   const [deleteReminderId, setDeleteReminderId] = useState<string | null>(null);
+  const [showDiagModal, setShowDiagModal] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -339,14 +342,23 @@ export function Lembretes() {
             Gerencie tarefas e compromissos internos do time de barbeiros e parabenize os aniversariantes do mês por WhatsApp.
           </p>
         </div>
-        <div className="flex gap-3 shrink-0 self-start sm:self-center">
+        <div className="flex gap-2.5 shrink-0 self-start sm:self-center">
+          <button
+            onClick={() => setShowDiagModal(true)}
+            className="flex items-center justify-center gap-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-4 py-3 rounded-2xl font-black text-xs uppercase tracking-wider transition shadow-xs active:scale-95 cursor-pointer"
+            title="Verificar status da conexão push, permissões e chaves"
+          >
+            <Activity size={15} className="text-blue-600" />
+            <span>Diagnóstico Push</span>
+          </button>
+
           {canManage && (
             <button 
               onClick={() => {
                 setEditingReminder(null);
                 setShowReminderModal(true);
               }}
-              className="flex items-center justify-center gap-2 bg-slate-900 border border-slate-850 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-slate-800 transition shadow-sm active:scale-95"
+              className="flex items-center justify-center gap-2 bg-slate-900 border border-slate-850 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-slate-800 transition shadow-sm active:scale-95 cursor-pointer"
             >
               <Plus size={15} />
               <span>Novo Lembrete</span>
@@ -908,6 +920,13 @@ export function Lembretes() {
         description="Tem certeza que dejsa deletar permanentemente este lembrete de equipe? Esta ação é irreversível e removerá todos os logs internos vinculados a este ID."
         confirmLabel="Remover Lembrete"
         variant="danger"
+      />
+      {/* 2. Push Notification Diagnostics Modal */}
+      <NotificationDiagnosticsModal 
+        isOpen={showDiagModal}
+        onClose={() => setShowDiagModal(false)}
+        userId={profile?.uid || ''}
+        tenantId={currentTenantId}
       />
     </div>
   );

@@ -23,6 +23,7 @@ interface AppointmentModalProps {
   onSuccess: () => void;
   appointment?: Appointment | null;
   currentUser: UserProfile;
+  initialDate?: Date | string;
   initialTime?: string;
   initialProfissionalId?: string;
   onOpenComanda?: (appointment: Appointment) => void;
@@ -34,6 +35,7 @@ export function AppointmentModal({
   onSuccess, 
   appointment, 
   currentUser,
+  initialDate,
   initialTime,
   initialProfissionalId,
   onOpenComanda
@@ -42,11 +44,17 @@ export function AppointmentModal({
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const effectiveInitialDate = useMemo(() => {
+    if (!initialDate) return format(new Date(), 'yyyy-MM-dd');
+    if (initialDate instanceof Date) return format(initialDate, 'yyyy-MM-dd');
+    return String(initialDate);
+  }, [initialDate]);
   
   const [modalMode, setModalMode] = useState<'appointment' | 'block'>('appointment');
   const [blockData, setBlockData] = useState({
     profissional_id: '',
-    date: format(new Date(), 'yyyy-MM-dd'),
+    date: effectiveInitialDate,
     startTime: '',
     endTime: '',
     reason: ''
@@ -75,7 +83,7 @@ export function AppointmentModal({
     profissional_name: '',
     servico_id: '',
     servico_name: '',
-    date: format(new Date(), 'yyyy-MM-dd'),
+    date: effectiveInitialDate,
     startTime: '',
     notes: '',
     status: 'agendado' as AppointmentStatus,
@@ -184,7 +192,7 @@ export function AppointmentModal({
         profissional_name: barber?.nome || (currentUser.tipo === 'barbeiro' ? currentUser.nome : ''),
         servico_id: '',
         servico_name: '',
-        date: format(new Date(), 'yyyy-MM-dd'),
+        date: effectiveInitialDate,
         startTime: initialTime || '',
         notes: '',
         status: 'agendado',
@@ -195,13 +203,13 @@ export function AppointmentModal({
       const endT = addMinutesToTimeString(startT, 30);
       setBlockData({
         profissional_id: targetProfId || (currentUser.tipo === 'barbeiro' ? (currentUser.uid || currentUser.id) : 'general'),
-        date: format(new Date(), 'yyyy-MM-dd'),
+        date: effectiveInitialDate,
         startTime: startT,
         endTime: endT,
         reason: ''
       });
     }
-  }, [appointment, currentUser, initialTime, initialProfissionalId, barbers]);
+  }, [appointment, currentUser, initialTime, initialProfissionalId, barbers, effectiveInitialDate]);
 
   const handleCreateBlock = async (e: React.FormEvent) => {
     e.preventDefault();

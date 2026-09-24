@@ -1402,6 +1402,20 @@ function BarberModal({ barber, onClose, onSave, isLoading }: BarberModalProps) {
                         <option value="Autônomo">Autônomo / Free-lancer</option>
                       </select>
                     </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Salário Fixo Mensal (R$)</label>
+                      <input 
+                        type="number" 
+                        min="0"
+                        step="0.01"
+                        value={remuneracaoFixa === 0 ? '' : remuneracaoFixa}
+                        onFocus={(e) => e.target.select()}
+                        onChange={e => setRemuneracaoFixa(e.target.value === '' ? 0 : Number(e.target.value))}
+                        className="w-full bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-500 rounded-xl py-2.5 px-3.5 text-xs font-bold text-primary outline-none transition"
+                        placeholder="Ex: 2000.00"
+                      />
+                      <p className="text-[9px] text-slate-400 font-semibold ml-1">Para profissionais CLT, recepcionistas ou fixo base.</p>
+                    </div>
                     <div className="space-y-1.5 sm:col-span-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">Contato Alternativo / Emergência</label>
                       <input 

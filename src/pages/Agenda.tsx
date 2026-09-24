@@ -300,6 +300,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
       profissional_id: selectedAppointment.profissional_id,
       profissional_name: selectedAppointment.profissional_name,
       observations: selectedAppointment.notes,
+      date: selectedAppointment.date,
       items: [{
         id: `item-${selectedAppointment.id}-${Date.now()}`,
         type: 'servico' as const,
@@ -449,24 +450,15 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
         const cSnap = await getDoc(doc(db, 'comandas', appointment.comanda_id));
         if (cSnap.exists()) {
           const cData = cSnap.data();
-          const normAppClient = (appointment.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-          const normComClient = (cData.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-          const isMismatched = normAppClient && normComClient && normAppClient !== normComClient && normAppClient !== 'consumidor final' && normComClient !== 'consumidor final';
-
-          if (cData.status === 'fechada' || isMismatched) {
-            console.log(`Unlinking invalid/closed comanda ${appointment.comanda_id} from appointment ${appointment.id}`);
+          if (cData.status === 'fechada' && appointment.status !== 'concluído') {
             await updateDoc(doc(db, 'appointments', appointment.id), {
-              comanda_id: deleteField(),
-              comanda_number: deleteField(),
+              status: 'concluído',
               updatedAt: serverTimestamp()
             });
-            const updatedApp = { ...appointment };
-            delete updatedApp.comanda_id;
-            delete updatedApp.comanda_number;
-            setSelectedAppointment(updatedApp);
-            setIsComandaModalOpen(true);
-            return;
           }
+          setSelectedAppointment(appointment);
+          setIsComandaModalOpen(true);
+          return;
         } else {
           await updateDoc(doc(db, 'appointments', appointment.id), {
             comanda_id: deleteField(),
@@ -950,6 +942,7 @@ export function Agenda({ currentUser, activeTab: parentActiveTab }: AgendaProps)
         onSuccess={loadAppointments}
         appointment={selectedAppointment}
         currentUser={currentUser}
+        initialDate={selectedDate}
         initialTime={selectedTimeSlot?.time}
         initialProfissionalId={selectedTimeSlot?.profissional_id}
         onOpenComanda={handleOpenComanda}

@@ -62,6 +62,42 @@ export const debtService = {
       });
 
       const debts = Array.from(debtMap.values());
+
+      // Verificar se o perfil do cliente possui saldo devedor histórico importado (do sistema anterior)
+      if (cliente_id) {
+        try {
+          const uSnap = await getDoc(doc(db, 'usuarios', cliente_id));
+          if (uSnap.exists()) {
+            const uData = uSnap.data();
+            const activeDebtsSum = debts
+              .filter(d => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status))
+              .reduce((s, d) => s + (d.remainingAmount ?? d.amount ?? 0), 0);
+
+            let importedVal = Number(uData.saldo_devedor_inicial ?? uData.total_em_aberto_importado ?? 0);
+            if (uData.saldo_devedor_inicial === undefined && (uData.total_em_aberto || 0) > activeDebtsSum + 0.001) {
+              importedVal = Number(((uData.total_em_aberto || 0) - activeDebtsSum).toFixed(2));
+            }
+
+            if (importedVal > 0.001 && !debtMap.has('imported-legacy-balance')) {
+              const legacyDebt: ClientDebt = {
+                id: 'imported-legacy-balance',
+                cliente_id,
+                cliente_name: uData.nome || uData.name || 'Cliente',
+                amount: importedVal,
+                remainingAmount: importedVal,
+                status: 'pendente',
+                description: 'Saldo Devedor Histórico (Importado do Sistema Anterior)',
+                date: uData.createdAt ? (typeof uData.createdAt === 'string' ? uData.createdAt.split('T')[0] : (uData.createdAt.toDate ? uData.createdAt.toDate().toISOString().split('T')[0] : '2026-01-01')) : '2026-01-01',
+                tenantId: activeTenant
+              } as any;
+              debts.unshift(legacyDebt);
+            }
+          }
+        } catch (e) {
+          console.warn("Could not check imported debt balance in getClientDebts", e);
+        }
+      }
+
       return debts.sort((a, b) => {
         const aTime = a.createdAt?.seconds || 0;
         const bTime = b.createdAt?.seconds || 0;
@@ -219,7 +255,18 @@ export const debtService = {
         remainingToPay -= payForThis;
       }
 
-      // Se sobrou valor após abater todas as dívidas ou se não havia dívidas cadastradas
+      // Se sobrou valor após abater todas as dívidas ativas em client_debts, abater do saldo importado do cliente (se houver)
+      const importedBal = Number(clientData.saldo_devedor_inicial ?? clientData.total_em_aberto_importado ?? 0);
+      let updatedImportedBal = importedBal;
+
+      if (importedBal > 0.001 && remainingToPay > 0.001) {
+        const deductImported = Math.min(importedBal, remainingToPay);
+        updatedImportedBal = Number((importedBal - deductImported).toFixed(2));
+        totalDebtDeducted = Number((totalDebtDeducted + deductImported).toFixed(2));
+        remainingToPay = Number((remainingToPay - deductImported).toFixed(2));
+      }
+
+      // Se AINDA sobrou valor, gera crédito em conta
       if (remainingToPay > 0.001) {
         const depositRef = doc(collection(db, COLLECTION_PAYMENTS));
         transaction.set(depositRef, {
@@ -242,7 +289,7 @@ export const debtService = {
       // Atualizar cadastro do cliente
       if (clientRef) {
         const currentOpen = clientData.total_em_aberto ?? clientData.saldo_devedor ?? 0;
-        const newOpen = Math.max(0, currentOpen - totalDebtDeducted);
+        const newOpen = Math.max(0, Number((currentOpen - totalDebtDeducted).toFixed(2)));
 
         // Apenas o troco/excedente que sobrou gera incremento em saldo de crédito positivo
         const creditIncrease = remainingToPay > 0.001 ? remainingToPay : 0;
@@ -250,7 +297,7 @@ export const debtService = {
         const newCredit = currentCredit + creditIncrease;
         const newNetBalance = newCredit - newOpen;
 
-        transaction.update(clientRef, {
+        const clientUpdate: any = {
           credit_balance: newCredit,
           saldo_atual: newNetBalance,
           balance: newNetBalance,
@@ -259,7 +306,13 @@ export const debtService = {
           total_em_aberto: newOpen,
           saldo_devedor: newOpen,
           updatedAt: serverTimestamp()
-        });
+        };
+
+        if (clientData.saldo_devedor_inicial !== undefined || importedBal > 0.001) {
+          clientUpdate.saldo_devedor_inicial = updatedImportedBal;
+        }
+
+        transaction.update(clientRef, clientUpdate);
       }
 
       // 4. Gravar no Caixa Diário se houver caixa aberto
@@ -668,9 +721,17 @@ export const debtService = {
       const debts = await this.getClientDebts(cliente_id);
       const payments = await this.getDebtPaymentsByClient(cliente_id);
 
-      // 1. Dívidas ativas em aberto
-      const activeDebts = debts.filter(d => !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status));
-      const totalOutstanding = activeDebts.reduce((sum, d) => sum + (d.remainingAmount ?? d.amount ?? 0), 0);
+      // 1. Dívidas ativas em aberto (excluindo dívida sintetizada de sistema anterior para não duplicar)
+      const activeDebts = debts.filter(d => d.id !== 'imported-legacy-balance' && !['pago', 'paga', 'quitado', 'cancelado'].includes(d.status));
+      const debtsOutstanding = activeDebts.reduce((sum, d) => sum + (d.remainingAmount ?? d.amount ?? 0), 0);
+
+      // Preservar / calcular saldo devedor histórico importado (do sistema anterior)
+      let importedBalance = Number(clientData.saldo_devedor_inicial ?? clientData.total_em_aberto_importado ?? 0);
+      if (clientData.saldo_devedor_inicial === undefined && (clientData.total_em_aberto || 0) > debtsOutstanding + 0.001) {
+        importedBalance = Number(((clientData.total_em_aberto || 0) - debtsOutstanding).toFixed(2));
+      }
+
+      const totalOutstanding = Number((debtsOutstanding + importedBalance).toFixed(2));
 
       // 2. Total de pagamentos de dívida realizados
       const totalDebtPayments = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
@@ -681,14 +742,20 @@ export const debtService = {
       // 4. Saldo líquido da conta (positivo = crédito, negativo = débito)
       const netBalance = creditBalance - totalOutstanding;
 
-      await updateDoc(clientRef, {
+      const updatePayload: any = {
         total_em_aberto: totalOutstanding,
         saldo_devedor: totalOutstanding,
         credit_balance: creditBalance,
         saldo_atual: netBalance,
         balance: netBalance,
         updatedAt: serverTimestamp()
-      });
+      };
+
+      if (importedBalance > 0.001) {
+        updatePayload.saldo_devedor_inicial = importedBalance;
+      }
+
+      await updateDoc(clientRef, updatePayload);
 
       return {
         totalOutstanding,

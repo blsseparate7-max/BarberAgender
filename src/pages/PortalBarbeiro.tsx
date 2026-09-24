@@ -191,6 +191,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
       profissional_id: selectedAppointment.profissional_id,
       profissional_name: selectedAppointment.profissional_name,
       observations: selectedAppointment.notes,
+      date: selectedAppointment.date,
       items: [{
         id: `item-${selectedAppointment.id}-${Date.now()}`,
         type: 'servico' as const,
@@ -645,44 +646,15 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         const cSnap = await getDoc(doc(db, 'comandas', app.comanda_id));
         if (cSnap.exists()) {
           const cData = cSnap.data();
-          const normAppClient = (app.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-          const normComClient = (cData.cliente_name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-          const isMismatched = normAppClient && normComClient && normAppClient !== normComClient && normAppClient !== 'consumidor final' && normComClient !== 'consumidor final';
-
-          if (cData.status === 'fechada') {
-            if (!isMismatched && (cData.agendamento_id === app.id || cData.date === app.date)) {
-              await updateDoc(doc(db, 'appointments', app.id), {
-                status: 'concluído',
-                updatedAt: serverTimestamp()
-              });
-              toast.success(`Atendimento de ${app.cliente_name} já constava como pago e foi finalizado!`);
-              return;
-            } else {
-              await updateDoc(doc(db, 'appointments', app.id), {
-                comanda_id: deleteField(),
-                comanda_number: deleteField(),
-                updatedAt: serverTimestamp()
-              });
-              const updatedApp = { ...app };
-              delete updatedApp.comanda_id;
-              delete updatedApp.comanda_number;
-              setSelectedAppointment(updatedApp);
-              setIsComandaModalOpen(true);
-              return;
-            }
-          } else if (isMismatched) {
+          if (cData.status === 'fechada' && app.status !== 'concluído') {
             await updateDoc(doc(db, 'appointments', app.id), {
-              comanda_id: deleteField(),
-              comanda_number: deleteField(),
+              status: 'concluído',
               updatedAt: serverTimestamp()
             });
-            const updatedApp = { ...app };
-            delete updatedApp.comanda_id;
-            delete updatedApp.comanda_number;
-            setSelectedAppointment(updatedApp);
-            setIsComandaModalOpen(true);
-            return;
           }
+          setSelectedAppointment(app);
+          setIsComandaModalOpen(true);
+          return;
         } else {
           await updateDoc(doc(db, 'appointments', app.id), {
             comanda_id: deleteField(),
@@ -2043,6 +2015,7 @@ export function PortalBarbeiro({ profile }: PortalBarbeiroProps) {
         }}
         appointment={selectedAppointment}
         currentUser={profile}
+        initialDate={selectedDate}
         initialTime={selectedTimeSlot?.time}
         initialProfissionalId={selectedTimeSlot?.profissional_id || profile.uid || profile.id}
         onOpenComanda={handleOpenComanda}

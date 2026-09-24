@@ -327,10 +327,11 @@ export function Comissoes() {
       // 3. Register transaction in Financial Ledger for DRE
       if (netAmount > 0) {
         try {
+          const isSalary = notes.includes('Salário Fixo');
           await financialService.createTransaction({
             type: 'expense',
-            category: 'Repasse Comissões (Parceiros)',
-            description: `Repasse Comissões Líquido - ${barber.nome} (Ref ${dateRange.start} a ${dateRange.end})`,
+            category: isSalary ? 'Salários e Encargos' : 'Repasse Comissões (Parceiros)',
+            description: `${isSalary ? 'Pagamento de Salário' : 'Repasse Comissões'} Líquido - ${barber.nome} (Ref ${dateRange.start} a ${dateRange.end})`,
             amount: netAmount,
             net_amount: netAmount,
             fee_amount: 0,
@@ -454,6 +455,7 @@ export function Comissoes() {
         nome: barber.nome,
         email: barber.email,
         percentualComissao: ledger.percentualComissao,
+        remuneracaoFixa: ledger.remuneracaoFixa || 0,
         grossPending: ledger.comissaoPendenteBruta,
         pendingAdvances: ledger.valesPendentes,
         pending: ledger.saldoPendenteLiquido,
@@ -965,6 +967,15 @@ export function Comissoes() {
                               </span>
                             </div>
 
+                            {barber.remuneracaoFixa > 0 && (
+                              <div className="flex items-center justify-between bg-blue-50/70 px-2 py-1 rounded-lg border border-blue-100">
+                                <span className="text-blue-700 font-bold">Salário Fixo Cadastrado:</span>
+                                <span className="font-mono font-black text-blue-900">
+                                  R$ {barber.remuneracaoFixa.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                            )}
+
                             <div className="flex items-center justify-between">
                               <span className="text-rose-600 font-medium">2. Vales Retirados:</span>
                               <span className="font-mono font-bold text-rose-600">
@@ -1173,7 +1184,7 @@ export function Comissoes() {
   );
 }
 
-// Payout modal component with pristine layouts, vales deduction and cash drawer integration
+// Payout modal component with pristine layouts, vales deduction, fixed salary support and cash drawer integration
 function PayoutModal({ 
   barbers, 
   initialBarberId, 
@@ -1204,6 +1215,12 @@ function PayoutModal({
   const [hasOpenCash, setHasOpenCash] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState('');
+  
+  // Suporte a Salário Fixo / Remuneração do Profissional
+  const selectedBarberObj = barbers.find(b => b.uid === selectedBarber);
+  const defaultFixedSalary = Number(selectedBarberObj?.remuneracao_fixa || (selectedBarberObj as any)?.fixedSalary || 0);
+  const [includeFixedSalary, setIncludeFixedSalary] = useState(defaultFixedSalary > 0);
+  const [fixedSalaryValue, setFixedSalaryValue] = useState<number>(defaultFixedSalary);
 
   useEffect(() => {
     // Check if cash register is open
@@ -1215,11 +1232,17 @@ function PayoutModal({
   useEffect(() => {
     if (selectedBarber) {
       loadPending();
+      const bObj = barbers.find(b => b.uid === selectedBarber);
+      const sal = Number(bObj?.remuneracao_fixa || (bObj as any)?.fixedSalary || 0);
+      setFixedSalaryValue(sal);
+      setIncludeFixedSalary(sal > 0);
     } else {
       setPendingCommissions([]);
       setPendingAdvances([]);
+      setFixedSalaryValue(0);
+      setIncludeFixedSalary(false);
     }
-  }, [selectedBarber]);
+  }, [selectedBarber, barbers]);
 
   const loadPending = async () => {
     setLoading(true);
@@ -1237,7 +1260,9 @@ function PayoutModal({
     }
   };
 
-  const grossAmount = pendingCommissions.reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
+  const commissionsAmount = pendingCommissions.reduce((acc, c) => acc + (Number(c.commission_value) || 0), 0);
+  const appliedFixedSalary = includeFixedSalary ? (Number(fixedSalaryValue) || 0) : 0;
+  const grossAmount = commissionsAmount + appliedFixedSalary;
   const advancesAmount = pendingAdvances.reduce((acc, a) => acc + (Number(a.amount) || 0), 0);
   const netAmount = Math.max(0, grossAmount - advancesAmount);
 
@@ -1247,13 +1272,19 @@ function PayoutModal({
       toast.error("O caixa de hoje precisa estar aberto para registrar saída em dinheiro da gaveta!");
       return;
     }
+    const finalNotes = [
+      notes,
+      appliedFixedSalary > 0 ? `Salário Fixo Incluído: R$ ${appliedFixedSalary.toFixed(2)}` : null,
+      commissionsAmount > 0 ? `Comissões: R$ ${commissionsAmount.toFixed(2)}` : null
+    ].filter(Boolean).join(' • ');
+
     onConfirm(
       selectedBarber,
       netAmount,
       pendingCommissions.map(c => c.id),
       pendingAdvances.map(a => a.id),
       paymentMethod,
-      notes,
+      finalNotes,
       grossAmount
     );
   };
@@ -1268,8 +1299,8 @@ function PayoutModal({
       >
         <div className="p-6 border-b border-slate-150 flex items-center justify-between bg-slate-50">
           <div>
-            <h2 className="text-lg font-black text-slate-900">Registrar Repasse de Cota</h2>
-            <p className="text-xs text-slate-500 font-medium">Acerto de comissões com dedução unificada de vales</p>
+            <h2 className="text-lg font-black text-slate-900">Registrar Repasse / Salário</h2>
+            <p className="text-xs text-slate-500 font-medium">Acerto financeiro com dedução unificada de vales</p>
           </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-900 transition-colors">
             <X size={18} />
@@ -1286,7 +1317,9 @@ function PayoutModal({
             >
               <option value="">Selecione um profissional...</option>
               {barbers.map((b, index) => (
-                <option key={`barber-modal-opt-${b.uid || index}-${index}`} value={b.uid}>{b.nome}</option>
+                <option key={`barber-modal-opt-${b.uid || index}-${index}`} value={b.uid}>
+                  {b.nome} {b.remuneracao_fixa ? `(Fixo: R$ ${Number(b.remuneracao_fixa).toFixed(2)})` : ''}
+                </option>
               ))}
             </select>
           </div>
@@ -1296,30 +1329,89 @@ function PayoutModal({
               {loading ? (
                 <div className="py-10 text-center">
                   <Loader2 className="animate-spin mx-auto text-blue-500" size={28} />
-                  <p className="text-xs text-slate-400 font-bold mt-2">Buscando comissões e vales...</p>
+                  <p className="text-xs text-slate-400 font-bold mt-2">Buscando pendências e vales...</p>
                 </div>
               ) : (
                 <>
+                  {/* Opção de Salário Fixo Mensal */}
+                  <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                          💼 Salário Fixo / Remuneração Base
+                        </span>
+                        <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                          Incluir valor mensal na apuração com desconto de vales
+                        </p>
+                      </div>
+                      <input 
+                        type="checkbox"
+                        checked={includeFixedSalary}
+                        onChange={(e) => setIncludeFixedSalary(e.target.checked)}
+                        className="w-5 h-5 rounded-md text-emerald-600 focus:ring-emerald-500 border-slate-300 cursor-pointer"
+                      />
+                    </div>
+
+                    {includeFixedSalary && (
+                      <div className="pt-2 border-t border-slate-200/60 flex items-center gap-3">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider shrink-0">
+                          Valor (R$):
+                        </label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={fixedSalaryValue === 0 ? '' : fixedSalaryValue}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setFixedSalaryValue(e.target.value === '' ? 0 : Number(e.target.value))}
+                          placeholder="0,00"
+                          className="flex-1 bg-white border border-slate-200 focus:ring-2 focus:ring-emerald-500 rounded-xl px-3 py-1.5 text-xs font-black text-slate-900 outline-none"
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   {/* Ledger Breakdown Cards */}
                   <div className="grid grid-cols-3 gap-2">
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-150 text-center">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Bruto</p>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Bruto Total</p>
                       <p className="text-sm font-black text-slate-800 font-mono">R$ {grossAmount.toFixed(2)}</p>
-                      <p className="text-[9px] text-slate-400 mt-0.5">{pendingCommissions.length} comissões</p>
+                      <p className="text-[8px] text-slate-400 mt-0.5 leading-tight">
+                        {appliedFixedSalary > 0 ? `Fixo + ` : ''}{pendingCommissions.length} comissões
+                      </p>
                     </div>
 
                     <div className="bg-rose-50/60 p-3 rounded-2xl border border-rose-150 text-center">
                       <p className="text-[8px] font-black text-rose-500 uppercase tracking-widest mb-1">Vales</p>
                       <p className="text-sm font-black text-rose-600 font-mono">- R$ {advancesAmount.toFixed(2)}</p>
-                      <p className="text-[9px] text-rose-400 mt-0.5">{pendingAdvances.length} vales</p>
+                      <p className="text-[8px] text-rose-400 mt-0.5 leading-tight">{pendingAdvances.length} vales</p>
                     </div>
 
                     <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-200 text-center">
                       <p className="text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1">Líquido</p>
                       <p className="text-sm font-black text-emerald-700 font-mono">R$ {netAmount.toFixed(2)}</p>
-                      <p className="text-[9px] text-emerald-600 mt-0.5 font-bold">A Pagar</p>
+                      <p className="text-[8px] text-emerald-600 mt-0.5 font-bold leading-tight">A Pagar no Pix</p>
                     </div>
                   </div>
+
+                  {/* Lista detalhada dos Vales que serão quitados */}
+                  {pendingAdvances.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider ml-1">
+                        Vales Pendentes a Deduzir ({pendingAdvances.length}):
+                      </p>
+                      <div className="max-h-24 overflow-y-auto space-y-1 pr-1 bg-slate-50 p-2 rounded-xl border border-slate-150">
+                        {pendingAdvances.map((adv, aIdx) => (
+                          <div key={`modal-adv-item-${adv.id || aIdx}`} className="flex justify-between items-center text-[10px] bg-white px-2 py-1 rounded-lg border border-slate-150">
+                            <span className="font-semibold text-slate-700 truncate max-w-[200px]">
+                              {adv.description || 'Vale / Adiantamento'} ({adv.date || 'Hoje'})
+                            </span>
+                            <span className="font-bold text-rose-600 font-mono">- R$ {Number(adv.amount || 0).toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Forma de Pagamento / Origem do Recurso */}
                   <div className="space-y-2">
@@ -1363,8 +1455,8 @@ function PayoutModal({
                     <textarea 
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-sm font-semibold focus:outline-none focus:border-slate-400 transition-colors text-slate-800 h-20 resize-none"
-                      placeholder="Ex: Pagamento referente ao acerto semanal."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 text-sm font-semibold focus:outline-none focus:border-slate-400 transition-colors text-slate-800 h-16 resize-none"
+                      placeholder="Ex: Salário mensal com quitação de vales."
                     />
                   </div>
                 </>
@@ -1386,7 +1478,7 @@ function PayoutModal({
               className="flex-[2] py-3.5 bg-slate-900 disabled:bg-slate-100 disabled:text-slate-400 text-white rounded-2xl font-black text-xs uppercase tracking-wider hover:bg-slate-800 transition-all shadow-md flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
             >
               {isRegistering ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-              <span>Confirmar Repasse (R$ {netAmount.toFixed(2)})</span>
+              <span>Confirmar Acerto (R$ {netAmount.toFixed(2)})</span>
             </button>
           </div>
         </div>

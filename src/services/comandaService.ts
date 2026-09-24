@@ -680,6 +680,7 @@ export const comandaService = {
       profissional_name: data.profissional_name || '',
       agendamento_id: linkedAppId,
       daily_flow_id: linkedDailyFlowId,
+      date: (data as any).date || format(new Date(), 'yyyy-MM-dd'),
       origin: data.origin || 'balcao',
       status: data.status || 'aberta',
       subtotalServices,
@@ -1263,79 +1264,115 @@ export const comandaService = {
       let updatedCount = 0;
       const touchedAppIds = new Set<string>();
 
+      // 1. Direct agendamentoId if provided
       if (agendamentoId) {
-        const appSnap = await getDoc(doc(db, 'appointments', agendamentoId));
-        if (appSnap.exists() && appSnap.data().status !== 'concluído') {
-          batch.update(appSnap.ref, {
-            status: 'concluído',
-            comanda_id: comandaId,
-            updatedAt: serverTimestamp()
-          });
-          touchedAppIds.add(agendamentoId);
-          updatedCount++;
+        try {
+          const appSnap = await getDoc(doc(db, 'appointments', agendamentoId));
+          if (appSnap.exists() && appSnap.data().status !== 'concluído') {
+            batch.update(appSnap.ref, {
+              status: 'concluído',
+              comanda_id: comandaId,
+              updatedAt: serverTimestamp()
+            });
+            touchedAppIds.add(agendamentoId);
+            updatedCount++;
+          }
+        } catch (e) {
+          console.warn("Error fetching direct agendamento in closeLinkedAppointments:", e);
         }
       }
 
+      // 2. Fetch comanda to get number and primary agendamento_id
       let cData: any = null;
-      const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
-      if (comandaSnap.exists()) {
-        cData = comandaSnap.data();
-        const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
-        if (linkedId && !touchedAppIds.has(linkedId)) {
-          const linkedSnap = await getDoc(doc(db, 'appointments', linkedId));
-          if (linkedSnap.exists() && linkedSnap.data().status !== 'concluído') {
-            batch.update(linkedSnap.ref, {
-              status: 'concluído',
-              comanda_id: comandaId,
-              comanda_number: cData.number || '',
-              updatedAt: serverTimestamp()
-            });
-            touchedAppIds.add(linkedId);
-            updatedCount++;
+      try {
+        const comandaSnap = await getDoc(doc(db, 'comandas', comandaId));
+        if (comandaSnap.exists()) {
+          cData = comandaSnap.data();
+          const linkedId = cData.agendamento_id || cData.agendamentoId || cData.appointment_id || cData.appointmentId;
+          if (linkedId && !touchedAppIds.has(linkedId)) {
+            const linkedSnap = await getDoc(doc(db, 'appointments', linkedId));
+            if (linkedSnap.exists() && linkedSnap.data().status !== 'concluído') {
+              batch.update(linkedSnap.ref, {
+                status: 'concluído',
+                comanda_id: comandaId,
+                comanda_number: cData.number || '',
+                updatedAt: serverTimestamp()
+              });
+              touchedAppIds.add(linkedId);
+              updatedCount++;
+            }
           }
         }
+      } catch (e) {
+        console.warn("Error fetching comanda doc in closeLinkedAppointments:", e);
       }
 
-      // Match appointments by comanda_id
-      const apptsQuery = query(
-        collection(db, 'appointments'),
-        where('comanda_id', '==', comandaId)
-      );
-      const apptsSnap = await getDocs(apptsQuery);
-      if (!apptsSnap.empty) {
-        apptsSnap.forEach((docSnap) => {
-          const apptData = docSnap.data();
-          const normAppClient = normalizeStr(apptData.cliente_name);
-          const normComClient = normalizeStr(cData?.cliente_name);
-          const isMismatched = normAppClient && normComClient && normAppClient !== normComClient && normAppClient !== 'consumidor final' && normComClient !== 'consumidor final';
-
-          if (isMismatched) {
-            batch.update(docSnap.ref, {
-              comanda_id: deleteField(),
-              comanda_number: deleteField(),
-              updatedAt: serverTimestamp()
-            });
-          } else if (!touchedAppIds.has(docSnap.id) && apptData.status !== 'concluído') {
-            batch.update(docSnap.ref, {
-              status: 'concluído',
-              comanda_id: comandaId,
-              comanda_number: cData?.number || '',
-              updatedAt: serverTimestamp()
-            });
-            touchedAppIds.add(docSnap.id);
-            updatedCount++;
-          }
-        });
+      // 3. Match ALL appointments by comanda_id
+      try {
+        const apptsQuery = query(
+          collection(db, 'appointments'),
+          where('comanda_id', '==', comandaId)
+        );
+        const apptsSnap = await getDocs(apptsQuery);
+        if (!apptsSnap.empty) {
+          apptsSnap.forEach((docSnap) => {
+            const apptData = docSnap.data();
+            if (!touchedAppIds.has(docSnap.id) && apptData.status !== 'concluído') {
+              batch.update(docSnap.ref, {
+                status: 'concluído',
+                comanda_id: comandaId,
+                comanda_number: cData?.number || '',
+                updatedAt: serverTimestamp()
+              });
+              touchedAppIds.add(docSnap.id);
+              updatedCount++;
+            }
+          });
+        }
+      } catch (e) {
+        console.warn("Error matching appointments by comanda_id:", e);
       }
 
-      // If comanda has a daily_flow_id, find and close daily_flow and any appointments connected to it
+      // 4. Also match appointments by agendamento_id == comandaId
+      try {
+        const apptsQuery2 = query(
+          collection(db, 'appointments'),
+          where('agendamento_id', '==', comandaId)
+        );
+        const apptsSnap2 = await getDocs(apptsQuery2);
+        if (!apptsSnap2.empty) {
+          apptsSnap2.forEach((docSnap) => {
+            const apptData = docSnap.data();
+            if (!touchedAppIds.has(docSnap.id) && apptData.status !== 'concluído') {
+              batch.update(docSnap.ref, {
+                status: 'concluído',
+                comanda_id: comandaId,
+                comanda_number: cData?.number || '',
+                updatedAt: serverTimestamp()
+              });
+              touchedAppIds.add(docSnap.id);
+              updatedCount++;
+            }
+          });
+        }
+      } catch (e) {
+        console.warn("Error matching appointments by agendamento_id == comandaId:", e);
+      }
+
+      // 5. Commit batch of directly linked appointments FIRST so they are 100% saved
+      if (updatedCount > 0) {
+        await batch.commit();
+        console.log(`Successfully completed ${updatedCount} linked appointments for comanda ${comandaId}`);
+      }
+
+      // 6. Safely handle daily_flow
       const dfId = cData?.daily_flow_id || cData?.dailyFlowId;
       if (dfId) {
         try {
           const dfSnap = await getDoc(doc(db, 'daily_flow', dfId));
           if (dfSnap.exists()) {
             const dfData = dfSnap.data();
-            batch.update(dfSnap.ref, {
+            await updateDoc(dfSnap.ref, {
               status: 'completed',
               comanda_id: comandaId,
               comanda_number: cData?.number || '',
@@ -1347,89 +1384,19 @@ export const comandaService = {
             if (dfAppId && !touchedAppIds.has(dfAppId)) {
               const dfAppSnap = await getDoc(doc(db, 'appointments', dfAppId));
               if (dfAppSnap.exists() && dfAppSnap.data().status !== 'concluído') {
-                batch.update(dfAppSnap.ref, {
+                await updateDoc(dfAppSnap.ref, {
                   status: 'concluído',
                   comanda_id: comandaId,
                   comanda_number: cData?.number || '',
                   updatedAt: serverTimestamp()
                 });
                 touchedAppIds.add(dfAppId);
-                updatedCount++;
               }
             }
           }
         } catch (dfErr) {
           console.warn("Error closing daily flow from closeLinkedAppointments:", dfErr);
         }
-      }
-
-      // If comanda had daily_flow_id or client/date info, find matching appointments on that date
-      if (cData) {
-        const tenantId = cData.tenantId || getActiveTenantId();
-        const todayDateStr = format(new Date(), 'yyyy-MM-dd');
-        const comandaDate = cData.date || (cData.createdAt ? new Date(cData.createdAt.seconds * 1000).toISOString().split('T')[0] : todayDateStr);
-        
-        // Match by client and date
-        if (cData.cliente_id && cData.cliente_id !== 'avulso') {
-          const clientApptsQuery = query(
-            collection(db, 'appointments'),
-            where('tenantId', '==', tenantId),
-            where('cliente_id', '==', cData.cliente_id),
-            where('date', '==', comandaDate)
-          );
-          const clientApptsSnap = await getDocs(clientApptsQuery);
-          clientApptsSnap.forEach((docSnap) => {
-            const data = docSnap.data();
-            if (!touchedAppIds.has(docSnap.id) && data.status !== 'concluído' && data.status !== 'cancelado') {
-              batch.update(docSnap.ref, {
-                status: 'concluído',
-                comanda_id: comandaId,
-                comanda_number: cData.number || '',
-                updatedAt: serverTimestamp()
-              });
-              touchedAppIds.add(docSnap.id);
-              updatedCount++;
-            }
-          });
-        }
-
-        // Match by client name ONLY if it is a specific unique named client (never avulso, consumidor, or generic names)
-        const rawName = (cData.cliente_name || '').trim();
-        const isGenericName = !rawName || 
-          rawName.toLowerCase() === 'consumidor final' || 
-          rawName.toLowerCase() === 'avulso' || 
-          rawName.toLowerCase() === 'cliente avulso' ||
-          rawName.toLowerCase() === 'balcão' ||
-          rawName.toLowerCase() === 'balcao' ||
-          rawName.length < 3;
-
-        if (!isGenericName && cData.cliente_id && cData.cliente_id !== 'avulso') {
-          const nameApptsQuery = query(
-            collection(db, 'appointments'),
-            where('tenantId', '==', tenantId),
-            where('cliente_name', '==', rawName),
-            where('date', '==', comandaDate)
-          );
-          const nameApptsSnap = await getDocs(nameApptsQuery);
-          nameApptsSnap.forEach((docSnap) => {
-            const data = docSnap.data();
-            if (!touchedAppIds.has(docSnap.id) && data.status !== 'concluído' && data.status !== 'cancelado') {
-              batch.update(docSnap.ref, {
-                status: 'concluído',
-                comanda_id: comandaId,
-                comanda_number: cData.number || '',
-                updatedAt: serverTimestamp()
-              });
-              touchedAppIds.add(docSnap.id);
-              updatedCount++;
-            }
-          });
-        }
-      }
-
-      if (updatedCount > 0) {
-        await batch.commit();
-        console.log(`Successfully completed ${updatedCount} linked appointments for comanda ${comandaId}`);
       }
     } catch (err) {
       console.warn("Error auto-closing linked appointments for comanda:", err);
